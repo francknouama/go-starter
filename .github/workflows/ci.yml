@@ -38,7 +38,13 @@ jobs:
       run: go mod download
 
     - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          go test -v -race -coverprofile=coverage.out ./...
+        else
+          go test -v -race ./...
+        fi
+      shell: bash
 
     - name: Upload coverage to Codecov
       if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.21'
@@ -65,7 +71,7 @@ jobs:
       uses: golangci/golangci-lint-action@v3
       with:
         version: latest
-        args: --config .golangci.yml
+        args: --timeout=10m
 
   build:
     name: Build
