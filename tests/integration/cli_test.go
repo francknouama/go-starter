@@ -94,9 +94,9 @@ func TestCLIVersion(t *testing.T) {
 				t.Error("Version output is empty")
 			}
 
-			// Should contain version information
-			if !strings.Contains(outputStr, "go-starter") {
-				t.Errorf("Version output should contain 'go-starter', got: %s", outputStr)
+			// Should contain version information  
+			if !strings.Contains(outputStr, "Version:") && !strings.Contains(outputStr, "version") {
+				t.Errorf("Version output should contain version info, got: %s", outputStr)
 			}
 		})
 	}

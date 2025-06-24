@@ -209,9 +209,7 @@ func (g *Generator) generateProjectFiles(tmpl types.Template, config types.Proje
 	}
 
 	// Execute post-generation hooks
-	if err := g.executeHooks(tmpl, config, outputPath, context); err != nil {
-		return nil, fmt.Errorf("failed to execute post hooks: %w", err)
-	}
+	g.executeHooks(tmpl, config, outputPath, context)
 
 	return filesCreated, nil
 }
@@ -519,7 +517,7 @@ func (g *Generator) addDependencies(projectPath string, dependencies []string) e
 }
 
 // executeHooks executes post-generation hooks
-func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig, outputPath string, _ map[string]any) error {
+func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig, outputPath string, _ map[string]any) {
 	for _, hook := range tmpl.PostHooks {
 		// Check condition if present - for now, we'll execute all hooks
 		// In the future, we can add conditional hook execution based on hook.Name
@@ -553,8 +551,6 @@ func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig
 			fmt.Printf("Warning: Hook '%s' failed: %s\n", hook.Name, string(output))
 		}
 	}
-
-	return nil
 }
 
 // isGitAvailable checks if git is available in the system PATH
