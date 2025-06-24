@@ -123,4 +123,3 @@ func TestGeneratorWithConfig(t *testing.T) {
 
 	t.Logf("Generator and config integration test passed for project: %s", projectConfig.Name)
 }
-

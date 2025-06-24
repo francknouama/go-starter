@@ -152,9 +152,7 @@ func Load(configFile string) (*Config, error) {
 	}
 
 	// Validate and apply defaults
-	if err := config.applyDefaults(); err != nil {
-		return nil, fmt.Errorf("failed to apply defaults: %w", err)
-	}
+	config.applyDefaults()
 
 	if err := config.validate(); err != nil {
 		return nil, fmt.Errorf("invalid configuration: %w", err)
@@ -243,7 +241,7 @@ func (c *Config) RemoveProfile(name string) error {
 }
 
 // applyDefaults applies default values to the configuration
-func (c *Config) applyDefaults() error {
+func (c *Config) applyDefaults() {
 	// Ensure we have at least a default profile
 	if c.Profiles == nil {
 		c.Profiles = make(map[string]Profile)
@@ -293,13 +291,11 @@ func (c *Config) applyDefaults() error {
 
 		c.Profiles[name] = profile
 	}
-
-	return nil
 }
 
 // validate validates the configuration
 func (c *Config) validate() error {
-	if c.Profiles == nil || len(c.Profiles) == 0 {
+	if len(c.Profiles) == 0 {
 		return fmt.Errorf("no profiles defined")
 	}
 
@@ -322,7 +318,7 @@ func (c *Config) validate() error {
 }
 
 // validateProfile validates a single profile
-func validateProfile(name string, profile Profile) error {
+func validateProfile(_ string, profile Profile) error {
 	// Validate Go version format
 	if profile.Defaults.GoVersion != "" {
 		// Simple validation - should be in format "1.xx"

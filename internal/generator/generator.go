@@ -469,7 +469,7 @@ func (g *Generator) evaluateCondition(condition string, context map[string]any) 
 }
 
 // processDependencies processes template dependencies
-func (g *Generator) processDependencies(tmpl types.Template, config types.ProjectConfig, outputPath string, context map[string]any) error {
+func (g *Generator) processDependencies(tmpl types.Template, _ types.ProjectConfig, outputPath string, context map[string]any) error {
 	if len(tmpl.Dependencies) == 0 {
 		return nil
 	}
@@ -519,13 +519,10 @@ func (g *Generator) addDependencies(projectPath string, dependencies []string) e
 }
 
 // executeHooks executes post-generation hooks
-func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig, outputPath string, context map[string]any) error {
+func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig, outputPath string, _ map[string]any) error {
 	for _, hook := range tmpl.PostHooks {
-		// Check condition if present
-		if hook.Name != "" {
-			// For now, we'll execute all hooks
-			// In the future, we can add conditional hook execution
-		}
+		// Check condition if present - for now, we'll execute all hooks
+		// In the future, we can add conditional hook execution based on hook.Name
 
 		// Determine working directory
 		workDir := outputPath

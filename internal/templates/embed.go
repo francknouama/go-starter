@@ -11,8 +11,8 @@ import (
 // templatesFS embeds all template files from the templates directory
 // Note: Due to Go embed limitations, we need to use relative paths from the package location
 // For now, we'll use the filesystem directly for development
-// Note: embed pattern will be used when building from the root directory
-var templatesFS embed.FS
+// TODO: Use embed.FS when building from the root directory
+var _ embed.FS
 
 // GetTemplatesFS returns the filesystem for templates
 func GetTemplatesFS() fs.FS {

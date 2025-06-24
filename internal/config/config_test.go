@@ -268,10 +268,7 @@ func TestApplyDefaults(t *testing.T) {
 		CurrentProfile: "test",
 	}
 
-	err := config.applyDefaults()
-	if err != nil {
-		t.Fatalf("Failed to apply defaults: %v", err)
-	}
+	config.applyDefaults()
 
 	testProfile := config.Profiles["test"]
 
