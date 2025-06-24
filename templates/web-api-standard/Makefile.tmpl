@@ -1,0 +1,146 @@
+.PHONY: build run test lint clean dev docker-build docker-run help
+
+# Variables
+BINARY_NAME={{.ProjectName}}
+MAIN_PATH=./cmd/server
+BUILD_DIR=./bin
+DOCKER_IMAGE={{.ProjectName}}:latest
+
+# Default target
+.DEFAULT_GOAL := help
+
+## Build the application
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@mkdir -p $(BUILD_DIR)
+	@go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PATH)
+	@echo "✓ Built: $(BUILD_DIR)/$(BINARY_NAME)"
+
+## Run the application
+run: build
+	@echo "Starting $(BINARY_NAME)..."
+	@$(BUILD_DIR)/$(BINARY_NAME)
+
+## Run tests
+test:
+	@echo "Running tests..."
+	@go test -v -race -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "✓ Tests completed. Coverage report: coverage.html"
+
+## Run linter
+lint:
+	@echo "Running linter..."
+	@golangci-lint run
+	@echo "✓ Linting completed"
+
+## Clean build artifacts
+clean:
+	@echo "Cleaning..."
+	@rm -rf $(BUILD_DIR)
+	@rm -f coverage.out coverage.html
+	@echo "✓ Cleaned"
+
+## Run in development mode with hot reload
+dev:
+{{- if ne .DatabaseDriver ""}}
+	@echo "Starting development environment..."
+	@./scripts/dev.sh
+{{- else}}
+	@echo "Starting development server..."
+	@go run $(MAIN_PATH)
+{{- end}}
+
+## Format code
+fmt:
+	@echo "Formatting code..."
+	@go fmt ./...
+	@echo "✓ Code formatted"
+
+## Tidy dependencies
+tidy:
+	@echo "Tidying dependencies..."
+	@go mod tidy
+	@echo "✓ Dependencies tidied"
+
+## Update dependencies
+update:
+	@echo "Updating dependencies..."
+	@go get -u ./...
+	@go mod tidy
+	@echo "✓ Dependencies updated"
+
+{{- if ne .DatabaseDriver ""}}
+## Run database migrations
+migrate:
+	@echo "Running database migrations..."
+	@./scripts/migrate.sh
+	@echo "✓ Migrations completed"
+
+## Reset database
+migrate-reset:
+	@echo "Resetting database..."
+	@./scripts/migrate.sh reset
+	@echo "✓ Database reset"
+{{- end}}
+
+## Build Docker image
+docker-build:
+	@echo "Building Docker image..."
+	@docker build -t $(DOCKER_IMAGE) .
+	@echo "✓ Docker image built: $(DOCKER_IMAGE)"
+
+## Run Docker container
+docker-run: docker-build
+	@echo "Running Docker container..."
+{{- if ne .DatabaseDriver ""}}
+	@docker-compose up --build
+{{- else}}
+	@docker run -p 8080:8080 $(DOCKER_IMAGE)
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+## Start services with Docker Compose
+docker-up:
+	@echo "Starting services with Docker Compose..."
+	@docker-compose up -d
+	@echo "✓ Services started"
+
+## Stop services
+docker-down:
+	@echo "Stopping services..."
+	@docker-compose down
+	@echo "✓ Services stopped"
+
+## View logs
+logs:
+	@docker-compose logs -f
+{{- end}}
+
+## Install development tools
+install-tools:
+	@echo "Installing development tools..."
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+{{- if ne .DatabaseDriver ""}}
+	@go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+{{- end}}
+	@echo "✓ Development tools installed"
+
+## Security check
+security:
+	@echo "Running security checks..."
+	@govulncheck ./...
+	@echo "✓ Security check completed"
+
+## Generate API documentation
+docs:
+	@echo "Generating API documentation..."
+	@swag init -g $(MAIN_PATH)/main.go -o ./docs
+	@echo "✓ API documentation generated"
+
+## Help
+help:
+	@echo "{{.ProjectName}} - Available commands:"
+	@echo ""
+	@awk 'BEGIN {FS = ":.*##"} /^[a-zA-Z_-]+:.*##/ {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@echo ""

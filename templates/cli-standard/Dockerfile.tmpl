@@ -1,0 +1,46 @@
+# Build stage
+FROM golang:{{.GoVersion}}-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git make
+
+# Set working directory
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build the application
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o {{.ProjectName}} .
+
+# Final stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates tzdata
+
+# Create non-root user
+RUN adduser -D -s /bin/sh {{.ProjectName}}
+
+# Set working directory
+WORKDIR /home/{{.ProjectName}}
+
+# Copy binary from builder stage
+COPY --from=builder /app/{{.ProjectName}} .
+COPY --from=builder /app/configs/ ./configs/
+
+# Set ownership
+RUN chown -R {{.ProjectName}}:{{.ProjectName}} /home/{{.ProjectName}}
+
+# Switch to non-root user
+USER {{.ProjectName}}
+
+# Expose port (if needed)
+# EXPOSE 8080
+
+# Set entrypoint
+ENTRYPOINT ["./{{.ProjectName}}"]

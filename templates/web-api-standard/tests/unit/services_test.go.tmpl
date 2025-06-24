@@ -1,0 +1,440 @@
+{{- if ne .DatabaseDriver ""}}
+package unit
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// MockUserRepository is a mock implementation of UserRepository
+type MockUserRepository struct {
+	mock.Mock
+}
+
+func (m *MockUserRepository) GetAll(limit, offset int) ([]models.User, error) {
+	args := m.Called(limit, offset)
+	return args.Get(0).([]models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByID(id uint) (*models.User, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByEmail(email string) (*models.User, error) {
+	args := m.Called(email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) Create(user *models.User) error {
+	args := m.Called(user)
+	// Simulate setting ID and timestamps
+	user.ID = 1
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) Update(user *models.User) error {
+	args := m.Called(user)
+	user.UpdatedAt = time.Now()
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) Delete(id uint) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) Count() (int, error) {
+	args := m.Called()
+	return args.Int(0), args.Error(1)
+}
+
+// UserServiceTestSuite tests the UserService
+type UserServiceTestSuite struct {
+	suite.Suite
+	mockRepo    *MockUserRepository
+	userService services.UserService
+}
+
+func (suite *UserServiceTestSuite) SetupTest() {
+	suite.mockRepo = new(MockUserRepository)
+	suite.userService = services.NewUserService(suite.mockRepo)
+}
+
+func (suite *UserServiceTestSuite) TestGetUsers() {
+	// Setup mock data
+	expectedUsers := []models.User{
+		{ID: 1, Name: "User 1", Email: "user1@example.com"},
+		{ID: 2, Name: "User 2", Email: "user2@example.com"},
+	}
+	expectedCount := 2
+
+	suite.mockRepo.On("GetAll", 10, 0).Return(expectedUsers, nil)
+	suite.mockRepo.On("Count").Return(expectedCount, nil)
+
+	// Test
+	users, total, err := suite.userService.GetUsers(1, 10)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expectedUsers, users)
+	assert.Equal(suite.T(), expectedCount, total)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestGetUserByID_Success() {
+	// Setup mock data
+	expectedUser := &models.User{
+		ID:    1,
+		Name:  "Test User",
+		Email: "test@example.com",
+	}
+
+	suite.mockRepo.On("GetByID", uint(1)).Return(expectedUser, nil)
+
+	// Test
+	user, err := suite.userService.GetUserByID(1)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), expectedUser, user)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestGetUserByID_NotFound() {
+	suite.mockRepo.On("GetByID", uint(999)).Return(nil, services.ErrUserNotFound)
+
+	// Test
+	user, err := suite.userService.GetUserByID(999)
+
+	// Assertions
+	assert.Error(suite.T(), err)
+	assert.Equal(suite.T(), services.ErrUserNotFound, err)
+	assert.Nil(suite.T(), user)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestCreateUser_Success() {
+	// Setup
+	req := models.CreateUserRequest{
+		Name:  "New User",
+		Email: "newuser@example.com",
+	}
+
+	// Mock that user doesn't exist
+	suite.mockRepo.On("GetByEmail", req.Email).Return(nil, services.ErrUserNotFound)
+	suite.mockRepo.On("Create", mock.AnythingOfType("*models.User")).Return(nil)
+
+	// Test
+	user, err := suite.userService.CreateUser(req)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), user)
+	assert.Equal(suite.T(), req.Name, user.Name)
+	assert.Equal(suite.T(), req.Email, user.Email)
+	assert.NotZero(suite.T(), user.ID)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestCreateUser_AlreadyExists() {
+	// Setup
+	req := models.CreateUserRequest{
+		Name:  "Existing User",
+		Email: "existing@example.com",
+	}
+
+	existingUser := &models.User{
+		ID:    1,
+		Name:  "Existing User",
+		Email: "existing@example.com",
+	}
+
+	suite.mockRepo.On("GetByEmail", req.Email).Return(existingUser, nil)
+
+	// Test
+	user, err := suite.userService.CreateUser(req)
+
+	// Assertions
+	assert.Error(suite.T(), err)
+	assert.Equal(suite.T(), services.ErrUserExists, err)
+	assert.Nil(suite.T(), user)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestUpdateUser_Success() {
+	// Setup
+	userID := uint(1)
+	existingUser := &models.User{
+		ID:    userID,
+		Name:  "Old Name",
+		Email: "old@example.com",
+	}
+
+	newName := "New Name"
+	newEmail := "new@example.com"
+	req := models.UpdateUserRequest{
+		Name:  &newName,
+		Email: &newEmail,
+	}
+
+	suite.mockRepo.On("GetByID", userID).Return(existingUser, nil)
+	suite.mockRepo.On("GetByEmail", newEmail).Return(nil, services.ErrUserNotFound)
+	suite.mockRepo.On("Update", mock.AnythingOfType("*models.User")).Return(nil)
+
+	// Test
+	user, err := suite.userService.UpdateUser(userID, req)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), user)
+	assert.Equal(suite.T(), newName, user.Name)
+	assert.Equal(suite.T(), newEmail, user.Email)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestUpdateUser_NotFound() {
+	// Setup
+	userID := uint(999)
+	req := models.UpdateUserRequest{}
+
+	suite.mockRepo.On("GetByID", userID).Return(nil, services.ErrUserNotFound)
+
+	// Test
+	user, err := suite.userService.UpdateUser(userID, req)
+
+	// Assertions
+	assert.Error(suite.T(), err)
+	assert.Equal(suite.T(), services.ErrUserNotFound, err)
+	assert.Nil(suite.T(), user)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestDeleteUser_Success() {
+	// Setup
+	userID := uint(1)
+	existingUser := &models.User{
+		ID:    userID,
+		Name:  "User to Delete",
+		Email: "delete@example.com",
+	}
+
+	suite.mockRepo.On("GetByID", userID).Return(existingUser, nil)
+	suite.mockRepo.On("Delete", userID).Return(nil)
+
+	// Test
+	err := suite.userService.DeleteUser(userID)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+func (suite *UserServiceTestSuite) TestDeleteUser_NotFound() {
+	// Setup
+	userID := uint(999)
+
+	suite.mockRepo.On("GetByID", userID).Return(nil, services.ErrUserNotFound)
+
+	// Test
+	err := suite.userService.DeleteUser(userID)
+
+	// Assertions
+	assert.Error(suite.T(), err)
+	assert.Equal(suite.T(), services.ErrUserNotFound, err)
+	suite.mockRepo.AssertExpectations(suite.T())
+}
+
+{{- if ne .AuthType ""}}
+// AuthServiceTestSuite tests the AuthService
+type AuthServiceTestSuite struct {
+	suite.Suite
+	mockUserService *MockUserService
+	authService     services.AuthService
+}
+
+// MockUserService is a mock implementation of UserService for auth tests
+type MockUserService struct {
+	mock.Mock
+}
+
+func (m *MockUserService) GetUsers(page, limit int) ([]models.User, int, error) {
+	args := m.Called(page, limit)
+	return args.Get(0).([]models.User), args.Int(1), args.Error(2)
+}
+
+func (m *MockUserService) GetUserByID(id uint) (*models.User, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) GetUserByEmail(email string) (*models.User, error) {
+	args := m.Called(email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) CreateUser(req models.CreateUserRequest) (*models.User, error) {
+	args := m.Called(req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) UpdateUser(id uint, req models.UpdateUserRequest) (*models.User, error) {
+	args := m.Called(id, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) DeleteUser(id uint) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
+func (suite *AuthServiceTestSuite) SetupTest() {
+	suite.mockUserService = new(MockUserService)
+	suite.authService = services.NewAuthService(suite.mockUserService, "test-secret", time.Hour)
+}
+
+func (suite *AuthServiceTestSuite) TestHashPassword() {
+	password := "testpassword123"
+	
+	hash, err := suite.authService.HashPassword(password)
+	
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), hash)
+	assert.NotEqual(suite.T(), password, hash)
+}
+
+func (suite *AuthServiceTestSuite) TestComparePasswords() {
+	password := "testpassword123"
+	hash, _ := suite.authService.HashPassword(password)
+	
+	// Test correct password
+	err := suite.authService.ComparePasswords(hash, password)
+	assert.NoError(suite.T(), err)
+	
+	// Test incorrect password
+	err = suite.authService.ComparePasswords(hash, "wrongpassword")
+	assert.Error(suite.T(), err)
+}
+
+func (suite *AuthServiceTestSuite) TestLogin_Success() {
+	// Setup
+	email := "test@example.com"
+	password := "password123"
+	hashedPassword, _ := suite.authService.HashPassword(password)
+	
+	user := &models.User{
+		ID:       1,
+		Name:     "Test User",
+		Email:    email,
+		Password: hashedPassword,
+	}
+
+	suite.mockUserService.On("GetUserByEmail", email).Return(user, nil)
+
+	// Test
+	token, returnedUser, err := suite.authService.Login(email, password)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), token)
+	assert.NotNil(suite.T(), returnedUser)
+	assert.Equal(suite.T(), user.ID, returnedUser.ID)
+	assert.Equal(suite.T(), user.Email, returnedUser.Email)
+	assert.Empty(suite.T(), returnedUser.Password) // Password should be cleared
+	suite.mockUserService.AssertExpectations(suite.T())
+}
+
+func (suite *AuthServiceTestSuite) TestLogin_InvalidCredentials() {
+	// Setup
+	email := "test@example.com"
+	password := "password123"
+	wrongPassword := "wrongpassword"
+	hashedPassword, _ := suite.authService.HashPassword(password)
+	
+	user := &models.User{
+		ID:       1,
+		Name:     "Test User",
+		Email:    email,
+		Password: hashedPassword,
+	}
+
+	suite.mockUserService.On("GetUserByEmail", email).Return(user, nil)
+
+	// Test
+	token, returnedUser, err := suite.authService.Login(email, wrongPassword)
+
+	// Assertions
+	assert.Error(suite.T(), err)
+	assert.Equal(suite.T(), services.ErrInvalidCredentials, err)
+	assert.Empty(suite.T(), token)
+	assert.Nil(suite.T(), returnedUser)
+	suite.mockUserService.AssertExpectations(suite.T())
+}
+
+func (suite *AuthServiceTestSuite) TestValidateToken() {
+	// Create a user and generate a token
+	user := &models.User{
+		ID:    1,
+		Email: "test@example.com",
+	}
+
+	// Generate token (we'll use the internal method for testing)
+	claims := services.JWTClaims{
+		UserID: user.ID,
+		Email:  user.Email,
+	}
+	claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Hour))
+	claims.IssuedAt = jwt.NewNumericDate(time.Now())
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, _ := token.SignedString([]byte("test-secret"))
+
+	// Test
+	parsedClaims, err := suite.authService.ValidateToken(tokenString)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.NotNil(suite.T(), parsedClaims)
+	assert.Equal(suite.T(), user.ID, parsedClaims.UserID)
+	assert.Equal(suite.T(), user.Email, parsedClaims.Email)
+}
+{{- end}}
+
+// Run the test suites
+func TestUserServiceTestSuite(t *testing.T) {
+	suite.Run(t, new(UserServiceTestSuite))
+}
+
+{{- if ne .AuthType ""}}
+func TestAuthServiceTestSuite(t *testing.T) {
+	suite.Run(t, new(AuthServiceTestSuite))
+}
+{{- end}}
+{{- end}}

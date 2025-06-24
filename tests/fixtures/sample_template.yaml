@@ -1,0 +1,223 @@
+name: "sample-web-api"
+description: "Sample Web API template for testing"
+type: "web-api"
+language: "go"
+version: "1.0.0"
+author: "Test Author"
+license: "MIT"
+repository: "https://github.com/test/sample-template"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the project"
+    type: "string"
+    required: true
+    validation:
+      pattern: "^[a-zA-Z0-9_-]+$"
+      min_length: 1
+      max_length: 50
+
+  - name: "ModulePath"
+    description: "Go module path"
+    type: "string"
+    required: true
+    validation:
+      pattern: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "Author"
+    description: "Project author"
+    type: "string"
+    required: false
+    default: "{{.Profile.Author}}"
+
+  - name: "Email"
+    description: "Author email"
+    type: "string"
+    required: false
+    default: "{{.Profile.Email}}"
+
+  - name: "License"
+    description: "Project license"
+    type: "string"
+    required: false
+    default: "MIT"
+    options:
+      - "MIT"
+      - "Apache-2.0"
+      - "GPL-3.0"
+      - "BSD-3-Clause"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+    validation:
+      pattern: "^1\\.(1[8-9]|2[0-9])(\\.\\d+)?$"
+
+  - name: "Framework"
+    description: "Web framework to use"
+    type: "string"
+    required: false
+    default: "gin"
+    options:
+      - "gin"
+      - "echo"
+      - "fiber"
+      - "chi"
+
+  - name: "DatabaseDriver"
+    description: "Database driver"
+    type: "string"
+    required: false
+    default: ""
+    options:
+      - ""
+      - "postgres"
+      - "mysql"
+      - "sqlite"
+
+  - name: "AuthType"
+    description: "Authentication type"
+    type: "string"
+    required: false
+    default: ""
+    options:
+      - ""
+      - "jwt"
+      - "oauth2"
+      - "session"
+
+files:
+  - source: "main.go.tmpl"
+    destination: "cmd/server/main.go"
+    condition: ""
+
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+    condition: ""
+
+  - source: "go.sum.tmpl"
+    destination: "go.sum"
+    condition: ""
+
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+    condition: ""
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+    condition: ""
+
+  - source: "config/config.go.tmpl"
+    destination: "internal/config/config.go"
+    condition: ""
+
+  - source: "handlers/health.go.tmpl"
+    destination: "internal/handlers/health.go"
+    condition: ""
+
+  - source: "handlers/users.go.tmpl"
+    destination: "internal/handlers/users.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "middleware/cors.go.tmpl"
+    destination: "internal/middleware/cors.go"
+    condition: ""
+
+  - source: "middleware/auth.go.tmpl"
+    destination: "internal/middleware/auth.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  - source: "database/connection.go.tmpl"
+    destination: "internal/database/connection.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "models/user.go.tmpl"
+    destination: "internal/models/user.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "docker/Dockerfile.tmpl"
+    destination: "Dockerfile"
+    condition: ""
+
+  - source: "docker/docker-compose.yml.tmpl"
+    destination: "docker-compose.yml"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "gitignore.tmpl"
+    destination: ".gitignore"
+    condition: ""
+
+dependencies:
+  required:
+    - "github.com/gin-gonic/gin@v1.9.1"
+  
+  conditional:
+    - package: "github.com/lib/pq@v1.10.9"
+      condition: "{{eq .DatabaseDriver \"postgres\"}}"
+    - package: "gorm.io/gorm@v1.25.4"
+      condition: "{{ne .DatabaseDriver \"\"}}"
+    - package: "gorm.io/driver/postgres@v1.5.2"
+      condition: "{{eq .DatabaseDriver \"postgres\"}}"
+    - package: "github.com/golang-jwt/jwt/v5@v5.0.0"
+      condition: "{{eq .AuthType \"jwt\"}}"
+
+hooks:
+  post_generation:
+    - command: "go mod tidy"
+      description: "Clean up dependencies"
+      working_dir: "{{.OutputPath}}"
+    
+    - command: "go fmt ./..."
+      description: "Format generated code"
+      working_dir: "{{.OutputPath}}"
+
+prompts:
+  - name: "ProjectName"
+    message: "What is the name of your project?"
+    help: "This will be used as the project directory name and in documentation"
+
+  - name: "ModulePath"
+    message: "What is the Go module path?"
+    help: "This should be the import path for your module (e.g., github.com/user/project)"
+    default: "github.com/{{.GitUser}}/{{.ProjectName}}"
+
+  - name: "Framework"
+    message: "Which web framework would you like to use?"
+    help: "Choose the web framework for your API"
+
+  - name: "DatabaseDriver"
+    message: "Do you want to include database support?"
+    help: "Select a database driver or leave empty for no database"
+
+  - name: "AuthType"
+    message: "Do you want to include authentication?"
+    help: "Select an authentication method or leave empty for no authentication"
+
+features:
+  - name: "database"
+    description: "Database integration"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
+  - name: "authentication"
+    description: "Authentication middleware"
+    enabled_when: "{{ne .AuthType \"\"}}"
+    
+  - name: "docker"
+    description: "Docker containerization"
+    enabled_when: "true"
+
+validation:
+  - name: "go_version_compatibility"
+    description: "Ensure Go version is compatible"
+    check: "go_version_gte"
+    value: "1.18"
+    
+  - name: "module_path_format"
+    description: "Validate module path format"
+    check: "module_path_valid"
+    
+  - name: "project_name_format"
+    description: "Validate project name format"
+    check: "project_name_valid"

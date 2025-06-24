@@ -1,0 +1,223 @@
+{{- if ne .DatabaseDriver ""}}
+package models
+
+import (
+	"time"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- end}}
+)
+
+{{- if eq .DatabaseORM "gorm"}}
+// BaseModel contains common columns for all models using GORM
+type BaseModel struct {
+	ID        uint           `json:"id" gorm:"primarykey"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// TableName sets a custom table name
+func (BaseModel) TableName(name string) string {
+	return name
+}
+{{- else}}
+// BaseModel contains common columns for all models
+type BaseModel struct {
+	ID        uint      `json:"id" db:"id"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+}
+
+// TimestampedModel adds soft delete support
+type TimestampedModel struct {
+	BaseModel
+	DeletedAt *time.Time `json:"deleted_at,omitempty" db:"deleted_at"`
+}
+{{- end}}
+
+// Validatable interface for models that support validation
+type Validatable interface {
+	Validate() error
+}
+
+// Auditable interface for models that track changes
+type Auditable interface {
+	GetCreatedAt() time.Time
+	GetUpdatedAt() time.Time
+	SetCreatedAt(time.Time)
+	SetUpdatedAt(time.Time)
+}
+
+// SoftDeletable interface for models that support soft delete
+type SoftDeletable interface {
+	GetDeletedAt() *time.Time
+	SetDeletedAt(*time.Time)
+	IsDeleted() bool
+}
+
+// Implement Auditable for BaseModel
+func (b *BaseModel) GetCreatedAt() time.Time {
+	return b.CreatedAt
+}
+
+func (b *BaseModel) GetUpdatedAt() time.Time {
+	return b.UpdatedAt
+}
+
+func (b *BaseModel) SetCreatedAt(t time.Time) {
+	b.CreatedAt = t
+}
+
+func (b *BaseModel) SetUpdatedAt(t time.Time) {
+	b.UpdatedAt = t
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// Implement SoftDeletable for BaseModel (GORM)
+func (b *BaseModel) GetDeletedAt() *time.Time {
+	if b.DeletedAt.Valid {
+		return &b.DeletedAt.Time
+	}
+	return nil
+}
+
+func (b *BaseModel) SetDeletedAt(t *time.Time) {
+	if t != nil {
+		b.DeletedAt = gorm.DeletedAt{
+			Time:  *t,
+			Valid: true,
+		}
+	} else {
+		b.DeletedAt = gorm.DeletedAt{
+			Valid: false,
+		}
+	}
+}
+
+func (b *BaseModel) IsDeleted() bool {
+	return b.DeletedAt.Valid
+}
+{{- else}}
+// Implement SoftDeletable for TimestampedModel
+func (t *TimestampedModel) GetDeletedAt() *time.Time {
+	return t.DeletedAt
+}
+
+func (t *TimestampedModel) SetDeletedAt(dt *time.Time) {
+	t.DeletedAt = dt
+}
+
+func (t *TimestampedModel) IsDeleted() bool {
+	return t.DeletedAt != nil
+}
+{{- end}}
+
+// PaginationParams contains pagination parameters
+type PaginationParams struct {
+	Page     int    `json:"page" form:"page" binding:"min=1"`
+	PageSize int    `json:"page_size" form:"page_size" binding:"min=1,max=100"`
+	Sort     string `json:"sort" form:"sort"`
+	Order    string `json:"order" form:"order" binding:"oneof=asc desc"`
+}
+
+// GetLimit returns the limit for database queries
+func (p *PaginationParams) GetLimit() int {
+	if p.PageSize <= 0 {
+		return 10
+	}
+	if p.PageSize > 100 {
+		return 100
+	}
+	return p.PageSize
+}
+
+// GetOffset returns the offset for database queries
+func (p *PaginationParams) GetOffset() int {
+	if p.Page <= 0 {
+		return 0
+	}
+	return (p.Page - 1) * p.GetLimit()
+}
+
+// GetSortOrder returns the sort order
+func (p *PaginationParams) GetSortOrder() string {
+	if p.Order == "" || (p.Order != "asc" && p.Order != "desc") {
+		return "asc"
+	}
+	return p.Order
+}
+
+// GetSortField returns the sort field with validation
+func (p *PaginationParams) GetSortField(allowedFields []string) string {
+	if p.Sort == "" {
+		return "id"
+	}
+	
+	// Validate sort field against allowed fields
+	for _, field := range allowedFields {
+		if p.Sort == field {
+			return p.Sort
+		}
+	}
+	
+	return "id"
+}
+
+// PaginatedResponse represents a paginated API response
+type PaginatedResponse struct {
+	Data       interface{} `json:"data"`
+	Page       int         `json:"page"`
+	PageSize   int         `json:"page_size"`
+	TotalItems int         `json:"total_items"`
+	TotalPages int         `json:"total_pages"`
+}
+
+// NewPaginatedResponse creates a new paginated response
+func NewPaginatedResponse(data interface{}, page, pageSize, totalItems int) *PaginatedResponse {
+	totalPages := (totalItems + pageSize - 1) / pageSize
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	return &PaginatedResponse{
+		Data:       data,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalItems: totalItems,
+		TotalPages: totalPages,
+	}
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Error   string                 `json:"error"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+// NewErrorResponse creates a new error response
+func NewErrorResponse(err string, message string, details map[string]interface{}) *ErrorResponse {
+	return &ErrorResponse{
+		Error:   err,
+		Message: message,
+		Details: details,
+	}
+}
+
+// SuccessResponse represents a success response
+type SuccessResponse struct {
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+// NewSuccessResponse creates a new success response
+func NewSuccessResponse(message string, data interface{}) *SuccessResponse {
+	return &SuccessResponse{
+		Success: true,
+		Message: message,
+		Data:    data,
+	}
+}
+{{- end}}

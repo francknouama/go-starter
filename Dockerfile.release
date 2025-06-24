@@ -1,0 +1,33 @@
+# Multi-stage build for go-starter release
+FROM alpine:3.18
+
+# Install ca-certificates and git (needed for go modules)
+RUN apk add --no-cache ca-certificates git
+
+# Create a non-root user
+RUN addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+# Copy the binary from goreleaser
+COPY go-starter /usr/local/bin/go-starter
+
+# Make binary executable
+RUN chmod +x /usr/local/bin/go-starter
+
+# Create workspace directory
+RUN mkdir -p /workspace && chown appuser:appgroup /workspace
+
+# Switch to non-root user
+USER appuser
+
+# Set working directory
+WORKDIR /workspace
+
+# Expose common port (not really needed for CLI but helpful for generated projects)
+EXPOSE 8080
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/go-starter"]
+
+# Default command shows help
+CMD ["--help"]

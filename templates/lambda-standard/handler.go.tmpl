@@ -1,0 +1,183 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"github.com/aws/aws-lambda-go/events"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Request represents the input to our Lambda function
+type Request struct {
+	Name    string            `json:"name"`
+	Message string            `json:"message"`
+	Meta    map[string]string `json:"meta,omitempty"`
+}
+
+// Response represents the output from our Lambda function
+type Response struct {
+	StatusCode int               `json:"statusCode"`
+	Body       string            `json:"body"`
+	Headers    map[string]string `json:"headers,omitempty"`
+}
+
+// HandleRequest is the Lambda function handler
+func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error) {
+	appLogger.InfoWith("Lambda function invoked", logger.Fields{
+		"request_id": getRequestID(ctx),
+	})
+
+	// Try to parse as API Gateway request first
+	var apiEvent events.APIGatewayProxyRequest
+	if err := json.Unmarshal(event, &apiEvent); err == nil && apiEvent.HTTPMethod != "" {
+		return handleAPIGatewayRequest(ctx, apiEvent)
+	}
+
+	// Fallback to direct invocation
+	var request Request
+	if err := json.Unmarshal(event, &request); err != nil {
+		appLogger.ErrorWith("Failed to parse request", logger.Fields{
+			"error":      err.Error(),
+			"request_id": getRequestID(ctx),
+		})
+		return Response{
+			StatusCode: 400,
+			Body:       `{"error": "Invalid request format"}`,
+		}, nil
+	}
+
+	return handleDirectRequest(ctx, request)
+}
+
+// handleAPIGatewayRequest handles API Gateway proxy requests
+func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRequest) (Response, error) {
+	requestID := getRequestID(ctx)
+	
+	appLogger.InfoWith("Handling API Gateway request", logger.Fields{
+		"method":     event.HTTPMethod,
+		"path":       event.Path,
+		"request_id": requestID,
+		"user_agent": event.Headers["User-Agent"],
+	})
+
+	// Parse body for POST/PUT requests
+	var request Request
+	if event.Body != "" {
+		if err := json.Unmarshal([]byte(event.Body), &request); err != nil {
+			appLogger.WarnWith("Failed to parse request body", logger.Fields{
+				"error":      err.Error(),
+				"request_id": requestID,
+			})
+			return Response{
+				StatusCode: 400,
+				Body:       `{"error": "Invalid JSON in request body"}`,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+			}, nil
+		}
+	} else {
+		// Use query parameters for GET requests
+		request.Name = event.QueryStringParameters["name"]
+		request.Message = event.QueryStringParameters["message"]
+	}
+
+	// Process the request
+	result, err := processRequest(ctx, request)
+	if err != nil {
+		appLogger.ErrorWith("Request processing failed", logger.Fields{
+			"error":      err.Error(),
+			"request_id": requestID,
+		})
+		return Response{
+			StatusCode: 500,
+			Body:       `{"error": "Internal server error"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+		}, nil
+	}
+
+	responseBody, _ := json.Marshal(result)
+	
+	appLogger.InfoWith("Request processed successfully", logger.Fields{
+		"request_id":    requestID,
+		"response_size": len(responseBody),
+	})
+
+	return Response{
+		StatusCode: 200,
+		Body:       string(responseBody),
+		Headers:    map[string]string{"Content-Type": "application/json"},
+	}, nil
+}
+
+// handleDirectRequest handles direct Lambda invocations
+func handleDirectRequest(ctx context.Context, request Request) (Response, error) {
+	requestID := getRequestID(ctx)
+	
+	appLogger.InfoWith("Handling direct request", logger.Fields{
+		"name":       request.Name,
+		"request_id": requestID,
+	})
+
+	result, err := processRequest(ctx, request)
+	if err != nil {
+		appLogger.ErrorWith("Request processing failed", logger.Fields{
+			"error":      err.Error(),
+			"request_id": requestID,
+		})
+		return Response{
+			StatusCode: 500,
+			Body:       fmt.Sprintf(`{"error": "%s"}`, err.Error()),
+		}, nil
+	}
+
+	responseBody, _ := json.Marshal(result)
+	
+	appLogger.InfoWith("Request processed successfully", logger.Fields{
+		"request_id":    requestID,
+		"response_size": len(responseBody),
+	})
+
+	return Response{
+		StatusCode: 200,
+		Body:       string(responseBody),
+	}, nil
+}
+
+// processRequest contains the core business logic
+func processRequest(ctx context.Context, request Request) (map[string]interface{}, error) {
+	appLogger.DebugWith("Processing request", logger.Fields{
+		"name":    request.Name,
+		"message": request.Message,
+	})
+
+	// Add your business logic here
+	if request.Name == "" {
+		return nil, fmt.Errorf("name is required")
+	}
+
+	result := map[string]interface{}{
+		"greeting":   fmt.Sprintf("Hello, %s!", request.Name),
+		"message":    request.Message,
+		"processed":  true,
+		"request_id": getRequestID(ctx),
+	}
+
+	if request.Meta != nil {
+		result["meta"] = request.Meta
+	}
+
+	return result, nil
+}
+
+// getRequestID extracts the AWS request ID from context
+func getRequestID(ctx context.Context) string {
+	if requestID, ok := ctx.Value("request_id").(string); ok {
+		return requestID
+	}
+	// Fallback for AWS Lambda context
+	if awsRequestID := ctx.Value("aws_request_id"); awsRequestID != nil {
+		return fmt.Sprintf("%v", awsRequestID)
+	}
+	return "unknown"
+}

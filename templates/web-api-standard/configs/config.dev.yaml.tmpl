@@ -1,0 +1,38 @@
+# Development configuration
+environment: development
+
+server:
+  port: 8080
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 60
+
+{{- if ne .DatabaseDriver ""}}
+database:
+{{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5432
+  name: {{.ProjectName}}_dev
+  user: {{.ProjectName}}
+  password: password
+  ssl_mode: disable
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3306
+  name: {{.ProjectName}}_dev
+  user: {{.ProjectName}}
+  password: password
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: {{.ProjectName}}_dev.db
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+jwt:
+  secret: dev-secret-key-change-in-production
+  expiration: 24  # hours
+{{- end}}
+
+logging:
+  level: debug
+  format: console  # console or json

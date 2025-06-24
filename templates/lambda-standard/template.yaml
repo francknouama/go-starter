@@ -1,0 +1,101 @@
+name: "lambda-standard"
+description: "AWS Lambda function template with CloudWatch logging"
+type: "lambda"
+architecture: "standard"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the project"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "Logger"
+    description: "Logging library (optimized for CloudWatch)"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+files:
+  # Core Lambda files
+  - source: "main.go.tmpl"
+    destination: "main.go"
+
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+
+  # Lambda handler
+  - source: "handler.go.tmpl"
+    destination: "handler.go"
+
+  # Logger
+  - source: "internal/logger/logger.go.tmpl"
+    destination: "internal/logger/logger.go"
+
+  # AWS deployment
+  - source: "template.yaml.tmpl"
+    destination: "template.yaml"
+
+  - source: "deploy.sh.tmpl"
+    destination: "deploy.sh"
+    executable: true
+
+  # Environment
+  - source: ".env.example.tmpl"
+    destination: ".env.example"
+
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+dependencies:
+  - module: "github.com/aws/aws-lambda-go"
+    version: "v1.41.0"
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .Logger \"zap\"}}"
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .Logger \"logrus\"}}"
+  - module: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .Logger \"zerolog\"}}"
+
+post_hooks:
+  - name: "clean_dependencies"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+
+features:
+  - name: "logging"
+    description: "CloudWatch-optimized structured logging"
+    enabled_when: "true"
+    
+  - name: "aws_deployment"
+    description: "AWS SAM deployment templates"
+    enabled_when: "true"

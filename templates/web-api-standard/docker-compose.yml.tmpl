@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  {{- if eq .DatabaseDriver "postgres"}}
+  postgres:
+    image: postgres:15-alpine
+    container_name: {{.ProjectName}}-postgres
+    environment:
+      POSTGRES_DB: ${DB_NAME:-{{lower .ProjectName}}}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - {{.ProjectName}}-network
+
+  {{- else if eq .DatabaseDriver "mysql"}}
+  mysql:
+    image: mysql:8.0
+    container_name: {{.ProjectName}}-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${DB_NAME:-{{lower .ProjectName}}}
+      MYSQL_USER: ${DB_USER:-user}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-password}
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+    networks:
+      - {{.ProjectName}}-network
+
+  {{- else if eq .DatabaseDriver "redis"}}
+  redis:
+    image: redis:7-alpine
+    container_name: {{.ProjectName}}-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - {{.ProjectName}}-network
+  {{- end}}
+
+  # Application service (uncomment and modify as needed)
+  # app:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: {{.ProjectName}}-app
+  #   ports:
+  #     - "${APP_PORT:-8080}:8080"
+  #   environment:
+  #     - DB_HOST={{if eq .DatabaseDriver "postgres"}}postgres{{else if eq .DatabaseDriver "mysql"}}mysql{{else if eq .DatabaseDriver "redis"}}redis{{end}}
+  #     - DB_PORT={{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{else if eq .DatabaseDriver "redis"}}6379{{end}}
+  #     - DB_NAME=${DB_NAME:-{{lower .ProjectName}}}
+  #     - DB_USER=${DB_USER:-{{if eq .DatabaseDriver "postgres"}}postgres{{else if eq .DatabaseDriver "mysql"}}user{{end}}}
+  #     - DB_PASSWORD=${DB_PASSWORD:-password}
+  #   depends_on:
+  #     {{- if eq .DatabaseDriver "postgres"}}
+  #     postgres:
+  #       condition: service_healthy
+  #     {{- else if eq .DatabaseDriver "mysql"}}
+  #     mysql:
+  #       condition: service_healthy
+  #     {{- else if eq .DatabaseDriver "redis"}}
+  #     redis:
+  #       condition: service_healthy
+  #     {{- end}}
+  #   networks:
+  #     - {{.ProjectName}}-network
+
+volumes:
+  {{- if eq .DatabaseDriver "postgres"}}
+  postgres_data:
+  {{- else if eq .DatabaseDriver "mysql"}}
+  mysql_data:
+  {{- else if eq .DatabaseDriver "redis"}}
+  redis_data:
+  {{- end}}
+
+networks:
+  {{.ProjectName}}-network:
+    driver: bridge

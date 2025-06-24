@@ -1,0 +1,167 @@
+project_name: go-starter
+
+before:
+  hooks:
+    - go mod tidy
+    - go generate ./...
+
+builds:
+  - id: go-starter
+    main: ./main.go
+    binary: go-starter
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    goarm:
+      - 6
+      - 7
+    ldflags:
+      - -s -w 
+      - -X github.com/francknouama/go-starter/cmd.Version={{.Version}}
+      - -X github.com/francknouama/go-starter/cmd.Commit={{.Commit}}
+      - -X github.com/francknouama/go-starter/cmd.Date={{.Date}}
+
+archives:
+  - id: default
+    builds:
+      - go-starter
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- title .Os }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else if eq .Arch "386" }}i386
+      {{- else }}{{ .Arch }}{{ end }}
+    format_overrides:
+      - goos: windows
+        format: zip
+    files:
+      - README.md
+      - LICENSE*
+      - CHANGELOG.md
+
+checksum:
+  name_template: 'checksums.txt'
+
+snapshot:
+  name_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - '^style:'
+      - '^refactor:'
+  groups:
+    - title: Features
+      regexp: "^.*feat[(\\w)]*:+.*$"
+      order: 0
+    - title: 'Bug fixes'
+      regexp: "^.*fix[(\\w)]*:+.*$"
+      order: 1
+    - title: 'Performance improvements'
+      regexp: "^.*perf[(\\w)]*:+.*$"
+      order: 2
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: francknouama
+    name: go-starter
+  draft: false
+  prerelease: auto
+  mode: replace
+  header: |
+    ## 🚀 go-starter {{ .Tag }}
+    
+    A comprehensive Go project generator with logger selector system.
+  footer: |
+    ## Installation
+    
+    ### Using Go install
+    ```bash
+    go install github.com/francknouama/go-starter@{{ .Tag }}
+    ```
+    
+    ### Download binary
+    Download the appropriate binary for your platform from the assets above.
+    
+    ### Using Homebrew (macOS/Linux)
+    ```bash
+    brew tap francknouama/tap
+    brew install go-starter
+    ```
+    
+    ---
+    
+    **Full Changelog**: https://github.com/francknouama/go-starter/compare/{{ .PreviousTag }}...{{ .Tag }}
+
+brews:
+  - name: go-starter
+    tap:
+      owner: francknouama
+      name: homebrew-tap
+    homepage: https://github.com/francknouama/go-starter
+    description: "A comprehensive Go project generator with modern best practices"
+    license: MIT
+    skip_upload: auto
+    test: |
+      system "#{bin}/go-starter version"
+    install: |
+      bin.install "go-starter"
+
+nfpms:
+  - id: packages
+    package_name: go-starter
+    vendor: Franck Nouama
+    homepage: https://github.com/francknouama/go-starter
+    maintainer: Franck Nouama <your-email@example.com>
+    description: "A comprehensive Go project generator with modern best practices and logger selector system"
+    license: MIT
+    formats:
+      - deb
+      - rpm
+      - apk
+    bindir: /usr/bin
+
+universal_binaries:
+  - replace: true
+    id: darwin
+    name_template: '{{ .ProjectName }}'
+
+dockers:
+  - image_templates:
+      - "francknouama/go-starter:{{ .Tag }}"
+      - "francknouama/go-starter:v{{ .Major }}"
+      - "francknouama/go-starter:v{{ .Major }}.{{ .Minor }}"
+      - "francknouama/go-starter:latest"
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--label=org.opencontainers.image.source=https://github.com/francknouama/go-starter"
+    dockerfile: Dockerfile.release
+
+winget:
+  - name: go-starter
+    publisher: francknouama
+    short_description: "Go project generator with best practices"
+    license: MIT
+    homepage: https://github.com/francknouama/go-starter
+    publisher_url: https://github.com/francknouama
+    publisher_support_url: https://github.com/francknouama/go-starter/issues
+    skip_upload: auto

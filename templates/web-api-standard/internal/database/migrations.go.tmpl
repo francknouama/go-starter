@@ -1,0 +1,372 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"database/sql"
+	"embed"
+	"fmt"
+	"sort"
+	"strings"
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- end}}
+	
+	appLogger "{{.ModulePath}}/internal/logger"
+)
+
+// MigrationFS embeds migration files
+//go:embed migrations/*.sql
+var MigrationFS embed.FS
+
+// Migration represents a database migration
+type Migration struct {
+	Version string
+	Name    string
+	Up      string
+	Down    string
+}
+
+// MigrationRunner handles database migrations
+type MigrationRunner struct {
+	{{- if eq .DatabaseORM "gorm"}}
+	db *gorm.DB
+	{{- else}}
+	db *sql.DB
+	{{- end}}
+	logger appLogger.Logger
+}
+
+// NewMigrationRunner creates a new migration runner
+{{- if eq .DatabaseORM "gorm"}}
+func NewMigrationRunner(db *gorm.DB, logger appLogger.Logger) *MigrationRunner {
+	return &MigrationRunner{db: db, logger: logger}
+}
+{{- else}}
+func NewMigrationRunner(db *sql.DB, logger appLogger.Logger) *MigrationRunner {
+	return &MigrationRunner{db: db, logger: logger}
+}
+{{- end}}
+
+// RunMigrations executes all pending migrations
+func (m *MigrationRunner) RunMigrations() error {
+	// Create migrations table if it doesn't exist
+	if err := m.createMigrationsTable(); err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	// Get all migration files
+	migrations, err := m.getMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get migrations: %w", err)
+	}
+
+	// Get applied migrations
+	applied, err := m.getAppliedMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+
+	// Apply pending migrations
+	for _, migration := range migrations {
+		if !contains(applied, migration.Version) {
+			m.logger.InfoWith("Applying migration", appLogger.Fields{
+				"version": migration.Version,
+				"name": migration.Name,
+			})
+			if err := m.applyMigration(migration); err != nil {
+				return fmt.Errorf("failed to apply migration %s: %w", migration.Version, err)
+			}
+		}
+	}
+
+	m.logger.Info("All migrations applied successfully")
+	return nil
+}
+
+// RollbackMigration rolls back the last migration
+func (m *MigrationRunner) RollbackMigration() error {
+	// Get the last applied migration
+	version, err := m.getLastAppliedVersion()
+	if err != nil {
+		return fmt.Errorf("failed to get last applied version: %w", err)
+	}
+
+	if version == "" {
+		m.logger.Info("No migrations to rollback")
+		return nil
+	}
+
+	// Get all migrations
+	migrations, err := m.getMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get migrations: %w", err)
+	}
+
+	// Find the migration to rollback
+	var migration *Migration
+	for _, m := range migrations {
+		if m.Version == version {
+			migration = &m
+			break
+		}
+	}
+
+	if migration == nil {
+		return fmt.Errorf("migration %s not found", version)
+	}
+
+	m.logger.InfoWith("Rolling back migration", appLogger.Fields{
+		"version": migration.Version,
+		"name": migration.Name,
+	})
+	if err := m.rollbackMigration(*migration); err != nil {
+		return fmt.Errorf("failed to rollback migration %s: %w", migration.Version, err)
+	}
+
+	m.logger.Info("Migration rolled back successfully")
+	return nil
+}
+
+// createMigrationsTable creates the migrations tracking table
+func (m *MigrationRunner) createMigrationsTable() error {
+	query := `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version VARCHAR(255) PRIMARY KEY,
+		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+	
+	{{- if eq .DatabaseDriver "sqlite"}}
+	query = `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version TEXT PRIMARY KEY,
+		applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	query = `CREATE TABLE IF NOT EXISTS schema_migrations (
+		version VARCHAR(255) PRIMARY KEY,
+		applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- end}}
+
+	{{- if eq .DatabaseORM "gorm"}}
+	return m.db.Exec(query).Error
+	{{- else}}
+	_, err := m.db.Exec(query)
+	return err
+	{{- end}}
+}
+
+// getMigrations reads all migration files from the embedded filesystem
+func (m *MigrationRunner) getMigrations() ([]Migration, error) {
+	entries, err := MigrationFS.ReadDir("migrations")
+	if err != nil {
+		return nil, err
+	}
+
+	migrationMap := make(map[string]*Migration)
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".sql") {
+			continue
+		}
+
+		// Parse migration file name (e.g., 001_create_users.up.sql)
+		parts := strings.Split(strings.TrimSuffix(name, ".sql"), ".")
+		if len(parts) != 2 {
+			continue
+		}
+
+		versionName := parts[0]
+		direction := parts[1]
+
+		// Extract version and name
+		versionParts := strings.SplitN(versionName, "_", 2)
+		if len(versionParts) != 2 {
+			continue
+		}
+
+		version := versionParts[0]
+		migrationName := versionParts[1]
+
+		// Read migration content
+		content, err := MigrationFS.ReadFile("migrations/" + name)
+		if err != nil {
+			return nil, err
+		}
+
+		// Create or update migration
+		if _, exists := migrationMap[version]; !exists {
+			migrationMap[version] = &Migration{
+				Version: version,
+				Name:    migrationName,
+			}
+		}
+
+		if direction == "up" {
+			migrationMap[version].Up = string(content)
+		} else if direction == "down" {
+			migrationMap[version].Down = string(content)
+		}
+	}
+
+	// Convert map to sorted slice
+	var migrations []Migration
+	for _, m := range migrationMap {
+		migrations = append(migrations, *m)
+	}
+
+	sort.Slice(migrations, func(i, j int) bool {
+		return migrations[i].Version < migrations[j].Version
+	})
+
+	return migrations, nil
+}
+
+// getAppliedMigrations returns the list of applied migration versions
+func (m *MigrationRunner) getAppliedMigrations() ([]string, error) {
+	query := `SELECT version FROM schema_migrations ORDER BY version`
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	var versions []string
+	err := m.db.Raw(query).Scan(&versions).Error
+	return versions, err
+	{{- else }}
+	rows, err := m.db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var versions []string
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+
+	return versions, rows.Err()
+	{{- end}}
+}
+
+// getLastAppliedVersion returns the last applied migration version
+func (m *MigrationRunner) getLastAppliedVersion() (string, error) {
+	query := `SELECT version FROM schema_migrations ORDER BY version DESC LIMIT 1`
+	
+	var version string
+	{{- if eq .DatabaseORM "gorm"}}
+	err := m.db.Raw(query).Scan(&version).Error
+	if err == gorm.ErrRecordNotFound {
+		return "", nil
+	}
+	{{- else}}
+	err := m.db.QueryRow(query).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	{{- end}}
+	
+	return version, err
+}
+
+// applyMigration applies a single migration
+func (m *MigrationRunner) applyMigration(migration Migration) error {
+	{{- if eq .DatabaseORM "gorm"}}
+	return m.db.Transaction(func(tx *gorm.DB) error {
+		// Execute migration
+		if err := tx.Exec(migration.Up).Error; err != nil {
+			return err
+		}
+
+		// Record migration
+		query := `INSERT INTO schema_migrations (version) VALUES (?)`
+		{{- if eq .DatabaseDriver "postgres"}}
+		query = `INSERT INTO schema_migrations (version) VALUES ($1)`
+		{{- end}}
+		
+		return tx.Exec(query, migration.Version).Error
+	})
+	{{- else}}
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Execute migration
+	if _, err := tx.Exec(migration.Up); err != nil {
+		return err
+	}
+
+	// Record migration
+	query := `INSERT INTO schema_migrations (version) VALUES (?)`
+	{{- if eq .DatabaseDriver "postgres"}}
+	query = `INSERT INTO schema_migrations (version) VALUES ($1)`
+	{{- end}}
+	
+	if _, err := tx.Exec(query, migration.Version); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+	{{- end}}
+}
+
+// rollbackMigration rolls back a single migration
+func (m *MigrationRunner) rollbackMigration(migration Migration) error {
+	{{- if eq .DatabaseORM "gorm"}}
+	return m.db.Transaction(func(tx *gorm.DB) error {
+		// Execute rollback
+		if err := tx.Exec(migration.Down).Error; err != nil {
+			return err
+		}
+
+		// Remove migration record
+		query := `DELETE FROM schema_migrations WHERE version = ?`
+		{{- if eq .DatabaseDriver "postgres"}}
+		query = `DELETE FROM schema_migrations WHERE version = $1`
+		{{- end}}
+		
+		return tx.Exec(query, migration.Version).Error
+	})
+	{{- else}}
+	tx, err := m.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Execute rollback
+	if _, err := tx.Exec(migration.Down); err != nil {
+		return err
+	}
+
+	// Remove migration record
+	query := `DELETE FROM schema_migrations WHERE version = ?`
+	{{- if eq .DatabaseDriver "postgres"}}
+	query = `DELETE FROM schema_migrations WHERE version = $1`
+	{{- end}}
+	
+	if _, err := tx.Exec(query, migration.Version); err != nil {
+		return err
+	}
+
+	return tx.Commit()
+	{{- end}}
+}
+
+// contains checks if a string is in a slice
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+{{- end}}

@@ -1,0 +1,228 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"fmt"
+	"time"
+
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	{{- if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{- end}}
+	{{- else}}
+	"database/sql"
+	{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+	{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	appLogger "{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+)
+
+{{- if eq .DatabaseORM "gorm"}}
+// DB is the global database connection
+var DB *gorm.DB
+
+// Connect establishes a database connection using GORM
+func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*gorm.DB, error) {
+	var dsn string
+	var db *gorm.DB
+	var err error
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=UTC",
+		cfg.Host, cfg.User, cfg.Password, cfg.Name, cfg.Port)
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- else if eq .DatabaseDriver "mysql"}}
+	dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
+	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	dsn = cfg.Name
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- end}}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	DB = db
+	logger.Info("Database connected successfully")
+	return db, nil
+}
+
+// Migrate runs database migrations
+func Migrate(db *gorm.DB, logger appLogger.Logger) error {
+	logger.Info("Running database migrations...")
+	
+	err := db.AutoMigrate(
+		&models.User{},
+		// Add other models here as needed
+	)
+	if err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	logger.Info("Database migrations completed successfully")
+	return nil
+}
+
+// getLogLevel converts string log level to GORM log level
+func getLogLevel(level string) logger.LogLevel {
+	switch level {
+	case "error":
+		return logger.Error
+	case "warn":
+		return logger.Warn
+	case "info":
+		return logger.Info
+	default:
+		return logger.Silent
+	}
+}
+
+{{- else}}
+// DB is the global database connection
+var DB *sql.DB
+
+// Connect establishes a database connection using database/sql
+func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*sql.DB, error) {
+	var dsn string
+	var driverName string
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	driverName = "postgres"
+	dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Name)
+	{{- else if eq .DatabaseDriver "mysql"}}
+	driverName = "mysql"
+	dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	driverName = "sqlite3"
+	dsn = cfg.Name
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- end}}
+
+	db, err := sql.Open(driverName, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	DB = db
+	logger.Info("Database connected successfully")
+	return db, nil
+}
+
+// Migrate runs database migrations
+func Migrate(db *sql.DB, logger appLogger.Logger) error {
+	logger.Info("Running database migrations...")
+	
+	// Create users table
+	{{- if eq .DatabaseDriver "postgres"}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id SERIAL PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		email VARCHAR(255) UNIQUE NOT NULL,
+		password VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		email VARCHAR(255) UNIQUE NOT NULL,
+		password VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	)`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		email TEXT UNIQUE NOT NULL,
+		password TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- end}}
+
+	if _, err := db.Exec(userTable); err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	logger.Info("Database migrations completed successfully")
+	return nil
+}
+{{- end}}
+
+// Close closes the database connection
+func Close() error {
+	{{- if eq .DatabaseORM "gorm"}}
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.Close()
+	}
+	{{- else}}
+	if DB != nil {
+		return DB.Close()
+	}
+	{{- end}}
+	return nil
+}
+{{- end}}

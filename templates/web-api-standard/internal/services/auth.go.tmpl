@@ -1,0 +1,164 @@
+{{- if ne .AuthType ""}}
+package services
+
+import (
+	"errors"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
+	"{{.ModulePath}}/internal/models"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrTokenExpired      = errors.New("token expired")
+	ErrInvalidToken      = errors.New("invalid token")
+)
+
+// JWTClaims represents the claims in a JWT token
+type JWTClaims struct {
+	UserID uint   `json:"user_id"`
+	Email  string `json:"email"`
+	jwt.RegisteredClaims
+}
+
+// AuthService defines the interface for authentication business logic
+type AuthService interface {
+	Login(email, password string) (string, *models.User, error)
+	Register(req models.RegisterRequest) (*models.User, error)
+	ValidateToken(tokenString string) (*JWTClaims, error)
+	RefreshToken(userID uint) (string, error)
+	HashPassword(password string) (string, error)
+	ComparePasswords(hashedPassword, password string) error
+}
+
+// authService implements AuthService
+type authService struct {
+	userService UserService
+	jwtSecret   string
+	tokenTTL    time.Duration
+}
+
+// NewAuthService creates a new auth service
+func NewAuthService(userService UserService, jwtSecret string, tokenTTL time.Duration) AuthService {
+	return &authService{
+		userService: userService,
+		jwtSecret:   jwtSecret,
+		tokenTTL:    tokenTTL,
+	}
+}
+
+// Login authenticates a user and returns a JWT token
+func (s *authService) Login(email, password string) (string, *models.User, error) {
+	user, err := s.userService.GetUserByEmail(email)
+	if err != nil {
+		if err == ErrUserNotFound {
+			return "", nil, ErrInvalidCredentials
+		}
+		return "", nil, err
+	}
+
+	if err := s.ComparePasswords(user.Password, password); err != nil {
+		return "", nil, ErrInvalidCredentials
+	}
+
+	token, err := s.generateToken(user)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Remove password from response
+	user.Password = ""
+
+	return token, user, nil
+}
+
+// Register creates a new user account
+func (s *authService) Register(req models.RegisterRequest) (*models.User, error) {
+	// Hash the password
+	hashedPassword, err := s.HashPassword(req.Password)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create user request
+	createReq := models.CreateUserRequest{
+		Name:  req.Name,
+		Email: req.Email,
+	}
+
+	user, err := s.userService.CreateUser(createReq)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set the hashed password (this would typically be done in the repository layer)
+	user.Password = hashedPassword
+
+	return user, nil
+}
+
+// ValidateToken validates a JWT token and returns the claims
+func (s *authService) ValidateToken(tokenString string) (*JWTClaims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &JWTClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, ErrInvalidToken
+		}
+		return []byte(s.jwtSecret), nil
+	})
+
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(*JWTClaims)
+	if !ok || !token.Valid {
+		return nil, ErrInvalidToken
+	}
+
+	// Check if token is expired
+	if time.Now().After(claims.ExpiresAt.Time) {
+		return nil, ErrTokenExpired
+	}
+
+	return claims, nil
+}
+
+// RefreshToken generates a new token for a user
+func (s *authService) RefreshToken(userID uint) (string, error) {
+	user, err := s.userService.GetUserByID(userID)
+	if err != nil {
+		return "", err
+	}
+
+	return s.generateToken(user)
+}
+
+// HashPassword hashes a password using bcrypt
+func (s *authService) HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(bytes), err
+}
+
+// ComparePasswords compares a hashed password with a plain text password
+func (s *authService) ComparePasswords(hashedPassword, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+}
+
+// generateToken generates a JWT token for a user
+func (s *authService) generateToken(user *models.User) (string, error) {
+	claims := JWTClaims{
+		UserID: user.ID,
+		Email:  user.Email,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(s.tokenTTL)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			Subject:   string(rune(user.ID)),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(s.jwtSecret))
+}
+{{- end}}

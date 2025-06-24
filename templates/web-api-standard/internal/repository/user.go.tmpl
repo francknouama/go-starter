@@ -1,0 +1,221 @@
+{{- if ne .DatabaseDriver ""}}
+package repository
+
+import (
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- else}}
+	"database/sql"
+	"fmt"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/models"
+)
+
+// UserRepository defines the interface for user data access
+type UserRepository interface {
+	GetAll(limit, offset int) ([]models.User, error)
+	GetByID(id uint) (*models.User, error)
+	GetByEmail(email string) (*models.User, error)
+	Create(user *models.User) error
+	Update(user *models.User) error
+	Delete(id uint) error
+	Count() (int, error)
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// gormUserRepository implements UserRepository using GORM
+type gormUserRepository struct {
+	db *gorm.DB
+}
+
+// NewUserRepository creates a new user repository
+func NewUserRepository(db *gorm.DB) UserRepository {
+	return &gormUserRepository{db: db}
+}
+
+// GetAll retrieves all users with pagination
+func (r *gormUserRepository) GetAll(limit, offset int) ([]models.User, error) {
+	var users []models.User
+	err := r.db.Limit(limit).Offset(offset).Find(&users).Error
+	return users, err
+}
+
+// GetByID retrieves a user by ID
+func (r *gormUserRepository) GetByID(id uint) (*models.User, error) {
+	var user models.User
+	err := r.db.First(&user, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *gormUserRepository) GetByEmail(email string) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("email = ?", email).First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// Create creates a new user
+func (r *gormUserRepository) Create(user *models.User) error {
+	return r.db.Create(user).Error
+}
+
+// Update updates an existing user
+func (r *gormUserRepository) Update(user *models.User) error {
+	return r.db.Save(user).Error
+}
+
+// Delete deletes a user by ID
+func (r *gormUserRepository) Delete(id uint) error {
+	return r.db.Delete(&models.User{}, id).Error
+}
+
+// Count returns the total number of users
+func (r *gormUserRepository) Count() (int, error) {
+	var count int64
+	err := r.db.Model(&models.User{}).Count(&count).Error
+	return int(count), err
+}
+
+{{- else}}
+// sqlUserRepository implements UserRepository using database/sql
+type sqlUserRepository struct {
+	db *sql.DB
+}
+
+// NewUserRepository creates a new user repository
+func NewUserRepository(db *sql.DB) UserRepository {
+	return &sqlUserRepository{db: db}
+}
+
+// GetAll retrieves all users with pagination
+func (r *sqlUserRepository) GetAll(limit, offset int) ([]models.User, error) {
+	query := `SELECT id, name, email, password, created_at, updated_at FROM users ORDER BY id LIMIT $1 OFFSET $2`
+	{{- if eq .DatabaseDriver "mysql"}}
+	query = `SELECT id, name, email, password, created_at, updated_at FROM users ORDER BY id LIMIT ? OFFSET ?`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	query = `SELECT id, name, email, password, created_at, updated_at FROM users ORDER BY id LIMIT ? OFFSET ?`
+	{{- end}}
+
+	rows, err := r.db.Query(query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var users []models.User
+	for rows.Next() {
+		var user models.User
+		err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+
+	return users, rows.Err()
+}
+
+// GetByID retrieves a user by ID
+func (r *sqlUserRepository) GetByID(id uint) (*models.User, error) {
+	query := `SELECT id, name, email, password, created_at, updated_at FROM users WHERE id = $1`
+	{{- if eq .DatabaseDriver "mysql" "sqlite"}}
+	query = `SELECT id, name, email, password, created_at, updated_at FROM users WHERE id = ?`
+	{{- end}}
+
+	var user models.User
+	err := r.db.QueryRow(query, id).Scan(
+		&user.ID, &user.Name, &user.Email, &user.Password, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *sqlUserRepository) GetByEmail(email string) (*models.User, error) {
+	query := `SELECT id, name, email, password, created_at, updated_at FROM users WHERE email = $1`
+	{{- if eq .DatabaseDriver "mysql" "sqlite"}}
+	query = `SELECT id, name, email, password, created_at, updated_at FROM users WHERE email = ?`
+	{{- end}}
+
+	var user models.User
+	err := r.db.QueryRow(query, email).Scan(
+		&user.ID, &user.Name, &user.Email, &user.Password, &user.CreatedAt, &user.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// Create creates a new user
+func (r *sqlUserRepository) Create(user *models.User) error {
+	query := `INSERT INTO users (name, email, password, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id, created_at, updated_at`
+	{{- if eq .DatabaseDriver "mysql"}}
+	query = `INSERT INTO users (name, email, password, created_at, updated_at) VALUES (?, ?, ?, NOW(), NOW())`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	query = `INSERT INTO users (name, email, password, created_at, updated_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))`
+	{{- end}}
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	err := r.db.QueryRow(query, user.Name, user.Email, user.Password).Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
+	{{- else}}
+	result, err := r.db.Exec(query, user.Name, user.Email, user.Password)
+	if err != nil {
+		return err
+	}
+	
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	user.ID = uint(id)
+	{{- end}}
+
+	return err
+}
+
+// Update updates an existing user
+func (r *sqlUserRepository) Update(user *models.User) error {
+	query := `UPDATE users SET name = $1, email = $2, updated_at = NOW() WHERE id = $3`
+	{{- if eq .DatabaseDriver "mysql"}}
+	query = `UPDATE users SET name = ?, email = ?, updated_at = NOW() WHERE id = ?`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	query = `UPDATE users SET name = ?, email = ?, updated_at = datetime('now') WHERE id = ?`
+	{{- end}}
+
+	_, err := r.db.Exec(query, user.Name, user.Email, user.ID)
+	return err
+}
+
+// Delete deletes a user by ID
+func (r *sqlUserRepository) Delete(id uint) error {
+	query := `DELETE FROM users WHERE id = $1`
+	{{- if eq .DatabaseDriver "mysql" "sqlite"}}
+	query = `DELETE FROM users WHERE id = ?`
+	{{- end}}
+
+	_, err := r.db.Exec(query, id)
+	return err
+}
+
+// Count returns the total number of users
+func (r *sqlUserRepository) Count() (int, error) {
+	query := `SELECT COUNT(*) FROM users`
+	
+	var count int
+	err := r.db.QueryRow(query).Scan(&count)
+	return count, err
+}
+{{- end}}
+{{- end}}

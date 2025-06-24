@@ -1,0 +1,183 @@
+package logger
+
+import (
+	"context"
+	"io"
+	"os"
+	"time"
+
+	"github.com/rs/zerolog"
+)
+
+// ZerologLogger wraps Zerolog logger to implement our Logger interface
+type ZerologLogger struct {
+	logger zerolog.Logger
+	level  Level
+	output io.Writer
+}
+
+// NewZerologLogger creates a new zerolog-based logger
+func NewZerologLogger(level Level, format Format, output io.Writer, structured bool) (*ZerologLogger, error) {
+	if output == nil {
+		output = os.Stdout
+	}
+
+	// Configure global settings
+	zerolog.TimeFieldFormat = time.RFC3339Nano
+
+	// Create logger based on format
+	var logger zerolog.Logger
+	switch format {
+	case JSONFormat:
+		logger = zerolog.New(output).With().Timestamp().Logger()
+	case TextFormat, ConsoleFormat:
+		// Use console writer for human-readable output
+		consoleWriter := zerolog.ConsoleWriter{
+			Out:        output,
+			TimeFormat: time.RFC3339,
+		}
+		logger = zerolog.New(consoleWriter).With().Timestamp().Logger()
+	default:
+		logger = zerolog.New(output).With().Timestamp().Logger()
+	}
+
+	// Set level
+	logger = logger.Level(convertToZerologLevel(level))
+
+	return &ZerologLogger{
+		logger: logger,
+		level:  level,
+		output: output,
+	}, nil
+}
+
+// Debug logs a debug message
+func (z *ZerologLogger) Debug(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		z.logger.Debug().Msgf(msg, args...)
+	} else {
+		z.logger.Debug().Msg(msg)
+	}
+}
+
+// Info logs an info message
+func (z *ZerologLogger) Info(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		z.logger.Info().Msgf(msg, args...)
+	} else {
+		z.logger.Info().Msg(msg)
+	}
+}
+
+// Warn logs a warning message
+func (z *ZerologLogger) Warn(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		z.logger.Warn().Msgf(msg, args...)
+	} else {
+		z.logger.Warn().Msg(msg)
+	}
+}
+
+// Error logs an error message
+func (z *ZerologLogger) Error(msg string, args ...interface{}) {
+	if len(args) > 0 {
+		z.logger.Error().Msgf(msg, args...)
+	} else {
+		z.logger.Error().Msg(msg)
+	}
+}
+
+// DebugWith logs a debug message with structured fields
+func (z *ZerologLogger) DebugWith(msg string, fields Fields) {
+	event := z.logger.Debug()
+	for key, value := range fields {
+		event.Interface(key, value)
+	}
+	event.Msg(msg)
+}
+
+// InfoWith logs an info message with structured fields
+func (z *ZerologLogger) InfoWith(msg string, fields Fields) {
+	event := z.logger.Info()
+	for key, value := range fields {
+		event.Interface(key, value)
+	}
+	event.Msg(msg)
+}
+
+// WarnWith logs a warning message with structured fields
+func (z *ZerologLogger) WarnWith(msg string, fields Fields) {
+	event := z.logger.Warn()
+	for key, value := range fields {
+		event.Interface(key, value)
+	}
+	event.Msg(msg)
+}
+
+// ErrorWith logs an error message with structured fields
+func (z *ZerologLogger) ErrorWith(msg string, fields Fields) {
+	event := z.logger.Error()
+	for key, value := range fields {
+		event.Interface(key, value)
+	}
+	event.Msg(msg)
+}
+
+// WithContext returns a logger with context
+func (z *ZerologLogger) WithContext(ctx context.Context) Logger {
+	return &ZerologLogger{
+		logger: z.logger.With().Logger(),
+		level:  z.level,
+		output: z.output,
+	}
+}
+
+// WithFields returns a logger with additional fields
+func (z *ZerologLogger) WithFields(fields Fields) Logger {
+	logger := z.logger.With()
+	for key, value := range fields {
+		logger = logger.Interface(key, value)
+	}
+	return &ZerologLogger{
+		logger: logger.Logger(),
+		level:  z.level,
+		output: z.output,
+	}
+}
+
+// SetLevel sets the log level
+func (z *ZerologLogger) SetLevel(level Level) {
+	z.level = level
+	z.logger = z.logger.Level(convertToZerologLevel(level))
+}
+
+// SetOutput sets the output writer
+func (z *ZerologLogger) SetOutput(w io.Writer) {
+	z.output = w
+	// Note: Changing output requires logger recreation in zerolog
+	// This is a simplified implementation
+}
+
+// Sync flushes any buffered log entries (no-op for zerolog)
+func (z *ZerologLogger) Sync() error {
+	// Zerolog doesn't require explicit syncing
+	return nil
+}
+
+// Helper functions
+
+// convertToZerologLevel converts our Level type to zerolog.Level
+func convertToZerologLevel(level Level) zerolog.Level {
+	switch level {
+	case DebugLevel:
+		return zerolog.DebugLevel
+	case InfoLevel:
+		return zerolog.InfoLevel
+	case WarnLevel:
+		return zerolog.WarnLevel
+	case ErrorLevel:
+		return zerolog.ErrorLevel
+	default:
+		return zerolog.InfoLevel
+	}
+}

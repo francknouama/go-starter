@@ -1,0 +1,38 @@
+# Production configuration
+environment: production
+
+server:
+  port: 8080
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 60
+
+{{- if ne .DatabaseDriver ""}}
+database:
+{{- if eq .DatabaseDriver "postgres"}}
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  name: ${DB_NAME}
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+  ssl_mode: require
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: ${DB_HOST}
+  port: ${DB_PORT}
+  name: ${DB_NAME}
+  user: ${DB_USER}
+  password: ${DB_PASSWORD}
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: ${DB_NAME}
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: 24  # hours
+{{- end}}
+
+logging:
+  level: info
+  format: json

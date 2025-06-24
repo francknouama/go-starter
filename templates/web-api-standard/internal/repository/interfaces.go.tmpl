@@ -1,0 +1,281 @@
+{{- if ne .DatabaseDriver ""}}
+package repository
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- else}}
+	"database/sql"
+	{{- end}}
+)
+
+// Repository is the base interface for all repositories
+type Repository interface {
+	// Transaction starts a new transaction
+	Transaction(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+// BaseRepository provides common repository functionality
+type BaseRepository struct {
+	{{- if eq .DatabaseORM "gorm"}}
+	db *gorm.DB
+	{{- else}}
+	db *sql.DB
+	{{- end}}
+}
+
+// NewBaseRepository creates a new base repository
+{{- if eq .DatabaseORM "gorm"}}
+func NewBaseRepository(db *gorm.DB) *BaseRepository {
+	return &BaseRepository{db: db}
+}
+{{- else}}
+func NewBaseRepository(db *sql.DB) *BaseRepository {
+	return &BaseRepository{db: db}
+}
+{{- end}}
+
+// Transaction implements transaction handling
+func (r *BaseRepository) Transaction(ctx context.Context, fn func(ctx context.Context) error) error {
+	{{- if eq .DatabaseORM "gorm"}}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Create a new context with the transaction
+		txCtx := context.WithValue(ctx, transactionKey{}, tx)
+		return fn(txCtx)
+	})
+	{{- else}}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	// Create a new context with the transaction
+	txCtx := context.WithValue(ctx, transactionKey{}, tx)
+	
+	// Execute the function
+	if err := fn(txCtx); err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return fmt.Errorf("failed to rollback: %v (original error: %w)", rbErr, err)
+		}
+		return err
+	}
+
+	return tx.Commit()
+	{{- end}}
+}
+
+// transactionKey is used as a key for storing transaction in context
+type transactionKey struct{}
+
+{{- if eq .DatabaseORM "gorm"}}
+// GetDB returns the database connection, using transaction if available
+func GetDB(ctx context.Context, db *gorm.DB) *gorm.DB {
+	if tx, ok := ctx.Value(transactionKey{}).(*gorm.DB); ok {
+		return tx
+	}
+	return db.WithContext(ctx)
+}
+{{- else}}
+// GetDB returns the database connection, using transaction if available
+func GetDB(ctx context.Context, db *sql.DB) DBInterface {
+	if tx, ok := ctx.Value(transactionKey{}).(*sql.Tx); ok {
+		return tx
+	}
+	return db
+}
+
+// DBInterface represents common database operations
+type DBInterface interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
+}
+{{- end}}
+
+// Pageable interface for repositories that support pagination
+type Pageable interface {
+	// CountTotal returns the total number of records
+	CountTotal(ctx context.Context) (int64, error)
+}
+
+// Searchable interface for repositories that support searching
+type Searchable interface {
+	// Search performs a search with the given query
+	Search(ctx context.Context, query string, limit, offset int) (interface{}, error)
+}
+
+// SoftDeletable interface for repositories that support soft delete
+type SoftDeletable interface {
+	// SoftDelete soft deletes a record
+	SoftDelete(ctx context.Context, id interface{}) error
+	// Restore restores a soft deleted record
+	Restore(ctx context.Context, id interface{}) error
+	// WithDeleted includes soft deleted records in queries
+	WithDeleted(ctx context.Context) Repository
+	// OnlyDeleted returns only soft deleted records
+	OnlyDeleted(ctx context.Context) Repository
+}
+
+// Auditable interface for repositories that track changes
+type Auditable interface {
+	// GetHistory returns the history of changes for a record
+	GetHistory(ctx context.Context, id interface{}) ([]interface{}, error)
+	// GetRevision returns a specific revision of a record
+	GetRevision(ctx context.Context, id interface{}, revision int) (interface{}, error)
+}
+
+// QueryOptions represents common query options
+type QueryOptions struct {
+	// Limit specifies the maximum number of records to return
+	Limit int
+	// Offset specifies the number of records to skip
+	Offset int
+	// OrderBy specifies the field to order by
+	OrderBy string
+	// Order specifies the order direction (ASC or DESC)
+	Order string
+	// Preload specifies related data to preload
+	Preload []string
+	// Where specifies additional where conditions
+	Where map[string]interface{}
+	// Select specifies fields to select
+	Select []string
+	// IncludeDeleted includes soft deleted records
+	IncludeDeleted bool
+}
+
+// DefaultQueryOptions returns default query options
+func DefaultQueryOptions() *QueryOptions {
+	return &QueryOptions{
+		Limit:   10,
+		Offset:  0,
+		OrderBy: "id",
+		Order:   "DESC",
+		Preload: []string{},
+		Where:   make(map[string]interface{}),
+		Select:  []string{},
+	}
+}
+
+// WithLimit sets the limit
+func (o *QueryOptions) WithLimit(limit int) *QueryOptions {
+	o.Limit = limit
+	return o
+}
+
+// WithOffset sets the offset
+func (o *QueryOptions) WithOffset(offset int) *QueryOptions {
+	o.Offset = offset
+	return o
+}
+
+// WithOrderBy sets the order by field
+func (o *QueryOptions) WithOrderBy(orderBy string, order string) *QueryOptions {
+	o.OrderBy = orderBy
+	o.Order = order
+	return o
+}
+
+// WithPreload adds preload fields
+func (o *QueryOptions) WithPreload(preload ...string) *QueryOptions {
+	o.Preload = append(o.Preload, preload...)
+	return o
+}
+
+// WithWhere adds where conditions
+func (o *QueryOptions) WithWhere(key string, value interface{}) *QueryOptions {
+	o.Where[key] = value
+	return o
+}
+
+// WithSelect sets select fields
+func (o *QueryOptions) WithSelect(fields ...string) *QueryOptions {
+	o.Select = fields
+	return o
+}
+
+// WithDeleted includes soft deleted records
+func (o *QueryOptions) WithDeleted() *QueryOptions {
+	o.IncludeDeleted = true
+	return o
+}
+
+// PaginationResult represents a paginated result
+type PaginationResult struct {
+	Data       interface{} `json:"data"`
+	Total      int64       `json:"total"`
+	Page       int         `json:"page"`
+	PageSize   int         `json:"page_size"`
+	TotalPages int         `json:"total_pages"`
+}
+
+// NewPaginationResult creates a new pagination result
+func NewPaginationResult(data interface{}, total int64, page, pageSize int) *PaginationResult {
+	totalPages := int(total) / pageSize
+	if int(total)%pageSize > 0 {
+		totalPages++
+	}
+
+	return &PaginationResult{
+		Data:       data,
+		Total:      total,
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}
+}
+
+// RepositoryError represents a repository error
+type RepositoryError struct {
+	Code    string
+	Message string
+	Err     error
+}
+
+// Error implements the error interface
+func (e *RepositoryError) Error() string {
+	if e.Err != nil {
+		return fmt.Sprintf("%s: %s (%v)", e.Code, e.Message, e.Err)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+// Unwrap returns the underlying error
+func (e *RepositoryError) Unwrap() error {
+	return e.Err
+}
+
+// Common repository errors
+var (
+	ErrNotFound        = &RepositoryError{Code: "NOT_FOUND", Message: "record not found"}
+	ErrDuplicateKey    = &RepositoryError{Code: "DUPLICATE_KEY", Message: "duplicate key error"}
+	ErrInvalidInput    = &RepositoryError{Code: "INVALID_INPUT", Message: "invalid input"}
+	ErrDatabaseError   = &RepositoryError{Code: "DATABASE_ERROR", Message: "database error"}
+	ErrTransactionFail = &RepositoryError{Code: "TRANSACTION_FAIL", Message: "transaction failed"}
+)
+
+// IsNotFoundError checks if an error is a not found error
+func IsNotFoundError(err error) bool {
+	{{- if eq .DatabaseORM "gorm"}}
+	return errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, ErrNotFound)
+	{{- else}}
+	return errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound)
+	{{- end}}
+}
+
+// IsDuplicateKeyError checks if an error is a duplicate key error
+func IsDuplicateKeyError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "duplicate") || 
+	       strings.Contains(errStr, "unique constraint") ||
+	       errors.Is(err, ErrDuplicateKey)
+}
+{{- end}}

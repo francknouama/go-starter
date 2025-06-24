@@ -1,0 +1,65 @@
+# Test configuration
+environment: test
+
+server:
+  port: 8081
+  read_timeout: 10
+  write_timeout: 10
+  idle_timeout: 30
+
+{{- if ne .DatabaseDriver ""}}
+database:
+{{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5433
+  name: {{.ProjectName}}_test
+  user: {{.ProjectName}}_test
+  password: test_password
+  ssl_mode: disable
+  log_level: error
+  max_idle_conns: 5
+  max_open_conns: 10
+  conn_max_lifetime: 300
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3307
+  name: {{.ProjectName}}_test
+  user: {{.ProjectName}}_test
+  password: test_password
+  log_level: error
+  max_idle_conns: 5
+  max_open_conns: 10
+  conn_max_lifetime: 300
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: :memory:  # Use in-memory database for tests
+  log_level: error
+  max_idle_conns: 1
+  max_open_conns: 1
+  conn_max_lifetime: 300
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+jwt:
+  secret: test-secret-key
+  expiration: 1  # hours
+{{- else if eq .AuthType "oauth2"}}
+oauth2:
+  client_id: test-client-id
+  client_secret: test-client-secret
+  redirect_url: http://localhost:8081/auth/callback
+{{- else if eq .AuthType "session"}}
+session:
+  secret: test-session-secret
+  max_age: 3600  # seconds
+{{- end}}
+
+logging:
+  level: warn
+  format: json
+
+# Test-specific settings
+test:
+  cleanup_after_tests: true
+  use_transactions: true
+  parallel_execution: false

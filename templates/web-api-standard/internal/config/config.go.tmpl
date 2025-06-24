@@ -1,0 +1,213 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+// Config holds the application configuration
+type Config struct {
+	Environment string         `mapstructure:"environment"`
+	Server      ServerConfig   `mapstructure:"server"`
+{{- if ne .DatabaseDriver ""}}
+	Database    DatabaseConfig `mapstructure:"database"`
+{{- end}}
+{{- if eq .AuthType "jwt"}}
+	JWT         JWTConfig      `mapstructure:"jwt"`
+{{- end}}
+	Logging     LoggingConfig  `mapstructure:"logging"`
+}
+
+// ServerConfig holds server configuration
+type ServerConfig struct {
+	Port         int `mapstructure:"port"`
+	ReadTimeout  int `mapstructure:"read_timeout"`
+	WriteTimeout int `mapstructure:"write_timeout"`
+	IdleTimeout  int `mapstructure:"idle_timeout"`
+}
+
+{{- if ne .DatabaseDriver ""}}
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Name     string `mapstructure:"name"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	SSLMode  string `mapstructure:"ssl_mode"`
+}
+
+// DSN returns the database connection string
+func (d DatabaseConfig) DSN() string {
+{{- if eq .DatabaseDriver "postgres"}}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		d.Host, d.Port, d.User, d.Password, d.Name, d.SSLMode)
+{{- else if eq .DatabaseDriver "mysql"}}
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		d.User, d.Password, d.Host, d.Port, d.Name)
+{{- else if eq .DatabaseDriver "sqlite"}}
+	return d.Name
+{{- end}}
+}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+// JWTConfig holds JWT configuration
+type JWTConfig struct {
+	Secret     string `mapstructure:"secret"`
+	Expiration int    `mapstructure:"expiration"` // in hours
+}
+{{- end}}
+
+// LoggingConfig holds logging configuration
+type LoggingConfig struct {
+	Level      string `mapstructure:"level"`
+	Format     string `mapstructure:"format"`
+	Structured bool   `mapstructure:"structured"`
+}
+
+// Load loads configuration from file and environment variables
+func Load() (*Config, error) {
+	v := viper.New()
+
+	// Set default values
+	setDefaults(v)
+
+	// Set config file name and paths
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath("./configs")
+	v.AddConfigPath(".")
+
+	// Set environment variable prefix
+	v.SetEnvPrefix("{{upper .ProjectName}}")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Determine environment
+	env := os.Getenv("ENVIRONMENT")
+	if env == "" {
+		env = "development"
+	}
+
+	// Try to read environment-specific config file
+	v.SetConfigName(fmt.Sprintf("config.%s", env))
+	if err := v.ReadInConfig(); err != nil {
+		// If environment-specific config doesn't exist, try default
+		v.SetConfigName("config")
+		if err := v.ReadInConfig(); err != nil {
+			// If no config file found, use defaults with env vars
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("failed to read config file: %w", err)
+			}
+		}
+	}
+
+	var config Config
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Set environment
+	config.Environment = env
+
+	// Validate configuration
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults(v *viper.Viper) {
+	// Server defaults
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.read_timeout", 30)
+	v.SetDefault("server.write_timeout", 30)
+	v.SetDefault("server.idle_timeout", 60)
+
+{{- if ne .DatabaseDriver ""}}
+	// Database defaults
+{{- if eq .DatabaseDriver "postgres"}}
+	v.SetDefault("database.host", "localhost")
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	v.SetDefault("database.password", "")
+	v.SetDefault("database.ssl_mode", "disable")
+{{- else if eq .DatabaseDriver "mysql"}}
+	v.SetDefault("database.host", "localhost")
+	v.SetDefault("database.port", 3306)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	v.SetDefault("database.password", "")
+{{- else if eq .DatabaseDriver "sqlite"}}
+	v.SetDefault("database.name", "{{.ProjectName}}.db")
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+	// JWT defaults
+	v.SetDefault("jwt.secret", "your-secret-key")
+	v.SetDefault("jwt.expiration", 24) // 24 hours
+{{- end}}
+
+	// Logging defaults
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.format", "json")
+	v.SetDefault("logging.structured", true)
+}
+
+// validateConfig validates the configuration
+func validateConfig(config *Config) error {
+	// Validate server port
+	if config.Server.Port <= 0 || config.Server.Port > 65535 {
+		return fmt.Errorf("invalid server port: %d", config.Server.Port)
+	}
+
+{{- if ne .DatabaseDriver ""}}
+	// Validate database configuration
+{{- if ne .DatabaseDriver "sqlite"}}
+	if config.Database.Host == "" {
+		return fmt.Errorf("database host is required")
+	}
+	if config.Database.Name == "" {
+		return fmt.Errorf("database name is required")
+	}
+	if config.Database.User == "" {
+		return fmt.Errorf("database user is required")
+	}
+{{- else}}
+	if config.Database.Name == "" {
+		return fmt.Errorf("database name is required")
+	}
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+	// Validate JWT configuration
+	if config.JWT.Secret == "" || config.JWT.Secret == "your-secret-key" {
+		return fmt.Errorf("JWT secret must be set and not use the default value")
+	}
+	if config.JWT.Expiration <= 0 {
+		return fmt.Errorf("JWT expiration must be positive")
+	}
+{{- end}}
+
+	// Validate logging level
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLevels[config.Logging.Level] {
+		return fmt.Errorf("invalid logging level: %s", config.Logging.Level)
+	}
+
+	return nil
+}
