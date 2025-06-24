@@ -1,7 +1,6 @@
 package integration
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/francknouama/go-starter/internal/config"
@@ -125,33 +124,3 @@ func TestGeneratorWithConfig(t *testing.T) {
 	t.Logf("Generator and config integration test passed for project: %s", projectConfig.Name)
 }
 
-// Helper function for case-insensitive string contains check
-func containsIgnoreCase(s, substr string) bool {
-	s = strings.ToLower(s)
-	substr = strings.ToLower(substr)
-	return strings.Contains(s, substr)
-}
-
-// Helper function to check if required imports are available
-func checkRequiredImports(t *testing.T) {
-	// This is a placeholder for checking if all required packages are available
-	// In a real test, you might want to check if all dependencies are properly imported
-	t.Helper()
-
-	// We can add checks here if needed, for now just ensure the test can import required packages
-	if gen := generator.New(); gen == nil {
-		t.Skip("Generator package not properly available")
-	}
-}
-
-// setupTestProjectEnvironment sets up a test project environment
-func setupTestProjectEnvironment(t *testing.T) string {
-	t.Helper()
-
-	tmpDir := t.TempDir()
-
-	// Set up any required environment variables or configuration
-	// for testing
-
-	return tmpDir
-}

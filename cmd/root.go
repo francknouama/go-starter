@@ -14,9 +14,9 @@ var cfgFile string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
-	Use:   "go-starter",
-	Short: "Generate Go project structures with best practices",
-	Long:  buildLongDescription(),
+	Use:     "go-starter",
+	Short:   "Generate Go project structures with best practices",
+	Long:    buildLongDescription(),
 	Version: Version,
 }
 

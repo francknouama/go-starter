@@ -60,9 +60,9 @@ type MonitorConfig struct {
 
 // LoggingConfig represents logging configuration
 type LoggingConfig struct {
-	Type       string `yaml:"type" json:"type"`           // slog, zap, logrus, zerolog
-	Level      string `yaml:"level" json:"level"`         // debug, info, warn, error
-	Format     string `yaml:"format" json:"format"`       // json, text, console
+	Type       string `yaml:"type" json:"type"`             // slog, zap, logrus, zerolog
+	Level      string `yaml:"level" json:"level"`           // debug, info, warn, error
+	Format     string `yaml:"format" json:"format"`         // json, text, console
 	Structured bool   `yaml:"structured" json:"structured"` // structured logging enabled
 }
 

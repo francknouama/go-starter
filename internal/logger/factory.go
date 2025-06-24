@@ -60,7 +60,7 @@ func (f *Factory) CreateFromProjectConfig(loggerType, level, format string, stru
 		Structured: structured,
 		Output:     "stdout",
 	}
-	
+
 	return f.Create(config)
 }
 

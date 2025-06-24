@@ -261,10 +261,10 @@ func (g *Generator) initGit(projectPath string) error {
 func (g *Generator) processTemplatePath(path string, config types.ProjectConfig) string {
 	// Create a simple context for path processing
 	context := map[string]any{
-		"ProjectName": config.Name,
-		"ModulePath":  config.Module,
-		"GoVersion":   config.GoVersion,
-		"Framework":   config.Framework,
+		"ProjectName":  config.Name,
+		"ModulePath":   config.Module,
+		"GoVersion":    config.GoVersion,
+		"Framework":    config.Framework,
 		"Architecture": config.Architecture,
 	}
 
@@ -307,7 +307,7 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 	// Add logger configuration to context
 	if config.Logger != "" {
 		context["LoggerType"] = config.Logger
-		
+
 		// Create logger configuration for templates
 		if config.Features != nil && config.Features.Logging.Type != "" {
 			context["LoggerConfig"] = map[string]interface{}{
@@ -325,7 +325,7 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 				"Structured": true,
 			}
 		}
-		
+
 		// Add logger-specific template variables
 		switch config.Logger {
 		case "slog":
@@ -450,7 +450,7 @@ func (g *Generator) evaluateCondition(condition string, context map[string]any) 
 
 	// Parse result
 	result := strings.TrimSpace(buf.String())
-	
+
 	// Handle boolean values
 	if result == "true" {
 		return true, nil
@@ -510,7 +510,7 @@ func (g *Generator) addDependencies(projectPath string, dependencies []string) e
 	for _, dep := range dependencies {
 		cmd := exec.Command("go", "get", dep)
 		cmd.Dir = projectPath
-		
+
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add dependency %s: %s", dep, string(output))
 		}

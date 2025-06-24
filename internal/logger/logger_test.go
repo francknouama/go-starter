@@ -232,11 +232,11 @@ func TestParseFormat(t *testing.T) {
 func TestGetSupportedTypes(t *testing.T) {
 	types := GetSupportedTypes()
 	expected := []string{"slog", "zap", "logrus", "zerolog"}
-	
+
 	if len(types) != len(expected) {
 		t.Errorf("expected %d types, got %d", len(expected), len(types))
 	}
-	
+
 	for i, expectedType := range expected {
 		if types[i] != expectedType {
 			t.Errorf("expected type %s at index %d, got %s", expectedType, i, types[i])
@@ -246,7 +246,7 @@ func TestGetSupportedTypes(t *testing.T) {
 
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
-	
+
 	if config.Type != "slog" {
 		t.Errorf("expected default type 'slog', got '%s'", config.Type)
 	}

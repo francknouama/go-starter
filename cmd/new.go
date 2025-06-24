@@ -124,14 +124,14 @@ func validateConfig(cfg types.ProjectConfig) error {
 	if cfg.Type == "" {
 		return types.NewValidationError("project type is required", nil)
 	}
-	
+
 	// Validate logger if provided
 	if cfg.Logger != "" {
 		if err := config.ValidateLogger(cfg.Logger); err != nil {
 			return types.NewValidationError(fmt.Sprintf("invalid logger: %v", err), nil)
 		}
 	}
-	
+
 	return nil
 }
 

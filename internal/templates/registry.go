@@ -126,7 +126,7 @@ func (r *Registry) exists(templateID string) bool {
 // loadEmbeddedTemplates loads templates from embedded files
 func (r *Registry) loadEmbeddedTemplates() {
 	loader := NewTemplateLoader()
-	
+
 	templates, err := loader.LoadAll()
 	if err != nil {
 		fmt.Printf("Warning: Failed to load templates: %v\n", err)

@@ -58,7 +58,7 @@ func (l *TemplateLoader) LoadAll() ([]types.Template, error) {
 // LoadTemplate loads a single template from a directory
 func (l *TemplateLoader) LoadTemplate(templateDir string) (types.Template, error) {
 	templatePath := filepath.Join(templateDir, "template.yaml")
-	
+
 	// Read template.yaml
 	file, err := l.fs.Open(templatePath)
 	if err != nil {
@@ -98,7 +98,7 @@ func (l *TemplateLoader) LoadTemplate(templateDir string) (types.Template, error
 // LoadTemplateFile loads a template file content
 func (l *TemplateLoader) LoadTemplateFile(templateDir, filePath string) (string, error) {
 	fullPath := filepath.Join(templateDir, filePath)
-	
+
 	file, err := l.fs.Open(fullPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to open template file %s: %w", filePath, err)

@@ -188,14 +188,14 @@ func (p *Prompter) promptAdvancedOptions(config *types.ProjectConfig) error {
 			return err
 		}
 	}
-	
+
 	// Advanced logger configuration (for all project types except library)
 	if config.Type != "library" {
 		if err := p.promptAdvancedLogger(config); err != nil {
 			return err
 		}
 	}
-	
+
 	return nil
 }
 
