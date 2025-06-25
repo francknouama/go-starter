@@ -6,19 +6,34 @@
 [![Release](https://img.shields.io/github/v/release/francknouama/go-starter)](https://github.com/francknouama/go-starter/releases)
 [![GitHub Actions](https://github.com/francknouama/go-starter/workflows/Release/badge.svg)](https://github.com/francknouama/go-starter/actions)
 
-A comprehensive Go project generator that combines the simplicity of create-react-app with the flexibility of Spring Initializr, offering both CLI and web interfaces with progressive disclosure for beginners and advanced developers.
+A comprehensive Go project generator that combines the simplicity of create-react-app with the flexibility of Spring Initializr. Features a unique **Logger Selector System** that lets you choose your logging strategy without vendor lock-in.
 
-## Features
+## 🌟 Key Features
 
-### ✨ v1.0.0 - Production Ready!
+### ⚡ Unique Logger Selector System
 
-- 🚀 **4 Project Types**: Web API (Gin), CLI application (Cobra), Go library, and AWS Lambda
-- 📝 **Smart Logger Selection**: Choose between slog, zap, logrus, or zerolog with consistent interface
-- 🎯 **16 Tested Combinations**: All template+logger combinations validated and production-ready
-- 🔧 **Best Practices Built-in**: Pre-configured linting, testing, Makefile, and development tools
-- 🐳 **Docker & CI Ready**: Multi-stage Dockerfiles and GitHub Actions workflows included
+**Choose your logging strategy, not your vendor.** go-starter's Logger Selector System is the first of its kind:
+
+| Logger | Performance | Best For | Zero Allocation |
+|--------|-------------|----------|-----------------|
+| **slog** | Good | Standard library choice | ✅ |
+| **zap** | Excellent | High-performance APIs | ✅ |
+| **logrus** | Good | Feature-rich applications | ❌ |
+| **zerolog** | Excellent | JSON-heavy workloads | ✅ |
+
+- **Switch Anytime**: Change loggers without touching application code
+- **Consistent Interface**: Same logging calls across all implementations  
+- **Clean Dependencies**: Only selected logger included in your project
+- **Performance Optimized**: Each logger tuned for its specific strengths
+
+### 🚀 v1.1.0 - Latest Features
+
+- 📦 **Multi-Database Selection**: PostgreSQL, MySQL, MongoDB, SQLite, Redis support
+- 🔄 **Dynamic Go Version Detection**: Uses your current Go version automatically
+- 🛠️ **Enhanced CLI**: Better error handling when Go is not installed
+- 🐳 **Multi-Service Docker**: Docker Compose for multiple databases
+- 🎯 **16 Tested Combinations**: All template+logger combinations validated
 - ⚡ **Instant Setup**: Generate complete, compilable projects in under 10 seconds
-- 🛡️ **Production Quality**: Full error handling, logging, configuration management, and testing setup
 
 ### 🛣️ Roadmap - Future Development
 See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed future plans:
@@ -28,9 +43,16 @@ See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed future plans:
 - 🌐 **Web UI Interface**: Browser-based project generator with live preview
 - 🏢 **Enterprise Templates**: Microservices, event-driven, workspace patterns
 
-## Installation
+## 💻 Installation
 
-### Using Go Install (Recommended)
+### Using Homebrew (Recommended)
+
+```bash
+brew tap francknouama/tap
+brew install go-starter
+```
+
+### Using Go Install
 
 ```bash
 go install github.com/francknouama/go-starter@latest
@@ -42,15 +64,15 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 ```bash
 # Example for Linux AMD64
-curl -L https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_Linux_x86_64.tar.gz | tar -xz
+curl -L https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_Linux_x86_64.tar.gz | tar -xz
 sudo mv go-starter /usr/local/bin/
 
 # Example for macOS Apple Silicon
-curl -L https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_Darwin_arm64.tar.gz | tar -xz
+curl -L https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_Darwin_arm64.tar.gz | tar -xz
 sudo mv go-starter /usr/local/bin/
 
 # Example for Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_Windows_x86_64.zip" -OutFile "go-starter.zip"
+Invoke-WebRequest -Uri "https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_Windows_x86_64.zip" -OutFile "go-starter.zip"
 Expand-Archive go-starter.zip -DestinationPath .
 # Add to PATH or move to desired location
 ```
@@ -61,16 +83,16 @@ Expand-Archive go-starter.zip -DestinationPath .
 
 ```bash
 # Debian/Ubuntu
-wget https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_linux_amd64.deb
-sudo dpkg -i go-starter_1.0.0_linux_amd64.deb
+wget https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_linux_amd64.deb
+sudo dpkg -i go-starter_1.1.0_linux_amd64.deb
 
 # RHEL/CentOS/Fedora  
-wget https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_linux_amd64.rpm
-sudo rpm -i go-starter_1.0.0_linux_amd64.rpm
+wget https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_linux_amd64.rpm
+sudo rpm -i go-starter_1.1.0_linux_amd64.rpm
 
 # Alpine Linux
-wget https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_linux_amd64.apk
-sudo apk add --allow-untrusted go-starter_1.0.0_linux_amd64.apk
+wget https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_linux_amd64.apk
+sudo apk add --allow-untrusted go-starter_1.1.0_linux_amd64.apk
 ```
 
 ### Verify Installation
@@ -88,7 +110,27 @@ cd go-starter
 make install
 ```
 
-## Quick Start
+## 🚀 Quick Start
+
+### ⚡ Logger Selector in Action
+
+See how easy it is to switch between different logging strategies:
+
+```bash
+# High-performance API with zap (zero allocation)
+go-starter new fast-api --type web-api --logger zap
+
+# Feature-rich app with structured logging
+go-starter new rich-app --type web-api --logger logrus  
+
+# Standard library approach
+go-starter new simple-api --type web-api --logger slog
+
+# JSON-optimized service
+go-starter new json-service --type web-api --logger zerolog
+```
+
+**Same application code, different performance characteristics!**
 
 ### 🎯 Interactive Mode (Recommended for beginners)
 
@@ -98,7 +140,8 @@ go-starter new my-awesome-project
 # Follow the interactive prompts:
 ? Project type: › Web API
 ? Framework: › gin  
-? Logger: › zap
+? Logger: › zap (High-performance, zero allocation)
+? Database: › PostgreSQL, Redis
 ? Module path: › github.com/yourusername/my-awesome-project
 
 ✅ Project generated successfully!
