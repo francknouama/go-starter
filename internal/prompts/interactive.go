@@ -248,20 +248,32 @@ func (p *Prompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 	}
 
 	if addDB {
-		dbPrompt := &survey.Select{
-			Message: "Which database?",
-			Options: []string{"PostgreSQL", "MySQL", "MongoDB", "SQLite"},
-			Default: "PostgreSQL",
-			Help:    "Choose the database for your project",
+		// Use MultiSelect for multiple database selection
+		dbPrompt := &survey.MultiSelect{
+			Message: "Which databases do you want to use? (Space to select, Enter to confirm)",
+			Options: []string{"PostgreSQL", "MySQL", "MongoDB", "SQLite", "Redis"},
+			Default: []string{"PostgreSQL"},
+			Help:    "Select one or more databases for your project. PostgreSQL for main data, Redis for caching, etc.",
 		}
 
-		var db string
-		if err := survey.AskOne(dbPrompt, &db); err != nil {
+		var selectedDBs []string
+		if err := survey.AskOne(dbPrompt, &selectedDBs); err != nil {
 			return err
 		}
 
-		config.Features.Database.Driver = strings.ToLower(db)
+		// Convert to lowercase for consistency
+		var drivers []string
+		for _, db := range selectedDBs {
+			drivers = append(drivers, strings.ToLower(db))
+		}
+
+		config.Features.Database.Drivers = drivers
 		config.Features.Database.ORM = "gorm" // Default ORM
+		
+		// For backward compatibility, set Driver to the first selected database
+		if len(drivers) > 0 {
+			config.Features.Database.Driver = drivers[0]
+		}
 	}
 
 	return nil

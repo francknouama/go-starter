@@ -30,8 +30,47 @@ type Features struct {
 
 // DatabaseConfig represents database configuration
 type DatabaseConfig struct {
-	Driver string `yaml:"driver" json:"driver"`
-	ORM    string `yaml:"orm" json:"orm"`
+	Drivers []string `yaml:"drivers" json:"drivers"` // Support multiple databases
+	ORM     string   `yaml:"orm" json:"orm"`
+	
+	// Deprecated: use Drivers instead. Kept for backward compatibility
+	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
+}
+
+// HasDatabase returns true if any database is configured
+func (dc *DatabaseConfig) HasDatabase() bool {
+	return len(dc.Drivers) > 0 || dc.Driver != ""
+}
+
+// GetDrivers returns all configured database drivers
+func (dc *DatabaseConfig) GetDrivers() []string {
+	if len(dc.Drivers) > 0 {
+		return dc.Drivers
+	}
+	if dc.Driver != "" {
+		return []string{dc.Driver}
+	}
+	return []string{}
+}
+
+// HasDriver returns true if the specified driver is configured
+func (dc *DatabaseConfig) HasDriver(driver string) bool {
+	drivers := dc.GetDrivers()
+	for _, d := range drivers {
+		if d == driver {
+			return true
+		}
+	}
+	return false
+}
+
+// PrimaryDriver returns the first/primary database driver
+func (dc *DatabaseConfig) PrimaryDriver() string {
+	drivers := dc.GetDrivers()
+	if len(drivers) > 0 {
+		return drivers[0]
+	}
+	return ""
 }
 
 // AuthConfig represents authentication configuration

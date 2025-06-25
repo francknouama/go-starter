@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  {{- if eq .DatabaseDriver "postgres"}}
+  {{- if .HasPostgreSQL}}
   postgres:
     image: postgres:15-alpine
     container_name: {{.ProjectName}}-postgres
@@ -22,7 +22,8 @@ services:
     networks:
       - {{.ProjectName}}-network
 
-  {{- else if eq .DatabaseDriver "mysql"}}
+  {{- end}}
+  {{- if .HasMySQL}}
   mysql:
     image: mysql:8.0
     container_name: {{.ProjectName}}-mysql
@@ -43,7 +44,8 @@ services:
     networks:
       - {{.ProjectName}}-network
 
-  {{- else if eq .DatabaseDriver "redis"}}
+  {{- end}}
+  {{- if .HasRedis}}
   redis:
     image: redis:7-alpine
     container_name: {{.ProjectName}}-redis
@@ -58,6 +60,28 @@ services:
       retries: 5
     networks:
       - {{.ProjectName}}-network
+
+  {{- end}}
+  {{- if .HasMongoDB}}
+  mongodb:
+    image: mongo:7
+    container_name: {{.ProjectName}}-mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:-password}
+      MONGO_INITDB_DATABASE: ${MONGO_DB_NAME:-{{lower .ProjectName}}}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - {{.ProjectName}}-network
+
   {{- end}}
 
   # Application service (uncomment and modify as needed)
@@ -89,12 +113,17 @@ services:
   #     - {{.ProjectName}}-network
 
 volumes:
-  {{- if eq .DatabaseDriver "postgres"}}
+  {{- if .HasPostgreSQL}}
   postgres_data:
-  {{- else if eq .DatabaseDriver "mysql"}}
+  {{- end}}
+  {{- if .HasMySQL}}
   mysql_data:
-  {{- else if eq .DatabaseDriver "redis"}}
+  {{- end}}
+  {{- if .HasRedis}}
   redis_data:
+  {{- end}}
+  {{- if .HasMongoDB}}
+  mongodb_data:
   {{- end}}
 
 networks:

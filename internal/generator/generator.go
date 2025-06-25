@@ -366,6 +366,60 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 		}
 	}
 	context["DatabaseDriver"] = dbDriver
+	
+	// Add multi-database support
+	dbDrivers := g.getDatabaseDrivers(config)
+	context["DatabaseDrivers"] = dbDrivers
+	context["HasDatabase"] = len(dbDrivers) > 0 || dbDriver != ""
+	
+	// For backward compatibility, ensure DatabaseDriver is set to primary database
+	if dbDriver == "" && len(dbDrivers) > 0 {
+		context["DatabaseDriver"] = dbDrivers[0]
+	}
+	
+	// Add convenience flags for each database type
+	allDrivers := dbDrivers
+	if dbDriver != "" {
+		// Add legacy single driver to the list if not already present
+		found := false
+		for _, d := range dbDrivers {
+			if d == dbDriver {
+				found = true
+				break
+			}
+		}
+		if !found {
+			allDrivers = append([]string{dbDriver}, dbDrivers...)
+		}
+	}
+	
+	for _, driver := range allDrivers {
+		switch driver {
+		case "postgresql", "postgres":
+			context["HasPostgreSQL"] = true
+		case "mysql":
+			context["HasMySQL"] = true
+		case "mongodb", "mongo":
+			context["HasMongoDB"] = true
+		case "sqlite":
+			context["HasSQLite"] = true
+		case "redis":
+			context["HasRedis"] = true
+		}
+	}
+	
+	// Add secondary database flags (for multi-database setups)
+	if len(dbDrivers) > 1 {
+		context["HasMultipleDatabases"] = true
+		for _, driver := range dbDrivers[1:] { // Skip primary database
+			switch driver {
+			case "redis":
+				context["HasRedisCache"] = true
+			case "mongodb", "mongo":
+				context["HasMongoAnalytics"] = true
+			}
+		}
+	}
 
 	authType := g.getFeatureValue(config, "authentication", "type", "")
 	if authType == "" && config.Variables != nil {
@@ -390,6 +444,10 @@ func (g *Generator) getFeatureValue(config types.ProjectConfig, feature, key, de
 	case "database":
 		switch key {
 		case "driver":
+			// For backward compatibility, return primary driver
+			if len(config.Features.Database.Drivers) > 0 {
+				return config.Features.Database.Drivers[0]
+			}
 			return config.Features.Database.Driver
 		case "orm":
 			return config.Features.Database.ORM
@@ -402,6 +460,15 @@ func (g *Generator) getFeatureValue(config types.ProjectConfig, feature, key, de
 	}
 
 	return defaultValue
+}
+
+// getDatabaseDrivers returns all configured database drivers
+func (g *Generator) getDatabaseDrivers(config types.ProjectConfig) []string {
+	if config.Features == nil {
+		return []string{}
+	}
+	
+	return config.Features.Database.GetDrivers()
 }
 
 // processTemplateFile processes a single template file
