@@ -57,7 +57,26 @@ jobs:
       uses: golangci/golangci-lint-action@v3
       with:
         version: latest
-        args: --timeout=10m
+
+  template-validation:
+    name: Template Generation Validation
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.21
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Validate template generation
+      run: scripts/validate_template_generation.sh
+      timeout-minutes: 10
 
   build:
     name: Build

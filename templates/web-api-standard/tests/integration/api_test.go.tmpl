@@ -2,14 +2,22 @@ package integration
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
+	{{- if ne .DatabaseDriver ""}}
+	"gorm.io/gorm"
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	"github.com/golang-jwt/jwt/v5"
+	{{- end}}
 
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/handlers"
@@ -18,7 +26,7 @@ import (
 	{{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/database"
 	"{{.ModulePath}}/internal/models"
-	"{{.ModulePath}}/internal/repositories"
+	"{{.ModulePath}}/internal/repository"
 	"{{.ModulePath}}/internal/services"
 	{{- end}}
 )
@@ -74,9 +82,9 @@ func (suite *APITestSuite) SetupSuite() {
 
 	// Setup services
 	{{- if eq .DatabaseORM "gorm"}}
-	userRepo := repositories.NewUserRepository(suite.db.(*gorm.DB))
+	userRepo := repository.NewUserRepository(suite.db.(*gorm.DB))
 	{{- else}}
-	userRepo := repositories.NewUserRepository(suite.db.(*sql.DB))
+	userRepo := repository.NewUserRepository(suite.db.(*sql.DB))
 	{{- end}}
 	suite.userService = services.NewUserService(userRepo)
 
