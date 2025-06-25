@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/francknouama/go-starter/internal/utils"
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
@@ -100,8 +101,9 @@ func TestPrompter_GetProjectConfig_NonInteractive(t *testing.T) {
 	}
 
 	// Check defaults were set
-	if config.GoVersion != "1.21" {
-		t.Errorf("GoVersion = %v, want %v", config.GoVersion, "1.21")
+	expectedGoVersion := utils.GetOptimalGoVersion()
+	if config.GoVersion != expectedGoVersion {
+		t.Errorf("GoVersion = %v, want %v", config.GoVersion, expectedGoVersion)
 	}
 	if config.Variables == nil {
 		t.Error("Variables should be initialized")
