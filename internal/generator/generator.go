@@ -505,6 +505,13 @@ func (g *Generator) processDependencies(tmpl types.Template, _ types.ProjectConf
 
 // addDependencies adds dependencies to go.mod
 func (g *Generator) addDependencies(projectPath string, dependencies []string) error {
+	// Check if Go is available before trying to add dependencies
+	if !g.isGoAvailable() {
+		// Go is not available - generate a warning and instructions instead of failing
+		g.logGoUnavailableWarning(dependencies)
+		return nil
+	}
+
 	for _, dep := range dependencies {
 		cmd := exec.Command("go", "get", dep)
 		cmd.Dir = projectPath
@@ -514,6 +521,29 @@ func (g *Generator) addDependencies(projectPath string, dependencies []string) e
 		}
 	}
 	return nil
+}
+
+// isGoAvailable checks if Go is installed and available
+func (g *Generator) isGoAvailable() bool {
+	cmd := exec.Command("go", "version")
+	return cmd.Run() == nil
+}
+
+// logGoUnavailableWarning logs a warning when Go is not available
+func (g *Generator) logGoUnavailableWarning(dependencies []string) {
+	fmt.Println("⚠️  Warning: Go is not installed or not available in PATH")
+	fmt.Println("   Project structure has been generated successfully, but dependencies were not installed.")
+	fmt.Println()
+	fmt.Println("   To complete the setup:")
+	fmt.Println("   1. Install Go from https://golang.org/dl/")
+	fmt.Println("   2. Navigate to your project directory")
+	fmt.Println("   3. Run the following commands:")
+	fmt.Println()
+	for _, dep := range dependencies {
+		fmt.Printf("      go get %s\n", dep)
+	}
+	fmt.Println("      go mod tidy")
+	fmt.Println()
 }
 
 // executeHooks executes post-generation hooks

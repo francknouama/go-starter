@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/francknouama/go-starter/internal/config"
@@ -153,5 +154,19 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 
 	fmt.Printf("\nGet started:\n")
 	fmt.Printf("  cd %s\n", config.Name)
-	fmt.Printf("  make run\n")
+	
+	// Check if Go is available and provide appropriate next steps
+	if isGoAvailable() {
+		fmt.Printf("  make run\n")
+	} else {
+		fmt.Printf("  # Install Go first, then run:\n")
+		fmt.Printf("  go mod tidy\n")
+		fmt.Printf("  make run\n")
+	}
+}
+
+// isGoAvailable checks if Go is installed and available in PATH
+func isGoAvailable() bool {
+	cmd := exec.Command("go", "version")
+	return cmd.Run() == nil
 }
