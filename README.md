@@ -41,23 +41,43 @@ go install github.com/francknouama/go-starter@latest
 Download the latest release for your platform from [GitHub Releases](https://github.com/francknouama/go-starter/releases/latest).
 
 ```bash
-# Example for Linux
+# Example for Linux AMD64
 curl -L https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_Linux_x86_64.tar.gz | tar -xz
 sudo mv go-starter /usr/local/bin/
+
+# Example for macOS Apple Silicon
+curl -L https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_Darwin_arm64.tar.gz | tar -xz
+sudo mv go-starter /usr/local/bin/
+
+# Example for Windows (PowerShell)
+Invoke-WebRequest -Uri "https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_Windows_x86_64.zip" -OutFile "go-starter.zip"
+Expand-Archive go-starter.zip -DestinationPath .
+# Add to PATH or move to desired location
 ```
 
-### Using Homebrew (macOS/Linux)
+### Using Package Managers
+
+**Linux packages** (deb, rpm, apk) are available from [GitHub Releases](https://github.com/francknouama/go-starter/releases/latest):
 
 ```bash
-brew tap francknouama/tap
-brew install go-starter
+# Debian/Ubuntu
+wget https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_linux_amd64.deb
+sudo dpkg -i go-starter_1.0.0_linux_amd64.deb
+
+# RHEL/CentOS/Fedora  
+wget https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_linux_amd64.rpm
+sudo rpm -i go-starter_1.0.0_linux_amd64.rpm
+
+# Alpine Linux
+wget https://github.com/francknouama/go-starter/releases/download/v1.0.0/go-starter_1.0.0_linux_amd64.apk
+sudo apk add --allow-untrusted go-starter_1.0.0_linux_amd64.apk
 ```
 
-### Using Docker
+### Verify Installation
 
 ```bash
-docker pull francknouama/go-starter:latest
-docker run --rm -v $(pwd):/workspace francknouama/go-starter:latest new my-project
+go-starter version
+go-starter list
 ```
 
 ### From Source
