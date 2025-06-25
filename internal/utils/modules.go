@@ -307,18 +307,42 @@ func isValidGoVersion(version string) bool {
 		return false
 	}
 
-	// Check minor version
+	// Check minor version - support Go 1.18+
 	minorVersion := parts[1]
-	switch minorVersion {
-	case "18", "19", "20", "21", "22", "23":
-		return true
-	default:
-		// For future versions, assume they're valid if >= 18
-		if len(minorVersion) == 2 && minorVersion >= "18" {
-			return true
-		}
+	
+	// Convert to int for comparison
+	var minor int
+	if _, err := fmt.Sscanf(minorVersion, "%d", &minor); err != nil {
 		return false
 	}
+	
+	return minor >= 18
+}
+
+// GetOptimalGoVersion returns the best Go version to use for new projects
+// It returns the current installed Go version in major.minor format,
+// or falls back to a sensible default if detection fails
+func GetOptimalGoVersion() string {
+	// Try to get the current Go version
+	currentVersion, err := GoVersion()
+	if err != nil {
+		// Fallback to a stable default if Go is not available or detection fails
+		return "1.21"
+	}
+
+	// Convert to major.minor format (e.g., "1.21.5" -> "1.21")
+	parts := strings.Split(currentVersion, ".")
+	if len(parts) >= 2 {
+		majorMinor := fmt.Sprintf("%s.%s", parts[0], parts[1])
+		
+		// Validate the version is supported
+		if isValidGoVersion(majorMinor) {
+			return majorMinor
+		}
+	}
+
+	// If current version is too old or invalid, use minimum supported
+	return "1.21"
 }
 
 // GenerateGoMod generates a go.mod file content

@@ -6,6 +6,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/francknouama/go-starter/pkg/types"
+	"github.com/francknouama/go-starter/internal/utils"
 )
 
 // Prompter handles interactive prompts for project configuration
@@ -22,7 +23,7 @@ func (p *Prompter) GetProjectConfig(initial types.ProjectConfig, advanced bool) 
 
 	// Set defaults
 	if config.GoVersion == "" {
-		config.GoVersion = "1.21"
+		config.GoVersion = utils.GetOptimalGoVersion()
 	}
 	if config.Variables == nil {
 		config.Variables = make(map[string]string)
