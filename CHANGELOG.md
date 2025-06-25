@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2025-06-25
+
+### Added
+- **Multi-Database Selection Support**: Projects can now select multiple databases (PostgreSQL, MySQL, MongoDB, SQLite, Redis) during generation
+- **Dynamic Go Version Detection**: Automatically detects and uses the developer's current Go version for generated projects
+- **Improved CLI Behavior**: Graceful handling when Go is not installed, with helpful warnings and installation instructions
+
+### Changed
+- Docker Compose generation now supports multi-service configurations for selected databases
+- Go version in generated projects now defaults to the detected version instead of hardcoded 1.21
+
+### Fixed
+- Prevented hard failures during dependency installation when Go is not installed
+- Improved backward compatibility for existing single-database projects
+
 ## [1.0.0] - 2024-06-24
 
 ### Added
@@ -115,5 +130,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Primary Developer: Franck Nouama
 - Special thanks to the Go community for inspiration and feedback
 
-[Unreleased]: https://github.com/francknouama/go-starter/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/francknouama/go-starter/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/francknouama/go-starter/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/francknouama/go-starter/releases/tag/v1.0.0

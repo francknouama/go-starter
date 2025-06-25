@@ -11,7 +11,7 @@ import (
 
 var (
 	// Version is set by build flags
-	Version = "1.0.0"
+	Version = "1.1.0"
 	// Commit is set by build flags
 	Commit = "none"
 	// Date is set by build flags
