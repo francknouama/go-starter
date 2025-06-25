@@ -32,7 +32,7 @@ type Features struct {
 type DatabaseConfig struct {
 	Drivers []string `yaml:"drivers" json:"drivers"` // Support multiple databases
 	ORM     string   `yaml:"orm" json:"orm"`
-	
+
 	// Deprecated: use Drivers instead. Kept for backward compatibility
 	Driver string `yaml:"driver,omitempty" json:"driver,omitempty"`
 }

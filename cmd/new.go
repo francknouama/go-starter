@@ -154,7 +154,7 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 
 	fmt.Printf("\nGet started:\n")
 	fmt.Printf("  cd %s\n", config.Name)
-	
+
 	// Check if Go is available and provide appropriate next steps
 	if isGoAvailable() {
 		fmt.Printf("  make run\n")

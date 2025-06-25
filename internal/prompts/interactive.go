@@ -5,8 +5,8 @@ import (
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
-	"github.com/francknouama/go-starter/pkg/types"
 	"github.com/francknouama/go-starter/internal/utils"
+	"github.com/francknouama/go-starter/pkg/types"
 )
 
 // Prompter handles interactive prompts for project configuration
@@ -269,10 +269,10 @@ func (p *Prompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 
 		config.Features.Database.Drivers = drivers
 		config.Features.Database.ORM = "gorm" // Default ORM
-		
+
 		// For backward compatibility, set Driver to the first selected database
 		if len(drivers) > 0 {
-			config.Features.Database.Driver = drivers[0]
+			config.Features.Database.Driver = drivers[0] //nolint:staticcheck // kept for backward compatibility
 		}
 	}
 

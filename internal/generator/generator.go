@@ -366,17 +366,17 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 		}
 	}
 	context["DatabaseDriver"] = dbDriver
-	
+
 	// Add multi-database support
 	dbDrivers := g.getDatabaseDrivers(config)
 	context["DatabaseDrivers"] = dbDrivers
 	context["HasDatabase"] = len(dbDrivers) > 0 || dbDriver != ""
-	
+
 	// For backward compatibility, ensure DatabaseDriver is set to primary database
 	if dbDriver == "" && len(dbDrivers) > 0 {
 		context["DatabaseDriver"] = dbDrivers[0]
 	}
-	
+
 	// Add convenience flags for each database type
 	allDrivers := dbDrivers
 	if dbDriver != "" {
@@ -392,7 +392,7 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 			allDrivers = append([]string{dbDriver}, dbDrivers...)
 		}
 	}
-	
+
 	for _, driver := range allDrivers {
 		switch driver {
 		case "postgresql", "postgres":
@@ -407,7 +407,7 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 			context["HasRedis"] = true
 		}
 	}
-	
+
 	// Add secondary database flags (for multi-database setups)
 	if len(dbDrivers) > 1 {
 		context["HasMultipleDatabases"] = true
@@ -448,7 +448,7 @@ func (g *Generator) getFeatureValue(config types.ProjectConfig, feature, key, de
 			if len(config.Features.Database.Drivers) > 0 {
 				return config.Features.Database.Drivers[0]
 			}
-			return config.Features.Database.Driver
+			return config.Features.Database.Driver //nolint:staticcheck // kept for backward compatibility
 		case "orm":
 			return config.Features.Database.ORM
 		}
@@ -467,7 +467,7 @@ func (g *Generator) getDatabaseDrivers(config types.ProjectConfig) []string {
 	if config.Features == nil {
 		return []string{}
 	}
-	
+
 	return config.Features.Database.GetDrivers()
 }
 

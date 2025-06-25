@@ -309,13 +309,13 @@ func isValidGoVersion(version string) bool {
 
 	// Check minor version - support Go 1.18+
 	minorVersion := parts[1]
-	
+
 	// Convert to int for comparison
 	var minor int
 	if _, err := fmt.Sscanf(minorVersion, "%d", &minor); err != nil {
 		return false
 	}
-	
+
 	return minor >= 18
 }
 
@@ -334,7 +334,7 @@ func GetOptimalGoVersion() string {
 	parts := strings.Split(currentVersion, ".")
 	if len(parts) >= 2 {
 		majorMinor := fmt.Sprintf("%s.%s", parts[0], parts[1])
-		
+
 		// Validate the version is supported
 		if isValidGoVersion(majorMinor) {
 			return majorMinor
