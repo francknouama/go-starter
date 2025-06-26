@@ -1,12 +1,34 @@
 package templates
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
+func setupTestTemplates(t *testing.T) {
+	t.Helper()
+	
+	// Get the project root for tests
+	_, file, _, _ := runtime.Caller(0)
+	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	templatesDir := filepath.Join(projectRoot, "templates")
+	
+	// Verify templates directory exists
+	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
+		t.Fatalf("Templates directory not found at: %s", templatesDir)
+	}
+	
+	// Set up the filesystem for tests using os.DirFS
+	SetTemplatesFS(os.DirFS(templatesDir))
+}
+
 func TestRegistry_Register(t *testing.T) {
+	setupTestTemplates(t)
+	
 	registry := NewRegistry()
 
 	template := types.Template{

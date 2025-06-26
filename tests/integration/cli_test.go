@@ -267,8 +267,8 @@ func buildTestBinary(t *testing.T) string {
 	tmpDir := t.TempDir()
 	binary := filepath.Join(tmpDir, "go-starter-test")
 
-	// Build the binary
-	cmd := exec.Command("go", "build", "-o", binary, "../../main.go")
+	// Build the binary - need to build the whole package to include embed.go
+	cmd := exec.Command("go", "build", "-o", binary, "../..")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 
 	output, err := cmd.CombinedOutput()

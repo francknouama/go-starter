@@ -1,15 +1,38 @@
 package integration
 
 import (
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/francknouama/go-starter/internal/config"
 	"github.com/francknouama/go-starter/internal/generator"
+	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
+func setupTestTemplates(t *testing.T) {
+	t.Helper()
+
+	// Get the project root for tests - integration tests are 2 levels deep
+	_, file, _, _ := runtime.Caller(0)
+	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	templatesDir := filepath.Join(projectRoot, "templates")
+
+	// Verify templates directory exists
+	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
+		t.Fatalf("Templates directory not found at: %s", templatesDir)
+	}
+
+	// Set up the filesystem for tests using os.DirFS
+	templates.SetTemplatesFS(os.DirFS(templatesDir))
+}
+
 // TestGeneratorBasicFunctionality tests basic generator functionality
 func TestGeneratorBasicFunctionality(t *testing.T) {
+	setupTestTemplates(t)
+
 	// Test generator creation
 	gen := generator.New()
 	if gen == nil {
@@ -23,6 +46,8 @@ func TestGeneratorBasicFunctionality(t *testing.T) {
 
 // TestGeneratorValidation tests project validation
 func TestGeneratorValidation(t *testing.T) {
+	setupTestTemplates(t)
+
 	gen := generator.New()
 	_ = gen // Use the generator to avoid unused variable warning
 
