@@ -7,19 +7,31 @@
 
 ---
 
-## 🎯 SaaS Platform Overview
+## 🎯 Web Platform Overview
 
-### **Core Value Propositions**
+### **Dual Approach: Free Web Tool + Premium SaaS Platform**
+
+#### **Free Web Version (CLI Parity)**
 1. **Browser-based project generation** - No CLI installation required
-2. **Live preview & visualization** - See project structure before generation
-3. **Project management dashboard** - Manage generated projects over time
-4. **Template marketplace** - Discover and share community templates
-5. **Team collaboration** - Share projects and templates within organizations
-6. **Direct deployment integration** - Deploy to Vercel, Railway, AWS from browser
+2. **All templates available** - Same as CLI, no restrictions
+3. **Live preview** - See project structure before generation
+4. **Instant download** - Zip file with generated project
+5. **No registration required** - Fully anonymous usage
+6. **Open source** - Same codebase as CLI
 
-### **Revenue Model**
-- **Free Tier:** Basic templates, 5 projects/month, public templates only
-- **Pro Tier ($9/month):** All templates, unlimited projects, private templates
+#### **Premium SaaS Features (Revenue Model)**
+1. **Project management dashboard** - Save and manage generated projects
+2. **Cloud storage** - Projects stored for 30+ days
+3. **Template marketplace** - Discover and share community templates
+4. **Team collaboration** - Share projects and templates within organizations
+5. **Direct deployment integration** - Deploy to Vercel, Railway, AWS from browser
+6. **Custom templates** - Create and save private templates
+7. **API access** - Programmatic project generation
+8. **Analytics & insights** - Track template usage and team metrics
+
+### **Revenue Model (SaaS Only)**
+- **Free Web Tool:** Unlimited generation, all templates, no storage
+- **Pro Tier ($9/month):** Cloud storage, private templates, deployment integration
 - **Team Tier ($29/month):** Team workspaces, collaboration features, analytics
 - **Enterprise Tier (Custom):** On-premise deployment, custom templates, SSO
 
@@ -55,7 +67,54 @@
 
 ---
 
-## 📋 Phase 2B: SaaS MVP Development (Weeks 1-6)
+## 📋 Phase 2B: Web Platform Development (Weeks 1-6)
+
+### Stage 1: Free Web Tool (Weeks 1-3) - PUBLIC GOOD
+
+#### 🌐 Feature: Web-based CLI Equivalent
+**Epic:** Free Web Generator  
+**Estimate:** 10-15 days  
+**Priority:** HIGH - Community Value
+
+**User Story:** *As a developer, I want to use go-starter from my browser without installing anything, with the same capabilities as the CLI tool.*
+
+**Core Requirements:**
+- [ ] **No Registration Required**
+  - [ ] Anonymous usage with no tracking
+  - [ ] No rate limiting for reasonable usage
+  - [ ] No artificial template restrictions
+  - [ ] Full feature parity with CLI
+
+- [ ] **Simple Web Interface**
+  - [ ] Single-page application for generation
+  - [ ] Same configuration options as CLI interactive mode
+  - [ ] Live file tree preview
+  - [ ] Instant zip download
+  - [ ] Copy individual files to clipboard
+
+- [ ] **Technical Implementation**
+  ```go
+  // Shared generation logic from CLI
+  POST /api/generate
+  {
+    "template": "web-api",
+    "name": "my-project", 
+    "logger": "slog",
+    "framework": "gin",
+    "database": "postgres",
+    "orm": "gorm"
+  }
+  
+  // Returns: zip file stream
+  ```
+
+- [ ] **Deployment Strategy**
+  - [ ] Static frontend on GitHub Pages or Netlify (free)
+  - [ ] Backend on free tier (Railway/Render)
+  - [ ] No database required (stateless)
+  - [ ] CDN for global performance
+
+### Stage 2: Premium SaaS Features (Weeks 4-6)
 
 ### Epic 1: Core Platform Foundation (Weeks 1-2)
 

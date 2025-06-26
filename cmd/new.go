@@ -19,6 +19,7 @@ var (
 	projectName   string
 	projectModule string
 	projectType   string
+	goVersion     string
 	outputDir     string
 	framework     string
 	logger        string
@@ -56,6 +57,7 @@ func init() {
 	newCmd.Flags().StringVar(&projectName, "name", "", "Project name")
 	newCmd.Flags().StringVar(&projectModule, "module", "", "Go module path (e.g., github.com/user/project)")
 	newCmd.Flags().StringVar(&projectType, "type", "", "Project type (web-api, cli, library, lambda)")
+	newCmd.Flags().StringVar(&goVersion, "go-version", "", "Go version to use (auto, 1.23, 1.22, 1.21)")
 	newCmd.Flags().StringVar(&framework, "framework", "", "Framework to use (gin, echo, cobra, etc.)")
 	newCmd.Flags().StringVar(&logger, "logger", "", "Logger to use (slog, zap, logrus, zerolog)")
 	newCmd.Flags().StringVar(&outputDir, "output", ".", "Output directory")
@@ -88,6 +90,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 		Name:      projectName,
 		Module:    projectModule,
 		Type:      projectType,
+		GoVersion: goVersion,
 		Framework: framework,
 		Logger:    logger,
 	}, advanced)
@@ -158,6 +161,13 @@ func validateConfig(cfg types.ProjectConfig) error {
 		}
 	}
 
+	// Validate Go version if provided
+	if cfg.GoVersion != "" {
+		if err := prompts.ValidateGoVersion(cfg.GoVersion); err != nil {
+			return types.NewValidationError(fmt.Sprintf("invalid Go version: %v", err), nil)
+		}
+	}
+
 	return nil
 }
 
@@ -203,6 +213,9 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Name:") + " " + valueStyle.Render(config.Name))
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Type:") + " " + valueStyle.Render(config.Type))
 	
+	if config.GoVersion != "" {
+		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Go Version:") + " " + valueStyle.Render(config.GoVersion))
+	}
 	if config.Framework != "" {
 		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Framework:") + " " + valueStyle.Render(config.Framework))
 	}

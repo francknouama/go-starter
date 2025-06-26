@@ -70,6 +70,13 @@ func (p *Prompter) getSurveyProjectConfig(initial types.ProjectConfig, advanced 
 		}
 	}
 
+	// Go version selection
+	if config.GoVersion == "" || config.GoVersion == utils.GetOptimalGoVersion() {
+		if err := p.promptGoVersionSelection(&config); err != nil {
+			return config, err
+		}
+	}
+
 	// Framework selection based on project type
 	if config.Framework == "" {
 		if err := p.promptFramework(&config); err != nil {
@@ -444,6 +451,15 @@ func (p *Prompter) promptAdvancedLogger(config *types.ProjectConfig) error {
 	// Structured logging (always enabled for consistency)
 	config.Features.Logging.Structured = true
 
+	return nil
+}
+
+func (p *Prompter) promptGoVersionSelection(config *types.ProjectConfig) error {
+	goVersion, err := p.PromptGoVersion()
+	if err != nil {
+		return err
+	}
+	config.GoVersion = goVersion
 	return nil
 }
 

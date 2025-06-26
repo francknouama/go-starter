@@ -1,307 +1,435 @@
-# Contributing to Go-Starter
+# Contributing to go-starter
 
-Thank you for your interest in contributing to go-starter! This document provides guidelines and workflows for contributing to the project.
+Thank you for your interest in contributing to go-starter! This project follows **strict Test-Driven Development (TDD) principles** to ensure high code quality and maintainability.
 
-## 📋 Table of Contents
+## 🧪 TDD is Mandatory
 
-- [Code of Conduct](#code-of-conduct)
-- [Getting Started](#getting-started)
-- [Development Workflow](#development-workflow)
-- [GitHub Project Management](#github-project-management)
-- [Commit Guidelines](#commit-guidelines)
-- [Pull Request Process](#pull-request-process)
-- [Testing Requirements](#testing-requirements)
-- [Documentation](#documentation)
+**All code contributions must follow Test-Driven Development (TDD) practices.** This is not optional.
 
-## Code of Conduct
+### What is TDD?
 
-Please note that this project is released with a Contributor Code of Conduct. By participating in this project you agree to abide by its terms. Be kind, respectful, and professional in all interactions.
+Test-Driven Development is a development process that follows the **Red-Green-Refactor** cycle:
 
-## Getting Started
+1. **Red**: Write a failing test first
+2. **Green**: Write the minimal code to make the test pass
+3. **Refactor**: Improve the code while keeping tests green
 
-1. **Fork the repository** and clone your fork:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/go-starter.git
-   cd go-starter
-   ```
+### Why TDD?
 
-2. **Set up your development environment**:
-   ```bash
-   # Install dependencies
-   go mod download
-   
-   # Run tests to ensure everything works
-   make test
-   
-   # Build the project
-   make build
-   ```
+- **Quality Assurance**: Ensures every feature works as intended
+- **Design Improvement**: Writing tests first leads to better API design
+- **Regression Prevention**: Comprehensive tests prevent future bugs
+- **Documentation**: Tests serve as living documentation
+- **Confidence**: Enables safe refactoring and feature additions
 
-3. **Create a feature branch**:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+## 📋 Before You Start
 
-## Development Workflow
+### 1. Read the Development Requirements
 
-### 1. Check Existing Issues
+- **Minimum Test Coverage**: >70% for all new code
+- **Project Coverage**: Must maintain >30% overall coverage
+- **Test Types**: Unit tests, integration tests, and edge case testing required
+- **TDD Process**: Must follow Red-Green-Refactor cycle with commit evidence
 
-Before starting work:
-- Check the [GitHub Issues](https://github.com/francknouama/go-starter/issues) for existing issues
-- Look at the [Project Board](https://github.com/users/francknouama/projects/4) for issue status
-- If no issue exists for your work, create one first
-
-### 2. Assign Yourself to an Issue
-
-When you decide to work on an issue:
-- Comment on the issue to let others know you're working on it
-- If you have access, assign yourself to the issue
-
-### 3. Update Project Status
-
-**IMPORTANT**: Keep the GitHub Project board updated with your progress.
-
-When starting work:
-```bash
-# Move issue to "In Progress" column
-gh project item-edit --project-id PVT_kwHOAAjzD84A8ata --id <ITEM_ID> --field-id PVTSSF_lAHOAAjzD84A8atazgwbEdk --single-select-option-id 47fc9ee4
-```
-
-When completing work:
-```bash
-# Move issue to "Done" column
-gh project item-edit --project-id PVT_kwHOAAjzD84A8ata --id <ITEM_ID> --field-id PVTSSF_lAHOAAjzD84A8atazgwbEdk --single-select-option-id 98236657
-```
-
-## GitHub Project Management
-
-We use GitHub Projects to track progress. The project board has three columns:
-
-| Column | ID | Purpose |
-|--------|-----|---------|
-| **Todo** | `f75ad846` | Issues ready to be worked on |
-| **In Progress** | `47fc9ee4` | Issues currently being worked on |
-| **Done** | `98236657` | Completed issues |
-
-### Finding Item IDs
-
-To find the item ID for an issue:
-```bash
-gh project item-list 4 --owner francknouama --format json | jq '.items[] | select(.content.url | contains("/issues/YOUR_ISSUE_NUMBER")) | {id, title}'
-```
-
-## Commit Guidelines
-
-### Commit Message Format
-
-**IMPORTANT**: All commits MUST reference the related issue number.
-
-Format:
-```
-<type>(<scope>): <subject> (#<issue-number>)
-
-<body>
-
-<footer>
-```
-
-### Types
-
-- **feat**: New feature
-- **fix**: Bug fix
-- **docs**: Documentation changes
-- **style**: Code style changes (formatting, missing semicolons, etc.)
-- **refactor**: Code refactoring without changing functionality
-- **perf**: Performance improvements
-- **test**: Adding or updating tests
-- **chore**: Maintenance tasks, dependency updates
-- **ci**: CI/CD configuration changes
-
-### Examples
+### 2. Set Up Your Development Environment
 
 ```bash
-# Feature commit
-git commit -m "feat(cli): add progress indicators with Charm's Fang (#22)
+# Clone the repository
+git clone https://github.com/francknouama/go-starter.git
+cd go-starter
 
-- Implement spinner for project generation
-- Add progress bar for file creation
-- Include styled success/error messages
+# Install dependencies
+go mod download
 
-Resolves #22"
-
-# Bug fix commit
-git commit -m "fix(generator): correct template path resolution (#45)
-
-- Fix relative path issues on Windows
-- Add proper path normalization
-- Update tests to cover edge cases
-
-Fixes #45"
-
-# Documentation commit
-git commit -m "docs(readme): update installation instructions (#12)
-
-- Add Homebrew installation method
-- Include Windows installation guide
-- Fix broken links
-
-Updates #12"
-```
-
-### Commit Best Practices
-
-1. **Reference issues**: Always include `#<issue-number>` in your commits
-2. **Be descriptive**: Explain what and why, not just how
-3. **Keep it focused**: One logical change per commit
-4. **Use present tense**: "add feature" not "added feature"
-5. **Line length**: Keep the subject line under 50 characters
-
-## Pull Request Process
-
-1. **Ensure your branch is up to date**:
-   ```bash
-   git checkout main
-   git pull upstream main
-   git checkout feature/your-feature
-   git rebase main
-   ```
-
-2. **Run all tests and checks**:
-   ```bash
-   make test
-   make lint
-   ```
-
-3. **Create Pull Request**:
-   - Use a clear title that includes the issue number
-   - Reference the issue in the PR description using "Fixes #XX" or "Resolves #XX"
-   - Fill out the PR template completely
-   - Add relevant labels
-
-### PR Title Format
-```
-<type>(<scope>): <description> (#<issue-number>)
-```
-
-Example: `feat(cli): integrate Charm's Fang for UI enhancement (#22)`
-
-### PR Description Template
-```markdown
-## Summary
-Brief description of the changes
-
-## Related Issue
-Fixes #<issue-number>
-
-## Type of Change
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Breaking change
-- [ ] Documentation update
-
-## Testing
-- [ ] Unit tests pass
-- [ ] Integration tests pass
-- [ ] Manual testing completed
-
-## Checklist
-- [ ] My code follows the project's style guidelines
-- [ ] I have performed a self-review
-- [ ] I have added tests that prove my fix/feature works
-- [ ] I have updated the documentation accordingly
-```
-
-## Testing Requirements
-
-### Running Tests
-
-```bash
-# Run all tests
+# Verify your setup
 make test
 
-# Run with race detection
-make test-race
-
-# Run specific tests
-go test -v ./internal/generator/...
-
-# Run integration tests
-make test-integration
+# Install development tools
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 ```
 
-### Test Coverage
+### 3. Understanding the Codebase
 
-- Aim for at least 80% test coverage
-- All new features must include tests
-- Bug fixes should include regression tests
+- Read the [README.md](README.md) for project overview
+- Review existing tests to understand testing patterns
+- Check [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for technical details
+- Examine the current test coverage: `make test`
+
+## 🚀 Development Workflow
+
+### Step 1: Create an Issue
+
+Before starting development, create an issue using our TDD-enforced templates:
+
+- **Feature Request**: Use `.github/ISSUE_TEMPLATE/feature_request.yml`
+- **Development Task**: Use `.github/ISSUE_TEMPLATE/development_task.yml`
+
+Both templates require:
+- Detailed test plan
+- TDD commitment checkboxes
+- Acceptance criteria
+- Definition of Done
+
+### Step 2: Follow the TDD Process
+
+#### 🔴 Red Phase: Write Failing Tests
+
+1. **Create a new branch**: `git checkout -b feature/your-feature-name`
+2. **Write failing tests first**: Create test file(s) before implementation
+3. **Run tests to confirm they fail**: `go test -v ./...`
+4. **Commit the failing tests**: `git commit -m "Add failing tests for [feature]"`
+
+```go
+// Example: writing a failing test first
+func TestNewFeature_ShouldReturnExpectedValue(t *testing.T) {
+    // Arrange
+    input := "test-input"
+    expected := "expected-output"
+    
+    // Act
+    result := NewFeature(input) // This function doesn't exist yet!
+    
+    // Assert
+    if result != expected {
+        t.Errorf("NewFeature() = %v, want %v", result, expected)
+    }
+}
+```
+
+#### 🟢 Green Phase: Make Tests Pass
+
+1. **Implement minimal code**: Write only enough code to make tests pass
+2. **Run tests**: `go test -v ./...`
+3. **Ensure tests pass**: All new tests should now be green
+4. **Commit implementation**: `git commit -m "Implement [feature] to pass tests"`
+
+```go
+// Example: minimal implementation
+func NewFeature(input string) string {
+    return "expected-output" // Minimal implementation
+}
+```
+
+#### 🔄 Refactor Phase: Improve Code Quality
+
+1. **Improve implementation**: Enhance code quality, performance, error handling
+2. **Keep tests green**: Ensure tests continue to pass during refactoring
+3. **Add more tests**: Add edge cases, error scenarios, integration tests
+4. **Commit improvements**: `git commit -m "Refactor [feature] for better quality"`
+
+```go
+// Example: improved implementation
+func NewFeature(input string) string {
+    if input == "" {
+        return "" // Handle edge case
+    }
+    // More sophisticated logic
+    return processInput(input)
+}
+
+// Additional test for edge case
+func TestNewFeature_WithEmptyInput_ShouldReturnEmpty(t *testing.T) {
+    result := NewFeature("")
+    if result != "" {
+        t.Errorf("NewFeature(\"\") = %v, want empty string", result)
+    }
+}
+```
+
+### Step 3: Ensure Comprehensive Testing
+
+#### Test Coverage Requirements
+
+- **Line Coverage**: >70% for all new code
+- **Branch Coverage**: >80% for critical paths
+- **Error Coverage**: 100% for error handling paths
+
+```bash
+# Check coverage locally
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out -o coverage.html
+go tool cover -func=coverage.out
+
+# Focus on package coverage
+go test -coverprofile=coverage.out ./internal/your-package/
+go tool cover -func=coverage.out
+```
+
+#### Test Types Required
+
+1. **Unit Tests**: Test individual functions and methods
+2. **Integration Tests**: Test component interactions
+3. **Edge Case Tests**: Test boundary conditions
+4. **Error Tests**: Test error handling and failure modes
+5. **Table-Driven Tests**: Test multiple scenarios efficiently
+
+#### Testing Best Practices
+
+```go
+// ✅ Good: Table-driven test
+func TestValidateProjectName(t *testing.T) {
+    tests := []struct {
+        name        string
+        projectName string
+        wantErr     bool
+        errorMsg    string
+    }{
+        {
+            name:        "valid simple name",
+            projectName: "my-project",
+            wantErr:     false,
+        },
+        {
+            name:        "empty name should error",
+            projectName: "",
+            wantErr:     true,
+            errorMsg:    "project name cannot be empty",
+        },
+        // More test cases...
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            err := ValidateProjectName(tt.projectName)
+            if (err != nil) != tt.wantErr {
+                t.Errorf("ValidateProjectName() error = %v, wantErr %v", err, tt.wantErr)
+                return
+            }
+            if tt.wantErr && !strings.Contains(err.Error(), tt.errorMsg) {
+                t.Errorf("ValidateProjectName() error = %v, want error containing %v", err, tt.errorMsg)
+            }
+        })
+    }
+}
+
+// ✅ Good: Testing error scenarios
+func TestGenerator_Generate_InvalidConfig(t *testing.T) {
+    generator := New()
+    invalidConfig := types.ProjectConfig{} // Missing required fields
+    
+    result, err := generator.Generate(invalidConfig, types.GenerationOptions{})
+    
+    // Test that error is returned
+    if err == nil {
+        t.Error("Expected error for invalid config, got nil")
+    }
+    
+    // Test that result indicates failure
+    if result.Success {
+        t.Error("Expected result.Success to be false for invalid config")
+    }
+}
+```
+
+### Step 4: Code Quality Standards
+
+Before submitting your PR, ensure:
+
+```bash
+# Format code
+go fmt ./...
+
+# Run linter
+golangci-lint run
+
+# Run vet
+go vet ./...
+
+# Run tests with race detection
+go test -race ./...
+
+# Check test coverage
+go test -coverprofile=coverage.out ./...
+go tool cover -func=coverage.out
+```
+
+### Step 5: Submit Pull Request
+
+1. **Push your branch**: `git push origin feature/your-feature-name`
+2. **Create PR**: Use the provided PR template
+3. **Fill TDD sections**: Provide evidence of TDD compliance
+4. **Include coverage report**: Show test coverage statistics
+5. **Link to issue**: Reference the original issue
+
+#### Required PR Information
+
+Your PR must include:
+
+- **TDD Evidence**: Commit hashes showing Red-Green-Refactor progression
+- **Coverage Report**: Current coverage statistics
+- **Test Files**: List of test files added/modified
+- **TDD Compliance Declaration**: Confirmation you followed TDD
+
+## 🔍 Code Review Process
+
+### What Reviewers Look For
+
+1. **TDD Compliance**: Evidence that TDD was followed
+2. **Test Quality**: Comprehensive, well-structured tests
+3. **Coverage**: Adequate test coverage for new code
+4. **Code Quality**: Clean, readable, maintainable code
+5. **Documentation**: Clear comments and updated docs
+
+### Common Review Feedback
+
+- **Insufficient Tests**: "Please add tests for error case X"
+- **Low Coverage**: "Coverage is X%, need >70% for new code"
+- **Missing Edge Cases**: "Please test boundary condition Y"
+- **No TDD Evidence**: "Please provide commit showing tests were written first"
+
+### Addressing Review Feedback
+
+When addressing feedback:
+
+1. **Continue TDD**: Write tests for missing scenarios first
+2. **Update coverage**: Ensure new tests improve coverage
+3. **Commit incrementally**: Show your TDD process in commits
+4. **Re-run checks**: Verify all automated checks pass
+
+## 🚨 Common TDD Violations
+
+### ❌ Writing Implementation First
+
+```go
+// DON'T DO THIS: Implementation without tests
+func NewFeature(input string) string {
+    return "result"
+}
+// Then writing tests after...
+```
+
+### ❌ Insufficient Test Coverage
+
+```go
+// DON'T DO THIS: Only testing happy path
+func TestNewFeature_OnlyHappyPath(t *testing.T) {
+    result := NewFeature("valid-input")
+    if result != "expected" {
+        t.Error("Failed")
+    }
+    // Missing: error cases, edge cases, invalid inputs
+}
+```
+
+### ❌ Non-Descriptive Tests
+
+```go
+// DON'T DO THIS: Unclear test names
+func TestFeature(t *testing.T) {
+    // What does this test actually verify?
+}
+
+// DO THIS: Clear, descriptive test names
+func TestNewFeature_WithInvalidInput_ReturnsError(t *testing.T) {
+    // Clear what's being tested
+}
+```
+
+## 🎯 Project-Specific Guidelines
 
 ### Template Testing
 
-When modifying templates:
-1. Test all template+logger combinations
-2. Ensure generated projects compile: `go build`
-3. Run generated project tests: `go test ./...`
-4. Validate against the test matrix in `scripts/test_all_combinations.sh`
+When working on templates:
 
-## Documentation
+```go
+func TestTemplate_Generation(t *testing.T) {
+    // Test template parsing
+    // Test variable substitution
+    // Test file generation
+    // Test generated project compiles
+}
+```
 
-### Code Documentation
+### Generator Testing
 
-- Add godoc comments to all exported functions, types, and packages
-- Include examples in godoc comments where appropriate
-- Keep comments up to date with code changes
+When working on the generator:
 
-### Project Documentation
+```go
+func TestGenerator_ProcessTemplate(t *testing.T) {
+    // Test template processing logic
+    // Test error handling
+    // Test file creation
+    // Test directory structure
+}
+```
 
-When adding features:
-1. Update README.md if it affects usage
-2. Update CLAUDE.md if it affects AI assistance
-3. Update PROJECT_ROADMAP.md for significant features
-4. Add entries to CHANGELOG.md (if present)
+### CLI Testing
 
-### Template Documentation
+When working on CLI commands:
 
-For new templates:
-1. Include comprehensive README.md in the template
-2. Add usage examples
-3. Document configuration options
-4. Provide troubleshooting guide
+```go
+func TestCommand_Execute(t *testing.T) {
+    // Test command parsing
+    // Test flag handling
+    // Test interactive prompts (mock user input)
+    // Test output formatting
+}
+```
 
-## Development Guidelines
+## 🆘 Getting Help
 
-### Code Style
+If you need help with TDD or testing:
 
-- Follow standard Go formatting (use `gofmt`)
-- Use meaningful variable and function names
-- Keep functions small and focused
-- Handle errors explicitly
-- Add comments for complex logic
+1. **Review existing tests**: Look at current test files for patterns
+2. **Check documentation**: Read Go testing best practices
+3. **Ask questions**: Create a discussion or comment on issues
+4. **Pair programming**: Request a review call for complex features
 
-### Dependencies
+### Useful Resources
 
-- Minimize external dependencies
-- Document why each dependency is needed
-- Keep dependencies up to date
-- Use go modules for version management
+- [Go Testing Documentation](https://golang.org/pkg/testing/)
+- [Table-Driven Tests in Go](https://github.com/golang/go/wiki/TableDrivenTests)
+- [Go Test Coverage](https://golang.org/doc/tutorial/add-a-test)
+- [TDD by Example (Kent Beck)](https://www.amazon.com/Test-Driven-Development-Kent-Beck/dp/0321146530)
 
-### Performance
+## 📝 Issue and PR Templates
 
-- Profile before optimizing
-- Consider memory allocations in hot paths
-- Use benchmarks to validate improvements
-- Document performance-critical code
+We provide TDD-enforced templates:
 
-## Getting Help
+- **Feature Request** (`.github/ISSUE_TEMPLATE/feature_request.yml`): For user-facing features
+- **Development Task** (`.github/ISSUE_TEMPLATE/development_task.yml`): For internal development
+- **Pull Request** (`.github/PULL_REQUEST_TEMPLATE.md`): TDD compliance verification
 
-- **Questions**: Open a [Discussion](https://github.com/francknouama/go-starter/discussions)
-- **Bugs**: Open an [Issue](https://github.com/francknouama/go-starter/issues)
-- **Security**: Email security concerns privately
+All templates include mandatory TDD requirements and commitments.
 
-## Recognition
+## 🔧 Automated Enforcement
 
-Contributors will be:
-- Listed in CONTRIBUTORS.md
-- Mentioned in release notes
-- Given credit in commit messages
+Our CI/CD pipeline automatically enforces:
 
-Thank you for contributing to go-starter! 🚀
+- **Test Coverage**: Fails if coverage drops below thresholds
+- **Test Quality**: Verifies all Go files have corresponding tests
+- **Code Quality**: Runs linting and formatting checks
+- **TDD Compliance**: Comments on PRs with coverage reports
+
+## 📊 Current Project Status
+
+- **Overall Coverage**: 31.6%
+- **Target Coverage**: 85%
+- **TDD Compliance**: Mandatory for all new code
+- **Coverage Trend**: Improving with each release
+
+## 🏆 Recognition
+
+Contributors who consistently follow TDD practices will be:
+
+- Recognized in release notes
+- Given priority for code review
+- Considered for maintainer roles
+- Featured in project documentation
+
+## ⚠️ Enforcement Policy
+
+**Code that doesn't follow TDD practices will be rejected.** This includes:
+
+- PRs without corresponding tests
+- Tests written after implementation (without TDD evidence)
+- Insufficient test coverage (<70% for new code)
+- Poor test quality (only happy path testing)
+
+We enforce TDD strictly because it's fundamental to the project's quality and maintainability.
+
+---
+
+**Thank you for contributing to go-starter with high-quality, test-driven code!** 🧪✨
+
+Your commitment to TDD helps us build a reliable, maintainable project that serves the Go community well.

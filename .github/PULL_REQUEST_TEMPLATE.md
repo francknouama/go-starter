@@ -32,15 +32,62 @@ Related to #(issue number)
 - Changes made: 
 - Backward compatibility: 
 
-## Testing
-<!-- Describe the testing you've performed -->
-- [ ] All existing tests pass
-- [ ] New tests added for new functionality
-- [ ] Manual testing completed
-- [ ] Template generation tested with various configurations
-- [ ] Generated projects compile successfully
+## 🧪 Test-Driven Development (TDD) Verification
+<!-- This section is MANDATORY for all code changes -->
 
-### Test Configuration
+### TDD Implementation Evidence
+<!-- Provide evidence that TDD was followed -->
+- [ ] **Red Phase**: I wrote failing tests first (provide commit hash where tests were added before implementation)
+- [ ] **Green Phase**: I implemented minimal code to make tests pass (provide commit hash)
+- [ ] **Refactor Phase**: I improved code quality while keeping tests green (provide commit hash if applicable)
+
+**Commit demonstrating TDD approach**: `[commit-hash]` <!-- Replace with actual commit hash -->
+
+### Test Coverage Analysis
+<!-- Provide detailed test coverage information -->
+- [ ] **New Code Coverage**: >70% line coverage for all new code
+- [ ] **Overall Project Coverage**: No reduction in overall coverage percentage
+- [ ] **Branch Coverage**: >80% for critical code paths
+- [ ] **Error Path Coverage**: 100% coverage for error handling
+
+**Coverage Report**: 
+```
+Package                          Coverage
+internal/[package]               XX.X%
+internal/[package]_test          XX.X%
+Overall Project                  XX.X%
+```
+
+### Test Quality Verification
+<!-- Verify comprehensive testing approach -->
+- [ ] **Unit Tests**: All new functions/methods have corresponding unit tests
+- [ ] **Integration Tests**: Cross-component functionality tested
+- [ ] **Edge Cases**: Boundary conditions and edge cases tested
+- [ ] **Error Scenarios**: All error paths and failure modes tested
+- [ ] **Table-Driven Tests**: Used for multiple input scenarios
+- [ ] **Mock Dependencies**: External dependencies properly mocked
+
+### Test Execution Results
+<!-- Confirm all tests pass -->
+- [ ] **Local Test Run**: All tests pass locally (`go test -v ./...`)
+- [ ] **Race Detection**: Tests pass with race detection (`go test -race ./...`)
+- [ ] **Existing Tests**: No existing tests broken by changes
+- [ ] **CI Pipeline**: All CI checks pass (or link to passing build)
+
+## Testing Details
+<!-- Describe the specific testing performed -->
+- [ ] All existing tests pass
+- [ ] New tests added following TDD principles
+- [ ] Manual testing completed for user-facing changes
+- [ ] Template generation tested with various configurations (if applicable)
+- [ ] Generated projects compile successfully (if applicable)
+
+### Test Files Added/Modified
+<!-- List specific test files -->
+- `[file_test.go]` - Added tests for [functionality]
+- `[file_test.go]` - Modified tests for [changes]
+
+### Test Configuration (if applicable)
 <!-- If testing templates, list the configurations tested -->
 - [ ] web-api-standard
 - [ ] cli-standard  
@@ -50,16 +97,23 @@ Related to #(issue number)
 - [ ] Different database options
 - [ ] Different architecture patterns
 
-## Checklist
+## Quality Assurance Checklist
 <!-- Mark completed items with an "x" -->
-- [ ] My code follows the project's style guidelines
-- [ ] I have performed a self-review of my code
-- [ ] I have commented my code, particularly in hard-to-understand areas  
-- [ ] I have made corresponding changes to the documentation
-- [ ] My changes generate no new warnings
-- [ ] I have added tests that prove my fix is effective or that my feature works
-- [ ] New and existing unit tests pass locally with my changes
-- [ ] Any dependent changes have been merged and published
+- [ ] **Code Style**: My code follows the project's style guidelines
+- [ ] **Code Review**: I have performed a thorough self-review of my code
+- [ ] **Documentation**: I have commented complex code and updated documentation
+- [ ] **Linting**: `golangci-lint run` passes with no new issues
+- [ ] **Formatting**: `go fmt` applied to all modified files
+- [ ] **Vet**: `go vet` passes with no issues
+- [ ] **Dependencies**: `go mod tidy` run and go.mod/go.sum updated if needed
+
+## TDD Compliance Declaration
+<!-- REQUIRED: Confirm TDD compliance -->
+- [ ] **I followed Test-Driven Development principles** (Red-Green-Refactor)
+- [ ] **I wrote tests before implementation code** (not after)
+- [ ] **All new code has comprehensive test coverage** (>70%)
+- [ ] **I tested both happy paths and error scenarios**
+- [ ] **I understand this PR will be rejected if TDD compliance cannot be verified**
 
 ## Template Testing (if applicable)
 <!-- If this PR affects templates, confirm template testing -->

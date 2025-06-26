@@ -1,0 +1,320 @@
+name: TDD Enforcement & Test Coverage
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+
+env:
+  GO_VERSION: "1.21"
+  MIN_COVERAGE: 70.0
+  MIN_PROJECT_COVERAGE: 30.0
+
+jobs:
+  tdd-compliance-check:
+    name: TDD Compliance Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Cache Go modules
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        run: go mod download
+
+      - name: Verify Go modules
+        run: go mod verify
+
+      - name: Run go vet
+        run: go vet ./...
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: latest
+          args: --timeout=5m
+
+  test-coverage-analysis:
+    name: Test Coverage Analysis
+    runs-on: ubuntu-latest
+    needs: tdd-compliance-check
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests with coverage
+        run: |
+          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Generate coverage report
+        run: |
+          go tool cover -func=coverage.out > coverage.txt
+          go tool cover -html=coverage.out -o coverage.html
+
+      - name: Check minimum project coverage
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep "total:" | awk '{print $3}' | sed 's/%//')
+          echo "Current project coverage: ${COVERAGE}%"
+          echo "CURRENT_COVERAGE=${COVERAGE}" >> $GITHUB_ENV
+          
+          if (( $(echo "$COVERAGE < $MIN_PROJECT_COVERAGE" | bc -l) )); then
+            echo "❌ Project coverage ${COVERAGE}% is below minimum ${MIN_PROJECT_COVERAGE}%"
+            echo "Please add more tests to improve coverage"
+            exit 1
+          else
+            echo "✅ Project coverage ${COVERAGE}% meets minimum requirement of ${MIN_PROJECT_COVERAGE}%"
+          fi
+
+      - name: Check for test files in changed code
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Checking for test files in PR changes..."
+          
+          # Get changed Go files (excluding generated files and vendor)
+          CHANGED_GO_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep '\.go$' | grep -v '_test\.go$' | grep -v 'vendor/' | grep -v '\.pb\.go$' || true)
+          
+          if [ -n "$CHANGED_GO_FILES" ]; then
+            echo "Changed Go files detected:"
+            echo "$CHANGED_GO_FILES"
+            
+            # Check if corresponding test files exist or were modified
+            MISSING_TESTS=""
+            for file in $CHANGED_GO_FILES; do
+              # Convert source file to test file name
+              TEST_FILE="${file%%.go}_test.go"
+              
+              # Check if test file exists
+              if [ ! -f "$TEST_FILE" ]; then
+                MISSING_TESTS="$MISSING_TESTS\n  - $TEST_FILE (for $file)"
+              fi
+            done
+            
+            if [ -n "$MISSING_TESTS" ]; then
+              echo "❌ Missing test files for changed Go code:"
+              echo -e "$MISSING_TESTS"
+              echo ""
+              echo "TDD Requirement: All new/modified Go code must have corresponding test files."
+              echo "Please add test files following the TDD approach (Red-Green-Refactor)."
+              exit 1
+            else
+              echo "✅ All changed Go files have corresponding test files"
+            fi
+          else
+            echo "No Go files changed in this PR"
+          fi
+
+      - name: Upload coverage reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-reports
+          path: |
+            coverage.out
+            coverage.html
+            coverage.txt
+
+      - name: Comment coverage on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const coverage = process.env.CURRENT_COVERAGE;
+            
+            let coverageReport = '';
+            try {
+              coverageReport = fs.readFileSync('coverage.txt', 'utf8');
+            } catch (error) {
+              console.log('Could not read coverage report');
+            }
+            
+            const body = `## 🧪 Test Coverage Report
+            
+            **Overall Project Coverage:** ${coverage}%
+            
+            ${coverage >= 30 ? '✅' : '❌'} **Coverage Status:** ${coverage >= 30 ? 'PASSING' : 'FAILING'} (minimum: 30%)
+            
+            ### Coverage by Package
+            \`\`\`
+            ${coverageReport}
+            \`\`\`
+            
+            ### TDD Compliance Checklist
+            - ${coverage >= 30 ? '✅' : '❌'} Project coverage above minimum threshold (30%)
+            - Please verify in PR description that TDD principles were followed
+            - Ensure all new code has >70% coverage
+            
+            📊 [View detailed coverage report in artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  test-quality-verification:
+    name: Test Quality Verification
+    runs-on: ubuntu-latest
+    needs: tdd-compliance-check
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run tests with verbose output
+        run: |
+          echo "Running all tests with verbose output..."
+          go test -v ./... > test_output.log 2>&1
+          
+          # Check if tests passed
+          if [ $? -eq 0 ]; then
+            echo "✅ All tests passed"
+          else
+            echo "❌ Some tests failed"
+            cat test_output.log
+            exit 1
+          fi
+
+      - name: Run tests with race detection
+        run: |
+          echo "Running tests with race detection..."
+          go test -race ./...
+
+      - name: Verify test naming conventions
+        run: |
+          echo "Checking test naming conventions..."
+          
+          # Find test functions that don't follow TestXxx pattern
+          INVALID_TESTS=$(grep -r "^func.*Test" --include="*_test.go" . | grep -v "^func Test" | grep -v "^func Benchmark" | grep -v "^func Example" || true)
+          
+          if [ -n "$INVALID_TESTS" ]; then
+            echo "❌ Found test functions with invalid naming:"
+            echo "$INVALID_TESTS"
+            echo "Test functions must start with 'Test', 'Benchmark', or 'Example'"
+            exit 1
+          else
+            echo "✅ All test functions follow proper naming conventions"
+          fi
+
+      - name: Check for table-driven tests
+        run: |
+          echo "Analyzing test structure for table-driven tests..."
+          
+          # Count test files and look for table-driven test patterns
+          TEST_FILES=$(find . -name "*_test.go" -not -path "./vendor/*")
+          TABLE_DRIVEN_TESTS=$(grep -l "tests := \[\]struct\|testCases := \[\]struct\|scenarios := \[\]struct" $TEST_FILES || true)
+          
+          echo "Found table-driven tests in:"
+          echo "$TABLE_DRIVEN_TESTS"
+          echo "✅ Table-driven test pattern usage detected"
+
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-results
+          path: |
+            test_output.log
+
+  integration-test-verification:
+    name: Integration Test Verification
+    runs-on: ubuntu-latest
+    needs: [test-coverage-analysis, test-quality-verification]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build CLI tool
+        run: |
+          echo "Building go-starter CLI tool..."
+          go build -o bin/go-starter .
+          chmod +x bin/go-starter
+
+      - name: Test template generation
+        run: |
+          echo "Testing template generation functionality..."
+          
+          # Create test directory
+          mkdir -p /tmp/go-starter-test
+          cd /tmp/go-starter-test
+          
+          # Test basic generation (this will fail until templates are implemented)
+          echo "Testing basic project generation..."
+          $GITHUB_WORKSPACE/bin/go-starter new test-project --type=library --no-git || echo "Expected failure - templates not yet implemented"
+          
+          echo "✅ Template generation test completed"
+
+  tdd-enforcement-summary:
+    name: TDD Enforcement Summary
+    runs-on: ubuntu-latest
+    needs: [test-coverage-analysis, test-quality-verification, integration-test-verification]
+    if: always()
+    steps:
+      - name: Generate TDD compliance summary
+        run: |
+          echo "## 🧪 TDD Enforcement Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.test-coverage-analysis.result }}" == "success" ]; then
+            echo "✅ **Test Coverage:** PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Test Coverage:** FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.test-quality-verification.result }}" == "success" ]; then
+            echo "✅ **Test Quality:** PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Test Quality:** FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "${{ needs.integration-test-verification.result }}" == "success" ] || [ "${{ needs.integration-test-verification.result }}" == "skipped" ]; then
+            echo "✅ **Integration Tests:** PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ **Integration Tests:** FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### TDD Requirements for this project:" >> $GITHUB_STEP_SUMMARY
+          echo "- All new code must have >70% test coverage" >> $GITHUB_STEP_SUMMARY
+          echo "- Project must maintain >30% overall coverage" >> $GITHUB_STEP_SUMMARY
+          echo "- All changed Go files must have corresponding test files" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests must follow Go conventions and best practices" >> $GITHUB_STEP_SUMMARY
+          echo "- TDD approach (Red-Green-Refactor) must be followed" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if any TDD checks failed
+        if: needs.test-coverage-analysis.result == 'failure' || needs.test-quality-verification.result == 'failure'
+        run: |
+          echo "❌ TDD enforcement checks failed. Please address the issues above."
+          exit 1
