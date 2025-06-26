@@ -34,13 +34,13 @@ func (l *TemplateLoader) LoadAll() ([]types.Template, error) {
 		// Try walking without a specific root
 		return l.walkTemplatesFromRoot()
 	}
-	
+
 	// Walk through each directory in the root
 	for _, entry := range rootEntries {
 		if !entry.IsDir() {
 			continue
 		}
-		
+
 		// Check if this directory contains a template.yaml
 		templatePath := filepath.Join(entry.Name(), "template.yaml")
 		if _, err := fs.Stat(l.fs, templatePath); err == nil {
@@ -52,14 +52,14 @@ func (l *TemplateLoader) LoadAll() ([]types.Template, error) {
 			templates = append(templates, template)
 		}
 	}
-	
+
 	return templates, nil
 }
 
 // walkTemplatesFromRoot is a fallback method when the filesystem structure is unclear
 func (l *TemplateLoader) walkTemplatesFromRoot() ([]types.Template, error) {
 	var templates []types.Template
-	
+
 	// Walk through the filesystem to find all template.yaml files
 	err := fs.WalkDir(l.fs, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
