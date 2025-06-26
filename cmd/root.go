@@ -78,7 +78,10 @@ func init() {
 	rootCmd.PersistentFlags().Bool("verbose", false, "verbose output")
 
 	// Bind flags to viper
-	_ = viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	if err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")); err != nil {
+		// Note: This is a programming error if it fails, so we panic in init
+		panic(fmt.Sprintf("failed to bind verbose flag: %v", err))
+	}
 }
 
 // initConfig reads in config file and ENV variables if set.

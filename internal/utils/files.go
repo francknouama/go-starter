@@ -15,7 +15,11 @@ func CopyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source file: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		if err := srcFile.Close(); err != nil {
+			fmt.Printf("Warning: failed to close source file: %v\n", err)
+		}
+	}()
 
 	// Create destination directory if it doesn't exist
 	dstDir := filepath.Dir(dst)
@@ -27,7 +31,11 @@ func CopyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if err := dstFile.Close(); err != nil {
+			fmt.Printf("Warning: failed to close destination file: %v\n", err)
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	if err != nil {
@@ -105,19 +113,43 @@ func ReadFile(path string) (string, error) {
 	return string(content), nil
 }
 
-// FileExists checks if a file exists
+// FileExists checks if a file exists and is accessible
 func FileExists(path string) bool {
 	_, err := os.Stat(path)
-	return !os.IsNotExist(err)
+	return err == nil
 }
 
-// DirExists checks if a directory exists
+// FileExistsWithError checks if a file exists and returns any access errors
+func FileExistsWithError(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to check file existence for %q: %w", path, err)
+}
+
+// DirExists checks if a directory exists and is accessible
 func DirExists(path string) bool {
 	info, err := os.Stat(path)
-	if os.IsNotExist(err) {
+	if err != nil {
 		return false
 	}
 	return info.IsDir()
+}
+
+// DirExistsWithError checks if a directory exists and returns any access errors
+func DirExistsWithError(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err == nil {
+		return info.IsDir(), nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("failed to check directory existence for %q: %w", path, err)
 }
 
 // IsEmptyDir checks if a directory is empty
@@ -285,11 +317,17 @@ func SafeWriteFile(path, content string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name()) // Clean up if we fail
+	defer func() {
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			fmt.Printf("Warning: failed to remove temporary file: %v\n", err)
+		}
+	}() // Clean up if we fail
 
 	// Write content to temp file
 	if _, err := tmpFile.WriteString(content); err != nil {
-		tmpFile.Close()
+		if closeErr := tmpFile.Close(); closeErr != nil {
+			fmt.Printf("Warning: failed to close temp file: %v\n", closeErr)
+		}
 		return fmt.Errorf("failed to write to temp file: %w", err)
 	}
 
@@ -367,7 +405,11 @@ func CopyFileFromFS(fsys fs.FS, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to open source file from FS: %w", err)
 	}
-	defer srcFile.Close()
+	defer func() {
+		if err := srcFile.Close(); err != nil {
+			fmt.Printf("Warning: failed to close source file from FS: %v\n", err)
+		}
+	}()
 
 	// Create destination directory if it doesn't exist
 	dstDir := filepath.Dir(dst)
@@ -379,7 +421,11 @@ func CopyFileFromFS(fsys fs.FS, src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create destination file: %w", err)
 	}
-	defer dstFile.Close()
+	defer func() {
+		if err := dstFile.Close(); err != nil {
+			fmt.Printf("Warning: failed to close destination file: %v\n", err)
+		}
+	}()
 
 	_, err = io.Copy(dstFile, srcFile)
 	if err != nil {

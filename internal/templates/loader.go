@@ -97,7 +97,11 @@ func (l *TemplateLoader) LoadTemplate(templateDir string) (types.Template, error
 	if err != nil {
 		return types.Template{}, fmt.Errorf("failed to open template.yaml: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close template file: %v\n", err)
+		}
+	}()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -136,7 +140,11 @@ func (l *TemplateLoader) LoadTemplateFile(templateDir, filePath string) (string,
 	if err != nil {
 		return "", fmt.Errorf("failed to open template file %s: %w", filePath, err)
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			fmt.Printf("Warning: failed to close template file %s: %v\n", filePath, err)
+		}
+	}()
 
 	content, err := io.ReadAll(file)
 	if err != nil {
@@ -160,6 +168,9 @@ func (l *TemplateLoader) FileExists(templateDir, filePath string) bool {
 	if err != nil {
 		return false
 	}
-	file.Close()
+	if err := file.Close(); err != nil {
+		// Log warning but still return true since file exists
+		fmt.Printf("Warning: failed to close file %s: %v\n", fullPath, err)
+	}
 	return true
 }

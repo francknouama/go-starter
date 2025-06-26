@@ -329,7 +329,8 @@ func (p *Prompter) promptORM(config *types.ProjectConfig) error {
 
 	// Check if the selected ORM is implemented
 	if selectedORM != "gorm" && selectedORM != "raw" {
-		return fmt.Errorf("ORM '%s' is not yet implemented. Currently supported: gorm, raw. See PROJECT_ROADMAP.md for implementation timeline", selectedORM)
+		message := fmt.Sprintf("ORM '%s' is not yet implemented. Currently supported: gorm, raw", selectedORM)
+		return types.NewValidationError(message, nil)
 	}
 
 	config.Features.Database.ORM = selectedORM

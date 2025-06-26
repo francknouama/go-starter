@@ -415,7 +415,7 @@ func GetLastCommitHash(projectPath string) (string, error) {
 // CheckGitInstallation checks if Git is properly installed and configured
 func CheckGitInstallation() error {
 	if !IsGitInstalled() {
-		return fmt.Errorf("Git is not installed or not available in PATH")
+		return fmt.Errorf("git is not installed or not available in PATH")
 	}
 
 	config, err := GetGitConfig()

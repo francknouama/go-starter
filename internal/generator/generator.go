@@ -269,13 +269,15 @@ func (g *Generator) processTemplatePath(path string, config types.ProjectConfig)
 	// Use text/template to process the path
 	tmpl, err := template.New("path").Funcs(sprig.FuncMap()).Parse(path)
 	if err != nil {
-		// If parsing fails, return the original path
+		// Log the error but continue with original path for backwards compatibility
+		fmt.Printf("Warning: Failed to parse template path %q: %v\n", path, err)
 		return path
 	}
 
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, context); err != nil {
-		// If execution fails, return the original path
+		// Log the error but continue with original path for backwards compatibility
+		fmt.Printf("Warning: Failed to execute template path %q: %v\n", path, err)
 		return path
 	}
 
@@ -614,7 +616,12 @@ func (g *Generator) addDependencies(projectPath string, dependencies []string) e
 		cmd.Dir = projectPath
 
 		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to add dependency %s: %s", dep, string(output))
+			// Clean up the output to make it more user-friendly
+			outputStr := strings.TrimSpace(string(output))
+			if outputStr == "" {
+				return fmt.Errorf("failed to add dependency %q: %w", dep, err)
+			}
+			return fmt.Errorf("failed to add dependency %q: %s", dep, outputStr)
 		}
 	}
 	return nil

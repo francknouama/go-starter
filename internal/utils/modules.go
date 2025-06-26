@@ -279,7 +279,7 @@ func GetGOROOT() (string, error) {
 // ValidateGoInstallation checks if Go is properly installed and configured
 func ValidateGoInstallation() error {
 	if !IsGoInstalled() {
-		return fmt.Errorf("Go is not installed or not available in PATH")
+		return fmt.Errorf("go is not installed or not available in PATH")
 	}
 
 	version, err := GoVersion()
@@ -289,7 +289,7 @@ func ValidateGoInstallation() error {
 
 	// Check minimum Go version (1.18+)
 	if !isValidGoVersion(version) {
-		return fmt.Errorf("Go version %s is not supported (minimum: 1.18)", version)
+		return fmt.Errorf("go version %s is not supported (minimum: 1.18)", version)
 	}
 
 	return nil

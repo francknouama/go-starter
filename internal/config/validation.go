@@ -147,7 +147,7 @@ func ValidateOutputPath(path string) error {
 // ValidateGoVersion validates a Go version string
 func ValidateGoVersion(version string) error {
 	if version == "" {
-		return fmt.Errorf("Go version cannot be empty")
+		return fmt.Errorf("go version cannot be empty")
 	}
 
 	// Should be in format "1.xx" or "1.xx.x"

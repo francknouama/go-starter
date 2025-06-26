@@ -44,7 +44,11 @@ func TestCLIHelp(t *testing.T) {
 	}
 
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,7 +73,11 @@ func TestCLIHelp(t *testing.T) {
 // TestCLIVersion tests the version command
 func TestCLIVersion(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name string
@@ -105,7 +113,11 @@ func TestCLIVersion(t *testing.T) {
 // TestCLIList tests the list command
 func TestCLIList(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	cmd := exec.Command(binary, "list")
 	output, err := cmd.Output()
@@ -140,7 +152,11 @@ func TestCLIList(t *testing.T) {
 // TestCLINewCommand tests the new command basic functionality
 func TestCLINewCommand(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	// Test new command without arguments
 	cmd := exec.Command(binary, "new")
@@ -160,7 +176,11 @@ func TestCLINewCommand(t *testing.T) {
 // TestCLIInvalidCommand tests invalid command handling
 func TestCLIInvalidCommand(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	cmd := exec.Command(binary, "invalid-command")
 	output, err := cmd.CombinedOutput()
@@ -179,7 +199,11 @@ func TestCLIInvalidCommand(t *testing.T) {
 // TestCLIFlags tests global flags
 func TestCLIFlags(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name       string
@@ -233,7 +257,11 @@ func TestCLIFlags(t *testing.T) {
 // TestCLICompletion tests shell completion
 func TestCLICompletion(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	shells := []string{"bash", "zsh", "fish", "powershell"}
 
@@ -287,7 +315,11 @@ func buildTestBinary(t *testing.T) string {
 // TestCLITimeout tests that CLI commands don't hang
 func TestCLITimeout(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	commands := [][]string{
 		{"--help"},
@@ -303,7 +335,9 @@ func TestCLITimeout(t *testing.T) {
 			// Set a reasonable timeout
 			timer := time.AfterFunc(30*time.Second, func() {
 				if cmd.Process != nil {
-					cmd.Process.Kill()
+					if err := cmd.Process.Kill(); err != nil {
+						t.Logf("Warning: failed to kill process: %v", err)
+					}
 				}
 			})
 			defer timer.Stop()
@@ -331,7 +365,11 @@ func TestCLITimeout(t *testing.T) {
 // TestCLIEnvironment tests CLI behavior with different environment variables
 func TestCLIEnvironment(t *testing.T) {
 	binary := buildTestBinary(t)
-	defer os.Remove(binary)
+	defer func() {
+		if err := os.Remove(binary); err != nil {
+			t.Logf("Warning: failed to remove test binary: %v", err)
+		}
+	}()
 
 	tests := []struct {
 		name     string
