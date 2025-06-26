@@ -1,10 +1,12 @@
 # Homebrew Publishing Setup
 
-This document explains how to set up the Personal Access Token (PAT) required for Homebrew tap publishing.
+**STATUS: TEMPORARILY DISABLED** ⚠️
+
+Homebrew publishing has been temporarily disabled due to PAT permission issues. Releases will work without Homebrew until this is resolved.
 
 ## The Issue
 
-The release workflow needs to update the `francknouama/homebrew-tap` repository, but the default `GITHUB_TOKEN` only has permissions for the current repository (`francknouama/go-starter`).
+The release workflow needs to update the `francknouama/homebrew-tap` repository, but despite having a `HOMEBREW_TOKEN`, we're still getting "Resource not accessible by personal access token" errors.
 
 ## Solution: Personal Access Token (PAT)
 

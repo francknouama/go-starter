@@ -46,18 +46,15 @@ See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed future plans:
 
 ## 💻 Installation
 
-### Using Homebrew (Recommended)
-
-```bash
-brew tap francknouama/tap
-brew install go-starter
-```
-
-### Using Go Install
+### Using Go Install (Recommended)
 
 ```bash
 go install github.com/francknouama/go-starter@latest
 ```
+
+### Using Homebrew
+
+**Currently unavailable** due to publishing issues. Use Go install or binary download instead.
 
 ### Download Binary
 
