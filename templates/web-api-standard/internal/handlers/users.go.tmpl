@@ -15,11 +15,16 @@ type UsersHandler struct {
 	userService services.UserService
 }
 
-// NewUsersHandler creates a new users handler
-func NewUsersHandler(userService services.UserService) *UsersHandler {
+// NewUserHandler creates a new users handler
+func NewUserHandler(userService services.UserService) *UsersHandler {
 	return &UsersHandler{
 		userService: userService,
 	}
+}
+
+// NewUsersHandler creates a new users handler (alias for compatibility)
+func NewUsersHandler(userService services.UserService) *UsersHandler {
+	return NewUserHandler(userService)
 }
 
 // GetUsers handles GET /api/v1/users
@@ -75,7 +80,8 @@ func (h *UsersHandler) GetUser(c *gin.Context) {
 
 	user, err := h.userService.GetUserByID(uint(id))
 	if err != nil {
-		if err == services.ErrUserNotFound {
+		// Check for user not found error - we need to compare with the actual error message
+		if err.Error() == "user not found" {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "User not found",
 				"code":  "USER_NOT_FOUND",
@@ -107,7 +113,7 @@ func (h *UsersHandler) CreateUser(c *gin.Context) {
 
 	user, err := h.userService.CreateUser(req)
 	if err != nil {
-		if err == services.ErrUserExists {
+		if err.Error() == "user already exists" {
 			c.JSON(http.StatusConflict, gin.H{
 				"error": "User already exists",
 				"code":  "USER_EXISTS",
@@ -149,7 +155,7 @@ func (h *UsersHandler) UpdateUser(c *gin.Context) {
 
 	user, err := h.userService.UpdateUser(uint(id), req)
 	if err != nil {
-		if err == services.ErrUserNotFound {
+		if err.Error() == "user not found" {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "User not found",
 				"code":  "USER_NOT_FOUND",
@@ -182,7 +188,7 @@ func (h *UsersHandler) DeleteUser(c *gin.Context) {
 
 	err = h.userService.DeleteUser(uint(id))
 	if err != nil {
-		if err == services.ErrUserNotFound {
+		if err.Error() == "user not found" {
 			c.JSON(http.StatusNotFound, gin.H{
 				"error": "User not found",
 				"code":  "USER_NOT_FOUND",
