@@ -16,6 +16,11 @@ Welcome to the comprehensive documentation for go-starter - the powerful Go proj
 - **[Logger Guide](LOGGER_GUIDE.md)** - Understanding the logger selector system
 - **[ORM Selection Guide](ORM_GUIDE.md)** - Choosing between GORM and raw SQL
 
+### Strategic Planning & Roadmap
+- **[Project Roadmap](../PROJECT_ROADMAP.md)** - Overall project strategy and timeline
+- **[SaaS Platform Backlog](../SAAS_BACKLOG.md)** - Web UI and business platform development
+- **[Template Implementation Backlog](../TEMPLATE_BACKLOG.md)** - Enterprise template specifications
+
 ### Help & Support
 - **[FAQ](FAQ.md)** - Frequently asked questions
 - **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Comprehensive problem-solving guide
@@ -23,8 +28,11 @@ Welcome to the comprehensive documentation for go-starter - the powerful Go proj
 ## 🚀 Quick Start
 
 ```bash
-# Install go-starter
-brew install go-starter
+# Install go-starter (using Go install - recommended)
+go install github.com/francknouama/go-starter@latest
+
+# Alternative: Download binary from GitHub releases
+# Homebrew currently unavailable due to PAT issues
 
 # Generate your first project
 go-starter new my-awesome-api

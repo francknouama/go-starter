@@ -26,23 +26,35 @@ A comprehensive Go project generator that combines the simplicity of create-reac
 - **Clean Dependencies**: Only selected logger included in your project
 - **Performance Optimized**: Each logger tuned for its specific strengths
 
-### 🚀 v1.1.0 - Latest Features
+### 🚀 v1.3.1 - Current Release
 
-- 📦 **Multi-Database Selection**: PostgreSQL, MySQL, MongoDB, SQLite, Redis support
-- 🔄 **Dynamic Go Version Detection**: Uses your current Go version automatically
-- 🛠️ **Enhanced CLI**: Better error handling when Go is not installed
-- 🐳 **Multi-Service Docker**: Docker Compose for multiple databases
+- 📦 **4 Production Templates**: Web API, CLI, Library, AWS Lambda
 - 🎯 **16 Tested Combinations**: All template+logger combinations validated
+- 🔧 **Enhanced UI**: Beautiful terminal interface with Fang integration
+- 📝 **Comprehensive Docs**: Complete guides, FAQs, and troubleshooting
+- 🤝 **Community Ready**: GitHub issue/PR templates and contribution guidelines
+- 💫 **Multi-Database Selection**: PostgreSQL, MySQL, MongoDB, SQLite, Redis support
+- 🔄 **Dynamic Go Version Detection**: Uses your current Go version automatically
 - ⚡ **Instant Setup**: Generate complete, compilable projects in under 10 seconds
 
-### 🛣️ Roadmap - Future Development
-See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed future plans:
-- 🏗️ **Advanced Architecture Templates**: Clean Architecture, DDD, Hexagonal patterns
-- 📦 **Additional Frameworks**: Echo, Fiber, Chi web framework support  
+### 🛣️ Strategic Roadmap - Next Phase
+See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) and [SAAS_BACKLOG.md](SAAS_BACKLOG.md) for detailed plans:
+
+**Phase 2A: Enterprise Templates (High Priority)**
+- 🏗️ **Advanced Architecture Patterns**: Clean Architecture, DDD, Hexagonal, Event-driven
+- 🔄 **Distributed Systems**: Microservice, Monolith, Go Workspace templates
+- 🎯 **8 Missing Templates**: Complete original 12-template vision (67% remaining)
+
+**Phase 2B: SaaS Platform (Parallel Development)**
+- 🌐 **Web UI Interface**: React-based project generator with live preview
+- 💰 **Business Model**: Freemium SaaS ($9-29/month) with template marketplace
+- 🚀 **6-8 Week Timeline**: MVP with core generation and user management
+- 🤝 **Revenue Diversification**: Open source CLI + SaaS platform + marketplace
+
+**Future Expansion:**
+- 📦 **Framework Choices**: Echo, Fiber, Chi web frameworks + CLI framework options
 - 🗃️ **ORM Expansion**: sqlx, sqlc, ent, and additional database abstraction layers
-- 🔧 **Enhanced Features**: Database drivers, authentication methods, deployment options
-- 🌐 **Web UI Interface**: Browser-based project generator with live preview
-- 🏢 **Enterprise Templates**: Microservices, event-driven, workspace patterns
+- 🔧 **Enhanced Features**: Authentication methods, deployment platform integrations
 
 ## 💻 Installation
 
@@ -62,15 +74,15 @@ Download the latest release for your platform from [GitHub Releases](https://git
 
 ```bash
 # Example for Linux AMD64
-curl -L https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_Linux_x86_64.tar.gz | tar -xz
+curl -L https://github.com/francknouama/go-starter/releases/download/v1.3.1/go-starter_1.3.1_Linux_x86_64.tar.gz | tar -xz
 sudo mv go-starter /usr/local/bin/
 
 # Example for macOS Apple Silicon
-curl -L https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_Darwin_arm64.tar.gz | tar -xz
+curl -L https://github.com/francknouama/go-starter/releases/download/v1.3.1/go-starter_1.3.1_Darwin_arm64.tar.gz | tar -xz
 sudo mv go-starter /usr/local/bin/
 
 # Example for Windows (PowerShell)
-Invoke-WebRequest -Uri "https://github.com/francknouama/go-starter/releases/download/v1.1.0/go-starter_1.1.0_Windows_x86_64.zip" -OutFile "go-starter.zip"
+Invoke-WebRequest -Uri "https://github.com/francknouama/go-starter/releases/download/v1.3.1/go-starter_1.3.1_Windows_x86_64.zip" -OutFile "go-starter.zip"
 Expand-Archive go-starter.zip -DestinationPath .
 # Add to PATH or move to desired location
 ```
