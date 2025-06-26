@@ -70,7 +70,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		projectName = args[0]
 	}
-	
+
 	// Generate random name if requested and no name provided
 	if randomName && projectName == "" {
 		projectName = utils.GenerateRandomProjectName()

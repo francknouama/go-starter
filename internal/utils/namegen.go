@@ -61,10 +61,10 @@ func GenerateMultipleNames(count int) []string {
 	if count <= 0 {
 		count = 3
 	}
-	
+
 	names := make([]string, count)
 	used := make(map[string]bool)
-	
+
 	for i := 0; i < count; i++ {
 		// Ensure uniqueness within the generated set
 		var name string
@@ -79,7 +79,7 @@ func GenerateMultipleNames(count int) []string {
 		names[i] = name
 		used[name] = true
 	}
-	
+
 	return names
 }
 
@@ -88,7 +88,7 @@ func GenerateWithPrefix(prefix string) string {
 	if prefix == "" {
 		return GenerateRandomProjectName()
 	}
-	
+
 	noun := nouns[rng.Intn(len(nouns))]
 	return fmt.Sprintf("%s-%s", prefix, noun)
 }
@@ -98,28 +98,28 @@ func GenerateWithSuffix(suffix string) string {
 	if suffix == "" {
 		return GenerateRandomProjectName()
 	}
-	
+
 	adjective := adjectives[rng.Intn(len(adjectives))]
 	return fmt.Sprintf("%s-%s", adjective, suffix)
 }
 
 // IsValidProjectNameChar checks if a character is valid for project names
 func IsValidProjectNameChar(ch rune) bool {
-	return (ch >= 'a' && ch <= 'z') || 
-		   (ch >= 'A' && ch <= 'Z') || 
-		   (ch >= '0' && ch <= '9') || 
-		   ch == '-' || ch == '_'
+	return (ch >= 'a' && ch <= 'z') ||
+		(ch >= 'A' && ch <= 'Z') ||
+		(ch >= '0' && ch <= '9') ||
+		ch == '-' || ch == '_'
 }
 
 // SanitizeProjectName removes invalid characters from a project name
 func SanitizeProjectName(name string) string {
 	result := make([]rune, 0, len(name))
-	
+
 	for _, ch := range name {
 		if IsValidProjectNameChar(ch) {
 			result = append(result, ch)
 		}
 	}
-	
+
 	return string(result)
 }

@@ -88,14 +88,14 @@ func (p *Prompter) promptProjectName(config *types.ProjectConfig) error {
 	// Generate random project name suggestions
 	suggestion := utils.GenerateRandomProjectName()
 	alternatives := utils.GenerateMultipleNames(3)
-	
+
 	// Create help text with multiple suggestions
 	helpText := fmt.Sprintf("This will be used as the directory name and default module path.\n"+
 		"Press Enter to use: %s\n"+
-		"Other suggestions: %s", 
-		suggestion, 
+		"Other suggestions: %s",
+		suggestion,
 		strings.Join(alternatives, ", "))
-	
+
 	prompt := &survey.Input{
 		Message: "What's your project name?",
 		Default: suggestion,
