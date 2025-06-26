@@ -32,19 +32,27 @@ type ServerConfig struct {
 {{- if ne .DatabaseDriver ""}}
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	Host     string `mapstructure:"host"`
-	Port     int    `mapstructure:"port"`
-	Name     string `mapstructure:"name"`
-	User     string `mapstructure:"user"`
-	Password string `mapstructure:"password"`
-	SSLMode  string `mapstructure:"ssl_mode"`
+	Host            string `mapstructure:"host"`
+	Port            int    `mapstructure:"port"`
+	Name            string `mapstructure:"name"`
+	User            string `mapstructure:"user"`
+	Password        string `mapstructure:"password"`
+	SSLMode         string `mapstructure:"ssl_mode"`
+	MaxIdleConns    int    `mapstructure:"max_idle_conns"`
+	MaxOpenConns    int    `mapstructure:"max_open_conns"`
+	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime"`
+	LogLevel        string `mapstructure:"log_level"`
 }
 
 // DSN returns the database connection string
 func (d DatabaseConfig) DSN() string {
 {{- if eq .DatabaseDriver "postgres"}}
+	sslMode := d.SSLMode
+	if sslMode == "" {
+		sslMode = "disable"
+	}
 	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		d.Host, d.Port, d.User, d.Password, d.Name, d.SSLMode)
+		d.Host, d.Port, d.User, d.Password, d.Name, sslMode)
 {{- else if eq .DatabaseDriver "mysql"}}
 	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
 		d.User, d.Password, d.Host, d.Port, d.Name)
@@ -54,6 +62,7 @@ func (d DatabaseConfig) DSN() string {
 	return "" // Default case for unsupported database drivers
 {{- end}}
 }
+{{- end}}
 
 {{- if eq .AuthType "jwt"}}
 // JWTConfig holds JWT configuration
@@ -140,14 +149,26 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("database.user", "{{.ProjectName}}")
 	v.SetDefault("database.password", "")
 	v.SetDefault("database.ssl_mode", "disable")
+	v.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.max_open_conns", 100)
+	v.SetDefault("database.conn_max_lifetime", 3600)
+	v.SetDefault("database.log_level", "info")
 {{- else if eq .DatabaseDriver "mysql"}}
 	v.SetDefault("database.host", "localhost")
 	v.SetDefault("database.port", 3306)
 	v.SetDefault("database.name", "{{.ProjectName}}")
 	v.SetDefault("database.user", "{{.ProjectName}}")
 	v.SetDefault("database.password", "")
+	v.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.max_open_conns", 100)
+	v.SetDefault("database.conn_max_lifetime", 3600)
+	v.SetDefault("database.log_level", "info")
 {{- else if eq .DatabaseDriver "sqlite"}}
 	v.SetDefault("database.name", "{{.ProjectName}}.db")
+	v.SetDefault("database.max_idle_conns", 5)
+	v.SetDefault("database.max_open_conns", 25)
+	v.SetDefault("database.conn_max_lifetime", 3600)
+	v.SetDefault("database.log_level", "info")
 {{- end}}
 {{- end}}
 

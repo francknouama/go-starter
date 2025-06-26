@@ -39,6 +39,7 @@ A comprehensive Go project generator that combines the simplicity of create-reac
 See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed future plans:
 - 🏗️ **Advanced Architecture Templates**: Clean Architecture, DDD, Hexagonal patterns
 - 📦 **Additional Frameworks**: Echo, Fiber, Chi web framework support  
+- 🗃️ **ORM Expansion**: sqlx, sqlc, ent, and additional database abstraction layers
 - 🔧 **Enhanced Features**: Database drivers, authentication methods, deployment options
 - 🌐 **Web UI Interface**: Browser-based project generator with live preview
 - 🏢 **Enterprise Templates**: Microservices, event-driven, workspace patterns

@@ -186,7 +186,14 @@ my-lambda/
 
 ### ✅ What We Built (Revolutionary Approach)
 
-Instead of the original one-template-per-phase approach, we implemented a **comprehensive Logger Selector System** that provides immediate value across all core project types.
+Instead of the original one-template-per-phase approach, we implemented a **comprehensive Logger Selector System** and **ORM Selector Foundation** that provides immediate value across all core project types.
+
+**ORM Selector System (Partially Implemented):**
+- ✅ **Foundation Complete**: ORM selection prompt and template variable system
+- ✅ **GORM Support**: Full implementation with associations and migrations
+- ✅ **Raw SQL Support**: Direct database/sql with manual query management
+- ⚠️ **Limited Options**: Only 2/6 planned ORMs currently implemented
+- 🎯 **Extensible Architecture**: Template system ready for additional ORM implementations
 
 ### Key Technical Achievements:
 - **Conditional Dependencies** - Projects only include selected logger dependencies
@@ -196,11 +203,13 @@ Instead of the original one-template-per-phase approach, we implemented a **comp
 
 ### CLI Usage Examples:
 ```bash
-# Interactive mode
+# Interactive mode with ORM selection
 go-starter new my-project
 ? Project type: › Web API
 ? Framework: › gin  
 ? Logger: › zap
+? Database: › PostgreSQL
+? ORM: › gorm
 ? Module path: › github.com/user/my-project
 
 # Direct mode examples
@@ -209,6 +218,16 @@ go-starter new my-cli --type=cli --framework=cobra --logger=logrus
 go-starter new my-lib --type=library --logger=slog
 go-starter new my-lambda --type=lambda --logger=zerolog
 ```
+
+### Current ORM Support Matrix:
+| ORM | Status | Database Support | Migration Support | Use Case |
+|-----|--------|------------------|-------------------|----------|
+| **gorm** | ✅ **Implemented** | PostgreSQL, MySQL, SQLite | Auto-migrations | Full-featured ORM |
+| **raw** | ✅ **Implemented** | PostgreSQL, MySQL, SQLite | Manual SQL | Full control |
+| **sqlx** | 🔄 **Planned** (Phase 7D-1) | All databases | Manual + helpers | Enhanced SQL |
+| **sqlc** | 🔄 **Planned** (Phase 7D-1) | PostgreSQL, MySQL | Schema-driven | Type-safe SQL |
+| **ent** | 🔄 **Planned** (Phase 7D-2) | All databases | Schema-first | Graph entities |
+| **xorm** | 🔄 **Planned** (Phase 7D-3) | All databases | Auto + manual | Alternative ORM |
 
 ### Efficiency Benefits:
 - **6-7 weeks total** vs. original 45-63 week timeline
@@ -359,7 +378,7 @@ The project is now production-ready with a clear strategic path forward:
 - [ ] **Database Driver Selection**
   - PostgreSQL, MySQL, SQLite, MongoDB drivers
   - Database migration tools integration
-  - ORM options (GORM, SQLx, SQLC, Ent)
+  - ORM options expansion (see Phase 7D for detailed roadmap)
 
 #### Phase 7B: Authentication & Security (Weeks 3-4)
 - [ ] **Authentication Methods**
@@ -381,7 +400,65 @@ The project is now production-ready with a clear strategic path forward:
   - Plugin system for custom generators
   - Interactive template selection with preview
 
-**Success Metrics:** 8+ frameworks, 4+ databases, 4+ auth methods, comprehensive security
+#### Phase 7D: ORM & Database Abstraction Layer Expansion (Overlaps with 7A-7C)
+- [ ] **ORM Support Roadmap** 
+
+**Current Status (✅ Implemented)**
+- **GORM** - Full template support with associations, migrations, and auto-generated CRUD
+- **Raw database/sql** - Manual SQL queries with full control and transaction management
+
+**Phase 7D-1: Popular ORM Support (High Priority)**
+- [ ] **sqlx Implementation** (Week 2-3)
+  - Named parameter support and struct scanning helpers
+  - Enhanced SQL query building with safety improvements
+  - Transaction management patterns and connection pooling
+  - Migration system integration and database schema management
+  - Template updates for all affected files (models, repositories, migrations)
+
+- [ ] **sqlc Implementation** (Week 3-4)
+  - SQL schema files generation and compilation validation
+  - Type-safe generated Go code integration 
+  - Query compilation and validation at build time
+  - Migration workflow integration with schema evolution
+  - Code generation integration with template system
+
+**Phase 7D-2: Enterprise ORM Support (Medium Priority)**
+- [ ] **ent Implementation** (Week 5-6)
+  - Facebook's entity framework integration
+  - Schema definitions with entity relationship modeling
+  - Generated entity code and graph query patterns
+  - Advanced relationship handling and graph traversal
+  - Integration with existing template authentication patterns
+
+**Phase 7D-3: Specialized Database Libraries (Lower Priority)**
+- [ ] **Additional Database Libraries** (Week 7-8)
+  - **XORM** - Alternative full-featured ORM with automatic struct mapping
+  - **go-pg** - PostgreSQL-specific ORM with advanced PG features
+  - **Beego ORM** - Part of Beego framework for existing Beego users
+  - **Bun** - Modern SQL-first ORM with excellent performance
+
+**Implementation Strategy for ORMs:**
+1. **Template Conditional Logic**: Extend existing `{{- if eq .DatabaseORM "gorm"}}` patterns
+2. **Generator Updates**: Update `internal/generator/generator.go` context mapping
+3. **Dependency Management**: Conditional go.mod generation based on ORM selection
+4. **Migration Support**: Each ORM gets appropriate migration strategy
+5. **Testing Coverage**: All new ORMs tested across all database drivers
+6. **Documentation**: ORM comparison guide and migration paths between ORMs
+
+**Success Metrics Phase 7D:** 
+- 6+ ORM options supported (GORM, raw, sqlx, sqlc, ent, +2 additional)
+- All ORMs work with all database drivers (PostgreSQL, MySQL, SQLite)
+- Comprehensive migration documentation between ORMs
+- Performance benchmarks comparing ORM efficiency
+- Zero compilation errors across all ORM+database combinations
+
+**Technical Considerations:**
+- **Template Complexity**: Each new ORM requires updates to 8-12 template files
+- **Testing Matrix**: N ORMs × M databases = exponential test combinations
+- **Documentation Overhead**: Each ORM needs usage examples and best practices
+- **Migration Paths**: Clear guidance for switching between ORMs in existing projects
+
+**Success Metrics:** 8+ frameworks, 4+ databases, 6+ ORMs, 4+ auth methods, comprehensive security
 
 ---
 

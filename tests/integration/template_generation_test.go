@@ -14,6 +14,9 @@ import (
 
 // TestCompleteTemplateWorkflow tests the complete template generation workflow for Phase 1
 func TestCompleteTemplateWorkflow(t *testing.T) {
+	// Initialize templates filesystem for testing
+	setupTestTemplates(t)
+
 	// Create a temporary directory for the test
 	tmpDir := t.TempDir()
 

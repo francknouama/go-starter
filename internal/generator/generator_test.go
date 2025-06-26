@@ -42,6 +42,8 @@ func TestNew(t *testing.T) {
 }
 
 func TestGenerator_validateConfig(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	tests := []struct {
@@ -94,7 +96,61 @@ func TestGenerator_validateConfig(t *testing.T) {
 	}
 }
 
+func TestGenerator_validateORM(t *testing.T) {
+	setupTestTemplates(t)
+
+	generator := New()
+
+	tests := []struct {
+		name    string
+		orm     string
+		wantErr bool
+	}{
+		{
+			name:    "valid gorm ORM",
+			orm:     "gorm",
+			wantErr: false,
+		},
+		{
+			name:    "valid raw ORM",
+			orm:     "raw",
+			wantErr: false,
+		},
+		{
+			name:    "empty ORM (default)",
+			orm:     "",
+			wantErr: false,
+		},
+		{
+			name:    "unsupported sqlx ORM",
+			orm:     "sqlx",
+			wantErr: true,
+		},
+		{
+			name:    "unsupported sqlc ORM",
+			orm:     "sqlc",
+			wantErr: true,
+		},
+		{
+			name:    "unsupported ent ORM",
+			orm:     "ent",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := generator.validateORM(tt.orm)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateORM() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestGenerator_getTemplateID(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	tests := []struct {
@@ -146,6 +202,8 @@ func TestGenerator_getTemplateID(t *testing.T) {
 }
 
 func TestGenerator_createGoMod(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	// Create temporary directory
@@ -184,6 +242,8 @@ func TestGenerator_createGoMod(t *testing.T) {
 }
 
 func TestGenerator_Preview(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	config := types.ProjectConfig{
@@ -202,6 +262,8 @@ func TestGenerator_Preview(t *testing.T) {
 }
 
 func TestGenerator_Generate_ValidationError(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	invalidConfig := types.ProjectConfig{
@@ -229,6 +291,8 @@ func TestGenerator_Generate_ValidationError(t *testing.T) {
 }
 
 func TestGenerator_Generate_TemplateNotFound(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	config := types.ProjectConfig{
@@ -274,6 +338,8 @@ func TestGenerator_Generate_TemplateNotFound(t *testing.T) {
 }
 
 func TestGenerator_isGitAvailable(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	// This test depends on the system having git installed
@@ -289,6 +355,8 @@ func TestGenerator_isGitAvailable(t *testing.T) {
 }
 
 func TestGenerator_hasGitRepository(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	// Test with a directory that definitely doesn't have git
@@ -316,6 +384,8 @@ func TestGenerator_hasGitRepository(t *testing.T) {
 }
 
 func TestGenerator_createGitignore(t *testing.T) {
+	setupTestTemplates(t)
+
 	generator := New()
 
 	// Create temporary directory

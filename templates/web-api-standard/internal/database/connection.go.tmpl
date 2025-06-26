@@ -37,27 +37,25 @@ var DB *gorm.DB
 
 // Connect establishes a database connection using GORM
 func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*gorm.DB, error) {
-	var dsn string
+	dsn := cfg.DSN()
+	{{- if eq .DatabaseDriver "sqlite"}}
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- end}}
+	
 	var db *gorm.DB
 	var err error
 
 	{{- if eq .DatabaseDriver "postgres"}}
-	dsn = fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=UTC",
-		cfg.Host, cfg.User, cfg.Password, cfg.Name, cfg.Port)
 	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
 	{{- else if eq .DatabaseDriver "mysql"}}
-	dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
 	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
 	{{- else if eq .DatabaseDriver "sqlite"}}
-	dsn = cfg.Name
-	if dsn == "" {
-		dsn = "app.db"
-	}
 	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
@@ -123,20 +121,15 @@ var DB *sql.DB
 
 // Connect establishes a database connection using database/sql
 func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*sql.DB, error) {
-	var dsn string
+	dsn := cfg.DSN()
 	var driverName string
 
 	{{- if eq .DatabaseDriver "postgres"}}
 	driverName = "postgres"
-	dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Name)
 	{{- else if eq .DatabaseDriver "mysql"}}
 	driverName = "mysql"
-	dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-		cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.Name)
 	{{- else if eq .DatabaseDriver "sqlite"}}
 	driverName = "sqlite3"
-	dsn = cfg.Name
 	if dsn == "" {
 		dsn = "app.db"
 	}

@@ -268,7 +268,11 @@ func (p *Prompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 		}
 
 		config.Features.Database.Drivers = drivers
-		config.Features.Database.ORM = "gorm" // Default ORM
+
+		// Prompt for ORM selection
+		if err := p.promptORM(config); err != nil {
+			return err
+		}
 
 		// For backward compatibility, set Driver to the first selected database
 		if len(drivers) > 0 {
@@ -276,6 +280,47 @@ func (p *Prompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 		}
 	}
 
+	return nil
+}
+
+func (p *Prompter) promptORM(config *types.ProjectConfig) error {
+	ormPrompt := &survey.Select{
+		Message: "Which ORM/database abstraction do you prefer?",
+		Options: []string{
+			"gorm - Feature-rich ORM with associations and migrations (recommended) ✅",
+			"raw - Raw database/sql package with manual queries ✅",
+			"sqlx - Lightweight extensions on database/sql 🔄 Coming Soon",
+			"sqlc - Generate type-safe code from SQL 🔄 Coming Soon",
+			"ent - Simple, yet feature-complete entity framework 🔄 Coming Soon",
+			"xorm - Alternative full-featured ORM 🔄 Coming Soon",
+		},
+		Default: "gorm - Feature-rich ORM with associations and migrations (recommended) ✅",
+		Help:    "✅ = Currently supported | 🔄 = Coming soon in future releases. GORM provides rich ORM features, while raw gives full control over SQL.",
+	}
+
+	var selection string
+	if err := survey.AskOne(ormPrompt, &selection); err != nil {
+		return err
+	}
+
+	// Map selection to ORM
+	ormMap := map[string]string{
+		"gorm - Feature-rich ORM with associations and migrations (recommended) ✅": "gorm",
+		"raw - Raw database/sql package with manual queries ✅":                     "raw",
+		"sqlx - Lightweight extensions on database/sql 🔄 Coming Soon":              "sqlx",
+		"sqlc - Generate type-safe code from SQL 🔄 Coming Soon":                    "sqlc",
+		"ent - Simple, yet feature-complete entity framework 🔄 Coming Soon":        "ent",
+		"xorm - Alternative full-featured ORM 🔄 Coming Soon":                       "xorm",
+	}
+
+	selectedORM := ormMap[selection]
+
+	// Check if the selected ORM is implemented
+	if selectedORM != "gorm" && selectedORM != "raw" {
+		return fmt.Errorf("ORM '%s' is not yet implemented. Currently supported: gorm, raw. See PROJECT_ROADMAP.md for implementation timeline", selectedORM)
+	}
+
+	config.Features.Database.ORM = selectedORM
 	return nil
 }
 

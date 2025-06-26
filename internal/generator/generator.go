@@ -429,7 +429,16 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 	}
 	context["AuthType"] = authType
 
-	context["ORM"] = g.getFeatureValue(config, "database", "orm", "")
+	ormValue := g.getFeatureValue(config, "database", "orm", "gorm")
+
+	// Validate ORM implementation
+	if err := g.validateORM(ormValue); err != nil {
+		// Log warning but don't fail - fallback to default
+		ormValue = "gorm"
+	}
+
+	context["ORM"] = ormValue
+	context["DatabaseORM"] = ormValue
 
 	return context
 }
@@ -450,16 +459,37 @@ func (g *Generator) getFeatureValue(config types.ProjectConfig, feature, key, de
 			}
 			return config.Features.Database.Driver //nolint:staticcheck // kept for backward compatibility
 		case "orm":
-			return config.Features.Database.ORM
+			if config.Features.Database.ORM != "" {
+				return config.Features.Database.ORM
+			}
+			return defaultValue
 		}
 	case "authentication":
 		switch key {
 		case "type":
-			return config.Features.Authentication.Type
+			if config.Features.Authentication.Type != "" {
+				return config.Features.Authentication.Type
+			}
+			return defaultValue
 		}
 	}
 
 	return defaultValue
+}
+
+// validateORM checks if the specified ORM is currently implemented
+func (g *Generator) validateORM(orm string) error {
+	supportedORMs := map[string]bool{
+		"gorm": true,
+		"raw":  true,
+		"":     true, // empty/default is valid
+	}
+
+	if !supportedORMs[orm] {
+		return fmt.Errorf("ORM '%s' is not yet implemented. Currently supported: gorm, raw. See PROJECT_ROADMAP.md for implementation timeline", orm)
+	}
+
+	return nil
 }
 
 // getDatabaseDrivers returns all configured database drivers
