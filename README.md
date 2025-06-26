@@ -396,10 +396,21 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 📚 Documentation
 
+### Core Guides
 - 📋 **[Template Usage Guide](docs/TEMPLATES.md)** - Comprehensive guide for all project types
-- 🪵 **[Logger Selector Guide](docs/LOGGER_GUIDE.md)** - Complete logging documentation
-- ❓ **[Troubleshooting & FAQ](docs/FAQ.md)** - Common issues and solutions
+- 🚀 **[Getting Started](docs/GETTING_STARTED.md)** - Quick start guide and tutorials
+- 🔍 **[Template Comparison](docs/TEMPLATE_COMPARISON.md)** - Detailed comparison to help you choose
+- 📊 **[Logger Guide](docs/LOGGER_GUIDE.md)** - Deep dive into the logger selector system
+- 🗃️ **[ORM Selection Guide](docs/ORM_GUIDE.md)** - Choose between GORM and raw SQL
+
+### References
+- 📖 **[Quick Reference Card](docs/QUICK_REFERENCE_CARD.md)** - Common commands and patterns
+- ❓ **[FAQ](docs/FAQ.md)** - Frequently asked questions
+- 🔧 **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)** - Comprehensive problem-solving guide
+
+### Development
 - 🛣️ **[Project Roadmap](PROJECT_ROADMAP.md)** - Future development plans
+- 🤝 **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to the project
 
 ## Support
 
