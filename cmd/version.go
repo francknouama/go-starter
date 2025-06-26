@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/fatih/color"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/francknouama/go-starter/internal/ascii"
 	"github.com/spf13/cobra"
 )
@@ -33,22 +33,48 @@ func init() {
 }
 
 func showVersion() {
-	// Color functions
-	cyan := color.New(color.FgCyan, color.Bold).SprintFunc()
-	green := color.New(color.FgGreen, color.Bold).SprintFunc()
-	yellow := color.New(color.FgYellow).SprintFunc()
-	blue := color.New(color.FgBlue).SprintFunc()
-	magenta := color.New(color.FgMagenta).SprintFunc()
+	// Define beautiful styles
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("12")).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderBottom(true).
+		BorderForeground(lipgloss.Color("8")).
+		MarginBottom(1).
+		PaddingLeft(1).
+		PaddingRight(1)
+
+	labelStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("11")).
+		MarginLeft(2)
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("10")).
+		Bold(true)
+
+	footerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("10")).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(0, 2).
+		MarginTop(2)
 
 	// Display logo and version information
 	fmt.Print(ascii.Logo())
-	fmt.Printf("\n%s %s\n", green("Version:"), cyan(Version))
-	fmt.Printf("%s %s\n", yellow("Commit: "), blue(Commit))
-	fmt.Printf("%s %s\n", yellow("Built:  "), blue(Date))
-	fmt.Printf("%s %s\n", yellow("Go:     "), magenta(runtime.Version()))
-	fmt.Printf("%s %s\n", yellow("OS:     "), magenta(runtime.GOOS))
-	fmt.Printf("%s %s\n", yellow("Arch:   "), magenta(runtime.GOARCH))
+	fmt.Println()
+	fmt.Println(headerStyle.Render("🚀 Go-Starter Version Information"))
+	fmt.Println()
+	
+	fmt.Println(labelStyle.Render("Version:") + " " + valueStyle.Render(Version))
+	fmt.Println(labelStyle.Render("Commit: ") + " " + valueStyle.Render(Commit))
+	fmt.Println(labelStyle.Render("Built:  ") + " " + valueStyle.Render(Date))
+	fmt.Println(labelStyle.Render("Go:     ") + " " + valueStyle.Render(runtime.Version()))
+	fmt.Println(labelStyle.Render("OS:     ") + " " + valueStyle.Render(runtime.GOOS))
+	fmt.Println(labelStyle.Render("Arch:   ") + " " + valueStyle.Render(runtime.GOARCH))
 
-	// Add some decoration
-	fmt.Printf("\n%s\n", green("🚀 Ready to generate awesome Go projects!"))
+	// Add footer message
+	fmt.Println()
+	fmt.Println(footerStyle.Render("🎉 Ready to generate awesome Go projects!"))
 }

@@ -5,20 +5,40 @@ import (
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/francknouama/go-starter/internal/ui"
 	"github.com/francknouama/go-starter/internal/utils"
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
 // Prompter handles interactive prompts for project configuration
-type Prompter struct{}
+type Prompter struct{
+	useFang bool
+}
 
-// New creates a new Prompter instance
+// New creates a new Prompter instance with Fang UI by default
 func New() *Prompter {
-	return &Prompter{}
+	return &Prompter{useFang: true}
+}
+
+// NewSurvey creates a new Prompter instance using Survey v2 (fallback)
+func NewSurvey() *Prompter {
+	return &Prompter{useFang: false}
 }
 
 // GetProjectConfig prompts the user for project configuration
 func (p *Prompter) GetProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
+	// Use Fang UI by default, fallback to Survey v2 if needed
+	if p.useFang {
+		fangPrompter := ui.NewFangPrompter()
+		return fangPrompter.GetProjectConfig(initial, advanced)
+	}
+
+	// Fallback to Survey v2 implementation
+	return p.getSurveyProjectConfig(initial, advanced)
+}
+
+// getSurveyProjectConfig is the original Survey v2 implementation (fallback)
+func (p *Prompter) getSurveyProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
 	config := initial
 
 	// Set defaults

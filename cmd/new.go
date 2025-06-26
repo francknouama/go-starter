@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/charmbracelet/huh/spinner"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/francknouama/go-starter/internal/config"
 	"github.com/francknouama/go-starter/internal/generator"
 	"github.com/francknouama/go-starter/internal/prompts"
@@ -78,6 +80,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize the prompter for interactive configuration
+	// Use Fang UI by default, set to prompts.NewSurvey() for fallback
 	prompter := prompts.New()
 
 	// Get project configuration through interactive prompts or flags
@@ -89,11 +92,13 @@ func runNew(cmd *cobra.Command, args []string) error {
 		Logger:    logger,
 	}, advanced)
 	if err != nil {
+		printErrorMessage("Failed to get project configuration", err)
 		return fmt.Errorf("failed to get project configuration: %w", err)
 	}
 
 	// Validate the configuration
 	if err := validateConfig(config); err != nil {
+		printErrorMessage("Invalid configuration", err)
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -116,8 +121,17 @@ func runNew(cmd *cobra.Command, args []string) error {
 		Verbose:    cmd.Flag("verbose").Changed,
 	}
 
-	result, err := gen.Generate(config, options)
+	// Generate the project with spinner
+	var result *types.GenerationResult
+	err = spinner.New().
+		Title("🚀 Generating your Go project...").
+		Action(func() {
+			result, err = gen.Generate(config, options)
+		}).
+		Run()
+
 	if err != nil {
+		printErrorMessage("Failed to generate project", err)
 		return fmt.Errorf("failed to generate project: %w", err)
 	}
 
@@ -148,36 +162,122 @@ func validateConfig(cfg types.ProjectConfig) error {
 }
 
 func printSuccessMessage(config types.ProjectConfig, result *types.GenerationResult) {
-	fmt.Printf("✓ Project '%s' created successfully!\n", config.Name)
-	fmt.Printf("✓ Type: %s\n", config.Type)
+	// Define beautiful styles
+	successStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("10")).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("10")).
+		Padding(1, 2).
+		MarginTop(1).
+		MarginBottom(1)
+
+	headerStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("12")).
+		BorderBottom(true).
+		BorderForeground(lipgloss.Color("8")).
+		MarginBottom(1)
+
+	checkStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("10"))
+
+	labelStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("8"))
+
+	valueStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("15"))
+
+	commandStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("11")).
+		Background(lipgloss.Color("0")).
+		Padding(0, 1).
+		MarginLeft(2)
+
+	// Print success header
+	fmt.Println(successStyle.Render("🎉 Project Created Successfully!"))
+
+	// Print project details
+	fmt.Println(headerStyle.Render("📋 Project Details"))
+	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Name:") + " " + valueStyle.Render(config.Name))
+	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Type:") + " " + valueStyle.Render(config.Type))
+	
 	if config.Framework != "" {
-		fmt.Printf("✓ Framework: %s\n", config.Framework)
+		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Framework:") + " " + valueStyle.Render(config.Framework))
 	}
 	if config.Logger != "" {
-		fmt.Printf("✓ Logger: %s\n", config.Logger)
+		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Logger:") + " " + valueStyle.Render(config.Logger))
 	}
-	fmt.Printf("✓ Go module: %s\n", config.Module)
-	fmt.Printf("✓ Files created: %d\n", len(result.FilesCreated))
+	
+	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Module:") + " " + valueStyle.Render(config.Module))
+	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Files created:") + " " + valueStyle.Render(fmt.Sprintf("%d", len(result.FilesCreated))))
+	
 	if !noGit {
-		fmt.Printf("✓ Git repository initialized\n")
+		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Git repository:") + " " + valueStyle.Render("Initialized"))
 	}
-	fmt.Printf("✓ Generation completed in %v\n", result.Duration)
+	
+	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Duration:") + " " + valueStyle.Render(result.Duration.String()))
 
-	fmt.Printf("\nGet started:\n")
-	fmt.Printf("  cd %s\n", config.Name)
+	// Print next steps
+	fmt.Println()
+	fmt.Println(headerStyle.Render("🚀 Next Steps"))
 
 	// Check if Go is available and provide appropriate next steps
 	if isGoAvailable() {
-		fmt.Printf("  make run\n")
+		fmt.Println(commandStyle.Render("cd " + config.Name))
+		fmt.Println(commandStyle.Render("make run"))
 	} else {
-		fmt.Printf("  # Install Go first, then run:\n")
-		fmt.Printf("  go mod tidy\n")
-		fmt.Printf("  make run\n")
+		fmt.Println(labelStyle.Render("# Install Go first, then run:"))
+		fmt.Println(commandStyle.Render("cd " + config.Name))
+		fmt.Println(commandStyle.Render("go mod tidy"))
+		fmt.Println(commandStyle.Render("make run"))
 	}
+
+	// Add helpful tips
+	fmt.Println()
+	tipStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("8")).
+		Italic(true).
+		MarginLeft(2)
+	
+	fmt.Println(tipStyle.Render("💡 Tip: Run 'make help' inside your project to see all available commands"))
 }
 
 // isGoAvailable checks if Go is installed and available in PATH
 func isGoAvailable() bool {
 	cmd := exec.Command("go", "version")
 	return cmd.Run() == nil
+}
+
+// printErrorMessage prints a beautiful error message using lipgloss styling
+func printErrorMessage(title string, err error) {
+	// Define error styles
+	errorStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("9")).
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("9")).
+		Padding(1, 2).
+		MarginTop(1).
+		MarginBottom(1)
+
+	iconStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("9"))
+
+	titleStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("15"))
+
+	messageStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("7")).
+		MarginLeft(2)
+
+	// Print error message
+	fmt.Println()
+	fmt.Println(errorStyle.Render(iconStyle.Render("❌") + " " + titleStyle.Render(title)))
+	if err != nil {
+		fmt.Println(messageStyle.Render("Error: " + err.Error()))
+	}
+	fmt.Println()
 }
