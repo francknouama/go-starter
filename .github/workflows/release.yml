@@ -88,26 +88,3 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  homebrew:
-    name: Update Homebrew Formula
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-')
-    steps:
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Update Homebrew formula
-        uses: mislav/bump-homebrew-formula-action@v3
-        with:
-          formula-name: go-starter
-          formula-path: Formula/go-starter.rb
-          homebrew-tap: francknouama/homebrew-tap
-          download-url: https://github.com/francknouama/go-starter/archive/v${{ steps.version.outputs.version }}.tar.gz
-          commit-message: |
-            go-starter ${{ steps.version.outputs.version }}
-            
-            Created by https://github.com/francknouama/go-starter/actions/runs/${{ github.run_id }}
-        env:
-          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
