@@ -23,16 +23,16 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	{{- end}}
 
-	"{{.ModulePath}}/internal/config"
-	"{{.ModulePath}}/internal/handlers"
-	"{{.ModulePath}}/internal/logger"
-	"{{.ModulePath}}/internal/middleware"
 	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/database"
 	"{{.ModulePath}}/internal/models"
 	"{{.ModulePath}}/internal/repository"
 	"{{.ModulePath}}/internal/services"
 	{{- end}}
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/middleware"
 )
 
 type APITestSuite struct {
@@ -120,9 +120,8 @@ func (suite *APITestSuite) TearDownSuite() {
 
 func (suite *APITestSuite) setupRoutes() {
 	// Health routes
-	healthHandler := handlers.NewHealthHandler()
-	suite.router.GET("/health", healthHandler.Health)
-	suite.router.GET("/ready", healthHandler.Ready)
+	suite.router.GET("/health", handlers.HealthCheck)
+	suite.router.GET("/ready", handlers.ReadinessCheck)
 
 	{{- if ne .DatabaseDriver ""}}
 	// API routes
@@ -168,16 +167,19 @@ func (suite *APITestSuite) TestHealthEndpoints() {
 		name           string
 		endpoint       string
 		expectedStatus int
+		expectedValue  string
 	}{
 		{
 			name:           "Health check should return 200",
 			endpoint:       "/health",
 			expectedStatus: http.StatusOK,
+			expectedValue:  "healthy",
 		},
 		{
 			name:           "Ready check should return 200",
 			endpoint:       "/ready",
 			expectedStatus: http.StatusOK,
+			expectedValue:  "ready",
 		},
 	}
 
@@ -192,7 +194,7 @@ func (suite *APITestSuite) TestHealthEndpoints() {
 			var response map[string]interface{}
 			err := json.Unmarshal(w.Body.Bytes(), &response)
 			assert.NoError(suite.T(), err)
-			assert.Equal(suite.T(), "healthy", response["status"])
+			assert.Equal(suite.T(), tt.expectedValue, response["status"])
 		})
 	}
 }
