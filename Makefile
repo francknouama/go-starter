@@ -9,12 +9,12 @@ help: ## Show this help message
 # Build commands
 build: ## Build the CLI binary
 	@echo "Building go-starter..."
-	go build -o bin/go-starter main.go
+	go build -o bin/go-starter .
 	@echo "✓ Built: bin/go-starter"
 
 dev-build: ## Build with race detection for development
 	@echo "Building go-starter with race detection..."
-	go build -race -o bin/go-starter-dev main.go
+	go build -race -o bin/go-starter-dev .
 	@echo "✓ Built: bin/go-starter-dev"
 
 install: ## Install go-starter to $GOPATH/bin
