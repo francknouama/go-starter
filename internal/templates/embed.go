@@ -1,31 +1,27 @@
 package templates
 
 import (
-	"embed"
 	"io/fs"
-	"os"
-	"path/filepath"
-	"runtime"
 )
 
-// templatesFS embeds all template files from the templates directory
-// Note: Due to Go embed limitations, we need to use relative paths from the package location
-// For now, we'll use the filesystem directly for development
-// TODO: Use embed.FS when building from the root directory
-var _ embed.FS
+// templatesFS holds the embedded filesystem set by the main package
+var templatesFS fs.FS
+
+// SetTemplatesFS sets the embedded filesystem (called from main package)
+func SetTemplatesFS(fs fs.FS) {
+	templatesFS = fs
+}
 
 // GetTemplatesFS returns the filesystem for templates
 func GetTemplatesFS() fs.FS {
-	// For development, use the actual filesystem
-	// In production, this would use the embedded filesystem
-	_, currentFile, _, _ := runtime.Caller(0)
-	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(currentFile)))
-	templatesDir := filepath.Join(projectRoot, "templates")
-
-	// Check if templates directory exists
-	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
-		panic("templates directory not found at: " + templatesDir)
+	if templatesFS == nil {
+		panic("templates filesystem not initialized - ensure SetTemplatesFS is called from main")
 	}
-
-	return os.DirFS(templatesDir)
+	
+	// When embedded from module root, we need to strip the "templates" prefix
+	subFS, err := fs.Sub(templatesFS, "templates")
+	if err != nil {
+		panic("failed to create sub-filesystem for templates: " + err.Error())
+	}
+	return subFS
 }

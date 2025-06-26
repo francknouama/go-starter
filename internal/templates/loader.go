@@ -27,6 +27,39 @@ func NewTemplateLoader() *TemplateLoader {
 func (l *TemplateLoader) LoadAll() ([]types.Template, error) {
 	var templates []types.Template
 
+	// First, list the root directory to find template directories
+	rootEntries, err := fs.ReadDir(l.fs, ".")
+	if err != nil {
+		// If reading "." fails, it might be because we're at the templates level already
+		// Try walking without a specific root
+		return l.walkTemplatesFromRoot()
+	}
+	
+	// Walk through each directory in the root
+	for _, entry := range rootEntries {
+		if !entry.IsDir() {
+			continue
+		}
+		
+		// Check if this directory contains a template.yaml
+		templatePath := filepath.Join(entry.Name(), "template.yaml")
+		if _, err := fs.Stat(l.fs, templatePath); err == nil {
+			// Load the template
+			template, err := l.LoadTemplate(entry.Name())
+			if err != nil {
+				return nil, fmt.Errorf("failed to load template from %s: %w", entry.Name(), err)
+			}
+			templates = append(templates, template)
+		}
+	}
+	
+	return templates, nil
+}
+
+// walkTemplatesFromRoot is a fallback method when the filesystem structure is unclear
+func (l *TemplateLoader) walkTemplatesFromRoot() ([]types.Template, error) {
+	var templates []types.Template
+	
 	// Walk through the filesystem to find all template.yaml files
 	err := fs.WalkDir(l.fs, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {

@@ -2,10 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 
 	"github.com/fatih/color"
 	"github.com/francknouama/go-starter/internal/ascii"
+	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -60,6 +62,12 @@ func Execute() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// ExecuteWithFS executes the root command with the provided filesystem for templates
+func ExecuteWithFS(fs fs.FS) {
+	templates.SetTemplatesFS(fs)
+	Execute()
 }
 
 func init() {

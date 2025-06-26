@@ -110,6 +110,12 @@ cd go-starter
 make install
 ```
 
+## 📚 Documentation
+
+- 📖 **[Getting Started Guide](docs/GETTING_STARTED.md)** - Comprehensive guide for beginners
+- 🚀 **[Quick Reference](docs/QUICK_REFERENCE.md)** - Command cheatsheet and examples
+- 📋 **[Release Notes](RELEASE_NOTES.md)** - Latest features and changes
+
 ## 🚀 Quick Start
 
 ### ⚡ Logger Selector in Action
