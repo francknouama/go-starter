@@ -185,7 +185,7 @@ func TestCLINewCommand(t *testing.T) {
 		// Test passed - either got prompt or failed appropriately
 	case <-time.After(5 * time.Second):
 		if cmd.Process != nil {
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 		}
 		// Timeout is also acceptable - means it was waiting for input
 	}
