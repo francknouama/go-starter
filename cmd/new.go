@@ -8,6 +8,7 @@ import (
 	"github.com/francknouama/go-starter/internal/config"
 	"github.com/francknouama/go-starter/internal/generator"
 	"github.com/francknouama/go-starter/internal/prompts"
+	"github.com/francknouama/go-starter/internal/utils"
 	"github.com/francknouama/go-starter/pkg/types"
 	"github.com/spf13/cobra"
 )
@@ -22,6 +23,7 @@ var (
 	advanced      bool
 	dryRun        bool
 	noGit         bool
+	randomName    bool
 )
 
 // newCmd represents the new command
@@ -36,6 +38,8 @@ Examples:
   go-starter new my-api --type=web-api --logger=zap              # With specific logger
   go-starter new my-cli --type=cli --logger=slog                 # CLI application
   go-starter new my-lib --type=library                           # Go library
+  go-starter new --random-name --type=web-api                    # Generate random project name
+  go-starter new --random-name                                   # Fully interactive with random name
 
 The command will guide you through the project configuration process
 or use the provided flags for direct project generation.`,
@@ -58,12 +62,19 @@ func init() {
 	newCmd.Flags().BoolVar(&advanced, "advanced", false, "Enable advanced configuration mode")
 	newCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview project structure without creating files")
 	newCmd.Flags().BoolVar(&noGit, "no-git", false, "Skip git repository initialization")
+	newCmd.Flags().BoolVar(&randomName, "random-name", false, "Generate a random project name (GitHub-style)")
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
 	// Get project name from args if provided
 	if len(args) > 0 {
 		projectName = args[0]
+	}
+	
+	// Generate random name if requested and no name provided
+	if randomName && projectName == "" {
+		projectName = utils.GenerateRandomProjectName()
+		fmt.Printf("🎲 Generated random project name: %s\n", projectName)
 	}
 
 	// Initialize the prompter for interactive configuration
