@@ -137,7 +137,12 @@ func (f *FangPrompter) promptProjectName() (string, error) {
 	help := fmt.Sprintf("Press Enter for: %s\nOther suggestions: %s", 
 		suggestion, strings.Join(alternatives, ", "))
 
-	return RunTextInput("🚀 What's your project name?", help, suggestion)
+	result, err := RunTextInput("🚀 What's your project name?", help, suggestion)
+	if err != nil {
+		fmt.Println(errorStyle.Render("❌ Failed to get project name: " + err.Error()))
+		return "", err
+	}
+	return result, nil
 }
 
 // promptModulePath prompts for Go module path using interactive UI
@@ -254,14 +259,18 @@ func (f *FangPrompter) promptDatabaseSupport(config *types.ProjectConfig) error 
 	}
 
 	fmt.Print(questionStyle.Render("Add database support? (y/N): "))
+	fmt.Print(optionStyle.Render(" "))
 	var response string
-	fmt.Scanln(&response)
+	if _, err := fmt.Scanln(&response); err != nil {
+		// Default to no if input fails
+		response = "n"
+	}
 
 	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
 		// Simple database selection for now
-		config.Features.Database.Driver = "postgres"
-		config.Features.Database.ORM = "gorm"
 		config.Features.Database.Drivers = []string{"postgres"}
+		config.Features.Database.ORM = "gorm"
+		fmt.Println(selectedStyle.Render("✓ Database support enabled with PostgreSQL"))
 	}
 
 	return nil
@@ -274,11 +283,16 @@ func (f *FangPrompter) promptAuthentication(config *types.ProjectConfig) error {
 	}
 
 	fmt.Print(questionStyle.Render("Add authentication? (y/N): "))
+	fmt.Print(optionStyle.Render(" "))
 	var response string
-	fmt.Scanln(&response)
+	if _, err := fmt.Scanln(&response); err != nil {
+		// Default to no if input fails
+		response = "n"
+	}
 
 	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
 		config.Features.Authentication.Type = "jwt"
+		fmt.Println(selectedStyle.Render("✓ JWT authentication enabled"))
 	}
 
 	return nil

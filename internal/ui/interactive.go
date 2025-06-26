@@ -140,9 +140,11 @@ func runNumberedSelection(title string, items []SelectionItem) (string, error) {
 	n, err := fmt.Scanf("%d", &choice)
 	if err != nil || n == 0 || choice < 1 || choice > len(items) {
 		// Default to first option
+		fmt.Printf("Using default: %s\n", selectedItemStyle.Render(items[0].title))
 		return items[0].value, nil
 	}
 
+	fmt.Printf("Selected: %s\n", selectedItemStyle.Render(items[choice-1].title))
 	return items[choice-1].value, nil
 }
 
