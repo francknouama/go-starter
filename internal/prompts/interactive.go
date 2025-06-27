@@ -11,22 +11,23 @@ import (
 )
 
 // Prompter handles interactive prompts for project configuration
-type Prompter struct{
+type SurveyPrompter struct{
 	useFang bool
+	surveyAdapter SurveyAdapter
 }
 
 // New creates a new Prompter instance with Fang UI by default
-func New() *Prompter {
-	return &Prompter{useFang: true}
+func New() *SurveyPrompter {
+	return &SurveyPrompter{useFang: true, surveyAdapter: &RealSurveyAdapter{}}
 }
 
 // NewSurvey creates a new Prompter instance using Survey v2 (fallback)
-func NewSurvey() *Prompter {
-	return &Prompter{useFang: false}
+func NewSurvey() *SurveyPrompter {
+	return &SurveyPrompter{useFang: false, surveyAdapter: &RealSurveyAdapter{}}
 }
 
 // GetProjectConfig prompts the user for project configuration
-func (p *Prompter) GetProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
+func (p *SurveyPrompter) GetProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
 	// Use Fang UI by default, fallback to Survey v2 if needed
 	if p.useFang {
 		fangPrompter := ui.NewFangPrompter()
@@ -38,7 +39,7 @@ func (p *Prompter) GetProjectConfig(initial types.ProjectConfig, advanced bool) 
 }
 
 // getSurveyProjectConfig is the original Survey v2 implementation (fallback)
-func (p *Prompter) getSurveyProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
+func (p *SurveyPrompter) getSurveyProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
 	config := initial
 
 	// Set defaults
@@ -106,12 +107,12 @@ func (p *Prompter) getSurveyProjectConfig(initial types.ProjectConfig, advanced 
 }
 
 // isInteractiveMode determines if we need to prompt for additional options
-func (p *Prompter) isInteractiveMode(initial types.ProjectConfig) bool {
+func (p *SurveyPrompter) isInteractiveMode(initial types.ProjectConfig) bool {
 	// If most fields are already provided, we're in non-interactive mode
 	return initial.Name == "" || initial.Module == "" || initial.Type == ""
 }
 
-func (p *Prompter) promptProjectName(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptProjectName(config *types.ProjectConfig) error {
 	// Generate random project name suggestions
 	suggestion := utils.GenerateRandomProjectName()
 	alternatives := utils.GenerateMultipleNames(3)
@@ -128,10 +129,10 @@ func (p *Prompter) promptProjectName(config *types.ProjectConfig) error {
 		Default: suggestion,
 		Help:    helpText,
 	}
-	return survey.AskOne(prompt, &config.Name, survey.WithValidator(survey.Required))
+	return p.surveyAdapter.AskOne(prompt, &config.Name, survey.WithValidator(survey.Required))
 }
 
-func (p *Prompter) promptModulePath(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptModulePath(config *types.ProjectConfig) error {
 	defaultModule := fmt.Sprintf("github.com/username/%s", config.Name)
 
 	prompt := &survey.Input{
@@ -139,10 +140,10 @@ func (p *Prompter) promptModulePath(config *types.ProjectConfig) error {
 		Default: defaultModule,
 		Help:    "Go module path for imports (e.g., github.com/username/project)",
 	}
-	return survey.AskOne(prompt, &config.Module, survey.WithValidator(survey.Required))
+	return p.surveyAdapter.AskOne(prompt, &config.Module, survey.WithValidator(survey.Required))
 }
 
-func (p *Prompter) promptProjectType(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptProjectType(config *types.ProjectConfig) error {
 	// For Phase 0, we only show available types
 	// In Phase 1+, this will be dynamic based on available templates
 	options := []string{
@@ -175,7 +176,7 @@ func (p *Prompter) promptProjectType(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptFramework(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptFramework(config *types.ProjectConfig) error {
 	var options []string
 	var message string
 
@@ -207,7 +208,7 @@ func (p *Prompter) promptFramework(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptBasicOptions(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptBasicOptions(config *types.ProjectConfig) error {
 	// Basic options for non-advanced mode
 	if config.Type == "web-api" {
 		return p.promptDatabaseSupport(config)
@@ -215,7 +216,7 @@ func (p *Prompter) promptBasicOptions(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptAdvancedOptions(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptAdvancedOptions(config *types.ProjectConfig) error {
 	// Advanced configuration options
 	if config.Type == "web-api" {
 		if err := p.promptArchitecture(config); err != nil {
@@ -239,7 +240,7 @@ func (p *Prompter) promptAdvancedOptions(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptArchitecture(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptArchitecture(config *types.ProjectConfig) error {
 	prompt := &survey.Select{
 		Message: "Architecture pattern?",
 		Options: []string{
@@ -269,7 +270,7 @@ func (p *Prompter) promptArchitecture(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptDatabaseSupport(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 	// Initialize Features if nil
 	if config.Features == nil {
 		config.Features = &types.Features{}
@@ -322,7 +323,7 @@ func (p *Prompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptORM(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptORM(config *types.ProjectConfig) error {
 	ormPrompt := &survey.Select{
 		Message: "Which ORM/database abstraction do you prefer?",
 		Options: []string{
@@ -364,7 +365,7 @@ func (p *Prompter) promptORM(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptAuthentication(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptAuthentication(config *types.ProjectConfig) error {
 	// Initialize Features if nil
 	if config.Features == nil {
 		config.Features = &types.Features{}
@@ -400,7 +401,7 @@ func (p *Prompter) promptAuthentication(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptAdvancedLogger(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptAdvancedLogger(config *types.ProjectConfig) error {
 	// Initialize Features if nil
 	if config.Features == nil {
 		config.Features = &types.Features{}
@@ -454,7 +455,7 @@ func (p *Prompter) promptAdvancedLogger(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptGoVersionSelection(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptGoVersionSelection(config *types.ProjectConfig) error {
 	goVersion, err := p.PromptGoVersion()
 	if err != nil {
 		return err
@@ -463,7 +464,7 @@ func (p *Prompter) promptGoVersionSelection(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *Prompter) promptLogger(config *types.ProjectConfig) error {
+func (p *SurveyPrompter) promptLogger(config *types.ProjectConfig) error {
 	// Skip logger selection for library projects (they typically don't need logging setup)
 	if config.Type == "library" {
 		config.Logger = "slog" // Default for libraries

@@ -84,7 +84,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	// Initialize the prompter for interactive configuration
 	// Use Fang UI by default, set to prompts.NewSurvey() for fallback
-	prompter := prompts.New()
+	prompter := prompts.NewSurvey()
 
 	// Get project configuration through interactive prompts or flags
 		config, err := prompter.GetProjectConfig(types.ProjectConfig{

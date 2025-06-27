@@ -31,7 +31,7 @@ func mapSelectionToVersion(selection string) string {
 }
 
 // PromptGoVersion prompts the user to select a Go version
-func (p *Prompter) PromptGoVersion() (string, error) {
+func (p *SurveyPrompter) PromptGoVersion() (string, error) {
 	options := []string{
 		"Auto-detect (recommended)",
 		"Go 1.23 (latest)",

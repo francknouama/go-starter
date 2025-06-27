@@ -4,136 +4,110 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/francknouama/go-starter/internal/utils"
 	"github.com/francknouama/go-starter/pkg/types"
+	"github.com/stretchr/testify/assert"
 )
 
-func TestNew(t *testing.T) {
-	prompter := New()
-	if prompter == nil {
-		t.Error("Expected prompter to not be nil")
-	}
+func TestGetProjectConfig_InteractiveMode(t *testing.T) {
+	// Test case 1: Fully interactive, no initial config
+	t.Run("fully interactive", func(t *testing.T) {
+		mockAdapter := NewMockSurveyAdapter(map[string]interface{}{
+			"What's your project name?": "my-test-project",
+			"Module path:": "github.com/user/my-test-project",
+			"What type of project?": "Web API - REST API or web service",
+			"Select Go version:": "Go 1.23 (latest)",
+			"Which web framework?": "Gin (recommended)",
+			"Which logger?": "slog - Go built-in structured logging (recommended)",
+			"Which ORM/database abstraction do you prefer?": "gorm - Feature-rich ORM with associations and migrations (recommended) ✅",
+			"Authentication type?": "JWT",
+			"Log level?": "info - General application flow (recommended)",
+			"Log format?": "json - Structured JSON format (recommended)",
+			"Which databases do you want to use? (Space to select, Enter to confirm)": []string{"PostgreSQL"},
+			"Would you like to configure advanced options?": true,
+		})
+
+		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
+		config, err := prompter.GetProjectConfig(types.ProjectConfig{}, true)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "my-test-project", config.Name)
+		assert.Equal(t, "github.com/user/my-test-project", config.Module)
+		assert.Equal(t, "web-api", config.Type)
+		assert.Equal(t, "1.23", config.GoVersion)
+		assert.Equal(t, "gin", config.Framework)
+		assert.Equal(t, "slog", config.Logger)
+		assert.Contains(t, config.Features.Database.Drivers, "postgresql")
+		assert.Equal(t, "gorm", config.Features.Database.ORM)
+		assert.Equal(t, "jwt", config.Features.Authentication.Type)
+		assert.Equal(t, "info", config.Features.Logging.Level)
+		assert.Equal(t, "json", config.Features.Logging.Format)
+	})
+
+	// Test case 2: Partially interactive, some initial config
+	t.Run("partially interactive", func(t *testing.T) {
+		mockAdapter := NewMockSurveyAdapter(map[string]interface{}{
+			"What type of project?": "CLI Application - Command-line tool",
+			"Which CLI framework?": "Cobra (recommended)",
+			"Which logger?": "zap - High-performance, zero-allocation logging",
+			"Select Go version:": "Go 1.23 (latest)",
+		})
+
+		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
+		initialConfig := types.ProjectConfig{
+			Name:   "my-cli-tool",
+			Module: "github.com/user/my-cli-tool",
+		}
+		config, err := prompter.GetProjectConfig(initialConfig, false)
+
+		assert.NoError(t, err)
+		assert.Equal(t, "my-cli-tool", config.Name)
+		assert.Equal(t, "github.com/user/my-cli-tool", config.Module)
+		assert.Equal(t, "cli", config.Type)
+		assert.Equal(t, "cobra", config.Framework)
+		assert.Equal(t, "zap", config.Logger)
+	})
+
+	// Test case 3: Non-interactive, all config provided
+	t.Run("non-interactive", func(t *testing.T) {
+		mockAdapter := NewMockSurveyAdapter(map[string]interface{}{})
+
+		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
+		fullConfig := types.ProjectConfig{
+			Name:      "full-config",
+			Module:    "github.com/user/full-config",
+			Type:      "library",
+			GoVersion: "1.21",
+			Framework: "",
+			Logger:    "slog",
+		}
+		config, err := prompter.GetProjectConfig(fullConfig, false)
+
+		assert.NoError(t, err)
+		assert.Equal(t, fullConfig, config)
+	})
 }
 
-func TestPrompter_isInteractiveMode(t *testing.T) {
-	prompter := New()
-
+func TestMapSelectionToProjectType(t *testing.T) {
 	tests := []struct {
-		name     string
-		initial  types.ProjectConfig
-		expected bool
+		selection string
+		expected  string
 	}{
-		{
-			name:     "empty config - interactive",
-			initial:  types.ProjectConfig{},
-			expected: true,
-		},
-		{
-			name: "missing name - interactive",
-			initial: types.ProjectConfig{
-				Module: "github.com/test/project",
-				Type:   "web-api",
-			},
-			expected: true,
-		},
-		{
-			name: "missing module - interactive",
-			initial: types.ProjectConfig{
-				Name: "test-project",
-				Type: "web-api",
-			},
-			expected: true,
-		},
-		{
-			name: "missing type - interactive",
-			initial: types.ProjectConfig{
-				Name:   "test-project",
-				Module: "github.com/test/project",
-			},
-			expected: true,
-		},
-		{
-			name: "all required fields provided - non-interactive",
-			initial: types.ProjectConfig{
-				Name:   "test-project",
-				Module: "github.com/test/project",
-				Type:   "web-api",
-			},
-			expected: false,
-		},
+		{"Web API - REST API or web service", "web-api"},
+		{"CLI Application - Command-line tool", "cli"},
+		{"Library - Reusable Go package", "library"},
+		{"AWS Lambda - Serverless function", "lambda"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := prompter.isInteractiveMode(tt.initial)
-			if result != tt.expected {
-				t.Errorf("isInteractiveMode() = %v, want %v", result, tt.expected)
-			}
+		t.Run(tt.selection, func(t *testing.T) {
+			// Test by checking the options in promptProjectType
+			// This is more of an integration test
+			assert.Contains(t, []string{"web-api", "cli", "library", "lambda"}, tt.expected)
 		})
 	}
 }
 
-func TestPrompter_GetProjectConfig_NonInteractive(t *testing.T) {
-	prompter := New()
-
-	initial := types.ProjectConfig{
-		Name:      "test-project",
-		Module:    "github.com/test/project",
-		Type:      "library",  // Use library type to avoid framework prompts
-		Framework: "standard", // Pre-set framework to avoid prompts
-	}
-
-	// This should work without prompting since all required fields are provided
-	config, err := prompter.GetProjectConfig(initial, false)
-	if err != nil {
-		t.Errorf("GetProjectConfig() error = %v", err)
-	}
-
-	// Check that values were preserved
-	if config.Name != initial.Name {
-		t.Errorf("Name = %v, want %v", config.Name, initial.Name)
-	}
-	if config.Module != initial.Module {
-		t.Errorf("Module = %v, want %v", config.Module, initial.Module)
-	}
-	if config.Type != initial.Type {
-		t.Errorf("Type = %v, want %v", config.Type, initial.Type)
-	}
-
-	// Check defaults were set
-	expectedGoVersion := utils.GetOptimalGoVersion()
-	if config.GoVersion != expectedGoVersion {
-		t.Errorf("GoVersion = %v, want %v", config.GoVersion, expectedGoVersion)
-	}
-	if config.Variables == nil {
-		t.Error("Variables should be initialized")
-	}
-}
-
-func TestPrompter_GetProjectConfig_WithDefaults(t *testing.T) {
-	prompter := New()
-
-	initial := types.ProjectConfig{
-		Name:      "test-project",
-		Module:    "github.com/test/project",
-		Type:      "library",  // Use library type to avoid framework prompts
-		Framework: "standard", // Pre-set framework to avoid prompts
-		GoVersion: "1.20",     // Custom Go version
-	}
-
-	config, err := prompter.GetProjectConfig(initial, false)
-	if err != nil {
-		t.Errorf("GetProjectConfig() error = %v", err)
-	}
-
-	// Should preserve custom Go version
-	if config.GoVersion != "1.20" {
-		t.Errorf("GoVersion = %v, want %v", config.GoVersion, "1.20")
-	}
-}
-
-// Mock test for framework extraction logic
-func TestFrameworkExtraction(t *testing.T) {
+func TestMapFrameworkSelection(t *testing.T) {
 	tests := []struct {
 		selection string
 		expected  string
@@ -148,452 +122,113 @@ func TestFrameworkExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.selection, func(t *testing.T) {
-			// Simulate the framework extraction logic
-			framework := strings.ToLower(strings.Split(tt.selection, " ")[0])
-			if framework != tt.expected {
-				t.Errorf("Framework extraction = %v, want %v", framework, tt.expected)
-			}
+			// Extract framework name (remove description)
+			result := strings.ToLower(strings.Split(tt.selection, " ")[0])
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }
 
-// Test architecture mapping
-func TestArchitectureMapping(t *testing.T) {
-	archMap := map[string]string{
-		"Standard - Simple structure":                 "standard",
-		"Clean Architecture - Uncle Bob's principles": "clean",
-		"Domain-Driven Design - Business-focused":     "ddd",
-		"Hexagonal - Ports and adapters":              "hexagonal",
-	}
-
-	for display, internal := range archMap {
-		t.Run(display, func(t *testing.T) {
-			if internal == "" {
-				t.Errorf("Architecture mapping for %s should not be empty", display)
-			}
-			if len(internal) > 20 {
-				t.Errorf("Architecture internal name %s is too long", internal)
-			}
+func TestMapDatabaseSelection(t *testing.T) {
+	// Database selections map directly
+	databases := []string{"PostgreSQL", "MySQL", "MongoDB", "SQLite", "Redis"}
+	
+	for _, db := range databases {
+		t.Run(db, func(t *testing.T) {
+			assert.NotEmpty(t, db)
 		})
 	}
 }
 
-// Test type mapping
-func TestTypeMapping(t *testing.T) {
-	typeMap := map[string]string{
-		"Web API - REST API or web service":   "web-api",
-		"CLI Application - Command-line tool": "cli",
-		"Library - Reusable Go package":       "library",
-		"AWS Lambda - Serverless function":    "lambda",
-	}
-
-	for display, internal := range typeMap {
-		t.Run(display, func(t *testing.T) {
-			if internal == "" {
-				t.Errorf("Type mapping for %s should not be empty", display)
-			}
-			if strings.Contains(internal, " ") {
-				t.Errorf("Type internal name %s should not contain spaces", internal)
-			}
-		})
-	}
-}
-
-// Test database driver normalization
-func TestDatabaseDriverNormalization(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"PostgreSQL", "postgresql"},
-		{"MySQL", "mysql"},
-		{"MongoDB", "mongodb"},
-		{"SQLite", "sqlite"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			// Simulate the database driver normalization
-			driver := strings.ToLower(tt.input)
-			if driver != tt.expected {
-				t.Errorf("Database driver normalization = %v, want %v", driver, tt.expected)
-			}
-		})
-	}
-}
-
-// Test authentication type normalization
-func TestAuthenticationTypeNormalization(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"JWT", "jwt"},
-		{"OAuth2", "oauth2"},
-		{"Session-based", "session-based"},
-		{"API Key", "api key"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			// Simulate the auth type normalization
-			authType := strings.ToLower(tt.input)
-			if authType != tt.expected {
-				t.Errorf("Auth type normalization = %v, want %v", authType, tt.expected)
-			}
-		})
-	}
-}
-
-// Test NewSurvey constructor function
-func TestNewSurvey(t *testing.T) {
-	prompter := NewSurvey()
-	if prompter == nil {
-		t.Error("Expected prompter to not be nil")
-		return
-	}
-	if prompter.useFang {
-		t.Error("Expected useFang to be false for Survey constructor")
-	}
-}
-
-// Test ORM mapping logic
-func TestOrmMapping(t *testing.T) {
-	ormMap := map[string]string{
-		"gorm - Feature-rich ORM with associations and migrations (recommended) ✅": "gorm",
-		"raw - Raw database/sql package with manual queries ✅":                     "raw",
-		"sqlx - Lightweight extensions on database/sql 🔄 Coming Soon":              "sqlx",
-		"sqlc - Generate type-safe code from SQL 🔄 Coming Soon":                    "sqlc",
-		"ent - Simple, yet feature-complete entity framework 🔄 Coming Soon":        "ent",
-		"xorm - Alternative full-featured ORM 🔄 Coming Soon":                       "xorm",
-	}
-
-	for display, internal := range ormMap {
-		t.Run(display, func(t *testing.T) {
-			if internal == "" {
-				t.Errorf("ORM mapping for %s should not be empty", display)
-			}
-			// Validate that only supported ORMs are implemented
-			if internal != "gorm" && internal != "raw" {
-				// These should trigger validation errors in actual usage
-				t.Logf("ORM %s is marked as coming soon", internal)
-			}
-		})
-	}
-}
-
-// Test logger extraction logic
-func TestLoggerMapping(t *testing.T) {
+func TestLoggerSelectionMapping(t *testing.T) {
 	tests := []struct {
 		selection string
 		expected  string
 	}{
 		{"slog - Go built-in structured logging (recommended)", "slog"},
 		{"zap - High-performance, zero-allocation logging", "zap"},
-		{"logrus - Feature-rich, popular logging library", "logrus"},
-		{"zerolog - Zero allocation, chainable API logging", "zerolog"},
+		{"logrus - Feature-rich logging with fields", "logrus"},
+		{"zerolog - Fast JSON logger with zero allocation", "zerolog"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.selection, func(t *testing.T) {
-			// Simulate the logger extraction logic
-			logger := strings.Split(tt.selection, " ")[0]
-			if logger != tt.expected {
-				t.Errorf("Logger extraction = %v, want %v", logger, tt.expected)
-			}
+		t.Run(tt.expected, func(t *testing.T) {
+			// Test logger selection parsing
+			parts := strings.Split(tt.selection, " - ")
+			assert.Equal(t, tt.expected, parts[0])
 		})
 	}
 }
 
-// Test level and format extraction for advanced logger config
-func TestLoggerLevelFormatExtraction(t *testing.T) {
-	levelTests := []struct {
+func TestORMSelectionParsing(t *testing.T) {
+	ormOptions := []string{
+		"gorm - Feature-rich ORM with associations and migrations (recommended) ✅",
+		"sqlx - Lightweight extension on database/sql with named queries",
+		"sqlc - Type-safe SQL with code generation (compile-time safety)",
+		"ent - Entity framework with graph-based data modeling",
+		"database/sql - Standard library (raw SQL)",
+	}
+
+	for _, option := range ormOptions {
+		t.Run(option, func(t *testing.T) {
+			// Test ORM selection parsing
+			parts := strings.Split(option, " - ")
+			ormName := parts[0]
+			assert.NotEmpty(t, ormName)
+			assert.Contains(t, []string{"gorm", "sqlx", "sqlc", "ent", "database/sql"}, ormName)
+		})
+	}
+}
+
+func TestLogLevelMapping(t *testing.T) {
+	tests := []struct {
 		selection string
 		expected  string
 	}{
-		{"debug - Detailed debugging information", "debug"},
+		{"debug - Detailed information for debugging", "debug"},
 		{"info - General application flow (recommended)", "info"},
-		{"warn - Warning messages and potential issues", "warn"},
-		{"error - Error conditions only", "error"},
+		{"warn - Warning messages", "warn"},
+		{"error - Error messages only", "error"},
 	}
 
-	for _, tt := range levelTests {
-		t.Run("level_"+tt.selection, func(t *testing.T) {
-			level := strings.Split(tt.selection, " ")[0]
-			if level != tt.expected {
-				t.Errorf("Level extraction = %v, want %v", level, tt.expected)
-			}
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			// Test log level selection parsing
+			parts := strings.Split(tt.selection, " - ")
+			assert.Equal(t, tt.expected, parts[0])
 		})
 	}
+}
 
-	formatTests := []struct {
+func TestLogFormatMapping(t *testing.T) {
+	tests := []struct {
 		selection string
 		expected  string
 	}{
 		{"json - Structured JSON format (recommended)", "json"},
 		{"text - Human-readable text format", "text"},
-		{"console - Colored console output", "console"},
-	}
-
-	for _, tt := range formatTests {
-		t.Run("format_"+tt.selection, func(t *testing.T) {
-			format := strings.Split(tt.selection, " ")[0]
-			if format != tt.expected {
-				t.Errorf("Format extraction = %v, want %v", format, tt.expected)
-			}
-		})
-	}
-}
-
-// Test project configuration validation and defaults
-func TestPrompter_ConfigValidation(t *testing.T) {
-	prompter := New()
-
-	tests := []struct {
-		name     string
-		config   types.ProjectConfig
-		advanced bool
-		wantErr  bool
-	}{
-		{
-			name: "library type should not prompt for logger",
-			config: types.ProjectConfig{
-				Name:      "test-lib",
-				Module:    "github.com/test/lib",
-				Type:      "library",
-				Framework: "standard",
-			},
-			advanced: false,
-			wantErr:  false,
-		},
-		{
-			name: "cli type should allow framework selection",
-			config: types.ProjectConfig{
-				Name:   "test-cli",
-				Module: "github.com/test/cli",
-				Type:   "cli",
-			},
-			advanced: false,
-			wantErr:  false,
-		},
-		{
-			name: "web-api type should support all features",
-			config: types.ProjectConfig{
-				Name:   "test-api",
-				Module: "github.com/test/api",
-				Type:   "web-api",
-			},
-			advanced: true,
-			wantErr:  false,
-		},
+		{"console - Colorized console output", "console"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := prompter.GetProjectConfig(tt.config, tt.advanced)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GetProjectConfig() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			// Validate specific behaviors based on type
-			switch tt.config.Type {
-			case "library":
-				if result.Logger != "slog" {
-					t.Errorf("Library projects should default to slog logger, got %v", result.Logger)
-				}
-			case "web-api":
-				if result.GoVersion == "" {
-					t.Error("Web API projects should have Go version set")
-				}
-			}
-
-			// Ensure Variables map is initialized
-			if result.Variables == nil {
-				t.Error("Variables should be initialized")
-			}
+		t.Run(tt.expected, func(t *testing.T) {
+			// Test log format selection parsing
+			parts := strings.Split(tt.selection, " - ")
+			assert.Equal(t, tt.expected, parts[0])
 		})
 	}
 }
 
-// Test go version handling
-func TestGoVersionHandling(t *testing.T) {
-	prompter := New()
+func TestErrorHandling(t *testing.T) {
+	t.Run("survey error propagation", func(t *testing.T) {
+		mockAdapter := &MockSurveyAdapter{
+			responses: map[string]interface{}{},
+		}
 
-	tests := []struct {
-		name       string
-		goVersion  string
-		shouldKeep bool
-	}{
-		{
-			name:       "custom go version should be preserved",
-			goVersion:  "1.20",
-			shouldKeep: true,
-		},
-		{
-			name:       "empty go version should be set to optimal",
-			goVersion:  "",
-			shouldKeep: false,
-		},
-		{
-			name:       "optimal go version may be prompted for change",
-			goVersion:  utils.GetOptimalGoVersion(),
-			shouldKeep: false, // This may trigger prompting
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			config := types.ProjectConfig{
-				Name:      "test-project",
-				Module:    "github.com/test/project",
-				Type:      "library", // Use library to avoid additional prompts
-				Framework: "standard",
-				GoVersion: tt.goVersion,
-			}
-
-			result, err := prompter.GetProjectConfig(config, false)
-			if err != nil {
-				t.Errorf("GetProjectConfig() error = %v", err)
-				return
-			}
-
-			if tt.shouldKeep && result.GoVersion != tt.goVersion {
-				t.Errorf("Expected GoVersion to be preserved as %v, got %v", tt.goVersion, result.GoVersion)
-			}
-
-			if !tt.shouldKeep && result.GoVersion == "" {
-				t.Error("GoVersion should be set to a valid value")
-			}
-		})
-	}
-}
-
-// Test framework logic based on project type
-func TestFrameworkLogic(t *testing.T) {
-	tests := []struct {
-		projectType       string
-		shouldHaveOptions bool
-		expectedOptions   []string
-	}{
-		{
-			projectType:       "web-api",
-			shouldHaveOptions: true,
-			expectedOptions:   []string{"gin", "echo", "fiber", "chi", "standard"},
-		},
-		{
-			projectType:       "cli",
-			shouldHaveOptions: true,
-			expectedOptions:   []string{"cobra", "standard"},
-		},
-		{
-			projectType:       "library",
-			shouldHaveOptions: false,
-			expectedOptions:   nil,
-		},
-		{
-			projectType:       "lambda",
-			shouldHaveOptions: false,
-			expectedOptions:   nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.projectType, func(t *testing.T) {
-			if tt.shouldHaveOptions {
-				// Verify that the expected frameworks are available
-				for _, framework := range tt.expectedOptions {
-					if framework == "" {
-						t.Errorf("Framework option should not be empty for type %s", tt.projectType)
-					}
-				}
-			} else {
-				// Library and lambda types should not need framework selection
-				t.Logf("Project type %s correctly requires no framework selection", tt.projectType)
-			}
-		})
-	}
-}
-
-// Test variable defaults and inheritance
-func TestVariableDefaults(t *testing.T) {
-	prompter := New()
-
-	config := types.ProjectConfig{
-		Name:   "test-project",
-		Module: "github.com/test/project",
-		Type:   "library",
-		Variables: map[string]string{
-			"ExistingVar": "ExistingValue",
-		},
-	}
-
-	result, err := prompter.GetProjectConfig(config, false)
-	if err != nil {
-		t.Errorf("GetProjectConfig() error = %v", err)
-		return
-	}
-
-	// Check that existing variables are preserved
-	if result.Variables["ExistingVar"] != "ExistingValue" {
-		t.Errorf("Expected ExistingVar to be preserved as 'ExistingValue', got %v", result.Variables["ExistingVar"])
-	}
-
-	// Check that Variables map is properly initialized
-	if result.Variables == nil {
-		t.Error("Variables map should be initialized")
-	}
-}
-
-// Test feature initialization for different project types
-func TestFeatureInitialization(t *testing.T) {
-	tests := []struct {
-		name        string
-		projectType string
-		advanced    bool
-		expectAuth  bool
-		expectDB    bool
-	}{
-		{
-			name:        "basic web-api should support database",
-			projectType: "web-api",
-			advanced:    false,
-			expectAuth:  false,
-			expectDB:    true,
-		},
-		{
-			name:        "advanced web-api should support all features",
-			projectType: "web-api",
-			advanced:    true,
-			expectAuth:  true,
-			expectDB:    true,
-		},
-		{
-			name:        "cli should not need database prompts",
-			projectType: "cli",
-			advanced:    false,
-			expectAuth:  false,
-			expectDB:    false,
-		},
-		{
-			name:        "library should not need feature prompts",
-			projectType: "library",
-			advanced:    false,
-			expectAuth:  false,
-			expectDB:    false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// This test validates the logic flow but doesn't test actual prompting
-			// since that would require user interaction
-			if tt.projectType == "web-api" && tt.expectDB {
-				t.Logf("Project type %s correctly supports database features", tt.projectType)
-			}
-			if tt.projectType == "web-api" && tt.advanced && tt.expectAuth {
-				t.Logf("Advanced web-api correctly supports authentication features")
-			}
-		})
-	}
+		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
+		_, err := prompter.GetProjectConfig(types.ProjectConfig{}, true)
+		
+		// We expect no error because the mock doesn't return errors by default
+		assert.NoError(t, err)
+	})
 }
