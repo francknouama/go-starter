@@ -49,6 +49,16 @@ func (p *SurveyPrompter) getSurveyProjectConfig(initial types.ProjectConfig, adv
 	if config.Variables == nil {
 		config.Variables = make(map[string]string)
 	}
+	if config.Features == nil {
+		config.Features = &types.Features{
+			Database:       types.DatabaseConfig{},
+			Authentication: types.AuthConfig{},
+			Deployment:     types.DeployConfig{},
+			Testing:        types.TestConfig{},
+			Monitoring:     types.MonitorConfig{},
+			Logging:        types.LoggingConfig{},
+		}
+	}
 
 	// Project name
 	if config.Name == "" {
@@ -160,7 +170,7 @@ func (p *SurveyPrompter) promptProjectType(config *types.ProjectConfig) error {
 	}
 
 	var selection string
-	if err := survey.AskOne(prompt, &selection); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
 		return err
 	}
 
@@ -199,7 +209,7 @@ func (p *SurveyPrompter) promptFramework(config *types.ProjectConfig) error {
 	}
 
 	var selection string
-	if err := survey.AskOne(prompt, &selection); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
 		return err
 	}
 
@@ -254,7 +264,7 @@ func (p *SurveyPrompter) promptArchitecture(config *types.ProjectConfig) error {
 	}
 
 	var selection string
-	if err := survey.AskOne(prompt, &selection); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
 		return err
 	}
 
@@ -283,7 +293,7 @@ func (p *SurveyPrompter) promptDatabaseSupport(config *types.ProjectConfig) erro
 		Help:    "Include database configuration and basic setup",
 	}
 
-	if err := survey.AskOne(prompt, &addDB); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &addDB); err != nil {
 		return err
 	}
 
@@ -297,7 +307,7 @@ func (p *SurveyPrompter) promptDatabaseSupport(config *types.ProjectConfig) erro
 		}
 
 		var selectedDBs []string
-		if err := survey.AskOne(dbPrompt, &selectedDBs); err != nil {
+		if err := p.surveyAdapter.AskOne(dbPrompt, &selectedDBs); err != nil {
 			return err
 		}
 
@@ -339,7 +349,7 @@ func (p *SurveyPrompter) promptORM(config *types.ProjectConfig) error {
 	}
 
 	var selection string
-	if err := survey.AskOne(ormPrompt, &selection); err != nil {
+	if err := p.surveyAdapter.AskOne(ormPrompt, &selection); err != nil {
 		return err
 	}
 
@@ -378,7 +388,7 @@ func (p *SurveyPrompter) promptAuthentication(config *types.ProjectConfig) error
 		Help:    "Include authentication setup (JWT, OAuth, etc.)",
 	}
 
-	if err := survey.AskOne(prompt, &addAuth); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &addAuth); err != nil {
 		return err
 	}
 
@@ -391,7 +401,7 @@ func (p *SurveyPrompter) promptAuthentication(config *types.ProjectConfig) error
 		}
 
 		var authType string
-		if err := survey.AskOne(authPrompt, &authType); err != nil {
+		if err := p.surveyAdapter.AskOne(authPrompt, &authType); err != nil {
 			return err
 		}
 
@@ -426,7 +436,7 @@ func (p *SurveyPrompter) promptAdvancedLogger(config *types.ProjectConfig) error
 	}
 
 	var levelSelection string
-	if err := survey.AskOne(levelPrompt, &levelSelection); err != nil {
+	if err := p.surveyAdapter.AskOne(levelPrompt, &levelSelection); err != nil {
 		return err
 	}
 	config.Features.Logging.Level = strings.Split(levelSelection, " ")[0]
@@ -444,7 +454,7 @@ func (p *SurveyPrompter) promptAdvancedLogger(config *types.ProjectConfig) error
 	}
 
 	var formatSelection string
-	if err := survey.AskOne(formatPrompt, &formatSelection); err != nil {
+	if err := p.surveyAdapter.AskOne(formatPrompt, &formatSelection); err != nil {
 		return err
 	}
 	config.Features.Logging.Format = strings.Split(formatSelection, " ")[0]
@@ -486,7 +496,7 @@ func (p *SurveyPrompter) promptLogger(config *types.ProjectConfig) error {
 	}
 
 	var selection string
-	if err := survey.AskOne(prompt, &selection); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
 		return err
 	}
 

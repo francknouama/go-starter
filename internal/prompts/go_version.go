@@ -47,7 +47,7 @@ func (p *SurveyPrompter) PromptGoVersion() (string, error) {
 	}
 
 	var selection string
-	if err := survey.AskOne(prompt, &selection); err != nil {
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
 		return "", err
 	}
 

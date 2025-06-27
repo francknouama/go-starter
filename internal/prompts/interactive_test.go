@@ -24,6 +24,8 @@ func TestGetProjectConfig_InteractiveMode(t *testing.T) {
 			"Log format?": "json - Structured JSON format (recommended)",
 			"Which databases do you want to use? (Space to select, Enter to confirm)": []string{"PostgreSQL"},
 			"Would you like to configure advanced options?": true,
+			"Add database support?": true,
+			"Add authentication?": true,
 		})
 
 		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
@@ -83,7 +85,15 @@ func TestGetProjectConfig_InteractiveMode(t *testing.T) {
 		config, err := prompter.GetProjectConfig(fullConfig, false)
 
 		assert.NoError(t, err)
-		assert.Equal(t, fullConfig, config)
+		assert.Equal(t, fullConfig.Name, config.Name)
+		assert.Equal(t, fullConfig.Module, config.Module)
+		assert.Equal(t, fullConfig.Type, config.Type)
+		assert.Equal(t, fullConfig.GoVersion, config.GoVersion)
+		assert.Equal(t, fullConfig.Framework, config.Framework)
+		assert.Equal(t, fullConfig.Logger, config.Logger)
+		// Features and Variables are initialized even in non-interactive mode
+		assert.NotNil(t, config.Features)
+		assert.NotNil(t, config.Variables)
 	})
 }
 
