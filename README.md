@@ -34,7 +34,7 @@ A comprehensive Go project generator that combines the simplicity of create-reac
 - 📝 **Comprehensive Docs**: Complete guides, FAQs, and troubleshooting
 - 🤝 **Community Ready**: GitHub issue/PR templates and contribution guidelines
 - 💫 **Multi-Database Selection**: PostgreSQL, MySQL, MongoDB, SQLite, Redis support
-- 🔄 **Dynamic Go Version Detection**: Uses your current Go version automatically
+- 🔄 **Go Version Selection**: Choose your Go version (`auto`, `1.23`, `1.22`, `1.21`) or let it auto-detect
 - ⚡ **Instant Setup**: Generate complete, compilable projects in under 10 seconds
 
 ### 🛣️ Strategic Roadmap - Next Phase
@@ -168,7 +168,7 @@ go-starter new my-awesome-project
 
 ```bash
 # Web API with high-performance logging
-go-starter new my-api --type=web-api --framework=gin --logger=zap
+go-starter new my-api --type=web-api --framework=gin --logger=zap --go-version=1.23
 
 # CLI tool with structured logging  
 go-starter new my-cli --type=cli --framework=cobra --logger=logrus

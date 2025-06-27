@@ -38,6 +38,7 @@ var newCmd = &cobra.Command{
 Examples:
   go-starter new my-api                                          # Interactive mode
   go-starter new my-api --type=web-api --framework=gin           # Direct mode
+  go-starter new my-api --type=web-api --go-version=1.23         # With specific Go version
   go-starter new my-api --type=web-api --logger=zap              # With specific logger
   go-starter new my-cli --type=cli --logger=slog                 # CLI application
   go-starter new my-lib --type=library                           # Go library
@@ -57,7 +58,7 @@ func init() {
 	newCmd.Flags().StringVar(&projectName, "name", "", "Project name")
 	newCmd.Flags().StringVar(&projectModule, "module", "", "Go module path (e.g., github.com/user/project)")
 	newCmd.Flags().StringVar(&projectType, "type", "", "Project type (web-api, cli, library, lambda)")
-	newCmd.Flags().StringVar(&goVersion, "go-version", "", "Go version to use (auto, 1.23, 1.22, 1.21)")
+	newCmd.Flags().StringVarP(&goVersion, "go-version", "g", "", "Go version to use (auto, 1.23, 1.22, 1.21)")
 	newCmd.Flags().StringVar(&framework, "framework", "", "Framework to use (gin, echo, cobra, etc.)")
 	newCmd.Flags().StringVar(&logger, "logger", "", "Logger to use (slog, zap, logrus, zerolog)")
 	newCmd.Flags().StringVar(&outputDir, "output", ".", "Output directory")
@@ -86,7 +87,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	prompter := prompts.New()
 
 	// Get project configuration through interactive prompts or flags
-	config, err := prompter.GetProjectConfig(types.ProjectConfig{
+		config, err := prompter.GetProjectConfig(types.ProjectConfig{
 		Name:      projectName,
 		Module:    projectModule,
 		Type:      projectType,

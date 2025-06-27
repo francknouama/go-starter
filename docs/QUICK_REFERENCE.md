@@ -55,6 +55,7 @@ go-starter config set key value  # Set configuration value
 
 ```bash
 --type        # Project type (web-api, cli, library, lambda)
+--go-version  # Go version to use (auto, 1.23, 1.22, 1.21)
 --logger      # Logger type (slog, zap, logrus, zerolog)
 --module      # Module path (e.g., github.com/user/project)
 --database    # Database driver (postgres, mysql, mongodb, sqlite, redis)
@@ -62,6 +63,15 @@ go-starter config set key value  # Set configuration value
 --verbose     # Enable verbose output
 --config      # Custom config file location
 ```
+
+## Go Version Options
+
+| Version | Flag Value | Description |
+|---------|------------|-------------|
+| Auto-detect | `auto` | Automatically detects the Go version from your system (default) |
+| Go 1.23 | `1.23` | Uses Go version 1.23 |
+| Go 1.22 | `1.22` | Uses Go version 1.22 |
+| Go 1.21 | `1.21` | Uses Go version 1.21 |
 
 ## Database Options
 
