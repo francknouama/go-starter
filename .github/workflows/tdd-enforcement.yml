@@ -212,7 +212,8 @@ jobs:
           echo "Checking test naming conventions..."
           
           # Find test functions that don't follow TestXxx pattern
-          INVALID_TESTS=$(grep -r "^func.*Test" --include="*_test.go" . | grep -v "^func Test" | grep -v "^func Benchmark" | grep -v "^func Example" || true)
+          # Only check for functions that start with "func " and have "Test" as the next word
+          INVALID_TESTS=$(grep -rE "^func\s+Test[^a-zA-Z]" --include="*_test.go" . | grep -vE "^[^:]*:func\s+(Test|Benchmark|Example)" || true)
           
           if [ -n "$INVALID_TESTS" ]; then
             echo "❌ Found test functions with invalid naming:"
