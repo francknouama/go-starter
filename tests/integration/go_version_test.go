@@ -27,14 +27,14 @@ func TestCLIGoVersionFlag(t *testing.T) {
 	}{
 		{
 			name:       "valid go version",
-			args:       []string{"new", "test-project", "--type=cli", "--go-version=1.23"},
+			args:       []string{"new", "test-project", "--type=cli", "--go-version=1.23", "--module=github.com/test/test-project", "--framework=cobra", "--logger=slog"},
 			shouldFail: false,
 			checkGoMod: true,
 			goVersion:  "1.23",
 		},
 		{
 			name:        "invalid go version",
-			args:        []string{"new", "test-project", "--type=cli", "--go-version=1.10"},
+			args:        []string{"new", "test-project", "--type=cli", "--go-version=1.10", "--module=github.com/test/test-project", "--framework=cobra", "--logger=slog"},
 			shouldFail:  true,
 			expectedMsg: "invalid Go version",
 		},
@@ -46,6 +46,13 @@ func TestCLIGoVersionFlag(t *testing.T) {
 
 			cmd := exec.Command(binary, tt.args...)
 			cmd.Dir = tmpDir
+			// Prepare input for interactive prompts
+			input := strings.NewReader(`github.com/test/test-project
+Cobra (recommended)
+slog - Go built-in structured logging (recommended)
+`)
+			cmd.Stdin = input
+
 			output, err := cmd.CombinedOutput()
 
 			if tt.shouldFail {

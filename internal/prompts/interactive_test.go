@@ -35,7 +35,7 @@ func TestGetProjectConfig_InteractiveMode(t *testing.T) {
 		assert.Equal(t, "my-test-project", config.Name)
 		assert.Equal(t, "github.com/user/my-test-project", config.Module)
 		assert.Equal(t, "web-api", config.Type)
-		assert.Equal(t, "1.23", config.GoVersion)
+		assert.Equal(t, "1.24", config.GoVersion)
 		assert.Equal(t, "gin", config.Framework)
 		assert.Equal(t, "slog", config.Logger)
 		assert.Contains(t, config.Features.Database.Drivers, "postgresql")

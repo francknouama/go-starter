@@ -82,7 +82,7 @@ func (p *SurveyPrompter) getSurveyProjectConfig(initial types.ProjectConfig, adv
 	}
 
 	// Go version selection
-	if config.GoVersion == "" || config.GoVersion == utils.GetOptimalGoVersion() {
+	if config.GoVersion == "" {
 		if err := p.promptGoVersionSelection(&config); err != nil {
 			return config, err
 		}
