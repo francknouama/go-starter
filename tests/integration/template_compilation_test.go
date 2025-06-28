@@ -46,7 +46,11 @@ func TestTemplateCompilation(t *testing.T) {
 	// Create temporary directory for test projects
 	tmpDir, err := os.MkdirTemp("", "go-starter-compilation-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to clean up temp dir: %v", err)
+		}
+	}()
 
 	templateTests := []struct {
 		name     string
@@ -230,7 +234,11 @@ func TestTemplateWithDifferentLoggers(t *testing.T) {
 	// Create temporary directory for test projects
 	tmpDir, err := os.MkdirTemp("", "go-starter-logger-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to clean up temp dir: %v", err)
+		}
+	}()
 
 	loggers := []string{"slog", "zap", "logrus", "zerolog"}
 
@@ -278,7 +286,11 @@ func TestTemplateWithDatabaseOptions(t *testing.T) {
 	// Create temporary directory for test projects
 	tmpDir, err := os.MkdirTemp("", "go-starter-db-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tmpDir)
+	defer func() {
+		if err := os.RemoveAll(tmpDir); err != nil {
+			t.Logf("Failed to clean up temp dir: %v", err)
+		}
+	}()
 
 	databases := []string{"postgres", "mysql", "sqlite"}
 

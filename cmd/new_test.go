@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/francknouama/go-starter/pkg/types"
@@ -228,7 +227,3 @@ func TestFlagBinding(t *testing.T) {
 	}
 }
 
-// Helper function to check if string contains substring
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && strings.Contains(s, substr)
-}

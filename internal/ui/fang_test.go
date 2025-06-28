@@ -6,6 +6,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/francknouama/go-starter/pkg/types"
+	"github.com/stretchr/testify/assert"
 )
 
 // MockSurveyAdapter for testing Survey fallbacks
@@ -31,19 +32,15 @@ func (m *MockSurveyAdapter) SetError(promptType string, err error) {
 
 func (m *MockSurveyAdapter) AskOne(p survey.Prompt, response interface{}, opts ...survey.AskOpt) error {
 	var promptType string
-	switch p.(type) {
+	switch p := p.(type) {
 	case *survey.Input:
-		input := p.(*survey.Input)
-		promptType = input.Message
+		promptType = p.Message
 	case *survey.Select:
-		sel := p.(*survey.Select)
-		promptType = sel.Message
+		promptType = p.Message
 	case *survey.Confirm:
-		confirm := p.(*survey.Confirm)
-		promptType = confirm.Message
+		promptType = p.Message
 	case *survey.MultiSelect:
-		multi := p.(*survey.MultiSelect)
-		promptType = multi.Message
+		promptType = p.Message
 	default:
 		promptType = "unknown"
 	}
@@ -237,9 +234,10 @@ func TestFangPrompter_PromptFrameworkSurvey(t *testing.T) {
 			prompter := NewFangPrompterWithSurvey()
 			mockAdapter := NewMockSurveyAdapter()
 			
-			if tc.projectType == "web-api" {
+			switch tc.projectType {
+			case "web-api":
 				mockAdapter.SetResponse("Which web framework?", tc.response)
-			} else if tc.projectType == "cli" {
+			case "cli":
 				mockAdapter.SetResponse("Which CLI framework?", tc.response)
 			}
 			
@@ -419,9 +417,7 @@ func TestRealSurveyAdapter(t *testing.T) {
 	adapter := &RealSurveyAdapter{}
 	
 	// Test that the adapter exists and has the correct interface
-	if adapter == nil {
-		t.Fatal("Expected adapter to be created")
-	}
+	assert.NotNil(t, adapter)
 	
 	// We can't easily test the actual survey interaction, but we can verify the method exists
 	// This is mainly for coverage and interface verification

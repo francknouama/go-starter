@@ -38,12 +38,6 @@ var (
 			Italic(true).
 			MarginTop(1)
 
-	errorStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("9")).
-			BorderStyle(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("9")).
-			Padding(1, 2)
 )
 
 // FangPrompter is a Fang-based UI prompter with Survey fallback
