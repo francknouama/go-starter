@@ -76,6 +76,7 @@ for combo in "${combinations[@]}"; do
         "--type=$template"
         "--logger=$logger" 
         "--module=github.com/test/$project_name"
+        "--go-version=1.21"
         "--no-git"
     )
     
@@ -84,8 +85,8 @@ for combo in "${combinations[@]}"; do
         cmd_args+=("--framework=$framework")
     fi
     
-    # Generate project with timeout
-    if timeout 30s "$ROOT_DIR/bin/go-starter" new "${cmd_args[@]}" > /dev/null 2>&1; then
+    # Generate project with timeout - provide all inputs via echo
+    if echo -e "$project_name\ngithub.com/test/$project_name" | timeout 30s "$ROOT_DIR/bin/go-starter" new "${cmd_args[@]}" > /dev/null 2>&1; then
         # Check if project compiles
         if cd "$project_name" && go build ./... > /dev/null 2>&1; then
             echo "  ✅ ${template}:${logger} - OK"

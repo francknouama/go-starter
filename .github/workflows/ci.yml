@@ -59,7 +59,7 @@ jobs:
         version: latest
 
   template-validation:
-    name: Template Generation Validation
+    name: Template Integration Tests
     runs-on: ubuntu-latest
     
     steps:
@@ -74,8 +74,16 @@ jobs:
     - name: Build go-starter
       run: make build
 
-    - name: Validate template generation
-      run: scripts/validate_template_generation.sh
+    - name: Run template compilation tests
+      run: go test -v ./tests/integration/... -run TestTemplateCompilation
+      timeout-minutes: 10
+
+    - name: Run template logger tests
+      run: go test -v ./tests/integration/... -run TestTemplateWithDifferentLoggers
+      timeout-minutes: 10
+
+    - name: Run template database tests  
+      run: go test -v ./tests/integration/... -run TestTemplateWithDatabaseOptions
       timeout-minutes: 10
 
   build:
