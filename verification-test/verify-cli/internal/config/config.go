@@ -1,0 +1,128 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+// Config holds the application configuration
+type Config struct {
+	Environment string        `mapstructure:"environment"`
+	Logging     LoggingConfig `mapstructure:"logging"`
+	CLI         CLIConfig     `mapstructure:"cli"`
+}
+
+// CLIConfig holds CLI-specific configuration
+type CLIConfig struct {
+	OutputFormat string `mapstructure:"output_format"` // json, table, text
+	NoColor      bool   `mapstructure:"no_color"`
+	Quiet        bool   `mapstructure:"quiet"`
+}
+
+// LoggingConfig holds logging configuration
+type LoggingConfig struct {
+	Level      string `mapstructure:"level"`
+	Format     string `mapstructure:"format"`
+	Structured bool   `mapstructure:"structured"`
+}
+
+// Load loads configuration from file and environment variables
+func Load() (*Config, error) {
+	v := viper.New()
+
+	// Set default values
+	setDefaults(v)
+
+	// Set config file name and paths
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath("./configs")
+	v.AddConfigPath(".")
+	v.AddConfigPath("$HOME/.verify-cli")
+
+	// Set environment variable prefix
+	v.SetEnvPrefix("VERIFY-CLI")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Determine environment
+	env := os.Getenv("ENVIRONMENT")
+	if env == "" {
+		env = "development"
+	}
+
+	// Try to read config file (optional for CLI apps)
+	if err := v.ReadInConfig(); err != nil {
+		// For CLI apps, config file is optional
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+	}
+
+	var config Config
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Set environment
+	config.Environment = env
+
+	// Validate configuration
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults(v *viper.Viper) {
+	// Logging defaults
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.format", "text")
+	v.SetDefault("logging.structured", false)
+
+	// CLI defaults
+	v.SetDefault("cli.output_format", "text")
+	v.SetDefault("cli.no_color", false)
+	v.SetDefault("cli.quiet", false)
+}
+
+// validateConfig validates the configuration
+func validateConfig(config *Config) error {
+	// Validate logging level
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLevels[config.Logging.Level] {
+		return fmt.Errorf("invalid logging level: %s", config.Logging.Level)
+	}
+
+	// Validate logging format
+	validFormats := map[string]bool{
+		"json":    true,
+		"text":    true,
+		"console": true,
+	}
+	if !validFormats[config.Logging.Format] {
+		return fmt.Errorf("invalid logging format: %s", config.Logging.Format)
+	}
+
+	// Validate CLI output format
+	validOutputFormats := map[string]bool{
+		"json":  true,
+		"table": true,
+		"text":  true,
+	}
+	if !validOutputFormats[config.CLI.OutputFormat] {
+		return fmt.Errorf("invalid CLI output format: %s", config.CLI.OutputFormat)
+	}
+
+	return nil
+}

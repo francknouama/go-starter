@@ -7,7 +7,7 @@ import (
 
 	{{- if eq .DatabaseORM "gorm"}}
 	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
+	gormLogger "gorm.io/gorm/logger"
 	{{- if eq .DatabaseDriver "postgres"}}
 	"gorm.io/driver/postgres"
 	{{- else if eq .DatabaseDriver "mysql"}}
@@ -49,15 +49,15 @@ func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*gorm.DB, erro
 
 	{{- if eq .DatabaseDriver "postgres"}}
 	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
 	{{- else if eq .DatabaseDriver "mysql"}}
 	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
 	{{- else if eq .DatabaseDriver "sqlite"}}
 	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
 	{{- end}}
 
@@ -102,16 +102,16 @@ func Migrate(db *gorm.DB, logger appLogger.Logger) error {
 }
 
 // getLogLevel converts string log level to GORM log level
-func getLogLevel(level string) logger.LogLevel {
+func getLogLevel(level string) gormLogger.LogLevel {
 	switch level {
 	case "error":
-		return logger.Error
+		return gormLogger.Error
 	case "warn":
-		return logger.Warn
+		return gormLogger.Warn
 	case "info":
-		return logger.Info
+		return gormLogger.Info
 	default:
-		return logger.Silent
+		return gormLogger.Silent
 	}
 }
 

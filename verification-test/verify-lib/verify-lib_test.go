@@ -1,0 +1,134 @@
+package verify_lib
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNew(t *testing.T) {
+	// Test with nil config (should use defaults)
+	client, err := New(nil)
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	defer client.Close()
+
+	// Test with custom config
+	config := &Config{
+		Debug: true,
+	}
+	config.Logger.Level = "debug"
+	config.Logger.Format = "text"
+
+	client2, err := New(config)
+	require.NoError(t, err)
+	require.NotNil(t, client2)
+	defer client2.Close()
+}
+
+func TestClient_Process(t *testing.T) {
+	client, err := New(nil)
+	require.NoError(t, err)
+	defer client.Close()
+
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "valid input",
+			input:   "hello world",
+			wantErr: false,
+		},
+		{
+			name:    "empty input",
+			input:   "",
+			wantErr: true,
+		},
+		{
+			name:    "long input",
+			input:   "this is a very long input string to test the processing functionality",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := client.Process(context.Background(), tt.input)
+			
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Empty(t, result)
+			} else {
+				assert.NoError(t, err)
+				assert.NotEmpty(t, result)
+				assert.Contains(t, result, "Processed:")
+			}
+		})
+	}
+}
+
+func TestClient_ProcessWithContext(t *testing.T) {
+	client, err := New(nil)
+	require.NoError(t, err)
+	defer client.Close()
+
+	ctx := context.Background()
+	result, err := client.Process(ctx, "test input")
+	
+	assert.NoError(t, err)
+	assert.Equal(t, "Processed: test input", result)
+}
+
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
+	
+	assert.NotNil(t, config)
+	assert.False(t, config.Debug)
+}
+
+func TestGetLogLevel(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		expected string
+	}{
+		{
+			name:     "explicit level",
+			config:   &Config{Debug: false},
+			expected: "warn",
+		},
+		{
+			name:     "debug mode",
+			config:   &Config{Debug: true},
+			expected: "debug",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			level := getLogLevel(tt.config)
+			assert.Equal(t, tt.expected, level)
+		})
+	}
+}
+
+func BenchmarkClient_Process(b *testing.B) {
+	client, err := New(nil)
+	require.NoError(b, err)
+	defer client.Close()
+
+	ctx := context.Background()
+	input := "benchmark test input"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := client.Process(ctx, input)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

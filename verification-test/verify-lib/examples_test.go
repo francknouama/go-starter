@@ -1,16 +1,16 @@
-package {{.ProjectName | replace "-" "_" | replace "." "_"}}_test
+package verify_lib_test
 
 import (
 	"context"
 	"fmt"
 	"log"
 
-	{{.ProjectName | replace "-" "_" | replace "." "_"}} "{{.ModulePath}}"
+	"github.com/verify/lib"
 )
 
 func ExampleNew() {
 	// Create a new client with default configuration
-	client, err := {{.ProjectName | replace "-" "_" | replace "." "_"}}.New(nil)
+	client, err := verify-lib.New(nil)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -28,11 +28,11 @@ func ExampleNew() {
 
 func ExampleNew_withConfig() {
 	// Create a client with custom configuration
-	config := &{{.ProjectName | replace "-" "_" | replace "." "_"}}.Config{
+	config := &verify-lib.Config{
 		Debug: false,
 	}
 
-	client, err := {{.ProjectName | replace "-" "_" | replace "." "_"}}.New(config)
+	client, err := verify-lib.New(config)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func ExampleNew_withConfig() {
 }
 
 func ExampleClient_Process() {
-	client, err := {{.ProjectName | replace "-" "_" | replace "." "_"}}.New(nil)
+	client, err := verify-lib.New(nil)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -1,0 +1,134 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run security scan daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+
+    - name: Build security scanner
+      run: |
+        go build -o bin/go-starter main.go
+
+    - name: Scan templates for security issues
+      run: |
+        ./bin/go-starter security scan-templates templates/ --verbose
+
+    - name: Run security tests
+      run: |
+        go test -v ./tests/security/...
+
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-severity medium -confidence medium -fmt sarif -out gosec-results.sarif ./...'
+
+    - name: Upload Gosec results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: gosec-results.sarif
+
+    - name: Run Govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
+    - name: Check for known vulnerabilities in dependencies
+      run: |
+        go list -json -deps ./... | nancy sleuth
+
+    - name: Template Security Validation
+      run: |
+        echo "🔍 Validating all template files for security issues..."
+        find templates/ -name "*.tmpl" -type f | while read template; do
+          echo "Checking: $template"
+          # Basic pattern checks for dangerous template functions
+          if grep -q -E '\{\{\s*(\.OS\.|\.Env\.|exec\s|system\s|readFile\s)' "$template"; then
+            echo "❌ Dangerous pattern found in $template"
+            exit 1
+          fi
+        done
+        echo "✅ All templates passed security validation"
+
+    - name: Configuration Security Check
+      run: |
+        echo "🔍 Checking for hardcoded secrets and dangerous configurations..."
+        # Check for potential secrets in config files
+        if find . -name "*.yaml" -o -name "*.yml" -o -name "*.json" | xargs grep -i -E "(password|secret|key|token).*[:=]\s*['\"][^'\"]{8,}['\"]"; then
+          echo "❌ Potential hardcoded secrets found"
+          exit 1
+        fi
+        echo "✅ No hardcoded secrets detected"
+
+    - name: File Permission Check
+      run: |
+        echo "🔍 Checking file permissions for security issues..."
+        # Check for files with overly permissive permissions
+        if find . -type f -perm 0777 -o -perm 0666; then
+          echo "❌ Files with overly permissive permissions found"
+          exit 1
+        fi
+        echo "✅ File permissions are secure"
+
+  dependency-review:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v3
+      with:
+        fail-on-severity: moderate
+        allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC
+
+  security-policy-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Check for Security Policy
+      run: |
+        if [ ! -f SECURITY.md ]; then
+          echo "❌ SECURITY.md file not found"
+          echo "Please create a SECURITY.md file with vulnerability reporting instructions"
+          exit 1
+        fi
+        echo "✅ Security policy found"
+
+    - name: Check for Code of Conduct
+      run: |
+        if [ ! -f CODE_OF_CONDUCT.md ]; then
+          echo "⚠️  CODE_OF_CONDUCT.md file not found (recommended)"
+        else
+          echo "✅ Code of conduct found"
+        fi
+
+    - name: Check for Contributing Guidelines
+      run: |
+        if [ ! -f CONTRIBUTING.md ]; then
+          echo "⚠️  CONTRIBUTING.md file not found (recommended)"
+        else
+          echo "✅ Contributing guidelines found"
+        fi

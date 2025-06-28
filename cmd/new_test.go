@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/francknouama/go-starter/pkg/types"
@@ -191,4 +192,43 @@ func TestGlobalVariables(t *testing.T) {
 			t.Errorf("Boolean variable %s should not be nil", name)
 		}
 	}
+}
+
+// Tests for helper functions would go here if they were exported
+
+func TestFlagBinding(t *testing.T) {
+	// Test that flags are properly bound and accessible
+	flags := newCmd.Flags()
+	
+	flagTests := []struct {
+		name string
+		typ  string
+	}{
+		{"name", "string"},
+		{"module", "string"},
+		{"type", "string"},
+		{"framework", "string"},
+		{"output", "string"},
+		{"advanced", "bool"},
+		{"dry-run", "bool"},
+		{"no-git", "bool"},
+	}
+
+	for _, ft := range flagTests {
+		t.Run(ft.name, func(t *testing.T) {
+			flag := flags.Lookup(ft.name)
+			if flag == nil {
+				t.Fatalf("Flag %s should exist", ft.name)
+			}
+			
+			if flag.Value.Type() != ft.typ {
+				t.Errorf("Flag %s should be %s, got %s", ft.name, ft.typ, flag.Value.Type())
+			}
+		})
+	}
+}
+
+// Helper function to check if string contains substring
+func containsString(s, substr string) bool {
+	return len(s) >= len(substr) && strings.Contains(s, substr)
 }
