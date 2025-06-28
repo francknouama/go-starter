@@ -5,7 +5,6 @@ import (
 	{{- if ne .DatabaseORM "gorm"}}
 	"database/sql"
 	{{- end}}
-	"embed"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,12 +13,9 @@ import (
 	"gorm.io/gorm"
 	{{- end}}
 	
+	"{{.ModulePath}}/migrations"
 	appLogger "{{.ModulePath}}/internal/logger"
 )
-
-// MigrationFS embeds migration files
-//go:embed migrations/*.sql
-var MigrationFS embed.FS
 
 // Migration represents a database migration
 type Migration struct {
@@ -159,7 +155,7 @@ func (m *MigrationRunner) createMigrationsTable() error {
 
 // getMigrations reads all migration files from the embedded filesystem
 func (m *MigrationRunner) getMigrations() ([]Migration, error) {
-	entries, err := MigrationFS.ReadDir("migrations")
+	entries, err := migrations.SQLFiles.ReadDir(".")
 	if err != nil {
 		return nil, err
 	}
@@ -195,7 +191,7 @@ func (m *MigrationRunner) getMigrations() ([]Migration, error) {
 		migrationName := versionParts[1]
 
 		// Read migration content
-		content, err := MigrationFS.ReadFile("migrations/" + name)
+		content, err := migrations.SQLFiles.ReadFile(name)
 		if err != nil {
 			return nil, err
 		}
