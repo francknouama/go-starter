@@ -213,10 +213,19 @@ func validateConfig(config *Config) error {
 {{- if eq .AuthType "jwt"}}
 	// Validate JWT configuration
 	if config.JWT.Secret == "" || config.JWT.Secret == "your-secret-key" {
-		return fmt.Errorf("JWT secret must be set and not use the default value")
+		return fmt.Errorf("SECURITY ERROR: JWT secret must be set and not use the default value. Set JWT_SECRET environment variable")
 	}
+	
+	// Enhanced security validation for production
+	if len(config.JWT.Secret) < 32 {
+		return fmt.Errorf("SECURITY WARNING: JWT secret should be at least 32 characters long for production use")
+	}
+	
 	if config.JWT.Expiration <= 0 {
 		return fmt.Errorf("JWT expiration must be positive")
+	}
+	if config.JWT.Expiration > 168 { // 7 days
+		return fmt.Errorf("SECURITY WARNING: JWT expiration should not exceed 168 hours (7 days) for security")
 	}
 {{- end}}
 

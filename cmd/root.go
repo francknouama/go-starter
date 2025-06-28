@@ -73,7 +73,12 @@ func ExecuteWithFS(fs fs.FS) {
 }
 
 func init() {
-	cobra.OnInitialize(initConfig)
+	cobra.OnInitialize(func() {
+		if err := initConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error initializing configuration: %v\n", err)
+			os.Exit(1)
+		}
+	})
 
 	// Global flags
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.go-starter.yaml)")
@@ -81,13 +86,14 @@ func init() {
 
 	// Bind flags to viper
 	if err := viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose")); err != nil {
-		// Note: This is a programming error if it fails, so we panic in init
-		panic(fmt.Sprintf("failed to bind verbose flag: %v", err))
+		// Log error and continue with degraded functionality rather than crashing
+		fmt.Fprintf(os.Stderr, "Warning: failed to bind verbose flag: %v\n", err)
+		fmt.Fprintln(os.Stderr, "Continuing without verbose flag binding...")
 	}
 }
 
 // initConfig reads in config file and ENV variables if set.
-func initConfig() {
+func initConfig() error {
 	if cfgFile != "" {
 		// Use config file from the flag.
 		viper.SetConfigFile(cfgFile)
@@ -95,8 +101,7 @@ func initConfig() {
 		// Find home directory.
 		home, err := os.UserHomeDir()
 		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
+			return fmt.Errorf("failed to determine home directory: %w", err)
 		}
 
 		// Search config in home directory with name ".go-starter" (without extension).
@@ -113,4 +118,6 @@ func initConfig() {
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		}
 	}
+	
+	return nil
 }

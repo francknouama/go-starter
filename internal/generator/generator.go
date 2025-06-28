@@ -16,10 +16,82 @@ import (
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
+// GenerationTransaction tracks operations that can be rolled back
+type GenerationTransaction struct {
+	outputPath    string
+	filesCreated  []string
+	dirsCreated   []string
+	hooksExecuted []string
+}
+
+// NewGenerationTransaction creates a new transaction for rollback support
+func NewGenerationTransaction(outputPath string) *GenerationTransaction {
+	return &GenerationTransaction{
+		outputPath:    outputPath,
+		filesCreated:  make([]string, 0),
+		dirsCreated:   make([]string, 0),
+		hooksExecuted: make([]string, 0),
+	}
+}
+
+// AddFile tracks a created file for potential rollback
+func (tx *GenerationTransaction) AddFile(path string) {
+	tx.filesCreated = append(tx.filesCreated, path)
+}
+
+// AddDirectory tracks a created directory for potential rollback
+func (tx *GenerationTransaction) AddDirectory(path string) {
+	tx.dirsCreated = append(tx.dirsCreated, path)
+}
+
+// AddHook tracks an executed hook for logging
+func (tx *GenerationTransaction) AddHook(hookName string) {
+	tx.hooksExecuted = append(tx.hooksExecuted, hookName)
+}
+
+// Rollback removes all created files and directories
+func (tx *GenerationTransaction) Rollback() error {
+	if len(tx.filesCreated) == 0 && len(tx.dirsCreated) == 0 {
+		return nil
+	}
+
+	fmt.Printf("Rolling back failed generation at %s...\n", tx.outputPath)
+
+	var rollbackErrors []string
+
+	// Remove created files in reverse order
+	for i := len(tx.filesCreated) - 1; i >= 0; i-- {
+		file := tx.filesCreated[i]
+		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+			rollbackErrors = append(rollbackErrors, fmt.Sprintf("file %s: %v", file, err))
+		}
+	}
+
+	// Remove directories in reverse order (only if empty)
+	for i := len(tx.dirsCreated) - 1; i >= 0; i-- {
+		dir := tx.dirsCreated[i]
+		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+			// Don't report errors for non-empty directories - that's expected
+			if !strings.Contains(err.Error(), "directory not empty") {
+				rollbackErrors = append(rollbackErrors, fmt.Sprintf("dir %s: %v", dir, err))
+			}
+		}
+	}
+
+	if len(rollbackErrors) > 0 {
+		fmt.Printf("Rollback completed with %d errors\n", len(rollbackErrors))
+		return fmt.Errorf("rollback errors: %s", strings.Join(rollbackErrors, "; "))
+	}
+
+	fmt.Println("Rollback completed successfully")
+	return nil
+}
+
 // Generator handles project generation
 type Generator struct {
-	registry *templates.Registry
-	loader   *templates.TemplateLoader
+	registry           *templates.Registry
+	loader             *templates.TemplateLoader
+	currentTransaction *GenerationTransaction
 }
 
 // New creates a new Generator instance
@@ -40,6 +112,20 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 		Success:      false,
 	}
 
+	// Create transaction for rollback support
+	tx := NewGenerationTransaction(options.OutputPath)
+	
+	// Set up recovery mechanism
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Generation panic occurred: %v\n", r)
+			if rollbackErr := tx.Rollback(); rollbackErr != nil {
+				fmt.Printf("Rollback failed: %v\n", rollbackErr)
+			}
+			panic(r) // Re-panic after cleanup
+		}
+	}()
+
 	// Validate configuration
 	if err := g.validateConfig(config); err != nil {
 		result.Error = err
@@ -58,11 +144,16 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 		result.Error = types.NewFileSystemError("failed to create output directory", err)
 		return result, result.Error
 	}
+	tx.AddDirectory(options.OutputPath)
 
-	// Generate project files
-	filesCreated, err := g.generateProjectFiles(template, config, options.OutputPath)
+	// Generate project files with transaction tracking
+	filesCreated, err := g.generateProjectFilesWithTransaction(template, config, options.OutputPath, tx)
 	if err != nil {
 		result.Error = err
+		// Perform rollback on failure
+		if rollbackErr := tx.Rollback(); rollbackErr != nil {
+			fmt.Printf("Rollback failed: %v\n", rollbackErr)
+		}
 		return result, err
 	}
 	result.FilesCreated = filesCreated
@@ -154,6 +245,16 @@ func (g *Generator) handleMissingTemplate(config types.ProjectConfig, result *ty
 }
 
 // generateProjectFiles generates all files for the project
+// generateProjectFilesWithTransaction generates project files with rollback support
+func (g *Generator) generateProjectFilesWithTransaction(tmpl types.Template, config types.ProjectConfig, outputPath string, tx *GenerationTransaction) ([]string, error) {
+	// Set the transaction in generator for file tracking
+	g.currentTransaction = tx
+	defer func() { g.currentTransaction = nil }()
+
+	// Use the existing generateProjectFiles function
+	return g.generateProjectFiles(tmpl, config, outputPath)
+}
+
 func (g *Generator) generateProjectFiles(tmpl types.Template, config types.ProjectConfig, outputPath string) ([]string, error) {
 	var filesCreated []string
 
@@ -220,6 +321,11 @@ func (g *Generator) createGoMod(config types.ProjectConfig, path string) error {
 
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		return types.NewFileSystemError("failed to create go.mod", err)
+	}
+
+	// Track file creation for rollback if transaction is active
+	if g.currentTransaction != nil {
+		g.currentTransaction.AddFile(path)
 	}
 
 	return nil
@@ -528,6 +634,11 @@ func (g *Generator) processTemplateFile(templateDir, sourceFile, destPath string
 		return types.NewFileSystemError("failed to write file", err)
 	}
 
+	// Track file creation for rollback if transaction is active
+	if g.currentTransaction != nil {
+		g.currentTransaction.AddFile(destPath)
+	}
+
 	return nil
 }
 
@@ -771,6 +882,11 @@ temp/
 	gitignorePath := filepath.Join(projectPath, ".gitignore")
 	if err := os.WriteFile(gitignorePath, []byte(strings.TrimSpace(gitignoreContent)), 0644); err != nil {
 		return err
+	}
+
+	// Track file creation for rollback if transaction is active
+	if g.currentTransaction != nil {
+		g.currentTransaction.AddFile(gitignorePath)
 	}
 
 	return nil

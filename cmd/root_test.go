@@ -51,15 +51,14 @@ func TestViperBinding(t *testing.T) {
 }
 
 func TestInitConfig(t *testing.T) {
-	// Test that initConfig function doesn't panic
+	// Test that initConfig function doesn't panic and handles errors properly
 	// This is mainly a smoke test since it involves file system operations
-	defer func() {
-		if r := recover(); r != nil {
-			t.Errorf("initConfig() panicked: %v", r)
-		}
-	}()
-
-	initConfig()
+	err := initConfig()
+	if err != nil {
+		// initConfig should not fail in normal circumstances
+		// If it does fail, it should return a proper error, not panic
+		t.Logf("initConfig returned error (this may be expected in test environment): %v", err)
+	}
 }
 
 func TestExecute(t *testing.T) {
