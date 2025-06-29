@@ -1,0 +1,144 @@
+package entities
+
+import (
+	"errors"
+	"time"
+)
+
+// User represents the core user entity in the domain
+// This is a pure business object with no external dependencies
+type User struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Username  string    `json:"username"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	Password  string    `json:"-"` // Never serialize password
+	IsActive  bool      `json:"is_active"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Domain errors
+var (
+	ErrUserNotFound         = errors.New("user not found")
+	ErrInvalidEmail         = errors.New("invalid email format")
+	ErrInvalidUsername      = errors.New("invalid username")
+	ErrWeakPassword         = errors.New("password does not meet requirements")
+	ErrEmailAlreadyExists   = errors.New("email already exists")
+	ErrUsernameAlreadyExists = errors.New("username already exists")
+)
+
+// NewUser creates a new User entity with validation
+func NewUser(email, username, firstName, lastName, password string) (*User, error) {
+	user := &User{
+		Email:     email,
+		Username:  username,
+		FirstName: firstName,
+		LastName:  lastName,
+		Password:  password,
+		IsActive:  true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	if err := user.Validate(); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// Validate performs business rule validation on the User entity
+func (u *User) Validate() error {
+	if err := u.validateEmail(); err != nil {
+		return err
+	}
+
+	if err := u.validateUsername(); err != nil {
+		return err
+	}
+
+	if err := u.validatePassword(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateEmail checks if email format is valid (basic validation)
+func (u *User) validateEmail() error {
+	if u.Email == "" {
+		return ErrInvalidEmail
+	}
+	
+	// Basic email validation - could be enhanced
+	if len(u.Email) < 3 || !containsAt(u.Email) {
+		return ErrInvalidEmail
+	}
+	
+	return nil
+}
+
+// validateUsername checks if username meets business requirements
+func (u *User) validateUsername() error {
+	if u.Username == "" {
+		return ErrInvalidUsername
+	}
+	
+	if len(u.Username) < 3 || len(u.Username) > 50 {
+		return ErrInvalidUsername
+	}
+	
+	return nil
+}
+
+// validatePassword checks if password meets security requirements
+func (u *User) validatePassword() error {
+	if u.Password == "" {
+		return ErrWeakPassword
+	}
+	
+	if len(u.Password) < 8 {
+		return ErrWeakPassword
+	}
+	
+	return nil
+}
+
+// UpdateProfile updates user profile information
+func (u *User) UpdateProfile(firstName, lastName string) {
+	u.FirstName = firstName
+	u.LastName = lastName
+	u.UpdatedAt = time.Now()
+}
+
+// Deactivate marks the user as inactive
+func (u *User) Deactivate() {
+	u.IsActive = false
+	u.UpdatedAt = time.Now()
+}
+
+// Activate marks the user as active
+func (u *User) Activate() {
+	u.IsActive = true
+	u.UpdatedAt = time.Now()
+}
+
+// GetFullName returns the user's full name
+func (u *User) GetFullName() string {
+	if u.FirstName == "" && u.LastName == "" {
+		return u.Username
+	}
+	return u.FirstName + " " + u.LastName
+}
+
+// containsAt is a simple helper to check for @ symbol
+func containsAt(s string) bool {
+	for _, r := range s {
+		if r == '@' {
+			return true
+		}
+	}
+	return false
+}

@@ -1,0 +1,83 @@
+package persistence
+
+import (
+	"fmt"
+
+	"{{.ModulePath}}/internal/domain/ports"
+	"gorm.io/gorm"
+)
+
+// MigrationManager handles database migrations
+type MigrationManager struct {
+	db     *gorm.DB
+	logger ports.Logger
+}
+
+// NewMigrationManager creates a new migration manager
+func NewMigrationManager(db *gorm.DB, logger ports.Logger) *MigrationManager {
+	return &MigrationManager{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// RunMigrations runs all pending migrations
+func (m *MigrationManager) RunMigrations() error {
+	m.logger.Info("Running database migrations")
+
+	// Auto-migrate the models
+	if err := m.db.AutoMigrate(
+		&UserModel{},
+		&AuthSessionModel{},
+	); err != nil {
+		m.logger.Error("Failed to run auto-migrations", "error", err)
+		return fmt.Errorf("auto-migration failed: %w", err)
+	}
+
+	m.logger.Info("Database migrations completed successfully")
+	return nil
+}
+
+// CreateTables creates the database tables
+func (m *MigrationManager) CreateTables() error {
+	m.logger.Info("Creating database tables")
+
+	// Create tables if they don't exist
+	if err := m.db.AutoMigrate(
+		&UserModel{},
+		&AuthSessionModel{},
+	); err != nil {
+		m.logger.Error("Failed to create tables", "error", err)
+		return fmt.Errorf("table creation failed: %w", err)
+	}
+
+	m.logger.Info("Database tables created successfully")
+	return nil
+}
+
+// DropTables drops all application tables (use with caution)
+func (m *MigrationManager) DropTables() error {
+	m.logger.Warn("Dropping all database tables")
+
+	if err := m.db.Migrator().DropTable(
+		&UserModel{},
+		&AuthSessionModel{},
+	); err != nil {
+		m.logger.Error("Failed to drop tables", "error", err)
+		return fmt.Errorf("table drop failed: %w", err)
+	}
+
+	m.logger.Info("Database tables dropped successfully")
+	return nil
+}
+
+// GetMigrationStatus returns the current migration status
+func (m *MigrationManager) GetMigrationStatus() (map[string]bool, error) {
+	status := make(map[string]bool)
+
+	// Check if tables exist
+	status["users"] = m.db.Migrator().HasTable(&UserModel{})
+	status["auth_sessions"] = m.db.Migrator().HasTable(&AuthSessionModel{})
+
+	return status, nil
+}

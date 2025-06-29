@@ -1,0 +1,111 @@
+package web
+
+import (
+	"{{.ModulePath}}/internal/adapters/controllers"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	"{{.ModulePath}}/internal/infrastructure/web/middleware"
+)
+
+// RouterService manages HTTP routing using domain interfaces
+type RouterService struct {
+	router ports.Router
+	config *config.ServerConfig
+	logger ports.Logger
+}
+
+// NewRouterService creates a new RouterService instance
+func NewRouterService(config *config.ServerConfig, logger ports.Logger) (*RouterService, error) {
+	// Create the router using the configured framework
+	router, err := NewRouter("{{.Framework}}")
+	if err != nil {
+		return nil, err
+	}
+
+	service := &RouterService{
+		router: router,
+		config: config,
+		logger: logger,
+	}
+
+	// Setup global middleware
+	service.setupMiddleware()
+
+	return service, nil
+}
+
+// setupMiddleware configures global middleware
+func (r *RouterService) setupMiddleware() {
+	// Recovery middleware
+	r.router.Use(middleware.Recovery(r.logger))
+
+	// CORS middleware
+	r.router.Use(middleware.CORS())
+
+	// Request logging middleware
+	r.router.Use(middleware.RequestLogger(r.logger))
+
+	// Security headers middleware
+	r.router.Use(middleware.SecurityHeaders())
+}
+
+// RegisterHealthRoutes registers health check routes
+func (r *RouterService) RegisterHealthRoutes(controller *controllers.HealthController) {
+	health := r.router.Group("/health")
+	health.GET("", controller.Health)
+	health.GET("/", controller.Health)
+
+	// Kubernetes health checks
+	r.router.GET("/ready", controller.Readiness)
+	r.router.GET("/live", controller.Liveness)
+}
+
+{{if ne .DatabaseDriver ""}}
+// RegisterUserRoutes registers user-related routes
+func (r *RouterService) RegisterUserRoutes(controller *controllers.UserController) {
+	v1 := r.router.Group("/api/v1")
+	
+	users := v1.Group("/users")
+	// Public routes
+	users.POST("", controller.CreateUser)
+	
+	// Protected routes
+	protected := users.Group("")
+	{{if ne .AuthType ""}}
+	protected.Use(middleware.Auth(r.logger))
+	{{end}}
+	protected.GET("", controller.ListUsers)
+	protected.GET("/:id", controller.GetUser)
+	protected.PUT("/:id", controller.UpdateUser)
+	protected.DELETE("/:id", controller.DeleteUser)
+}
+{{end}}
+
+{{if ne .AuthType ""}}
+// RegisterAuthRoutes registers authentication routes
+func (r *RouterService) RegisterAuthRoutes(controller *controllers.AuthController) {
+	v1 := r.router.Group("/api/v1")
+	
+	auth := v1.Group("/auth")
+	// Public auth routes
+	auth.POST("/login", controller.Login)
+	auth.POST("/refresh", controller.RefreshToken)
+	
+	// Protected auth routes
+	protected := auth.Group("")
+	protected.Use(middleware.Auth(r.logger))
+	protected.POST("/logout", controller.Logout)
+	protected.POST("/logout-all", controller.LogoutAll)
+	protected.GET("/me", controller.Me)
+}
+{{end}}
+
+// GetRouter returns the domain router interface
+func (r *RouterService) GetRouter() ports.Router {
+	return r.router
+}
+
+// CreateWebServer creates a web server for this router
+func (r *RouterService) CreateWebServer() (ports.WebServer, error) {
+	return NewWebServer("{{.Framework}}", r.router)
+}

@@ -1,0 +1,95 @@
+package logger
+
+import (
+	"os"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// ZapLogger implements the Logger interface using Zap
+type ZapLogger struct {
+	sugar *zap.SugaredLogger
+}
+
+// NewZapLogger creates a new Zap-based logger
+func NewZapLogger(config *config.LoggerConfig) ports.Logger {
+	var level zapcore.Level
+	switch config.Level {
+	case "debug":
+		level = zapcore.DebugLevel
+	case "info":
+		level = zapcore.InfoLevel
+	case "warn":
+		level = zapcore.WarnLevel
+	case "error":
+		level = zapcore.ErrorLevel
+	default:
+		level = zapcore.InfoLevel
+	}
+
+	encoderConfig := zap.NewProductionEncoderConfig()
+	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+
+	var core zapcore.Core
+	switch config.Format {
+	case "json":
+		core = zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoderConfig),
+			zapcore.AddSync(os.Stdout),
+			level,
+		)
+	case "text", "console":
+		encoderConfig = zap.NewDevelopmentEncoderConfig()
+		encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+		core = zapcore.NewCore(
+			zapcore.NewConsoleEncoder(encoderConfig),
+			zapcore.AddSync(os.Stdout),
+			level,
+		)
+	default:
+		core = zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoderConfig),
+			zapcore.AddSync(os.Stdout),
+			level,
+		)
+	}
+
+	logger := zap.New(core, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
+	return &ZapLogger{sugar: logger.Sugar()}
+}
+
+// Debug logs debug information
+func (l *ZapLogger) Debug(msg string, fields ...interface{}) {
+	l.sugar.Debugw(msg, fields...)
+}
+
+// Info logs informational messages
+func (l *ZapLogger) Info(msg string, fields ...interface{}) {
+	l.sugar.Infow(msg, fields...)
+}
+
+// Warn logs warning messages
+func (l *ZapLogger) Warn(msg string, fields ...interface{}) {
+	l.sugar.Warnw(msg, fields...)
+}
+
+// Error logs error messages
+func (l *ZapLogger) Error(msg string, fields ...interface{}) {
+	l.sugar.Errorw(msg, fields...)
+}
+
+// Fatal logs fatal errors and exits
+func (l *ZapLogger) Fatal(msg string, fields ...interface{}) {
+	l.sugar.Fatalw(msg, fields...)
+	os.Exit(1)
+}
+
+// With returns a logger with additional context fields
+func (l *ZapLogger) With(fields ...interface{}) ports.Logger {
+	return &ZapLogger{
+		sugar: l.sugar.With(fields...),
+	}
+}

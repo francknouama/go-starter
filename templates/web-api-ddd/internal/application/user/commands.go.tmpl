@@ -1,0 +1,137 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+// Command represents a command in the CQRS pattern
+type Command interface {
+	CommandType() string
+}
+
+// Create{{.DomainName | title}}Command represents a command to create a new {{.DomainName}}
+type Create{{.DomainName | title}}Command struct {
+	Email     string `json:"email" validate:"required,email"`
+	FirstName string `json:"firstName" validate:"required,min=1,max=50"`
+	LastName  string `json:"lastName" validate:"required,min=1,max=50"`
+}
+
+// CommandType returns the command type
+func (c Create{{.DomainName | title}}Command) CommandType() string {
+	return "create_{{.DomainName}}"
+}
+
+// Update{{.DomainName | title}}Command represents a command to update a {{.DomainName}}
+type Update{{.DomainName | title}}Command struct {
+	ID        string  `json:"id" validate:"required,uuid"`
+	Email     *string `json:"email,omitempty" validate:"omitempty,email"`
+	FirstName *string `json:"firstName,omitempty" validate:"omitempty,min=1,max=50"`
+	LastName  *string `json:"lastName,omitempty" validate:"omitempty,min=1,max=50"`
+}
+
+// CommandType returns the command type
+func (c Update{{.DomainName | title}}Command) CommandType() string {
+	return "update_{{.DomainName}}"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (c Update{{.DomainName | title}}Command) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(c.ID)
+}
+
+// GetEmail returns the email as a value object if provided
+func (c Update{{.DomainName | title}}Command) GetEmail() (*valueobjects.Email, error) {
+	if c.Email == nil {
+		return nil, nil
+	}
+	email, err := valueobjects.NewEmail(*c.Email)
+	if err != nil {
+		return nil, err
+	}
+	return &email, nil
+}
+
+// Change{{.DomainName | title}}EmailCommand represents a command to change a {{.DomainName}}'s email
+type Change{{.DomainName | title}}EmailCommand struct {
+	ID       string `json:"id" validate:"required,uuid"`
+	NewEmail string `json:"newEmail" validate:"required,email"`
+}
+
+// CommandType returns the command type
+func (c Change{{.DomainName | title}}EmailCommand) CommandType() string {
+	return "change_{{.DomainName}}_email"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (c Change{{.DomainName | title}}EmailCommand) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(c.ID)
+}
+
+// GetNewEmail returns the new email as a value object
+func (c Change{{.DomainName | title}}EmailCommand) GetNewEmail() (valueobjects.Email, error) {
+	return valueobjects.NewEmail(c.NewEmail)
+}
+
+// Change{{.DomainName | title}}NameCommand represents a command to change a {{.DomainName}}'s name
+type Change{{.DomainName | title}}NameCommand struct {
+	ID        string `json:"id" validate:"required,uuid"`
+	FirstName string `json:"firstName" validate:"required,min=1,max=50"`
+	LastName  string `json:"lastName" validate:"required,min=1,max=50"`
+}
+
+// CommandType returns the command type
+func (c Change{{.DomainName | title}}NameCommand) CommandType() string {
+	return "change_{{.DomainName}}_name"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (c Change{{.DomainName | title}}NameCommand) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(c.ID)
+}
+
+// Activate{{.DomainName | title}}Command represents a command to activate a {{.DomainName}}
+type Activate{{.DomainName | title}}Command struct {
+	ID string `json:"id" validate:"required,uuid"`
+}
+
+// CommandType returns the command type
+func (c Activate{{.DomainName | title}}Command) CommandType() string {
+	return "activate_{{.DomainName}}"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (c Activate{{.DomainName | title}}Command) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(c.ID)
+}
+
+// Deactivate{{.DomainName | title}}Command represents a command to deactivate a {{.DomainName}}
+type Deactivate{{.DomainName | title}}Command struct {
+	ID string `json:"id" validate:"required,uuid"`
+}
+
+// CommandType returns the command type
+func (c Deactivate{{.DomainName | title}}Command) CommandType() string {
+	return "deactivate_{{.DomainName}}"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (c Deactivate{{.DomainName | title}}Command) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(c.ID)
+}
+
+// Delete{{.DomainName | title}}Command represents a command to delete a {{.DomainName}}
+type Delete{{.DomainName | title}}Command struct {
+	ID string `json:"id" validate:"required,uuid"`
+}
+
+// CommandType returns the command type
+func (c Delete{{.DomainName | title}}Command) CommandType() string {
+	return "delete_{{.DomainName}}"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (c Delete{{.DomainName | title}}Command) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(c.ID)
+}
+{{- end}}

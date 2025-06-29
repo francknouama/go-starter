@@ -1,0 +1,177 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"time"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+// {{.DomainName | title}}DTO represents a {{.DomainName}} data transfer object
+type {{.DomainName | title}}DTO struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	FirstName string    `json:"firstName"`
+	LastName  string    `json:"lastName"`
+	FullName  string    `json:"fullName"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	Version   int       `json:"version"`
+}
+
+// From{{.DomainName | title}} creates a DTO from a domain entity
+func From{{.DomainName | title}}({{.DomainName}}Entity *{{.DomainName}}.{{.DomainName | title}}) {{.DomainName | title}}DTO {
+	return {{.DomainName | title}}DTO{
+		ID:        {{.DomainName}}Entity.ID().String(),
+		Email:     {{.DomainName}}Entity.Email().String(),
+		FirstName: {{.DomainName}}Entity.Name().FirstName(),
+		LastName:  {{.DomainName}}Entity.Name().LastName(),
+		FullName:  {{.DomainName}}Entity.Name().FullName(),
+		Status:    {{.DomainName}}Entity.Status().String(),
+		CreatedAt: {{.DomainName}}Entity.CreatedAt(),
+		UpdatedAt: {{.DomainName}}Entity.UpdatedAt(),
+		Version:   {{.DomainName}}Entity.Version(),
+	}
+}
+
+// From{{.DomainName | title}}s creates DTOs from domain entities
+func From{{.DomainName | title}}s({{.DomainName}}Entities []*{{.DomainName}}.{{.DomainName | title}}) []{{.DomainName | title}}DTO {
+	dtos := make([]{{.DomainName | title}}DTO, len({{.DomainName}}Entities))
+	for i, entity := range {{.DomainName}}Entities {
+		dtos[i] = From{{.DomainName | title}}(entity)
+	}
+	return dtos
+}
+
+// {{.DomainName | title}}ListDTO represents a paginated list of {{.DomainName}}s
+type {{.DomainName | title}}ListDTO struct {
+	{{.DomainName | title}}s []{{.DomainName | title}}DTO `json:"{{.DomainName}}s"`
+	Total      int                          `json:"total"`
+	Page       int                          `json:"page"`
+	Limit      int                          `json:"limit"`
+	TotalPages int                          `json:"totalPages"`
+}
+
+// New{{.DomainName | title}}ListDTO creates a new {{.DomainName}} list DTO
+func New{{.DomainName | title}}ListDTO({{.DomainName}}s []{{.DomainName | title}}DTO, total, page, limit int) {{.DomainName | title}}ListDTO {
+	totalPages := (total + limit - 1) / limit
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	
+	return {{.DomainName | title}}ListDTO{
+		{{.DomainName | title}}s: {{.DomainName}}s,
+		Total:      total,
+		Page:       page,
+		Limit:      limit,
+		TotalPages: totalPages,
+	}
+}
+
+// {{.DomainName | title}}SummaryDTO represents a summary of {{.DomainName}} information
+type {{.DomainName | title}}SummaryDTO struct {
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	FullName string `json:"fullName"`
+	Status   string `json:"status"`
+}
+
+// From{{.DomainName | title}}Summary creates a summary DTO from a domain entity
+func From{{.DomainName | title}}Summary({{.DomainName}}Entity *{{.DomainName}}.{{.DomainName | title}}) {{.DomainName | title}}SummaryDTO {
+	return {{.DomainName | title}}SummaryDTO{
+		ID:       {{.DomainName}}Entity.ID().String(),
+		Email:    {{.DomainName}}Entity.Email().String(),
+		FullName: {{.DomainName}}Entity.Name().FullName(),
+		Status:   {{.DomainName}}Entity.Status().String(),
+	}
+}
+
+// From{{.DomainName | title}}Summaries creates summary DTOs from domain entities
+func From{{.DomainName | title}}Summaries({{.DomainName}}Entities []*{{.DomainName}}.{{.DomainName | title}}) []{{.DomainName | title}}SummaryDTO {
+	dtos := make([]{{.DomainName | title}}SummaryDTO, len({{.DomainName}}Entities))
+	for i, entity := range {{.DomainName}}Entities {
+		dtos[i] = From{{.DomainName | title}}Summary(entity)
+	}
+	return dtos
+}
+
+// Create{{.DomainName | title}}Request represents a request to create a {{.DomainName}}
+type Create{{.DomainName | title}}Request struct {
+	Email     string `json:"email" validate:"required,email"`
+	FirstName string `json:"firstName" validate:"required,min=1,max=50"`
+	LastName  string `json:"lastName" validate:"required,min=1,max=50"`
+}
+
+// ToCommand converts the request to a command
+func (r Create{{.DomainName | title}}Request) ToCommand() Create{{.DomainName | title}}Command {
+	return Create{{.DomainName | title}}Command{
+		Email:     r.Email,
+		FirstName: r.FirstName,
+		LastName:  r.LastName,
+	}
+}
+
+// Update{{.DomainName | title}}Request represents a request to update a {{.DomainName}}
+type Update{{.DomainName | title}}Request struct {
+	Email     *string `json:"email,omitempty" validate:"omitempty,email"`
+	FirstName *string `json:"firstName,omitempty" validate:"omitempty,min=1,max=50"`
+	LastName  *string `json:"lastName,omitempty" validate:"omitempty,min=1,max=50"`
+}
+
+// ToCommand converts the request to a command
+func (r Update{{.DomainName | title}}Request) ToCommand(id string) Update{{.DomainName | title}}Command {
+	return Update{{.DomainName | title}}Command{
+		ID:        id,
+		Email:     r.Email,
+		FirstName: r.FirstName,
+		LastName:  r.LastName,
+	}
+}
+
+// Change{{.DomainName | title}}EmailRequest represents a request to change a {{.DomainName}}'s email
+type Change{{.DomainName | title}}EmailRequest struct {
+	NewEmail string `json:"newEmail" validate:"required,email"`
+}
+
+// ToCommand converts the request to a command
+func (r Change{{.DomainName | title}}EmailRequest) ToCommand(id string) Change{{.DomainName | title}}EmailCommand {
+	return Change{{.DomainName | title}}EmailCommand{
+		ID:       id,
+		NewEmail: r.NewEmail,
+	}
+}
+
+// Change{{.DomainName | title}}NameRequest represents a request to change a {{.DomainName}}'s name
+type Change{{.DomainName | title}}NameRequest struct {
+	FirstName string `json:"firstName" validate:"required,min=1,max=50"`
+	LastName  string `json:"lastName" validate:"required,min=1,max=50"`
+}
+
+// ToCommand converts the request to a command
+func (r Change{{.DomainName | title}}NameRequest) ToCommand(id string) Change{{.DomainName | title}}NameCommand {
+	return Change{{.DomainName | title}}NameCommand{
+		ID:        id,
+		FirstName: r.FirstName,
+		LastName:  r.LastName,
+	}
+}
+
+// {{.DomainName | title}}ExistsResponse represents a response for {{.DomainName}} existence check
+type {{.DomainName | title}}ExistsResponse struct {
+	Exists bool `json:"exists"`
+}
+
+// {{.DomainName | title}}CountResponse represents a response for {{.DomainName}} count
+type {{.DomainName | title}}CountResponse struct {
+	Count int `json:"count"`
+}
+
+// {{.DomainName | title}}StatsDTO represents statistics about {{.DomainName}}s
+type {{.DomainName | title}}StatsDTO struct {
+	Total    int `json:"total"`
+	Active   int `json:"active"`
+	Inactive int `json:"inactive"`
+	Deleted  int `json:"deleted"`
+}
+{{- end}}

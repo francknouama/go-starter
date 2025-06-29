@@ -1,0 +1,80 @@
+package logger
+
+import (
+	"fmt"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// Factory creates logger instances based on configuration
+type Factory struct {
+	config *config.LoggerConfig
+}
+
+// NewFactory creates a new logger factory
+func NewFactory(config *config.LoggerConfig) *Factory {
+	return &Factory{
+		config: config,
+	}
+}
+
+// CreateLogger creates a logger instance based on the configured type
+func (f *Factory) CreateLogger() ports.Logger {
+	switch f.config.Level {
+	case "debug", "info", "warn", "error":
+		// Valid log levels
+	default:
+		f.config.Level = "info" // fallback to info level
+	}
+
+	switch f.config.Format {
+	case "json", "text", "console":
+		// Valid formats
+	default:
+		f.config.Format = "json" // fallback to json format
+	}
+
+	// Create logger based on type (determined by build tags or config)
+	{{if eq .Logger "slog"}}
+	return NewSlogLogger(f.config)
+	{{else if eq .Logger "zap"}}
+	return NewZapLogger(f.config)
+	{{else if eq .Logger "logrus"}}
+	return NewLogrusLogger(f.config)
+	{{else if eq .Logger "zerolog"}}
+	return NewZerologLogger(f.config)
+	{{else}}
+	// Default to slog if no specific logger configured
+	return NewSlogLogger(f.config)
+	{{end}}
+}
+
+// ValidateConfig validates the logger configuration
+func (f *Factory) ValidateConfig() error {
+	if f.config == nil {
+		return fmt.Errorf("logger config is nil")
+	}
+
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+
+	if !validLevels[f.config.Level] {
+		return fmt.Errorf("invalid log level: %s", f.config.Level)
+	}
+
+	validFormats := map[string]bool{
+		"json":    true,
+		"text":    true,
+		"console": true,
+	}
+
+	if !validFormats[f.config.Format] {
+		return fmt.Errorf("invalid log format: %s", f.config.Format)
+	}
+
+	return nil
+}

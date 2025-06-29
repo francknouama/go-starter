@@ -1,0 +1,132 @@
+package persistence
+
+import (
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	{{if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+	{{else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{end}}
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+)
+
+// Database holds the database connection and configuration
+type Database struct {
+	DB     *gorm.DB
+	config *config.DatabaseConfig
+	logger ports.Logger
+}
+
+// NewDatabase creates a new database connection
+func NewDatabase(config *config.DatabaseConfig, appLogger ports.Logger) (*Database, error) {
+	// Configure GORM logger
+	gormLogger := logger.New(
+		&gormLogWriter{logger: appLogger},
+		logger.Config{
+			SlowThreshold:             time.Second,
+			LogLevel:                  logger.Info,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+
+	// Open database connection
+	var dialector gorm.Dialector
+	switch config.Driver {
+	{{if eq .DatabaseDriver "postgres"}}
+	case "postgres":
+		dialector = postgres.Open(config.GetDSN())
+	{{end}}
+	{{if eq .DatabaseDriver "mysql"}}
+	case "mysql":
+		dialector = mysql.Open(config.GetDSN())
+	{{end}}
+	{{if eq .DatabaseDriver "sqlite"}}
+	case "sqlite":
+		dialector = sqlite.Open(config.GetDSN())
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", config.Driver)
+	}
+
+	db, err := gorm.Open(dialector, &gorm.Config{
+		Logger: gormLogger,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying SQL database for connection pooling
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(config.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(config.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(config.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	appLogger.Info("Database connection established successfully",
+		"driver", config.Driver,
+		"host", config.Host,
+		"database", config.Database,
+	)
+
+	return &Database{
+		DB:     db,
+		config: config,
+		logger: appLogger,
+	}, nil
+}
+
+// GetDB returns the GORM database instance
+func (d *Database) GetDB() *gorm.DB {
+	return d.DB
+}
+
+// Close closes the database connection
+func (d *Database) Close() error {
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
+// AutoMigrate runs database migrations
+func (d *Database) AutoMigrate(models ...interface{}) error {
+	d.logger.Info("Running database migrations")
+	return d.DB.AutoMigrate(models...)
+}
+
+// Health checks the database connection health
+func (d *Database) Health() error {
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+}
+
+// gormLogWriter adapts our logger to GORM's logger interface
+type gormLogWriter struct {
+	logger ports.Logger
+}
+
+// Printf implements the writer interface for GORM logger
+func (w *gormLogWriter) Printf(format string, args ...interface{}) {
+	w.logger.Debug(fmt.Sprintf(format, args...))
+}

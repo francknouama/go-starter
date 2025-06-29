@@ -1,0 +1,82 @@
+package errors
+
+import (
+	"fmt"
+)
+
+// ApplicationError represents errors that occur in the application layer
+type ApplicationError struct {
+	Code    string
+	Message string
+	Cause   error
+}
+
+func (e ApplicationError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("[%s] %s: %v", e.Code, e.Message, e.Cause)
+	}
+	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+// Unwrap returns the underlying cause
+func (e ApplicationError) Unwrap() error {
+	return e.Cause
+}
+
+// NewApplicationError creates a new application error
+func NewApplicationError(code, message string) ApplicationError {
+	return ApplicationError{
+		Code:    code,
+		Message: message,
+	}
+}
+
+// NewApplicationErrorWithCause creates a new application error with a cause
+func NewApplicationErrorWithCause(code, message string, cause error) ApplicationError {
+	return ApplicationError{
+		Code:    code,
+		Message: message,
+		Cause:   cause,
+	}
+}
+
+// Common application errors
+var (
+	// Command/Query errors
+	ErrCommandHandling = NewApplicationError("COMMAND_HANDLING_ERROR", "Error handling command")
+	ErrQueryHandling = NewApplicationError("QUERY_HANDLING_ERROR", "Error handling query")
+	ErrInvalidCommand = NewApplicationError("INVALID_COMMAND", "Command is invalid")
+	ErrInvalidQuery = NewApplicationError("INVALID_QUERY", "Query is invalid")
+	
+	// Validation errors
+	ErrValidation = NewApplicationError("VALIDATION_ERROR", "Validation failed")
+	ErrInvalidInput = NewApplicationError("INVALID_INPUT", "Input is invalid")
+	ErrMissingRequiredField = NewApplicationError("MISSING_REQUIRED_FIELD", "Required field is missing")
+	
+	// Infrastructure errors
+	ErrRepository = NewApplicationError("REPOSITORY_ERROR", "Repository operation failed")
+	ErrDatabase = NewApplicationError("DATABASE_ERROR", "Database operation failed")
+	ErrExternalService = NewApplicationError("EXTERNAL_SERVICE_ERROR", "External service error")
+	
+	// Authorization errors
+	ErrUnauthorized = NewApplicationError("UNAUTHORIZED", "User is not authorized")
+	ErrForbidden = NewApplicationError("FORBIDDEN", "Access forbidden")
+	ErrInvalidCredentials = NewApplicationError("INVALID_CREDENTIALS", "Invalid credentials")
+	
+	// Resource errors
+	ErrResourceNotFound = NewApplicationError("RESOURCE_NOT_FOUND", "Resource not found")
+	ErrResourceConflict = NewApplicationError("RESOURCE_CONFLICT", "Resource conflict")
+	ErrResourceLocked = NewApplicationError("RESOURCE_LOCKED", "Resource is locked")
+)
+
+// IsApplicationError checks if an error is an application error
+func IsApplicationError(err error) bool {
+	_, ok := err.(ApplicationError)
+	return ok
+}
+
+// GetApplicationError extracts application error from error
+func GetApplicationError(err error) (ApplicationError, bool) {
+	appErr, ok := err.(ApplicationError)
+	return appErr, ok
+}

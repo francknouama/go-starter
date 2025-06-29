@@ -1,0 +1,83 @@
+package ports
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/entities"
+)
+
+// UserRepository defines the contract for user data persistence
+// This is a port (interface) that will be implemented by the infrastructure layer
+type UserRepository interface {
+	// Create a new user
+	Create(ctx context.Context, user *entities.User) error
+	
+	// GetByID retrieves a user by their ID
+	GetByID(ctx context.Context, id string) (*entities.User, error)
+	
+	// GetByEmail retrieves a user by their email address
+	GetByEmail(ctx context.Context, email string) (*entities.User, error)
+	
+	// GetByUsername retrieves a user by their username
+	GetByUsername(ctx context.Context, username string) (*entities.User, error)
+	
+	// Update modifies an existing user
+	Update(ctx context.Context, user *entities.User) error
+	
+	// Delete removes a user (soft delete)
+	Delete(ctx context.Context, id string) error
+	
+	// List retrieves users with pagination
+	List(ctx context.Context, offset, limit int) ([]*entities.User, error)
+	
+	// ExistsByEmail checks if a user with the given email exists
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
+	
+	// ExistsByUsername checks if a user with the given username exists
+	ExistsByUsername(ctx context.Context, username string) (bool, error)
+}
+
+// AuthSessionRepository defines the contract for authentication session persistence
+type AuthSessionRepository interface {
+	// Create a new authentication session
+	Create(ctx context.Context, session *entities.AuthSession) error
+	
+	// GetByAccessToken retrieves a session by access token
+	GetByAccessToken(ctx context.Context, accessToken string) (*entities.AuthSession, error)
+	
+	// GetByRefreshToken retrieves a session by refresh token
+	GetByRefreshToken(ctx context.Context, refreshToken string) (*entities.AuthSession, error)
+	
+	// GetByUserID retrieves all active sessions for a user
+	GetByUserID(ctx context.Context, userID string) ([]*entities.AuthSession, error)
+	
+	// Update modifies an existing session
+	Update(ctx context.Context, session *entities.AuthSession) error
+	
+	// Delete removes a session
+	Delete(ctx context.Context, sessionID string) error
+	
+	// DeleteByUserID removes all sessions for a user
+	DeleteByUserID(ctx context.Context, userID string) error
+	
+	// DeleteExpired removes all expired sessions
+	DeleteExpired(ctx context.Context) error
+}
+
+// Repository aggregates all repository interfaces
+// This follows the Unit of Work pattern for transaction management
+type Repository interface {
+	UserRepository() UserRepository
+	AuthSessionRepository() AuthSessionRepository
+	
+	// Transaction management
+	BeginTransaction(ctx context.Context) (Transaction, error)
+}
+
+// Transaction represents a database transaction
+type Transaction interface {
+	UserRepository() UserRepository
+	AuthSessionRepository() AuthSessionRepository
+	
+	Commit() error
+	Rollback() error
+}

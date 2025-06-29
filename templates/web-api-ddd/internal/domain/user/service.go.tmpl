@@ -1,0 +1,157 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/errors"
+)
+
+// Service provides domain services for {{.DomainName}} operations
+type Service interface {
+	// IsEmailUnique checks if an email address is unique
+	IsEmailUnique(ctx context.Context, email valueobjects.Email, excludeID *valueobjects.ID) (bool, error)
+	
+	// CanChangeStatus determines if a {{.DomainName}} can change to a specific status
+	CanChangeStatus({{.DomainName}} *{{.DomainName | title}}, newStatus Status) error
+	
+	// ValidateForCreation validates a {{.DomainName}} before creation
+	ValidateForCreation(email valueobjects.Email, name Name) error
+	
+	// ValidateForUpdate validates a {{.DomainName}} before update
+	ValidateForUpdate({{.DomainName}} *{{.DomainName | title}}, newEmail *valueobjects.Email, newName *Name) error
+}
+
+// DomainService implements the {{.DomainName}} domain service
+type DomainService struct {
+	repository ReadOnlyRepository
+}
+
+// NewDomainService creates a new {{.DomainName}} domain service
+func NewDomainService(repository ReadOnlyRepository) *DomainService {
+	return &DomainService{
+		repository: repository,
+	}
+}
+
+// IsEmailUnique checks if an email address is unique
+func (s *DomainService) IsEmailUnique(ctx context.Context, email valueobjects.Email, excludeID *valueobjects.ID) (bool, error) {
+	exists, err := s.repository.ExistsByEmail(ctx, email)
+	if err != nil {
+		return false, err
+	}
+	
+	if !exists {
+		return true, nil
+	}
+	
+	// If excludeID is provided, check if the existing {{.DomainName}} is the one being excluded
+	if excludeID != nil {
+		existing{{.DomainName | title}}, err := s.repository.FindByEmail(ctx, email)
+		if err != nil {
+			return false, err
+		}
+		
+		if existing{{.DomainName | title}} != nil && existing{{.DomainName | title}}.ID().Equals(*excludeID) {
+			return true, nil
+		}
+	}
+	
+	return false, nil
+}
+
+// CanChangeStatus determines if a {{.DomainName}} can change to a specific status
+func (s *DomainService) CanChangeStatus({{.DomainName}} *{{.DomainName | title}}, newStatus Status) error {
+	if {{.DomainName}} == nil {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "{{.DomainName}} is nil")
+	}
+	
+	currentStatus := {{.DomainName}}.Status()
+	
+	// Define valid status transitions
+	switch currentStatus {
+	case StatusActive:
+		// Active {{.DomainName}}s can become inactive or deleted
+		if newStatus != StatusInactive && newStatus != StatusDeleted {
+			return errors.ErrBusinessRuleViolation.WithDetails(
+				"reason", 
+				"active {{.DomainName}} can only be changed to inactive or deleted",
+			)
+		}
+	case StatusInactive:
+		// Inactive {{.DomainName}}s can become active or deleted
+		if newStatus != StatusActive && newStatus != StatusDeleted {
+			return errors.ErrBusinessRuleViolation.WithDetails(
+				"reason", 
+				"inactive {{.DomainName}} can only be changed to active or deleted",
+			)
+		}
+	case StatusDeleted:
+		// Deleted {{.DomainName}}s cannot change status
+		return errors.ErrBusinessRuleViolation.WithDetails(
+			"reason", 
+			"deleted {{.DomainName}} cannot change status",
+		)
+	default:
+		return errors.ErrInvalidEntityState.WithDetails("reason", "unknown status")
+	}
+	
+	return nil
+}
+
+// ValidateForCreation validates a {{.DomainName}} before creation
+func (s *DomainService) ValidateForCreation(email valueobjects.Email, name Name) error {
+	// Check email uniqueness
+	unique, err := s.IsEmailUnique(context.Background(), email, nil)
+	if err != nil {
+		return err
+	}
+	
+	if !unique {
+		return errors.ErrBusinessRuleViolation.WithDetails(
+			"reason", 
+			"email address already exists",
+		).WithDetails("email", email.String())
+	}
+	
+	// Additional business rules can be added here
+	// For example: checking against banned email domains, name patterns, etc.
+	
+	return nil
+}
+
+// ValidateForUpdate validates a {{.DomainName}} before update
+func (s *DomainService) ValidateForUpdate({{.DomainName}} *{{.DomainName | title}}, newEmail *valueobjects.Email, newName *Name) error {
+	if {{.DomainName}} == nil {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "{{.DomainName}} is nil")
+	}
+	
+	// Check if {{.DomainName}} is in a valid state for updates
+	if {{.DomainName}}.IsDeleted() {
+		return errors.ErrBusinessRuleViolation.WithDetails(
+			"reason", 
+			"cannot update deleted {{.DomainName}}",
+		)
+	}
+	
+	// If email is being changed, check uniqueness
+	if newEmail != nil && !{{.DomainName}}.Email().Equals(*newEmail) {
+		{{.DomainName}}ID := {{.DomainName}}.ID()
+		unique, err := s.IsEmailUnique(context.Background(), *newEmail, &{{.DomainName}}ID)
+		if err != nil {
+			return err
+		}
+		
+		if !unique {
+			return errors.ErrBusinessRuleViolation.WithDetails(
+				"reason", 
+				"email address already exists",
+			).WithDetails("email", newEmail.String())
+		}
+	}
+	
+	// Additional validation rules can be added here
+	
+	return nil
+}
+{{- end}}

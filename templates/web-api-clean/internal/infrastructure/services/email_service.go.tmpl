@@ -1,0 +1,104 @@
+package services
+
+import (
+	"context"
+	"fmt"
+
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// EmailService implements email operations
+type EmailService struct {
+	config *config.EmailConfig
+	logger ports.Logger
+}
+
+// NewEmailService creates a new EmailService instance
+func NewEmailService(config *config.EmailConfig, logger ports.Logger) ports.EmailService {
+	return &EmailService{
+		config: config,
+		logger: logger,
+	}
+}
+
+// SendWelcomeEmail sends a welcome email to a new user
+func (s *EmailService) SendWelcomeEmail(ctx context.Context, user *entities.User) error {
+	s.logger.Info("Sending welcome email", "user_id", user.ID, "email", user.Email)
+
+	// In a real implementation, this would:
+	// 1. Load email template
+	// 2. Render template with user data
+	// 3. Send email via SMTP/SES/SendGrid etc.
+	
+	// For now, just log the action
+	subject := fmt.Sprintf("Welcome to {{.ProjectName}}, %s!", user.GetFullName())
+	
+	s.logger.Info("Welcome email prepared",
+		"user_id", user.ID,
+		"email", user.Email,
+		"subject", subject,
+	)
+
+	// TODO: Implement actual email sending
+	// return s.sendEmail(user.Email, subject, welcomeTemplate, user)
+	
+	return nil
+}
+
+// SendPasswordResetEmail sends a password reset email
+func (s *EmailService) SendPasswordResetEmail(ctx context.Context, user *entities.User, resetToken string) error {
+	s.logger.Info("Sending password reset email", "user_id", user.ID, "email", user.Email)
+
+	subject := "Reset Your {{.ProjectName}} Password"
+	
+	s.logger.Info("Password reset email prepared",
+		"user_id", user.ID,
+		"email", user.Email,
+		"subject", subject,
+		"token_length", len(resetToken),
+	)
+
+	// TODO: Implement actual email sending
+	// return s.sendEmail(user.Email, subject, resetTemplate, map[string]interface{}{
+	//     "user": user,
+	//     "reset_token": resetToken,
+	//     "reset_url": fmt.Sprintf("%s/reset-password?token=%s", s.config.BaseURL, resetToken),
+	// })
+	
+	return nil
+}
+
+// SendEmailVerification sends an email verification message
+func (s *EmailService) SendEmailVerification(ctx context.Context, user *entities.User, verificationToken string) error {
+	s.logger.Info("Sending email verification", "user_id", user.ID, "email", user.Email)
+
+	subject := "Verify Your {{.ProjectName}} Email Address"
+	
+	s.logger.Info("Email verification prepared",
+		"user_id", user.ID,
+		"email", user.Email,
+		"subject", subject,
+		"token_length", len(verificationToken),
+	)
+
+	// TODO: Implement actual email sending
+	// return s.sendEmail(user.Email, subject, verificationTemplate, map[string]interface{}{
+	//     "user": user,
+	//     "verification_token": verificationToken,
+	//     "verification_url": fmt.Sprintf("%s/verify-email?token=%s", s.config.BaseURL, verificationToken),
+	// })
+	
+	return nil
+}
+
+// sendEmail would send the actual email (placeholder for real implementation)
+// func (s *EmailService) sendEmail(to, subject, template string, data interface{}) error {
+//     // Real implementation would:
+//     // 1. Parse and render template with data
+//     // 2. Create SMTP connection or use email service API
+//     // 3. Send email
+//     // 4. Handle errors and retries
+//     return nil
+// }

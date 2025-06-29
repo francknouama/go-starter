@@ -1,0 +1,275 @@
+package controllers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/adapters/presenters"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/usecases"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// AuthController handles authentication-related HTTP requests
+type AuthController struct {
+	authUseCase   *usecases.AuthUseCase
+	authPresenter *presenters.AuthPresenter
+	logger        ports.Logger
+}
+
+// LoginRequest represents the login request payload
+type LoginRequest struct {
+	Identifier string `json:"identifier" binding:"required"` // email or username
+	Password   string `json:"password" binding:"required"`
+}
+
+// RefreshTokenRequest represents the refresh token request payload
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// NewAuthController creates a new AuthController instance
+func NewAuthController(
+	authUseCase *usecases.AuthUseCase,
+	authPresenter *presenters.AuthPresenter,
+	logger ports.Logger,
+) *AuthController {
+	return &AuthController{
+		authUseCase:   authUseCase,
+		authPresenter: authPresenter,
+		logger:        logger,
+	}
+}
+
+// Login authenticates a user and returns tokens
+// @Summary User login
+// @Description Authenticate user and return access/refresh tokens
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body LoginRequest true "Login credentials"
+// @Success 200 {object} presenters.LoginResponse
+// @Failure 400 {object} presenters.ErrorResponse
+// @Failure 401 {object} presenters.ErrorResponse
+// @Failure 500 {object} presenters.ErrorResponse
+// @Router /auth/login [post]
+func (ac *AuthController) Login(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ac.logger.Warn("Invalid login request", "error", err)
+		c.JSON(http.StatusBadRequest, ac.authPresenter.PresentError(err))
+		return
+	}
+
+	// Get client information
+	ipAddress := ac.getClientIP(c)
+	userAgent := c.GetHeader("User-Agent")
+
+	// Convert request to use case input
+	input := usecases.LoginInput{
+		Identifier: req.Identifier,
+		Password:   req.Password,
+		IPAddress:  ipAddress,
+		UserAgent:  userAgent,
+	}
+
+	// Execute use case
+	output, err := ac.authUseCase.Login(c.Request.Context(), input)
+	if err != nil {
+		ac.handleAuthError(c, err)
+		return
+	}
+
+	// Present response
+	response := ac.authPresenter.PresentLogin(output)
+	c.JSON(http.StatusOK, response)
+}
+
+// RefreshToken generates new tokens from a refresh token
+// @Summary Refresh access token
+// @Description Generate new access token using refresh token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param request body RefreshTokenRequest true "Refresh token"
+// @Success 200 {object} presenters.LoginResponse
+// @Failure 400 {object} presenters.ErrorResponse
+// @Failure 401 {object} presenters.ErrorResponse
+// @Failure 500 {object} presenters.ErrorResponse
+// @Router /auth/refresh [post]
+func (ac *AuthController) RefreshToken(c *gin.Context) {
+	var req RefreshTokenRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		ac.logger.Warn("Invalid refresh token request", "error", err)
+		c.JSON(http.StatusBadRequest, ac.authPresenter.PresentError(err))
+		return
+	}
+
+	// Get client information
+	ipAddress := ac.getClientIP(c)
+	userAgent := c.GetHeader("User-Agent")
+
+	// Convert request to use case input
+	input := usecases.RefreshTokenInput{
+		RefreshToken: req.RefreshToken,
+		IPAddress:    ipAddress,
+		UserAgent:    userAgent,
+	}
+
+	// Execute use case
+	output, err := ac.authUseCase.RefreshToken(c.Request.Context(), input)
+	if err != nil {
+		ac.handleAuthError(c, err)
+		return
+	}
+
+	// Present response
+	response := ac.authPresenter.PresentLogin(output)
+	c.JSON(http.StatusOK, response)
+}
+
+// Logout invalidates the current session
+// @Summary User logout
+// @Description Logout user and invalidate session
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Success 204
+// @Failure 401 {object} presenters.ErrorResponse
+// @Failure 500 {object} presenters.ErrorResponse
+// @Security ApiKeyAuth
+// @Router /auth/logout [post]
+func (ac *AuthController) Logout(c *gin.Context) {
+	// Get access token from Authorization header
+	token := ac.extractTokenFromHeader(c)
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+		return
+	}
+
+	// Execute use case
+	if err := ac.authUseCase.Logout(c.Request.Context(), token); err != nil {
+		ac.handleAuthError(c, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// LogoutAll invalidates all sessions for the current user
+// @Summary Logout from all devices
+// @Description Logout user from all devices and invalidate all sessions
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Success 204
+// @Failure 401 {object} presenters.ErrorResponse
+// @Failure 500 {object} presenters.ErrorResponse
+// @Security ApiKeyAuth
+// @Router /auth/logout-all [post]
+func (ac *AuthController) LogoutAll(c *gin.Context) {
+	// Get user from context (set by auth middleware)
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+		return
+	}
+
+	userEntity, ok := user.(*entities.User)
+	if !ok {
+		ac.logger.Error("Invalid user type in context")
+		c.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+		return
+	}
+
+	// Execute use case
+	if err := ac.authUseCase.LogoutAll(c.Request.Context(), userEntity.ID); err != nil {
+		ac.handleAuthError(c, err)
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+
+// Me returns the current authenticated user information
+// @Summary Get current user
+// @Description Get current authenticated user information
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Success 200 {object} presenters.UserResponse
+// @Failure 401 {object} presenters.ErrorResponse
+// @Security ApiKeyAuth
+// @Router /auth/me [get]
+func (ac *AuthController) Me(c *gin.Context) {
+	// Get user from context (set by auth middleware)
+	user, exists := c.Get("user")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+		return
+	}
+
+	userEntity, ok := user.(*entities.User)
+	if !ok {
+		ac.logger.Error("Invalid user type in context")
+		c.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+		return
+	}
+
+	// Present user response (reuse user presenter)
+	userPresenter := presenters.NewUserPresenter()
+	response := userPresenter.PresentUser(userEntity)
+	c.JSON(http.StatusOK, response)
+}
+
+// getClientIP extracts the client IP address from the request
+func (ac *AuthController) getClientIP(c *gin.Context) string {
+	// Check X-Forwarded-For header first (for load balancers/proxies)
+	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
+		// Take the first IP in the comma-separated list
+		if len(xff) > 0 {
+			return xff
+		}
+	}
+
+	// Check X-Real-IP header
+	if xri := c.GetHeader("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	// Fall back to remote address
+	return c.ClientIP()
+}
+
+// extractTokenFromHeader extracts the access token from Authorization header
+func (ac *AuthController) extractTokenFromHeader(c *gin.Context) string {
+	authHeader := c.GetHeader("Authorization")
+	if authHeader == "" {
+		return ""
+	}
+
+	// Expected format: "Bearer <token>"
+	const bearerPrefix = "Bearer "
+	if len(authHeader) < len(bearerPrefix) {
+		return ""
+	}
+
+	if authHeader[:len(bearerPrefix)] != bearerPrefix {
+		return ""
+	}
+
+	return authHeader[len(bearerPrefix):]
+}
+
+// handleAuthError handles authentication-related errors and returns appropriate HTTP responses
+func (ac *AuthController) handleAuthError(c *gin.Context, err error) {
+	switch err {
+	case entities.ErrInvalidCredentials, entities.ErrInvalidToken:
+		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(err))
+	case entities.ErrTokenExpired, entities.ErrSessionExpired, entities.ErrSessionNotFound:
+		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(err))
+	default:
+		ac.logger.Error("Unexpected error in auth controller", "error", err)
+		c.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(err))
+	}
+}

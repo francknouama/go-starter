@@ -1,0 +1,217 @@
+{{if eq .Framework "echo"}}
+package adapters
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net/http"
+	
+	"github.com/labstack/echo/v4"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// EchoContext adapts echo.Context to implement ports.HTTPContext
+type EchoContext struct {
+	ctx echo.Context
+}
+
+// Ensure EchoContext implements ports.HTTPContext
+var _ ports.HTTPContext = (*EchoContext)(nil)
+
+// GetParam implements ports.HTTPContext.GetParam
+func (e *EchoContext) GetParam(key string) string {
+	return e.ctx.Param(key)
+}
+
+// GetQuery implements ports.HTTPContext.GetQuery
+func (e *EchoContext) GetQuery(key string) string {
+	return e.ctx.QueryParam(key)
+}
+
+// GetHeader implements ports.HTTPContext.GetHeader
+func (e *EchoContext) GetHeader(key string) string {
+	return e.ctx.Request().Header.Get(key)
+}
+
+// BindJSON implements ports.HTTPContext.BindJSON
+func (e *EchoContext) BindJSON(obj interface{}) error {
+	return e.ctx.Bind(obj)
+}
+
+// GetRequestContext implements ports.HTTPContext.GetRequestContext
+func (e *EchoContext) GetRequestContext() context.Context {
+	return e.ctx.Request().Context()
+}
+
+// GetMethod implements ports.HTTPContext.GetMethod
+func (e *EchoContext) GetMethod() string {
+	return e.ctx.Request().Method
+}
+
+// JSON implements ports.HTTPContext.JSON
+func (e *EchoContext) JSON(code int, obj interface{}) {
+	e.ctx.JSON(code, obj)
+}
+
+// String implements ports.HTTPContext.String
+func (e *EchoContext) String(code int, message string) {
+	e.ctx.String(code, message)
+}
+
+// NoContent implements ports.HTTPContext.NoContent
+func (e *EchoContext) NoContent(code int) {
+	e.ctx.NoContent(code)
+}
+
+// SetHeader implements ports.HTTPContext.SetHeader
+func (e *EchoContext) SetHeader(key, value string) {
+	e.ctx.Response().Header().Set(key, value)
+}
+
+// ClientIP implements ports.HTTPContext.ClientIP
+func (e *EchoContext) ClientIP() string {
+	return e.ctx.RealIP()
+}
+
+// EchoRouter adapts echo.Echo to implement ports.Router
+type EchoRouter struct {
+	echo *echo.Echo
+}
+
+// NewEchoRouter creates a new EchoRouter
+func NewEchoRouter() ports.Router {
+	e := echo.New()
+	e.HideBanner = true
+	return &EchoRouter{echo: e}
+}
+
+// adaptHandler converts ports.HTTPHandler to echo.HandlerFunc
+func (r *EchoRouter) adaptHandler(handler ports.HTTPHandler) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		handler(&EchoContext{ctx: c})
+		return nil
+	}
+}
+
+// GET implements ports.Router.GET
+func (r *EchoRouter) GET(path string, handler ports.HTTPHandler) {
+	r.echo.GET(path, r.adaptHandler(handler))
+}
+
+// POST implements ports.Router.POST
+func (r *EchoRouter) POST(path string, handler ports.HTTPHandler) {
+	r.echo.POST(path, r.adaptHandler(handler))
+}
+
+// PUT implements ports.Router.PUT
+func (r *EchoRouter) PUT(path string, handler ports.HTTPHandler) {
+	r.echo.PUT(path, r.adaptHandler(handler))
+}
+
+// DELETE implements ports.Router.DELETE
+func (r *EchoRouter) DELETE(path string, handler ports.HTTPHandler) {
+	r.echo.DELETE(path, r.adaptHandler(handler))
+}
+
+// PATCH implements ports.Router.PATCH
+func (r *EchoRouter) PATCH(path string, handler ports.HTTPHandler) {
+	r.echo.PATCH(path, r.adaptHandler(handler))
+}
+
+// Use implements ports.Router.Use
+func (r *EchoRouter) Use(middleware ports.HTTPHandler) {
+	r.echo.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			middleware(&EchoContext{ctx: c})
+			return next(c)
+		}
+	})
+}
+
+// Group implements ports.Router.Group
+func (r *EchoRouter) Group(prefix string) ports.RouteGroup {
+	group := r.echo.Group(prefix)
+	return &EchoRouteGroup{group: group}
+}
+
+// EchoRouteGroup adapts echo.Group to implement ports.RouteGroup
+type EchoRouteGroup struct {
+	group *echo.Group
+}
+
+// adaptHandler for route group
+func (g *EchoRouteGroup) adaptHandler(handler ports.HTTPHandler) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		handler(&EchoContext{ctx: c})
+		return nil
+	}
+}
+
+// GET implements ports.RouteGroup.GET
+func (g *EchoRouteGroup) GET(path string, handler ports.HTTPHandler) {
+	g.group.GET(path, g.adaptHandler(handler))
+}
+
+// POST implements ports.RouteGroup.POST
+func (g *EchoRouteGroup) POST(path string, handler ports.HTTPHandler) {
+	g.group.POST(path, g.adaptHandler(handler))
+}
+
+// PUT implements ports.RouteGroup.PUT
+func (g *EchoRouteGroup) PUT(path string, handler ports.HTTPHandler) {
+	g.group.PUT(path, g.adaptHandler(handler))
+}
+
+// DELETE implements ports.RouteGroup.DELETE
+func (g *EchoRouteGroup) DELETE(path string, handler ports.HTTPHandler) {
+	g.group.DELETE(path, g.adaptHandler(handler))
+}
+
+// PATCH implements ports.RouteGroup.PATCH
+func (g *EchoRouteGroup) PATCH(path string, handler ports.HTTPHandler) {
+	g.group.PATCH(path, g.adaptHandler(handler))
+}
+
+// Use implements ports.RouteGroup.Use
+func (g *EchoRouteGroup) Use(middleware ports.HTTPHandler) {
+	g.group.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			middleware(&EchoContext{ctx: c})
+			return next(c)
+		}
+	})
+}
+
+// Group implements ports.RouteGroup.Group
+func (g *EchoRouteGroup) Group(prefix string) ports.RouteGroup {
+	subGroup := g.group.Group(prefix)
+	return &EchoRouteGroup{group: subGroup}
+}
+
+// EchoWebServer adapts echo.Echo to implement ports.WebServer
+type EchoWebServer struct {
+	echo *echo.Echo
+}
+
+// NewEchoWebServer creates a new EchoWebServer
+func NewEchoWebServer(router ports.Router) ports.WebServer {
+	echoRouter := router.(*EchoRouter)
+	return &EchoWebServer{echo: echoRouter.echo}
+}
+
+// Start implements ports.WebServer.Start
+func (s *EchoWebServer) Start(addr string) error {
+	return s.echo.Start(addr)
+}
+
+// Stop implements ports.WebServer.Stop
+func (s *EchoWebServer) Stop() error {
+	return s.echo.Shutdown(context.Background())
+}
+
+// Handler implements ports.WebServer.Handler
+func (s *EchoWebServer) Handler() http.Handler {
+	return s.echo
+}
+{{end}}

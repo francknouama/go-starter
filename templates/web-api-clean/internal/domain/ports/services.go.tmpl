@@ -1,0 +1,90 @@
+package ports
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/entities"
+)
+
+// PasswordService defines the contract for password operations
+type PasswordService interface {
+	// Hash generates a secure hash of the password
+	Hash(password string) (string, error)
+	
+	// Verify checks if the provided password matches the hash
+	Verify(password, hash string) error
+}
+
+// TokenService defines the contract for token operations
+type TokenService interface {
+	// GenerateAccessToken creates a new access token for the user
+	GenerateAccessToken(userID string) (*entities.AuthToken, error)
+	
+	// GenerateRefreshToken creates a new refresh token for the user
+	GenerateRefreshToken(userID string) (*entities.AuthToken, error)
+	
+	// ValidateToken validates a token and returns the user ID
+	ValidateToken(token string) (string, error)
+	
+	// RefreshToken generates a new access token from a refresh token
+	RefreshToken(refreshToken string) (*entities.AuthToken, error)
+}
+
+// Logger defines the contract for logging operations
+type Logger interface {
+	// Debug logs debug information
+	Debug(msg string, fields ...interface{})
+	
+	// Info logs informational messages
+	Info(msg string, fields ...interface{})
+	
+	// Warn logs warning messages
+	Warn(msg string, fields ...interface{})
+	
+	// Error logs error messages
+	Error(msg string, fields ...interface{})
+	
+	// Fatal logs fatal errors and exits
+	Fatal(msg string, fields ...interface{})
+	
+	// With returns a logger with additional context fields
+	With(fields ...interface{}) Logger
+}
+
+// EmailService defines the contract for email operations
+type EmailService interface {
+	// SendWelcomeEmail sends a welcome email to a new user
+	SendWelcomeEmail(ctx context.Context, user *entities.User) error
+	
+	// SendPasswordResetEmail sends a password reset email
+	SendPasswordResetEmail(ctx context.Context, user *entities.User, resetToken string) error
+	
+	// SendEmailVerification sends an email verification message
+	SendEmailVerification(ctx context.Context, user *entities.User, verificationToken string) error
+}
+
+// CacheService defines the contract for caching operations
+type CacheService interface {
+	// Set stores a value in the cache with expiration
+	Set(ctx context.Context, key string, value interface{}, expiration int64) error
+	
+	// Get retrieves a value from the cache
+	Get(ctx context.Context, key string) (interface{}, error)
+	
+	// Delete removes a value from the cache
+	Delete(ctx context.Context, key string) error
+	
+	// Exists checks if a key exists in the cache
+	Exists(ctx context.Context, key string) (bool, error)
+}
+
+// ValidationService defines the contract for validation operations
+type ValidationService interface {
+	// ValidateEmail performs comprehensive email validation
+	ValidateEmail(email string) error
+	
+	// ValidatePassword checks password strength and requirements
+	ValidatePassword(password string) error
+	
+	// ValidateUsername checks username format and availability
+	ValidateUsername(username string) error
+}

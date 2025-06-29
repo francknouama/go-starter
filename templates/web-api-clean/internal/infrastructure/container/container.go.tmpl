@@ -1,0 +1,213 @@
+package container
+
+import (
+	"{{.ModulePath}}/internal/adapters/controllers"
+	"{{.ModulePath}}/internal/adapters/presenters"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/domain/usecases"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/infrastructure/persistence"
+	"{{.ModulePath}}/internal/infrastructure/services"
+	"{{.ModulePath}}/internal/infrastructure/web"
+)
+
+// Container holds all application dependencies
+// This implements dependency injection for Clean Architecture
+type Container struct {
+	// Configuration
+	Config *config.Config
+
+	// Infrastructure Services
+	Logger          ports.Logger
+	Repository      ports.Repository
+	PasswordService ports.PasswordService
+	TokenService    ports.TokenService
+	EmailService    ports.EmailService
+
+	// Use Cases
+	UserUseCase *usecases.UserUseCase
+	AuthUseCase *usecases.AuthUseCase
+
+	// Presenters
+	UserPresenter *presenters.UserPresenter
+	AuthPresenter *presenters.AuthPresenter
+
+	// Controllers
+	HealthController *controllers.HealthController
+	UserController   *controllers.UserController
+	AuthController   *controllers.AuthController
+
+	// Web Infrastructure
+	Router *web.Router
+}
+
+// NewContainer creates and wires all dependencies
+func NewContainer(cfg *config.Config) (*Container, error) {
+	container := &Container{
+		Config: cfg,
+	}
+
+	// Initialize infrastructure services
+	if err := container.initInfrastructure(); err != nil {
+		return nil, err
+	}
+
+	// Initialize use cases
+	if err := container.initUseCases(); err != nil {
+		return nil, err
+	}
+
+	// Initialize presenters
+	if err := container.initPresenters(); err != nil {
+		return nil, err
+	}
+
+	// Initialize controllers
+	if err := container.initControllers(); err != nil {
+		return nil, err
+	}
+
+	// Initialize web layer
+	if err := container.initWeb(); err != nil {
+		return nil, err
+	}
+
+	return container, nil
+}
+
+// initInfrastructure initializes all infrastructure services
+func (c *Container) initInfrastructure() error {
+	// Initialize logger
+	loggerFactory := logger.NewFactory(c.Config.Logger)
+	c.Logger = loggerFactory.CreateLogger()
+
+	{{if ne .DatabaseDriver ""}}
+	// Initialize database and repository
+	db, err := persistence.NewDatabase(c.Config.Database, c.Logger)
+	if err != nil {
+		return err
+	}
+
+	c.Repository = persistence.NewRepository(db.GetDB(), c.Logger)
+	{{end}}
+
+	// Initialize external services
+	c.PasswordService = services.NewPasswordService(c.Logger)
+	
+	{{if ne .AuthType ""}}
+	c.TokenService = services.NewTokenService(c.Config.Auth, c.Logger)
+	{{end}}
+	
+	c.EmailService = services.NewEmailService(c.Config.Email, c.Logger)
+
+	return nil
+}
+
+// initUseCases initializes all use cases with their dependencies
+func (c *Container) initUseCases() error {
+	{{if ne .DatabaseDriver ""}}
+	// Initialize user use case
+	c.UserUseCase = usecases.NewUserUseCase(
+		c.Repository.UserRepository(),
+		c.PasswordService,
+		c.Logger,
+		c.EmailService,
+	)
+	{{end}}
+
+	{{if ne .AuthType ""}}
+	// Initialize auth use case
+	c.AuthUseCase = usecases.NewAuthUseCase(
+		c.Repository.UserRepository(),
+		c.Repository.AuthSessionRepository(),
+		c.PasswordService,
+		c.TokenService,
+		c.Logger,
+	)
+	{{end}}
+
+	return nil
+}
+
+// initPresenters initializes all presenters
+func (c *Container) initPresenters() error {
+	c.UserPresenter = presenters.NewUserPresenter()
+	c.AuthPresenter = presenters.NewAuthPresenter()
+	return nil
+}
+
+// initControllers initializes all controllers with their dependencies
+func (c *Container) initControllers() error {
+	// Health controller (always available)
+	c.HealthController = controllers.NewHealthController()
+
+	{{if ne .DatabaseDriver ""}}
+	// User controller
+	c.UserController = controllers.NewUserController(
+		c.UserUseCase,
+		c.UserPresenter,
+		c.Logger,
+	)
+	{{end}}
+
+	{{if ne .AuthType ""}}
+	// Auth controller
+	c.AuthController = controllers.NewAuthController(
+		c.AuthUseCase,
+		c.AuthPresenter,
+		c.Logger,
+	)
+	{{end}}
+
+	return nil
+}
+
+// initWeb initializes the web layer
+func (c *Container) initWeb() error {
+	c.Router = web.NewRouter(c.Config.Server, c.Logger)
+
+	// Register routes
+	c.registerRoutes()
+
+	return nil
+}
+
+// registerRoutes registers all application routes
+func (c *Container) registerRoutes() {
+	// Health routes
+	c.Router.RegisterHealthRoutes(c.HealthController)
+
+	{{if ne .DatabaseDriver ""}}
+	// User routes
+	c.Router.RegisterUserRoutes(c.UserController)
+	{{end}}
+
+	{{if ne .AuthType ""}}
+	// Auth routes
+	c.Router.RegisterAuthRoutes(c.AuthController)
+	{{end}}
+}
+
+// GetRouter returns the configured router
+func (c *Container) GetRouter() *web.Router {
+	return c.Router
+}
+
+// Cleanup performs cleanup operations
+func (c *Container) Cleanup() error {
+	c.Logger.Info("Cleaning up application resources")
+
+	{{if ne .DatabaseDriver ""}}
+	// Close database connections
+	if repo, ok := c.Repository.(*persistence.Repository); ok {
+		if err := repo.Close(); err != nil {
+			c.Logger.Error("Failed to close repository", "error", err)
+			return err
+		}
+	}
+	{{end}}
+
+	c.Logger.Info("Application cleanup completed")
+	return nil
+}

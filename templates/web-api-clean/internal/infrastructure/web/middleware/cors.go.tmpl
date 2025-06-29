@@ -1,0 +1,31 @@
+package middleware
+
+import (
+	"net/http"
+
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// CORS returns a CORS middleware using domain interfaces
+func CORS() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		origin := ctx.GetHeader("Origin")
+		
+		// Set CORS headers
+		if origin != "" {
+			ctx.SetHeader("Access-Control-Allow-Origin", origin)
+		} else {
+			ctx.SetHeader("Access-Control-Allow-Origin", "*")
+		}
+
+		ctx.SetHeader("Access-Control-Allow-Credentials", "true")
+		ctx.SetHeader("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		ctx.SetHeader("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
+
+		// Handle preflight requests
+		if ctx.GetMethod() == "OPTIONS" {
+			ctx.NoContent(http.StatusNoContent)
+			return
+		}
+	}
+}

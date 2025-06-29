@@ -1,0 +1,132 @@
+package entities
+
+import (
+	"errors"
+	"time"
+)
+
+// AuthToken represents an authentication token in the domain
+type AuthToken struct {
+	Token     string    `json:"token"`
+	TokenType string    `json:"token_type"`
+	ExpiresAt time.Time `json:"expires_at"`
+	UserID    string    `json:"user_id"`
+}
+
+// LoginCredentials represents login attempt data
+type LoginCredentials struct {
+	Email    string `json:"email"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+// AuthSession represents an authenticated session
+type AuthSession struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"user_id"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	CreatedAt    time.Time `json:"created_at"`
+	LastUsedAt   time.Time `json:"last_used_at"`
+	IPAddress    string    `json:"ip_address"`
+	UserAgent    string    `json:"user_agent"`
+}
+
+// Auth domain errors
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrTokenExpired       = errors.New("token has expired")
+	ErrInvalidToken       = errors.New("invalid token")
+	ErrSessionNotFound    = errors.New("session not found")
+	ErrSessionExpired     = errors.New("session has expired")
+)
+
+// NewAuthToken creates a new authentication token
+func NewAuthToken(token, tokenType, userID string, expiresIn time.Duration) *AuthToken {
+	return &AuthToken{
+		Token:     token,
+		TokenType: tokenType,
+		ExpiresAt: time.Now().Add(expiresIn),
+		UserID:    userID,
+	}
+}
+
+// IsExpired checks if the token has expired
+func (t *AuthToken) IsExpired() bool {
+	return time.Now().After(t.ExpiresAt)
+}
+
+// NewLoginCredentials creates new login credentials with validation
+func NewLoginCredentials(identifier, password string) (*LoginCredentials, error) {
+	creds := &LoginCredentials{
+		Password: password,
+	}
+
+	// Determine if identifier is email or username
+	if containsAt(identifier) {
+		creds.Email = identifier
+	} else {
+		creds.Username = identifier
+	}
+
+	if err := creds.Validate(); err != nil {
+		return nil, err
+	}
+
+	return creds, nil
+}
+
+// Validate checks if login credentials are valid
+func (c *LoginCredentials) Validate() error {
+	if c.Password == "" {
+		return ErrInvalidCredentials
+	}
+
+	if c.Email == "" && c.Username == "" {
+		return ErrInvalidCredentials
+	}
+
+	return nil
+}
+
+// GetIdentifier returns the login identifier (email or username)
+func (c *LoginCredentials) GetIdentifier() string {
+	if c.Email != "" {
+		return c.Email
+	}
+	return c.Username
+}
+
+// NewAuthSession creates a new authentication session
+func NewAuthSession(userID, accessToken, refreshToken, ipAddress, userAgent string, expiresIn time.Duration) *AuthSession {
+	now := time.Now()
+	return &AuthSession{
+		UserID:       userID,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    now.Add(expiresIn),
+		CreatedAt:    now,
+		LastUsedAt:   now,
+		IPAddress:    ipAddress,
+		UserAgent:    userAgent,
+	}
+}
+
+// IsExpired checks if the session has expired
+func (s *AuthSession) IsExpired() bool {
+	return time.Now().After(s.ExpiresAt)
+}
+
+// UpdateLastUsed updates the last used timestamp
+func (s *AuthSession) UpdateLastUsed() {
+	s.LastUsedAt = time.Now()
+}
+
+// Refresh updates the session with new tokens and expiry
+func (s *AuthSession) Refresh(newAccessToken, newRefreshToken string, expiresIn time.Duration) {
+	s.AccessToken = newAccessToken
+	s.RefreshToken = newRefreshToken
+	s.ExpiresAt = time.Now().Add(expiresIn)
+	s.LastUsedAt = time.Now()
+}

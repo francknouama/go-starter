@@ -1,0 +1,99 @@
+package logger
+
+import (
+	"os"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// ZerologLogger implements the Logger interface using Zerolog
+type ZerologLogger struct {
+	logger zerolog.Logger
+}
+
+// NewZerologLogger creates a new Zerolog-based logger
+func NewZerologLogger(config *config.LoggerConfig) ports.Logger {
+	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
+
+	var logger zerolog.Logger
+
+	switch config.Format {
+	case "json":
+		logger = log.Output(os.Stdout).With().Timestamp().Logger()
+	case "text", "console":
+		logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout}).With().Timestamp().Logger()
+	default:
+		logger = log.Output(os.Stdout).With().Timestamp().Logger()
+	}
+
+	switch config.Level {
+	case "debug":
+		logger = logger.Level(zerolog.DebugLevel)
+	case "info":
+		logger = logger.Level(zerolog.InfoLevel)
+	case "warn":
+		logger = logger.Level(zerolog.WarnLevel)
+	case "error":
+		logger = logger.Level(zerolog.ErrorLevel)
+	default:
+		logger = logger.Level(zerolog.InfoLevel)
+	}
+
+	return &ZerologLogger{
+		logger: logger,
+	}
+}
+
+// Debug logs debug information
+func (l *ZerologLogger) Debug(msg string, fields ...interface{}) {
+	l.logger.Debug().Fields(fieldsToMap(fields)).Msg(msg)
+}
+
+// Info logs informational messages
+func (l *ZerologLogger) Info(msg string, fields ...interface{}) {
+	l.logger.Info().Fields(fieldsToMap(fields)).Msg(msg)
+}
+
+// Warn logs warning messages
+func (l *ZerologLogger) Warn(msg string, fields ...interface{}) {
+	l.logger.Warn().Fields(fieldsToMap(fields)).Msg(msg)
+}
+
+// Error logs error messages
+func (l *ZerologLogger) Error(msg string, fields ...interface{}) {
+	l.logger.Error().Fields(fieldsToMap(fields)).Msg(msg)
+}
+
+// Fatal logs fatal errors and exits
+func (l *ZerologLogger) Fatal(msg string, fields ...interface{}) {
+	l.logger.Fatal().Fields(fieldsToMap(fields)).Msg(msg)
+	os.Exit(1)
+}
+
+// With returns a logger with additional context fields
+func (l *ZerologLogger) With(fields ...interface{}) ports.Logger {
+	return &ZerologLogger{
+		logger: l.logger.With().Fields(fieldsToMap(fields)).Logger(),
+	}
+}
+
+// fieldsToMap converts a slice of key-value pairs to a map[string]interface{}
+func fieldsToMap(fields []interface{}) map[string]interface{} {
+	if len(fields)%2 != 0 {
+		// Zerolog doesn't handle odd number of fields well, so we'll just return empty map
+		return make(map[string]interface{})
+	}
+	m := make(map[string]interface{}, len(fields)/2)
+	for i := 0; i < len(fields); i += 2 {
+		key, ok := fields[i].(string)
+		if !ok {
+			// If key is not a string, skip it
+			continue
+		}
+		m[key] = fields[i+1]
+	}
+	return m
+}

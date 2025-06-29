@@ -1,0 +1,213 @@
+package usecases
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// UserUseCase implements business logic for user operations
+// This layer orchestrates the application's business rules
+type UserUseCase struct {
+	userRepo        ports.UserRepository
+	passwordService ports.PasswordService
+	logger          ports.Logger
+	emailService    ports.EmailService
+}
+
+// UserUseCaseInput represents input for user operations
+type UserUseCaseInput struct {
+	Email     string `json:"email"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Password  string `json:"password"`
+}
+
+// UserUseCaseOutput represents output from user operations
+type UserUseCaseOutput struct {
+	User    *entities.User `json:"user"`
+	Message string         `json:"message,omitempty"`
+}
+
+// NewUserUseCase creates a new UserUseCase instance
+func NewUserUseCase(
+	userRepo ports.UserRepository,
+	passwordService ports.PasswordService,
+	logger ports.Logger,
+	emailService ports.EmailService,
+) *UserUseCase {
+	return &UserUseCase{
+		userRepo:        userRepo,
+		passwordService: passwordService,
+		logger:          logger,
+		emailService:    emailService,
+	}
+}
+
+// CreateUser creates a new user following business rules
+func (uc *UserUseCase) CreateUser(ctx context.Context, input UserUseCaseInput) (*UserUseCaseOutput, error) {
+	uc.logger.Info("Creating new user", "email", input.Email, "username", input.Username)
+
+	// Check if email already exists
+	exists, err := uc.userRepo.ExistsByEmail(ctx, input.Email)
+	if err != nil {
+		uc.logger.Error("Failed to check email existence", "error", err)
+		return nil, err
+	}
+	if exists {
+		return nil, entities.ErrEmailAlreadyExists
+	}
+
+	// Check if username already exists
+	exists, err = uc.userRepo.ExistsByUsername(ctx, input.Username)
+	if err != nil {
+		uc.logger.Error("Failed to check username existence", "error", err)
+		return nil, err
+	}
+	if exists {
+		return nil, entities.ErrUsernameAlreadyExists
+	}
+
+	// Hash password
+	hashedPassword, err := uc.passwordService.Hash(input.Password)
+	if err != nil {
+		uc.logger.Error("Failed to hash password", "error", err)
+		return nil, err
+	}
+
+	// Create user entity
+	user, err := entities.NewUser(input.Email, input.Username, input.FirstName, input.LastName, hashedPassword)
+	if err != nil {
+		uc.logger.Error("Failed to create user entity", "error", err)
+		return nil, err
+	}
+
+	// Save user to repository
+	if err := uc.userRepo.Create(ctx, user); err != nil {
+		uc.logger.Error("Failed to save user", "error", err)
+		return nil, err
+	}
+
+	// Send welcome email (asynchronously in real implementation)
+	if uc.emailService != nil {
+		go func() {
+			if err := uc.emailService.SendWelcomeEmail(context.Background(), user); err != nil {
+				uc.logger.Error("Failed to send welcome email", "error", err, "user_id", user.ID)
+			}
+		}()
+	}
+
+	uc.logger.Info("User created successfully", "user_id", user.ID)
+
+	return &UserUseCaseOutput{
+		User:    user,
+		Message: "User created successfully",
+	}, nil
+}
+
+// GetUserByID retrieves a user by their ID
+func (uc *UserUseCase) GetUserByID(ctx context.Context, userID string) (*UserUseCaseOutput, error) {
+	uc.logger.Debug("Getting user by ID", "user_id", userID)
+
+	user, err := uc.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		uc.logger.Error("Failed to get user by ID", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	return &UserUseCaseOutput{User: user}, nil
+}
+
+// GetUserByEmail retrieves a user by their email
+func (uc *UserUseCase) GetUserByEmail(ctx context.Context, email string) (*UserUseCaseOutput, error) {
+	uc.logger.Debug("Getting user by email", "email", email)
+
+	user, err := uc.userRepo.GetByEmail(ctx, email)
+	if err != nil {
+		uc.logger.Error("Failed to get user by email", "error", err, "email", email)
+		return nil, err
+	}
+
+	return &UserUseCaseOutput{User: user}, nil
+}
+
+// UpdateUser updates user information
+func (uc *UserUseCase) UpdateUser(ctx context.Context, userID string, input UserUseCaseInput) (*UserUseCaseOutput, error) {
+	uc.logger.Info("Updating user", "user_id", userID)
+
+	// Get existing user
+	user, err := uc.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		uc.logger.Error("Failed to get user for update", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	// Update profile information
+	if input.FirstName != "" || input.LastName != "" {
+		user.UpdateProfile(input.FirstName, input.LastName)
+	}
+
+	// Update password if provided
+	if input.Password != "" {
+		hashedPassword, err := uc.passwordService.Hash(input.Password)
+		if err != nil {
+			uc.logger.Error("Failed to hash password for update", "error", err)
+			return nil, err
+		}
+		user.Password = hashedPassword
+	}
+
+	// Validate updated user
+	if err := user.Validate(); err != nil {
+		uc.logger.Error("User validation failed after update", "error", err)
+		return nil, err
+	}
+
+	// Save updated user
+	if err := uc.userRepo.Update(ctx, user); err != nil {
+		uc.logger.Error("Failed to update user", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	uc.logger.Info("User updated successfully", "user_id", userID)
+
+	return &UserUseCaseOutput{
+		User:    user,
+		Message: "User updated successfully",
+	}, nil
+}
+
+// DeleteUser soft deletes a user
+func (uc *UserUseCase) DeleteUser(ctx context.Context, userID string) error {
+	uc.logger.Info("Deleting user", "user_id", userID)
+
+	// Verify user exists
+	_, err := uc.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		uc.logger.Error("Failed to get user for deletion", "error", err, "user_id", userID)
+		return err
+	}
+
+	// Delete user
+	if err := uc.userRepo.Delete(ctx, userID); err != nil {
+		uc.logger.Error("Failed to delete user", "error", err, "user_id", userID)
+		return err
+	}
+
+	uc.logger.Info("User deleted successfully", "user_id", userID)
+	return nil
+}
+
+// ListUsers retrieves a paginated list of users
+func (uc *UserUseCase) ListUsers(ctx context.Context, offset, limit int) ([]*entities.User, error) {
+	uc.logger.Debug("Listing users", "offset", offset, "limit", limit)
+
+	users, err := uc.userRepo.List(ctx, offset, limit)
+	if err != nil {
+		uc.logger.Error("Failed to list users", "error", err)
+		return nil, err
+	}
+
+	return users, nil
+}

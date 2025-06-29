@@ -1,0 +1,87 @@
+package controllers
+
+import (
+	"net/http"
+	"time"
+
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// HealthController handles health check endpoints
+// This is an interface adapter that converts HTTP requests to use case calls
+type HealthController struct {
+	startTime time.Time
+}
+
+// NewHealthController creates a new HealthController instance
+func NewHealthController() *HealthController {
+	return &HealthController{
+		startTime: time.Now(),
+	}
+}
+
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Timestamp time.Time         `json:"timestamp"`
+	Uptime    string            `json:"uptime"`
+	Version   string            `json:"version"`
+	Checks    map[string]string `json:"checks"`
+}
+
+// Health handles GET /health
+// @Summary Health check endpoint
+// @Description Returns the health status of the service
+// @Tags health
+// @Accept json
+// @Produce json
+// @Success 200 {object} HealthResponse
+// @Router /health [get]
+func (c *HealthController) Health(ctx ports.HTTPContext) {
+	response := HealthResponse{
+		Status:    "healthy",
+		Timestamp: time.Now(),
+		Uptime:    time.Since(c.startTime).String(),
+		Version:   "1.0.0", // You might want to inject this from build info
+		Checks: map[string]string{
+			"service": "ok",
+		},
+	}
+
+	ctx.JSON(http.StatusOK, response)
+}
+
+// Readiness handles GET /ready
+// @Summary Readiness check endpoint
+// @Description Checks if the service is ready to accept requests
+// @Tags health
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Router /ready [get]
+func (c *HealthController) Readiness(ctx ports.HTTPContext) {
+	// In a real application, you would check:
+	// - Database connectivity
+	// - External service dependencies
+	// - Cache connectivity
+	// etc.
+
+	ctx.JSON(http.StatusOK, map[string]string{
+		"status": "ready",
+	})
+}
+
+// Liveness handles GET /live
+// @Summary Liveness check endpoint
+// @Description Checks if the service is alive
+// @Tags health
+// @Accept json
+// @Produce json
+// @Success 200 {object} map[string]string
+// @Router /live [get]
+func (c *HealthController) Liveness(ctx ports.HTTPContext) {
+	ctx.JSON(http.StatusOK, map[string]string{
+		"status": "alive",
+	})
+}

@@ -1,0 +1,162 @@
+# {{.ProjectName}} Makefile
+# Clean Architecture Go Web API
+
+.PHONY: help build run test clean docker-build docker-run dev fmt lint migrate-up migrate-down
+
+# Variables
+APP_NAME={{.ProjectName}}
+VERSION?=latest
+BINARY_NAME=bin/$(APP_NAME)
+DOCKER_IMAGE=$(APP_NAME):$(VERSION)
+GO_VERSION={{.GoVersion}}
+
+# Default target
+help: ## Show this help message
+	@echo "{{.ProjectName}} - Clean Architecture Go Web API"
+	@echo ""
+	@echo "Usage: make [target]"
+	@echo ""
+	@echo "Targets:"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  %-15s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+# Development
+dev: ## Run the application in development mode
+	@echo "Starting {{.ProjectName}} in development mode..."
+	@go run cmd/server/main.go
+
+run: build ## Build and run the application
+	@echo "Running {{.ProjectName}}..."
+	@./$(BINARY_NAME)
+
+# Build
+build: ## Build the application binary
+	@echo "Building {{.ProjectName}}..."
+	@mkdir -p bin
+	@go build -o $(BINARY_NAME) cmd/server/main.go
+
+build-linux: ## Build for Linux
+	@echo "Building {{.ProjectName}} for Linux..."
+	@mkdir -p bin
+	@GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux cmd/server/main.go
+
+build-all: ## Build for all platforms
+	@echo "Building {{.ProjectName}} for all platforms..."
+	@mkdir -p bin
+	@GOOS=linux GOARCH=amd64 go build -o $(BINARY_NAME)-linux-amd64 cmd/server/main.go
+	@GOOS=darwin GOARCH=amd64 go build -o $(BINARY_NAME)-darwin-amd64 cmd/server/main.go
+	@GOOS=windows GOARCH=amd64 go build -o $(BINARY_NAME)-windows-amd64.exe cmd/server/main.go
+
+# Testing
+test: ## Run all tests
+	@echo "Running tests..."
+	@go test -v ./...
+
+test-coverage: ## Run tests with coverage
+	@echo "Running tests with coverage..."
+	@go test -v -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+test-integration: ## Run integration tests
+	@echo "Running integration tests..."
+	@go test -v ./tests/integration/...
+
+# Code Quality
+fmt: ## Format code
+	@echo "Formatting code..."
+	@go fmt ./...
+
+lint: ## Run linter
+	@echo "Running linter..."
+	@golangci-lint run
+
+vet: ## Run go vet
+	@echo "Running go vet..."
+	@go vet ./...
+
+# Dependencies
+deps: ## Download dependencies
+	@echo "Downloading dependencies..."
+	@go mod download
+
+deps-update: ## Update dependencies
+	@echo "Updating dependencies..."
+	@go get -u ./...
+	@go mod tidy
+
+deps-verify: ## Verify dependencies
+	@echo "Verifying dependencies..."
+	@go mod verify
+
+# Database
+{{if ne .DatabaseDriver ""}}
+migrate-up: ## Run database migrations up
+	@echo "Running database migrations up..."
+	@go run cmd/server/main.go migrate up
+
+migrate-down: ## Run database migrations down
+	@echo "Running database migrations down..."
+	@go run cmd/server/main.go migrate down
+
+migrate-create: ## Create a new migration (usage: make migrate-create NAME=migration_name)
+	@echo "Creating migration: $(NAME)"
+	@migrate create -ext sql -dir migrations $(NAME)
+{{end}}
+
+# Docker
+docker-build: ## Build Docker image
+	@echo "Building Docker image..."
+	@docker build -t $(DOCKER_IMAGE) .
+
+docker-run: ## Run Docker container
+	@echo "Running Docker container..."
+	@docker run -p 8080:8080 --env-file .env $(DOCKER_IMAGE)
+
+docker-compose-up: ## Start with Docker Compose
+	@echo "Starting with Docker Compose..."
+	@docker-compose up -d
+
+docker-compose-down: ## Stop Docker Compose
+	@echo "Stopping Docker Compose..."
+	@docker-compose down
+
+# Utilities
+clean: ## Clean build artifacts
+	@echo "Cleaning..."
+	@rm -rf bin/
+	@rm -f coverage.out coverage.html
+	@go clean
+
+install: ## Install the application globally
+	@echo "Installing {{.ProjectName}}..."
+	@go install cmd/server/main.go
+
+generate: ## Run go generate
+	@echo "Running go generate..."
+	@go generate ./...
+
+# Production
+build-prod: ## Build for production with optimizations
+	@echo "Building for production..."
+	@mkdir -p bin
+	@CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags '-extldflags "-static"' -o $(BINARY_NAME) cmd/server/main.go
+
+# Health checks
+health: ## Check application health
+	@echo "Checking application health..."
+	@curl -f http://localhost:8080/health || echo "Application is not running"
+
+# Security
+security-scan: ## Run security scan
+	@echo "Running security scan..."
+	@gosec ./...
+
+# Benchmarks
+bench: ## Run benchmarks
+	@echo "Running benchmarks..."
+	@go test -bench=. -benchmem ./...
+
+# Default Go commands with better output
+mod-tidy: ## Tidy go modules
+	@echo "Tidying go modules..."
+	@go mod tidy

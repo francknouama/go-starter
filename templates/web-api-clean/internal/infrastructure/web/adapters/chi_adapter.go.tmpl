@@ -1,0 +1,261 @@
+{{if eq .Framework "chi"}}
+package adapters
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	
+	"github.com/go-chi/chi/v5"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// ChiContext adapts http.Request and http.ResponseWriter to implement ports.HTTPContext
+type ChiContext struct {
+	request    *http.Request
+	writer     http.ResponseWriter
+	params     map[string]string
+	statusCode int
+}
+
+// Ensure ChiContext implements ports.HTTPContext
+var _ ports.HTTPContext = (*ChiContext)(nil)
+
+// GetParam implements ports.HTTPContext.GetParam
+func (c *ChiContext) GetParam(key string) string {
+	return chi.URLParam(c.request, key)
+}
+
+// GetQuery implements ports.HTTPContext.GetQuery
+func (c *ChiContext) GetQuery(key string) string {
+	return c.request.URL.Query().Get(key)
+}
+
+// GetHeader implements ports.HTTPContext.GetHeader
+func (c *ChiContext) GetHeader(key string) string {
+	return c.request.Header.Get(key)
+}
+
+// BindJSON implements ports.HTTPContext.BindJSON
+func (c *ChiContext) BindJSON(obj interface{}) error {
+	decoder := json.NewDecoder(c.request.Body)
+	return decoder.Decode(obj)
+}
+
+// GetRequestContext implements ports.HTTPContext.GetRequestContext
+func (c *ChiContext) GetRequestContext() context.Context {
+	return c.request.Context()
+}
+
+// GetMethod implements ports.HTTPContext.GetMethod
+func (c *ChiContext) GetMethod() string {
+	return c.request.Method
+}
+
+// JSON implements ports.HTTPContext.JSON
+func (c *ChiContext) JSON(code int, obj interface{}) {
+	c.SetHeader("Content-Type", "application/json")
+	c.statusCode = code
+	c.writer.WriteHeader(code)
+	json.NewEncoder(c.writer).Encode(obj)
+}
+
+// String implements ports.HTTPContext.String
+func (c *ChiContext) String(code int, message string) {
+	c.SetHeader("Content-Type", "text/plain")
+	c.statusCode = code
+	c.writer.WriteHeader(code)
+	c.writer.Write([]byte(message))
+}
+
+// NoContent implements ports.HTTPContext.NoContent
+func (c *ChiContext) NoContent(code int) {
+	c.statusCode = code
+	c.writer.WriteHeader(code)
+}
+
+// SetHeader implements ports.HTTPContext.SetHeader
+func (c *ChiContext) SetHeader(key, value string) {
+	c.writer.Header().Set(key, value)
+}
+
+// ClientIP implements ports.HTTPContext.ClientIP
+func (c *ChiContext) ClientIP() string {
+	// Try to get IP from X-Real-IP or X-Forwarded-For headers
+	if ip := c.request.Header.Get("X-Real-IP"); ip != "" {
+		return ip
+	}
+	if ip := c.request.Header.Get("X-Forwarded-For"); ip != "" {
+		// Take the first IP if there are multiple
+		if idx := strings.Index(ip, ","); idx != -1 {
+			return strings.TrimSpace(ip[:idx])
+		}
+		return ip
+	}
+	// Fall back to RemoteAddr
+	if idx := strings.LastIndex(c.request.RemoteAddr, ":"); idx != -1 {
+		return c.request.RemoteAddr[:idx]
+	}
+	return c.request.RemoteAddr
+}
+
+// ChiRouter adapts chi.Router to implement ports.Router
+type ChiRouter struct {
+	mux *chi.Mux
+}
+
+// NewChiRouter creates a new ChiRouter
+func NewChiRouter() ports.Router {
+	return &ChiRouter{mux: chi.NewRouter()}
+}
+
+// adaptHandler converts ports.HTTPHandler to http.HandlerFunc
+func (r *ChiRouter) adaptHandler(handler ports.HTTPHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		ctx := &ChiContext{
+			request: req,
+			writer:  w,
+		}
+		handler(ctx)
+	}
+}
+
+// GET implements ports.Router.GET
+func (r *ChiRouter) GET(path string, handler ports.HTTPHandler) {
+	r.mux.Get(path, r.adaptHandler(handler))
+}
+
+// POST implements ports.Router.POST
+func (r *ChiRouter) POST(path string, handler ports.HTTPHandler) {
+	r.mux.Post(path, r.adaptHandler(handler))
+}
+
+// PUT implements ports.Router.PUT
+func (r *ChiRouter) PUT(path string, handler ports.HTTPHandler) {
+	r.mux.Put(path, r.adaptHandler(handler))
+}
+
+// DELETE implements ports.Router.DELETE
+func (r *ChiRouter) DELETE(path string, handler ports.HTTPHandler) {
+	r.mux.Delete(path, r.adaptHandler(handler))
+}
+
+// PATCH implements ports.Router.PATCH
+func (r *ChiRouter) PATCH(path string, handler ports.HTTPHandler) {
+	r.mux.Patch(path, r.adaptHandler(handler))
+}
+
+// Use implements ports.Router.Use
+func (r *ChiRouter) Use(middleware ports.HTTPHandler) {
+	r.mux.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := &ChiContext{
+				request: req,
+				writer:  w,
+			}
+			middleware(ctx)
+			next.ServeHTTP(w, req)
+		})
+	})
+}
+
+// Group implements ports.Router.Group
+func (r *ChiRouter) Group(prefix string) ports.RouteGroup {
+	return &ChiRouteGroup{
+		mux:    r.mux,
+		prefix: prefix,
+	}
+}
+
+// ChiRouteGroup represents a group of routes with common prefix
+type ChiRouteGroup struct {
+	mux    *chi.Mux
+	prefix string
+}
+
+// adaptHandler for route group
+func (g *ChiRouteGroup) adaptHandler(handler ports.HTTPHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		ctx := &ChiContext{
+			request: req,
+			writer:  w,
+		}
+		handler(ctx)
+	}
+}
+
+// GET implements ports.RouteGroup.GET
+func (g *ChiRouteGroup) GET(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.mux.Get(fullPath, g.adaptHandler(handler))
+}
+
+// POST implements ports.RouteGroup.POST
+func (g *ChiRouteGroup) POST(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.mux.Post(fullPath, g.adaptHandler(handler))
+}
+
+// PUT implements ports.RouteGroup.PUT
+func (g *ChiRouteGroup) PUT(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.mux.Put(fullPath, g.adaptHandler(handler))
+}
+
+// DELETE implements ports.RouteGroup.DELETE
+func (g *ChiRouteGroup) DELETE(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.mux.Delete(fullPath, g.adaptHandler(handler))
+}
+
+// PATCH implements ports.RouteGroup.PATCH
+func (g *ChiRouteGroup) PATCH(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.mux.Patch(fullPath, g.adaptHandler(handler))
+}
+
+// Use implements ports.RouteGroup.Use
+func (g *ChiRouteGroup) Use(middleware ports.HTTPHandler) {
+	// Chi doesn't support group-specific middleware easily, 
+	// so we would handle this at the route level
+}
+
+// Group implements ports.RouteGroup.Group
+func (g *ChiRouteGroup) Group(prefix string) ports.RouteGroup {
+	return &ChiRouteGroup{
+		mux:    g.mux,
+		prefix: g.prefix + prefix,
+	}
+}
+
+// ChiWebServer adapts chi.Mux to implement ports.WebServer
+type ChiWebServer struct {
+	mux *chi.Mux
+}
+
+// NewChiWebServer creates a new ChiWebServer
+func NewChiWebServer(router ports.Router) ports.WebServer {
+	chiRouter := router.(*ChiRouter)
+	return &ChiWebServer{mux: chiRouter.mux}
+}
+
+// Start implements ports.WebServer.Start
+func (s *ChiWebServer) Start(addr string) error {
+	return http.ListenAndServe(addr, s.mux)
+}
+
+// Stop implements ports.WebServer.Stop
+func (s *ChiWebServer) Stop() error {
+	// Chi doesn't have a built-in graceful shutdown, 
+	// this would be handled at a higher level
+	return nil
+}
+
+// Handler implements ports.WebServer.Handler
+func (s *ChiWebServer) Handler() http.Handler {
+	return s.mux
+}
+{{end}}

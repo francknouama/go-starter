@@ -1,0 +1,45 @@
+package unit_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/domain/usecases"
+	"{{.ModulePath}}/tests/mocks"
+)
+
+func TestUserUseCase_CreateUser(t *testing.T) {
+	mockRepo := new(mocks.MockUserRepository)
+	mockLogger := new(mocks.MockLogger)
+	useCase := usecases.NewUserUseCase(mockRepo, mockLogger)
+
+	ctx := context.Background()
+	user := &entities.User{
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+
+	// Test case 1: Successful user creation
+	mockRepo.On("CreateUser", ctx, user).Return(nil).Once()
+	mockLogger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return().Once()
+
+	err := useCase.CreateUser(ctx, user)
+	assert.NoError(t, err)
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
+
+	// Test case 2: User creation fails
+	mockRepo.On("CreateUser", ctx, user).Return(errors.New("db error")).Once()
+	mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+
+	err = useCase.CreateUser(ctx, user)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "db error")
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
+}

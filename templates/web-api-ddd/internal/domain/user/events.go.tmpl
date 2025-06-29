@@ -1,0 +1,165 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"{{.ModulePath}}/internal/shared/events"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+// Event types
+const (
+	{{.DomainName | title}}CreatedEventType     = "{{.DomainName}}.created"
+	{{.DomainName | title}}EmailChangedEventType = "{{.DomainName}}.email_changed"
+	{{.DomainName | title}}NameChangedEventType  = "{{.DomainName}}.name_changed"
+	{{.DomainName | title}}ActivatedEventType   = "{{.DomainName}}.activated"
+	{{.DomainName | title}}DeactivatedEventType = "{{.DomainName}}.deactivated"
+	{{.DomainName | title}}DeletedEventType     = "{{.DomainName}}.deleted"
+)
+
+// {{.DomainName | title}}CreatedEvent represents the event when a {{.DomainName}} is created
+type {{.DomainName | title}}CreatedEvent struct {
+	events.BaseDomainEvent
+	Email valueobjects.Email
+	Name  Name
+}
+
+// New{{.DomainName | title}}CreatedEvent creates a new {{.DomainName}} created event
+func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, email valueobjects.Email, name Name) {{.DomainName | title}}CreatedEvent {
+	data := map[string]interface{}{
+		"email":     email.String(),
+		"firstName": name.FirstName(),
+		"lastName":  name.LastName(),
+		"fullName":  name.FullName(),
+	}
+	
+	return {{.DomainName | title}}CreatedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}CreatedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		Email: email,
+		Name:  name,
+	}
+}
+
+// {{.DomainName | title}}EmailChangedEvent represents the event when a {{.DomainName}}'s email is changed
+type {{.DomainName | title}}EmailChangedEvent struct {
+	events.BaseDomainEvent
+	OldEmail valueobjects.Email
+	NewEmail valueobjects.Email
+}
+
+// New{{.DomainName | title}}EmailChangedEvent creates a new {{.DomainName}} email changed event
+func New{{.DomainName | title}}EmailChangedEvent({{.DomainName}}ID valueobjects.ID, oldEmail, newEmail valueobjects.Email) {{.DomainName | title}}EmailChangedEvent {
+	data := map[string]interface{}{
+		"oldEmail": oldEmail.String(),
+		"newEmail": newEmail.String(),
+	}
+	
+	return {{.DomainName | title}}EmailChangedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}EmailChangedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		OldEmail: oldEmail,
+		NewEmail: newEmail,
+	}
+}
+
+// {{.DomainName | title}}NameChangedEvent represents the event when a {{.DomainName}}'s name is changed
+type {{.DomainName | title}}NameChangedEvent struct {
+	events.BaseDomainEvent
+	OldName Name
+	NewName Name
+}
+
+// New{{.DomainName | title}}NameChangedEvent creates a new {{.DomainName}} name changed event
+func New{{.DomainName | title}}NameChangedEvent({{.DomainName}}ID valueobjects.ID, oldName, newName Name) {{.DomainName | title}}NameChangedEvent {
+	data := map[string]interface{}{
+		"oldFirstName": oldName.FirstName(),
+		"oldLastName":  oldName.LastName(),
+		"oldFullName":  oldName.FullName(),
+		"newFirstName": newName.FirstName(),
+		"newLastName":  newName.LastName(),
+		"newFullName":  newName.FullName(),
+	}
+	
+	return {{.DomainName | title}}NameChangedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}NameChangedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		OldName: oldName,
+		NewName: newName,
+	}
+}
+
+// {{.DomainName | title}}ActivatedEvent represents the event when a {{.DomainName}} is activated
+type {{.DomainName | title}}ActivatedEvent struct {
+	events.BaseDomainEvent
+}
+
+// New{{.DomainName | title}}ActivatedEvent creates a new {{.DomainName}} activated event
+func New{{.DomainName | title}}ActivatedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}ActivatedEvent {
+	data := map[string]interface{}{
+		"status": StatusActive.String(),
+	}
+	
+	return {{.DomainName | title}}ActivatedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}ActivatedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+	}
+}
+
+// {{.DomainName | title}}DeactivatedEvent represents the event when a {{.DomainName}} is deactivated
+type {{.DomainName | title}}DeactivatedEvent struct {
+	events.BaseDomainEvent
+}
+
+// New{{.DomainName | title}}DeactivatedEvent creates a new {{.DomainName}} deactivated event
+func New{{.DomainName | title}}DeactivatedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}DeactivatedEvent {
+	data := map[string]interface{}{
+		"status": StatusInactive.String(),
+	}
+	
+	return {{.DomainName | title}}DeactivatedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}DeactivatedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+	}
+}
+
+// {{.DomainName | title}}DeletedEvent represents the event when a {{.DomainName}} is deleted
+type {{.DomainName | title}}DeletedEvent struct {
+	events.BaseDomainEvent
+}
+
+// New{{.DomainName | title}}DeletedEvent creates a new {{.DomainName}} deleted event
+func New{{.DomainName | title}}DeletedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}DeletedEvent {
+	data := map[string]interface{}{
+		"status": StatusDeleted.String(),
+	}
+	
+	return {{.DomainName | title}}DeletedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}DeletedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+	}
+}
+{{- end}}

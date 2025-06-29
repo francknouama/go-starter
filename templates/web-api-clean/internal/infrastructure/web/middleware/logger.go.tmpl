@@ -1,0 +1,59 @@
+package middleware
+
+import (
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// RequestLogger returns a request logging middleware
+func RequestLogger(logger ports.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		path := c.Request.URL.Path
+		method := c.Request.Method
+
+		// Process request
+		c.Next()
+
+		// Calculate request duration
+		duration := time.Since(start)
+		status := c.Writer.Status()
+
+		// Log request details
+		logger.Info("HTTP Request",
+			"method", method,
+			"path", path,
+			"status", status,
+			"duration", duration.String(),
+			"ip", c.ClientIP(),
+			"user_agent", c.Request.UserAgent(),
+		)
+
+		// Log errors if status >= 400
+		if status >= 400 {
+			if len(c.Errors) > 0 {
+				logger.Error("Request completed with errors",
+					"method", method,
+					"path", path,
+					"status", status,
+					"errors", c.Errors.String(),
+				)
+			}
+		}
+	}
+}
+
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Content-Security-Policy", "default-src 'self'")
+		
+		c.Next()
+	}
+}

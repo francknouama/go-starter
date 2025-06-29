@@ -1,0 +1,245 @@
+package controllers
+
+import (
+	"net/http"
+	"strconv"
+
+	"{{.ModulePath}}/internal/adapters/presenters"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/usecases"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/web/framework"
+)
+
+// UserController handles user-related HTTP requests
+// This is an interface adapter that converts HTTP requests to use case calls
+type UserController struct {
+	userUseCase   *usecases.UserUseCase
+	userPresenter *presenters.UserPresenter
+	logger        ports.Logger
+}
+
+// CreateUserRequest represents the create user request payload
+type CreateUserRequest struct {
+	Email     string `json:"email" {{if eq .Framework "gin"}}binding:"required,email"{{end}}`
+	Username  string `json:"username" {{if eq .Framework "gin"}}binding:"required,min=3,max=50"{{end}}`
+	FirstName string `json:"first_name" {{if eq .Framework "gin"}}binding:"required"{{end}}`
+	LastName  string `json:"last_name" {{if eq .Framework "gin"}}binding:"required"{{end}}`
+	Password  string `json:"password" {{if eq .Framework "gin"}}binding:"required,min=8"{{end}}`
+}
+
+// UpdateUserRequest represents the update user request payload
+type UpdateUserRequest struct {
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Password  string `json:"password,omitempty" {{if eq .Framework "gin"}}binding:"omitempty,min=8"{{end}}`
+}
+
+// NewUserController creates a new UserController instance
+func NewUserController(
+	userUseCase *usecases.UserUseCase,
+	userPresenter *presenters.UserPresenter,
+	logger ports.Logger,
+) *UserController {
+	return &UserController{
+		userUseCase:   userUseCase,
+		userPresenter: userPresenter,
+		logger:        logger,
+	}
+}
+
+// CreateUser handles POST /users
+// @Summary Create a new user
+// @Description Create a new user with the provided information
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user body CreateUserRequest true "User information"
+// @Success 201 {object} presenters.UserResponse
+// @Failure 400 {object} presenters.ErrorResponse
+// @Failure 409 {object} presenters.ErrorResponse
+// @Router /api/v1/users [post]
+func (c *UserController) CreateUser(ctx framework.Context) {
+	var req CreateUserRequest
+	if err := ctx.Bind(&req); err != nil {
+		c.logger.Debug("Invalid request payload", "error", err)
+		ctx.JSON(http.StatusBadRequest, c.userPresenter.PresentError("Invalid request payload"))
+		return
+	}
+
+	// Map request to entity
+	user := &entities.User{
+		Email:     req.Email,
+		Username:  req.Username,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Password:  req.Password,
+	}
+
+	// Call use case
+	if err := c.userUseCase.CreateUser(ctx.Request().Context(), user); err != nil {
+		switch err {
+		case entities.ErrUserExists:
+			ctx.JSON(http.StatusConflict, c.userPresenter.PresentError("User already exists"))
+		default:
+			c.logger.Error("Failed to create user", "error", err)
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to create user"))
+		}
+		return
+	}
+
+	// Return success response
+	ctx.JSON(http.StatusCreated, c.userPresenter.PresentUser(user))
+}
+
+// GetUser handles GET /users/:id
+// @Summary Get user by ID
+// @Description Get a user by their ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID"
+// @Success 200 {object} presenters.UserResponse
+// @Failure 404 {object} presenters.ErrorResponse
+// @Security BearerAuth
+// @Router /api/v1/users/{id} [get]
+func (c *UserController) GetUser(ctx framework.Context) {
+	userID := ctx.Param("id")
+	
+	user, err := c.userUseCase.GetUserByID(ctx.Request().Context(), userID)
+	if err != nil {
+		switch err {
+		case entities.ErrUserNotFound:
+			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError("User not found"))
+		default:
+			c.logger.Error("Failed to get user", "error", err, "user_id", userID)
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to get user"))
+		}
+		return
+	}
+
+	ctx.JSON(http.StatusOK, c.userPresenter.PresentUser(user))
+}
+
+// UpdateUser handles PUT /users/:id
+// @Summary Update user
+// @Description Update a user's information
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID"
+// @Param user body UpdateUserRequest true "User update information"
+// @Success 200 {object} presenters.UserResponse
+// @Failure 400 {object} presenters.ErrorResponse
+// @Failure 404 {object} presenters.ErrorResponse
+// @Security BearerAuth
+// @Router /api/v1/users/{id} [put]
+func (c *UserController) UpdateUser(ctx framework.Context) {
+	userID := ctx.Param("id")
+	
+	var req UpdateUserRequest
+	if err := ctx.Bind(&req); err != nil {
+		c.logger.Debug("Invalid request payload", "error", err)
+		ctx.JSON(http.StatusBadRequest, c.userPresenter.PresentError("Invalid request payload"))
+		return
+	}
+
+	// Get existing user
+	user, err := c.userUseCase.GetUserByID(ctx.Request().Context(), userID)
+	if err != nil {
+		switch err {
+		case entities.ErrUserNotFound:
+			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError("User not found"))
+		default:
+			c.logger.Error("Failed to get user", "error", err, "user_id", userID)
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to get user"))
+		}
+		return
+	}
+
+	// Update fields
+	if req.FirstName != "" {
+		user.FirstName = req.FirstName
+	}
+	if req.LastName != "" {
+		user.LastName = req.LastName
+	}
+	if req.Password != "" {
+		user.Password = req.Password
+	}
+
+	// Update user
+	if err := c.userUseCase.UpdateUser(ctx.Request().Context(), user); err != nil {
+		c.logger.Error("Failed to update user", "error", err, "user_id", userID)
+		ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to update user"))
+		return
+	}
+
+	ctx.JSON(http.StatusOK, c.userPresenter.PresentUser(user))
+}
+
+// DeleteUser handles DELETE /users/:id
+// @Summary Delete user
+// @Description Delete a user by their ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path string true "User ID"
+// @Success 204 "No content"
+// @Failure 404 {object} presenters.ErrorResponse
+// @Security BearerAuth
+// @Router /api/v1/users/{id} [delete]
+func (c *UserController) DeleteUser(ctx framework.Context) {
+	userID := ctx.Param("id")
+	
+	if err := c.userUseCase.DeleteUser(ctx.Request().Context(), userID); err != nil {
+		switch err {
+		case entities.ErrUserNotFound:
+			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError("User not found"))
+		default:
+			c.logger.Error("Failed to delete user", "error", err, "user_id", userID)
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to delete user"))
+		}
+		return
+	}
+
+	ctx.NoContent(http.StatusNoContent)
+}
+
+// ListUsers handles GET /users
+// @Summary List users
+// @Description Get a list of users with pagination
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} presenters.UserListResponse
+// @Security BearerAuth
+// @Router /api/v1/users [get]
+func (c *UserController) ListUsers(ctx framework.Context) {
+	// Parse pagination parameters
+	page := 1
+	if p := ctx.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	limit := 10
+	if l := ctx.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	// Get users
+	users, total, err := c.userUseCase.ListUsers(ctx.Request().Context(), page, limit)
+	if err != nil {
+		c.logger.Error("Failed to list users", "error", err)
+		ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to list users"))
+		return
+	}
+
+	ctx.JSON(http.StatusOK, c.userPresenter.PresentUserList(users, page, limit, total))
+}

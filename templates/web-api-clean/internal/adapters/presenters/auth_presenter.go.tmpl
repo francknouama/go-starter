@@ -1,0 +1,83 @@
+package presenters
+
+import (
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/usecases"
+)
+
+// AuthPresenter formats authentication data for API responses
+type AuthPresenter struct{}
+
+// LoginResponse represents a successful login response
+type LoginResponse struct {
+	User         UserResponse `json:"user"`
+	AccessToken  string       `json:"access_token"`
+	RefreshToken string       `json:"refresh_token"`
+	TokenType    string       `json:"token_type"`
+	ExpiresIn    int64        `json:"expires_in"`
+}
+
+// NewAuthPresenter creates a new AuthPresenter instance
+func NewAuthPresenter() *AuthPresenter {
+	return &AuthPresenter{}
+}
+
+// PresentLogin converts LoginOutput to LoginResponse
+func (ap *AuthPresenter) PresentLogin(output *usecases.LoginOutput) LoginResponse {
+	if output == nil {
+		return LoginResponse{}
+	}
+
+	// Use UserPresenter to format user data
+	userPresenter := NewUserPresenter()
+	userResponse := userPresenter.PresentUser(output.User)
+
+	return LoginResponse{
+		User:         userResponse,
+		AccessToken:  output.AccessToken,
+		RefreshToken: output.RefreshToken,
+		TokenType:    output.TokenType,
+		ExpiresIn:    output.ExpiresIn,
+	}
+}
+
+// PresentError converts an error to ErrorResponse
+func (ap *AuthPresenter) PresentError(err error) ErrorResponse {
+	if err == nil {
+		return ErrorResponse{}
+	}
+
+	// Map authentication domain errors to appropriate messages
+	switch err {
+	case entities.ErrInvalidCredentials:
+		return ErrorResponse{
+			Error:   "INVALID_CREDENTIALS",
+			Message: "Invalid email/username or password",
+		}
+	case entities.ErrTokenExpired:
+		return ErrorResponse{
+			Error:   "TOKEN_EXPIRED",
+			Message: "The access token has expired",
+		}
+	case entities.ErrInvalidToken:
+		return ErrorResponse{
+			Error:   "INVALID_TOKEN",
+			Message: "The provided token is invalid",
+		}
+	case entities.ErrSessionNotFound:
+		return ErrorResponse{
+			Error:   "SESSION_NOT_FOUND",
+			Message: "No active session found",
+		}
+	case entities.ErrSessionExpired:
+		return ErrorResponse{
+			Error:   "SESSION_EXPIRED",
+			Message: "The session has expired",
+		}
+	default:
+		return ErrorResponse{
+			Error:   "INTERNAL_ERROR",
+			Message: "An internal error occurred",
+		}
+	}
+}

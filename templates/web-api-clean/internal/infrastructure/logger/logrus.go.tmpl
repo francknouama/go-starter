@@ -1,0 +1,98 @@
+package logger
+
+import (
+	"os"
+
+	"github.com/sirupsen/logrus"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// LogrusLogger implements the Logger interface using Logrus
+type LogrusLogger struct {
+	logger *logrus.Logger
+}
+
+// NewLogrusLogger creates a new Logrus-based logger
+func NewLogrusLogger(config *config.LoggerConfig) ports.Logger {
+	logger := logrus.New()
+	logger.SetOutput(os.Stdout)
+
+	switch config.Format {
+	case "json":
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	case "text", "console":
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+		})
+	default:
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	}
+
+	switch config.Level {
+	case "debug":
+		logger.SetLevel(logrus.DebugLevel)
+	case "info":
+		logger.SetLevel(logrus.InfoLevel)
+	case "warn":
+		logger.SetLevel(logrus.WarnLevel)
+	case "error":
+		logger.SetLevel(logrus.ErrorLevel)
+	default:
+		logger.SetLevel(logrus.InfoLevel)
+	}
+
+	return &LogrusLogger{
+		logger: logger,
+	}
+}
+
+// Debug logs debug information
+func (l *LogrusLogger) Debug(msg string, fields ...interface{}) {
+	l.logger.WithFields(logrus.Fields(fieldsToMap(fields))).Debug(msg)
+}
+
+// Info logs informational messages
+func (l *LogrusLogger) Info(msg string, fields ...interface{}) {
+	l.logger.WithFields(logrus.Fields(fieldsToMap(fields))).Info(msg)
+}
+
+// Warn logs warning messages
+func (l *LogrusLogger) Warn(msg string, fields ...interface{}) {
+	l.logger.WithFields(logrus.Fields(fieldsToMap(fields))).Warn(msg)
+}
+
+// Error logs error messages
+func (l *LogrusLogger) Error(msg string, fields ...interface{}) {
+	l.logger.WithFields(logrus.Fields(fieldsToMap(fields))).Error(msg)
+}
+
+// Fatal logs fatal errors and exits
+func (l *LogrusLogger) Fatal(msg string, fields ...interface{}) {
+	l.logger.WithFields(logrus.Fields(fieldsToMap(fields))).Fatal(msg)
+}
+
+// With returns a logger with additional context fields
+func (l *LogrusLogger) With(fields ...interface{}) ports.Logger {
+	return &LogrusLogger{
+		logger: l.logger.WithFields(logrus.Fields(fieldsToMap(fields))).Logger,
+	}
+}
+
+// fieldsToMap converts a slice of key-value pairs to a map[string]interface{}
+func fieldsToMap(fields []interface{}) map[string]interface{} {
+	if len(fields)%2 != 0 {
+		// Logrus doesn't handle odd number of fields well, so we'll just return empty map
+		return make(map[string]interface{})
+	}
+	m := make(map[string]interface{}, len(fields)/2)
+	for i := 0; i < len(fields); i += 2 {
+		key, ok := fields[i].(string)
+		if !ok {
+			// If key is not a string, skip it
+			continue
+		}
+		m[key] = fields[i+1]
+	}
+	return m
+}

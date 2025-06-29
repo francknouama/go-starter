@@ -1,0 +1,49 @@
+server:
+  host: "0.0.0.0"
+  port: "8080"
+  environment: "production"
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 60
+
+{{if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+  host: "${DB_HOST}"
+  {{if eq .DatabaseDriver "postgres"}}
+  port: ${DB_PORT:-5432}
+  {{else if eq .DatabaseDriver "mysql"}}
+  port: ${DB_PORT:-3306}
+  {{end}}
+  database: "${DB_NAME}"
+  username: "${DB_USER}"
+  password: "${DB_PASSWORD}"
+  ssl_mode: "require"
+  max_open_conns: 50
+  max_idle_conns: 10
+  conn_max_lifetime: 600
+{{end}}
+
+{{if ne .AuthType ""}}
+auth:
+  jwt_secret: "${JWT_SECRET}"
+  access_token_expiry: 15   # minutes
+  refresh_token_expiry: 7   # days
+  password_min_length: 8
+  session_timeout: 60       # minutes
+  max_active_sessions: 5
+{{end}}
+
+logger:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+email:
+  provider: "smtp"
+  smtp_host: "${SMTP_HOST}"
+  smtp_port: ${SMTP_PORT:-587}
+  smtp_user: "${SMTP_USER}"
+  smtp_pass: "${SMTP_PASSWORD}"
+  from_email: "${FROM_EMAIL}"
+  from_name: "{{.ProjectName}}"

@@ -1,0 +1,56 @@
+package web
+
+import (
+	"fmt"
+	
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/web/adapters"
+)
+
+// NewRouter creates a router based on the configured framework
+func NewRouter(framework string) (ports.Router, error) {
+	switch framework {
+	{{if eq .Framework "gin"}}
+	case "gin":
+		return adapters.NewGinRouter(), nil
+	{{end}}
+	{{if eq .Framework "echo"}}
+	case "echo":
+		return adapters.NewEchoRouter(), nil
+	{{end}}
+	{{if eq .Framework "fiber"}}
+	case "fiber":
+		return adapters.NewFiberRouter(), nil
+	{{end}}
+	{{if eq .Framework "chi"}}
+	case "chi":
+		return adapters.NewChiRouter(), nil
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported web framework: %s", framework)
+	}
+}
+
+// NewWebServer creates a web server based on the configured framework
+func NewWebServer(framework string, router ports.Router) (ports.WebServer, error) {
+	switch framework {
+	{{if eq .Framework "gin"}}
+	case "gin":
+		return adapters.NewGinWebServer(router), nil
+	{{end}}
+	{{if eq .Framework "echo"}}
+	case "echo":
+		return adapters.NewEchoWebServer(router), nil
+	{{end}}
+	{{if eq .Framework "fiber"}}
+	case "fiber":
+		return adapters.NewFiberWebServer(router), nil
+	{{end}}
+	{{if eq .Framework "chi"}}
+	case "chi":
+		return adapters.NewChiWebServer(router), nil
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported web framework: %s", framework)
+	}
+}

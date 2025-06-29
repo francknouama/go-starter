@@ -1,0 +1,277 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/shared/errors"
+)
+
+// QueryHandler defines the interface for query handlers
+type QueryHandler interface {
+	Handle(ctx context.Context, query Query) (interface{}, error)
+	CanHandle(queryType string) bool
+}
+
+// Get{{.DomainName | title}}ByIDHandler handles queries to get a {{.DomainName}} by ID
+type Get{{.DomainName | title}}ByIDHandler struct {
+	repository {{.DomainName}}.ReadOnlyRepository
+}
+
+// NewGet{{.DomainName | title}}ByIDHandler creates a new Get{{.DomainName | title}}ByIDHandler
+func NewGet{{.DomainName | title}}ByIDHandler(repository {{.DomainName}}.ReadOnlyRepository) *Get{{.DomainName | title}}ByIDHandler {
+	return &Get{{.DomainName | title}}ByIDHandler{
+		repository: repository,
+	}
+}
+
+// Handle processes the Get{{.DomainName | title}}ByIDQuery
+func (h *Get{{.DomainName | title}}ByIDHandler) Handle(ctx context.Context, query Query) (interface{}, error) {
+	q, ok := query.(Get{{.DomainName | title}}ByIDQuery)
+	if !ok {
+		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "Get{{.DomainName | title}}ByIDQuery")
+	}
+	
+	{{.DomainName}}ID, err := q.GetID()
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "id")
+	}
+	
+	{{.DomainName}}Entity, err := h.repository.FindByID(ctx, {{.DomainName}}ID)
+	if err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "findByID")
+	}
+	
+	if {{.DomainName}}Entity == nil {
+		return nil, errors.ErrEntityNotFound.WithDetails("id", {{.DomainName}}ID.String())
+	}
+	
+	return From{{.DomainName | title}}({{.DomainName}}Entity), nil
+}
+
+// CanHandle returns true if this handler can handle the query type
+func (h *Get{{.DomainName | title}}ByIDHandler) CanHandle(queryType string) bool {
+	return queryType == "get_{{.DomainName}}_by_id"
+}
+
+// Get{{.DomainName | title}}ByEmailHandler handles queries to get a {{.DomainName}} by email
+type Get{{.DomainName | title}}ByEmailHandler struct {
+	repository {{.DomainName}}.ReadOnlyRepository
+}
+
+// NewGet{{.DomainName | title}}ByEmailHandler creates a new Get{{.DomainName | title}}ByEmailHandler
+func NewGet{{.DomainName | title}}ByEmailHandler(repository {{.DomainName}}.ReadOnlyRepository) *Get{{.DomainName | title}}ByEmailHandler {
+	return &Get{{.DomainName | title}}ByEmailHandler{
+		repository: repository,
+	}
+}
+
+// Handle processes the Get{{.DomainName | title}}ByEmailQuery
+func (h *Get{{.DomainName | title}}ByEmailHandler) Handle(ctx context.Context, query Query) (interface{}, error) {
+	q, ok := query.(Get{{.DomainName | title}}ByEmailQuery)
+	if !ok {
+		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "Get{{.DomainName | title}}ByEmailQuery")
+	}
+	
+	email, err := q.GetEmail()
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "email")
+	}
+	
+	{{.DomainName}}Entity, err := h.repository.FindByEmail(ctx, email)
+	if err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "findByEmail")
+	}
+	
+	if {{.DomainName}}Entity == nil {
+		return nil, errors.ErrEntityNotFound.WithDetails("email", email.String())
+	}
+	
+	return From{{.DomainName | title}}({{.DomainName}}Entity), nil
+}
+
+// CanHandle returns true if this handler can handle the query type
+func (h *Get{{.DomainName | title}}ByEmailHandler) CanHandle(queryType string) bool {
+	return queryType == "get_{{.DomainName}}_by_email"
+}
+
+// List{{.DomainName | title}}sHandler handles queries to list {{.DomainName}}s
+type List{{.DomainName | title}}sHandler struct {
+	repository {{.DomainName}}.ReadOnlyRepository
+}
+
+// NewList{{.DomainName | title}}sHandler creates a new List{{.DomainName | title}}sHandler
+func NewList{{.DomainName | title}}sHandler(repository {{.DomainName}}.ReadOnlyRepository) *List{{.DomainName | title}}sHandler {
+	return &List{{.DomainName | title}}sHandler{
+		repository: repository,
+	}
+}
+
+// Handle processes the List{{.DomainName | title}}sQuery
+func (h *List{{.DomainName | title}}sHandler) Handle(ctx context.Context, query Query) (interface{}, error) {
+	q, ok := query.(List{{.DomainName | title}}sQuery)
+	if !ok {
+		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "List{{.DomainName | title}}sQuery")
+	}
+	
+	var {{.DomainName}}Entities []*{{.DomainName}}.{{.DomainName | title}}
+	var total int
+	var err error
+	
+	status, err := q.GetStatus()
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "status")
+	}
+	
+	offset := q.GetOffset()
+	
+	if status != nil {
+		{{.DomainName}}Entities, err = h.repository.FindByStatus(ctx, *status, offset, q.Limit)
+		if err != nil {
+			return nil, errors.ErrRepository.WithDetails("operation", "findByStatus")
+		}
+		
+		total, err = h.repository.CountByStatus(ctx, *status)
+		if err != nil {
+			return nil, errors.ErrRepository.WithDetails("operation", "countByStatus")
+		}
+	} else {
+		{{.DomainName}}Entities, err = h.repository.FindAll(ctx, offset, q.Limit)
+		if err != nil {
+			return nil, errors.ErrRepository.WithDetails("operation", "findAll")
+		}
+		
+		total, err = h.repository.Count(ctx)
+		if err != nil {
+			return nil, errors.ErrRepository.WithDetails("operation", "count")
+		}
+	}
+	
+	{{.DomainName}}DTOs := From{{.DomainName | title}}s({{.DomainName}}Entities)
+	return New{{.DomainName | title}}ListDTO({{.DomainName}}DTOs, total, q.Page, q.Limit), nil
+}
+
+// CanHandle returns true if this handler can handle the query type
+func (h *List{{.DomainName | title}}sHandler) CanHandle(queryType string) bool {
+	return queryType == "list_{{.DomainName}}s"
+}
+
+// Count{{.DomainName | title}}sHandler handles queries to count {{.DomainName}}s
+type Count{{.DomainName | title}}sHandler struct {
+	repository {{.DomainName}}.ReadOnlyRepository
+}
+
+// NewCount{{.DomainName | title}}sHandler creates a new Count{{.DomainName | title}}sHandler
+func NewCount{{.DomainName | title}}sHandler(repository {{.DomainName}}.ReadOnlyRepository) *Count{{.DomainName | title}}sHandler {
+	return &Count{{.DomainName | title}}sHandler{
+		repository: repository,
+	}
+}
+
+// Handle processes the Count{{.DomainName | title}}sQuery
+func (h *Count{{.DomainName | title}}sHandler) Handle(ctx context.Context, query Query) (interface{}, error) {
+	q, ok := query.(Count{{.DomainName | title}}sQuery)
+	if !ok {
+		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "Count{{.DomainName | title}}sQuery")
+	}
+	
+	status, err := q.GetStatus()
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "status")
+	}
+	
+	var count int
+	
+	if status != nil {
+		count, err = h.repository.CountByStatus(ctx, *status)
+		if err != nil {
+			return nil, errors.ErrRepository.WithDetails("operation", "countByStatus")
+		}
+	} else {
+		count, err = h.repository.Count(ctx)
+		if err != nil {
+			return nil, errors.ErrRepository.WithDetails("operation", "count")
+		}
+	}
+	
+	return {{.DomainName | title}}CountResponse{Count: count}, nil
+}
+
+// CanHandle returns true if this handler can handle the query type
+func (h *Count{{.DomainName | title}}sHandler) CanHandle(queryType string) bool {
+	return queryType == "count_{{.DomainName}}s"
+}
+
+// Exists{{.DomainName | title}}Handler handles queries to check if a {{.DomainName}} exists
+type Exists{{.DomainName | title}}Handler struct {
+	repository {{.DomainName}}.ReadOnlyRepository
+}
+
+// NewExists{{.DomainName | title}}Handler creates a new Exists{{.DomainName | title}}Handler
+func NewExists{{.DomainName | title}}Handler(repository {{.DomainName}}.ReadOnlyRepository) *Exists{{.DomainName | title}}Handler {
+	return &Exists{{.DomainName | title}}Handler{
+		repository: repository,
+	}
+}
+
+// Handle processes the Exists{{.DomainName | title}}Query
+func (h *Exists{{.DomainName | title}}Handler) Handle(ctx context.Context, query Query) (interface{}, error) {
+	q, ok := query.(Exists{{.DomainName | title}}Query)
+	if !ok {
+		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "Exists{{.DomainName | title}}Query")
+	}
+	
+	var exists bool
+	var err error
+	
+	{{.DomainName}}ID, idErr := q.GetID()
+	email, emailErr := q.GetEmail()
+	
+	if idErr == nil && {{.DomainName}}ID != nil {
+		exists, err = h.repository.Exists(ctx, *{{.DomainName}}ID)
+	} else if emailErr == nil && email != nil {
+		exists, err = h.repository.ExistsByEmail(ctx, *email)
+	} else {
+		return nil, errors.ErrValidation.WithDetails("reason", "either id or email must be provided")
+	}
+	
+	if err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "exists")
+	}
+	
+	return {{.DomainName | title}}ExistsResponse{Exists: exists}, nil
+}
+
+// CanHandle returns true if this handler can handle the query type
+func (h *Exists{{.DomainName | title}}Handler) CanHandle(queryType string) bool {
+	return queryType == "exists_{{.DomainName}}"
+}
+
+// QueryBus coordinates query handling
+type QueryBus struct {
+	handlers []QueryHandler
+}
+
+// NewQueryBus creates a new query bus
+func NewQueryBus() *QueryBus {
+	return &QueryBus{
+		handlers: make([]QueryHandler, 0),
+	}
+}
+
+// RegisterHandler registers a query handler
+func (b *QueryBus) RegisterHandler(handler QueryHandler) {
+	b.handlers = append(b.handlers, handler)
+}
+
+// Execute executes a query
+func (b *QueryBus) Execute(ctx context.Context, query Query) (interface{}, error) {
+	for _, handler := range b.handlers {
+		if handler.CanHandle(query.QueryType()) {
+			return handler.Handle(ctx, query)
+		}
+	}
+	
+	return nil, errors.ErrQueryHandling.WithDetails("queryType", query.QueryType())
+}
+{{- end}}

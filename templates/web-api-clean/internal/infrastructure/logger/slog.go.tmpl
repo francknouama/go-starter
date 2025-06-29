@@ -1,0 +1,83 @@
+package logger
+
+import (
+	"log/slog"
+	"os"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// SlogLogger implements the Logger interface using Go's slog package
+type SlogLogger struct {
+	logger *slog.Logger
+}
+
+// NewSlogLogger creates a new slog-based logger
+func NewSlogLogger(config *config.LoggerConfig) ports.Logger {
+	var level slog.Level
+	switch config.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	var handler slog.Handler
+	opts := &slog.HandlerOptions{
+		Level: level,
+	}
+
+	switch config.Format {
+	case "json":
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	case "text", "console":
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	default:
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	}
+
+	logger := slog.New(handler)
+	
+	return &SlogLogger{
+		logger: logger,
+	}
+}
+
+// Debug logs debug information
+func (l *SlogLogger) Debug(msg string, fields ...interface{}) {
+	l.logger.Debug(msg, fields...)
+}
+
+// Info logs informational messages
+func (l *SlogLogger) Info(msg string, fields ...interface{}) {
+	l.logger.Info(msg, fields...)
+}
+
+// Warn logs warning messages
+func (l *SlogLogger) Warn(msg string, fields ...interface{}) {
+	l.logger.Warn(msg, fields...)
+}
+
+// Error logs error messages
+func (l *SlogLogger) Error(msg string, fields ...interface{}) {
+	l.logger.Error(msg, fields...)
+}
+
+// Fatal logs fatal errors and exits
+func (l *SlogLogger) Fatal(msg string, fields ...interface{}) {
+	l.logger.Error(msg, fields...)
+	os.Exit(1)
+}
+
+// With returns a logger with additional context fields
+func (l *SlogLogger) With(fields ...interface{}) ports.Logger {
+	return &SlogLogger{
+		logger: l.logger.With(fields...),
+	}
+}

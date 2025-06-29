@@ -1,0 +1,215 @@
+package persistence
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// UserRepository implements the UserRepository interface using GORM
+type UserRepository struct {
+	db     *gorm.DB
+	logger ports.Logger
+}
+
+// UserModel represents the user table structure for GORM
+type UserModel struct {
+	ID        string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	Email     string `gorm:"uniqueIndex;not null"`
+	Username  string `gorm:"uniqueIndex;not null"`
+	FirstName string `gorm:"not null"`
+	LastName  string `gorm:"not null"`
+	Password  string `gorm:"not null"`
+	IsActive  bool   `gorm:"default:true"`
+	CreatedAt int64  `gorm:"autoCreateTime"`
+	UpdatedAt int64  `gorm:"autoUpdateTime"`
+	DeletedAt *int64 `gorm:"index"`
+}
+
+// TableName specifies the table name for GORM
+func (UserModel) TableName() string {
+	return "users"
+}
+
+// NewUserRepository creates a new UserRepository instance
+func NewUserRepository(db *gorm.DB, logger ports.Logger) ports.UserRepository {
+	return &UserRepository{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// Create creates a new user in the database
+func (r *UserRepository) Create(ctx context.Context, user *entities.User) error {
+	model := r.entityToModel(user)
+	
+	if err := r.db.WithContext(ctx).Create(model).Error; err != nil {
+		r.logger.Error("Failed to create user", "error", err, "email", user.Email)
+		return err
+	}
+
+	// Update entity with generated ID
+	user.ID = model.ID
+	
+	r.logger.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+	return nil
+}
+
+// GetByID retrieves a user by their ID
+func (r *UserRepository) GetByID(ctx context.Context, id string) (*entities.User, error) {
+	var model UserModel
+	
+	if err := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", id).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, entities.ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by ID", "error", err, "user_id", id)
+		return nil, err
+	}
+
+	return r.modelToEntity(&model), nil
+}
+
+// GetByEmail retrieves a user by their email address
+func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entities.User, error) {
+	var model UserModel
+	
+	if err := r.db.WithContext(ctx).Where("email = ? AND deleted_at IS NULL", email).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, entities.ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by email", "error", err, "email", email)
+		return nil, err
+	}
+
+	return r.modelToEntity(&model), nil
+}
+
+// GetByUsername retrieves a user by their username
+func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*entities.User, error) {
+	var model UserModel
+	
+	if err := r.db.WithContext(ctx).Where("username = ? AND deleted_at IS NULL", username).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, entities.ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by username", "error", err, "username", username)
+		return nil, err
+	}
+
+	return r.modelToEntity(&model), nil
+}
+
+// Update modifies an existing user
+func (r *UserRepository) Update(ctx context.Context, user *entities.User) error {
+	model := r.entityToModel(user)
+	
+	result := r.db.WithContext(ctx).Where("id = ? AND deleted_at IS NULL", user.ID).Updates(model)
+	if result.Error != nil {
+		r.logger.Error("Failed to update user", "error", result.Error, "user_id", user.ID)
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return entities.ErrUserNotFound
+	}
+
+	r.logger.Info("User updated successfully", "user_id", user.ID)
+	return nil
+}
+
+// Delete removes a user (soft delete)
+func (r *UserRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Model(&UserModel{}).Where("id = ? AND deleted_at IS NULL", id).Update("deleted_at", gorm.Expr("EXTRACT(EPOCH FROM NOW())"))
+	if result.Error != nil {
+		r.logger.Error("Failed to delete user", "error", result.Error, "user_id", id)
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return entities.ErrUserNotFound
+	}
+
+	r.logger.Info("User deleted successfully", "user_id", id)
+	return nil
+}
+
+// List retrieves users with pagination
+func (r *UserRepository) List(ctx context.Context, offset, limit int) ([]*entities.User, error) {
+	var models []UserModel
+	
+	if err := r.db.WithContext(ctx).Where("deleted_at IS NULL").Offset(offset).Limit(limit).Find(&models).Error; err != nil {
+		r.logger.Error("Failed to list users", "error", err)
+		return nil, err
+	}
+
+	users := make([]*entities.User, len(models))
+	for i, model := range models {
+		users[i] = r.modelToEntity(&model)
+	}
+
+	return users, nil
+}
+
+// ExistsByEmail checks if a user with the given email exists
+func (r *UserRepository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	var count int64
+	
+	if err := r.db.WithContext(ctx).Model(&UserModel{}).Where("email = ? AND deleted_at IS NULL", email).Count(&count).Error; err != nil {
+		r.logger.Error("Failed to check email existence", "error", err, "email", email)
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// ExistsByUsername checks if a user with the given username exists
+func (r *UserRepository) ExistsByUsername(ctx context.Context, username string) (bool, error) {
+	var count int64
+	
+	if err := r.db.WithContext(ctx).Model(&UserModel{}).Where("username = ? AND deleted_at IS NULL", username).Count(&count).Error; err != nil {
+		r.logger.Error("Failed to check username existence", "error", err, "username", username)
+		return false, err
+	}
+
+	return count > 0, nil
+}
+
+// entityToModel converts an entity.User to UserModel
+func (r *UserRepository) entityToModel(user *entities.User) *UserModel {
+	return &UserModel{
+		ID:        user.ID,
+		Email:     user.Email,
+		Username:  user.Username,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		Password:  user.Password,
+		IsActive:  user.IsActive,
+		CreatedAt: user.CreatedAt.Unix(),
+		UpdatedAt: user.UpdatedAt.Unix(),
+	}
+}
+
+// modelToEntity converts a UserModel to entities.User
+func (r *UserRepository) modelToEntity(model *UserModel) *entities.User {
+	return &entities.User{
+		ID:        model.ID,
+		Email:     model.Email,
+		Username:  model.Username,
+		FirstName: model.FirstName,
+		LastName:  model.LastName,
+		Password:  model.Password,
+		IsActive:  model.IsActive,
+		CreatedAt: timeFromUnix(model.CreatedAt),
+		UpdatedAt: timeFromUnix(model.UpdatedAt),
+	}
+}
+
+// timeFromUnix converts unix timestamp to time.Time
+func timeFromUnix(timestamp int64) time.Time {
+	return time.Unix(timestamp, 0)
+}

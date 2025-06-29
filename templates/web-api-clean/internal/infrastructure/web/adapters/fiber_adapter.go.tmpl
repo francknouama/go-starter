@@ -1,0 +1,208 @@
+{{if eq .Framework "fiber"}}
+package adapters
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// FiberContext adapts fiber.Ctx to implement ports.HTTPContext
+type FiberContext struct {
+	ctx *fiber.Ctx
+}
+
+// Ensure FiberContext implements ports.HTTPContext
+var _ ports.HTTPContext = (*FiberContext)(nil)
+
+// GetParam implements ports.HTTPContext.GetParam
+func (f *FiberContext) GetParam(key string) string {
+	return f.ctx.Params(key)
+}
+
+// GetQuery implements ports.HTTPContext.GetQuery
+func (f *FiberContext) GetQuery(key string) string {
+	return f.ctx.Query(key)
+}
+
+// GetHeader implements ports.HTTPContext.GetHeader
+func (f *FiberContext) GetHeader(key string) string {
+	return f.ctx.Get(key)
+}
+
+// BindJSON implements ports.HTTPContext.BindJSON
+func (f *FiberContext) BindJSON(obj interface{}) error {
+	return f.ctx.BodyParser(obj)
+}
+
+// GetRequestContext implements ports.HTTPContext.GetRequestContext
+func (f *FiberContext) GetRequestContext() context.Context {
+	return f.ctx.Context()
+}
+
+// GetMethod implements ports.HTTPContext.GetMethod
+func (f *FiberContext) GetMethod() string {
+	return f.ctx.Method()
+}
+
+// JSON implements ports.HTTPContext.JSON
+func (f *FiberContext) JSON(code int, obj interface{}) {
+	f.ctx.Status(code).JSON(obj)
+}
+
+// String implements ports.HTTPContext.String
+func (f *FiberContext) String(code int, message string) {
+	f.ctx.Status(code).SendString(message)
+}
+
+// NoContent implements ports.HTTPContext.NoContent
+func (f *FiberContext) NoContent(code int) {
+	f.ctx.Status(code).Send(nil)
+}
+
+// SetHeader implements ports.HTTPContext.SetHeader
+func (f *FiberContext) SetHeader(key, value string) {
+	f.ctx.Set(key, value)
+}
+
+// ClientIP implements ports.HTTPContext.ClientIP
+func (f *FiberContext) ClientIP() string {
+	return f.ctx.IP()
+}
+
+// FiberRouter adapts fiber.App to implement ports.Router
+type FiberRouter struct {
+	app *fiber.App
+}
+
+// NewFiberRouter creates a new FiberRouter
+func NewFiberRouter() ports.Router {
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+	return &FiberRouter{app: app}
+}
+
+// adaptHandler converts ports.HTTPHandler to fiber.Handler
+func (r *FiberRouter) adaptHandler(handler ports.HTTPHandler) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		handler(&FiberContext{ctx: c})
+		return nil
+	}
+}
+
+// GET implements ports.Router.GET
+func (r *FiberRouter) GET(path string, handler ports.HTTPHandler) {
+	r.app.Get(path, r.adaptHandler(handler))
+}
+
+// POST implements ports.Router.POST
+func (r *FiberRouter) POST(path string, handler ports.HTTPHandler) {
+	r.app.Post(path, r.adaptHandler(handler))
+}
+
+// PUT implements ports.Router.PUT
+func (r *FiberRouter) PUT(path string, handler ports.HTTPHandler) {
+	r.app.Put(path, r.adaptHandler(handler))
+}
+
+// DELETE implements ports.Router.DELETE
+func (r *FiberRouter) DELETE(path string, handler ports.HTTPHandler) {
+	r.app.Delete(path, r.adaptHandler(handler))
+}
+
+// PATCH implements ports.Router.PATCH
+func (r *FiberRouter) PATCH(path string, handler ports.HTTPHandler) {
+	r.app.Patch(path, r.adaptHandler(handler))
+}
+
+// Use implements ports.Router.Use
+func (r *FiberRouter) Use(middleware ports.HTTPHandler) {
+	r.app.Use(r.adaptHandler(middleware))
+}
+
+// Group implements ports.Router.Group
+func (r *FiberRouter) Group(prefix string) ports.RouteGroup {
+	group := r.app.Group(prefix)
+	return &FiberRouteGroup{group: group}
+}
+
+// FiberRouteGroup adapts fiber.Router to implement ports.RouteGroup
+type FiberRouteGroup struct {
+	group fiber.Router
+}
+
+// adaptHandler for route group
+func (g *FiberRouteGroup) adaptHandler(handler ports.HTTPHandler) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		handler(&FiberContext{ctx: c})
+		return nil
+	}
+}
+
+// GET implements ports.RouteGroup.GET
+func (g *FiberRouteGroup) GET(path string, handler ports.HTTPHandler) {
+	g.group.Get(path, g.adaptHandler(handler))
+}
+
+// POST implements ports.RouteGroup.POST
+func (g *FiberRouteGroup) POST(path string, handler ports.HTTPHandler) {
+	g.group.Post(path, g.adaptHandler(handler))
+}
+
+// PUT implements ports.RouteGroup.PUT
+func (g *FiberRouteGroup) PUT(path string, handler ports.HTTPHandler) {
+	g.group.Put(path, g.adaptHandler(handler))
+}
+
+// DELETE implements ports.RouteGroup.DELETE
+func (g *FiberRouteGroup) DELETE(path string, handler ports.HTTPHandler) {
+	g.group.Delete(path, g.adaptHandler(handler))
+}
+
+// PATCH implements ports.RouteGroup.PATCH
+func (g *FiberRouteGroup) PATCH(path string, handler ports.HTTPHandler) {
+	g.group.Patch(path, g.adaptHandler(handler))
+}
+
+// Use implements ports.RouteGroup.Use
+func (g *FiberRouteGroup) Use(middleware ports.HTTPHandler) {
+	g.group.Use(g.adaptHandler(middleware))
+}
+
+// Group implements ports.RouteGroup.Group
+func (g *FiberRouteGroup) Group(prefix string) ports.RouteGroup {
+	subGroup := g.group.Group(prefix)
+	return &FiberRouteGroup{group: subGroup}
+}
+
+// FiberWebServer adapts fiber.App to implement ports.WebServer
+type FiberWebServer struct {
+	app *fiber.App
+}
+
+// NewFiberWebServer creates a new FiberWebServer
+func NewFiberWebServer(router ports.Router) ports.WebServer {
+	fiberRouter := router.(*FiberRouter)
+	return &FiberWebServer{app: fiberRouter.app}
+}
+
+// Start implements ports.WebServer.Start
+func (s *FiberWebServer) Start(addr string) error {
+	return s.app.Listen(addr)
+}
+
+// Stop implements ports.WebServer.Stop
+func (s *FiberWebServer) Stop() error {
+	return s.app.Shutdown()
+}
+
+// Handler implements ports.WebServer.Handler
+func (s *FiberWebServer) Handler() http.Handler {
+	return adaptor.FiberApp(s.app)
+}
+{{end}}

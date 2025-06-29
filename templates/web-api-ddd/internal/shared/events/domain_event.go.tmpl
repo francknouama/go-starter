@@ -1,0 +1,107 @@
+package events
+
+import (
+	"time"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+// DomainEvent represents a domain event
+type DomainEvent interface {
+	// EventID returns the unique identifier of the event
+	EventID() valueobjects.ID
+	
+	// EventType returns the type of the event
+	EventType() string
+	
+	// AggregateID returns the ID of the aggregate that raised the event
+	AggregateID() valueobjects.ID
+	
+	// AggregateType returns the type of the aggregate
+	AggregateType() string
+	
+	// OccurredAt returns when the event occurred
+	OccurredAt() time.Time
+	
+	// Version returns the version of the event
+	Version() int
+	
+	// Data returns the event data
+	Data() map[string]interface{}
+}
+
+// BaseDomainEvent provides a base implementation for domain events
+type BaseDomainEvent struct {
+	eventID       valueobjects.ID
+	eventType     string
+	aggregateID   valueobjects.ID
+	aggregateType string
+	occurredAt    time.Time
+	version       int
+	data          map[string]interface{}
+}
+
+// NewBaseDomainEvent creates a new base domain event
+func NewBaseDomainEvent(
+	eventType string,
+	aggregateID valueobjects.ID,
+	aggregateType string,
+	data map[string]interface{},
+) BaseDomainEvent {
+	return BaseDomainEvent{
+		eventID:       valueobjects.GenerateID(),
+		eventType:     eventType,
+		aggregateID:   aggregateID,
+		aggregateType: aggregateType,
+		occurredAt:    time.Now().UTC(),
+		version:       1,
+		data:          data,
+	}
+}
+
+// EventID returns the unique identifier of the event
+func (e BaseDomainEvent) EventID() valueobjects.ID {
+	return e.eventID
+}
+
+// EventType returns the type of the event
+func (e BaseDomainEvent) EventType() string {
+	return e.eventType
+}
+
+// AggregateID returns the ID of the aggregate that raised the event
+func (e BaseDomainEvent) AggregateID() valueobjects.ID {
+	return e.aggregateID
+}
+
+// AggregateType returns the type of the aggregate
+func (e BaseDomainEvent) AggregateType() string {
+	return e.aggregateType
+}
+
+// OccurredAt returns when the event occurred
+func (e BaseDomainEvent) OccurredAt() time.Time {
+	return e.occurredAt
+}
+
+// Version returns the version of the event
+func (e BaseDomainEvent) Version() int {
+	return e.version
+}
+
+// Data returns the event data
+func (e BaseDomainEvent) Data() map[string]interface{} {
+	return e.data
+}
+
+// EventHandler represents a handler for domain events
+type EventHandler interface {
+	Handle(event DomainEvent) error
+	CanHandle(eventType string) bool
+}
+
+// EventStore represents a store for domain events
+type EventStore interface {
+	Save(events []DomainEvent) error
+	GetEvents(aggregateID valueobjects.ID) ([]DomainEvent, error)
+	GetEventsByType(eventType string) ([]DomainEvent, error)
+}

@@ -1,0 +1,205 @@
+{{if eq .Framework "gin"}}
+package adapters
+
+import (
+	"context"
+	"net/http"
+	
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// GinContext adapts gin.Context to implement ports.HTTPContext
+type GinContext struct {
+	ctx *gin.Context
+}
+
+// Ensure GinContext implements ports.HTTPContext
+var _ ports.HTTPContext = (*GinContext)(nil)
+
+// GetParam implements ports.HTTPContext.GetParam
+func (g *GinContext) GetParam(key string) string {
+	return g.ctx.Param(key)
+}
+
+// GetQuery implements ports.HTTPContext.GetQuery
+func (g *GinContext) GetQuery(key string) string {
+	return g.ctx.Query(key)
+}
+
+// GetHeader implements ports.HTTPContext.GetHeader
+func (g *GinContext) GetHeader(key string) string {
+	return g.ctx.GetHeader(key)
+}
+
+// BindJSON implements ports.HTTPContext.BindJSON
+func (g *GinContext) BindJSON(obj interface{}) error {
+	return g.ctx.ShouldBindJSON(obj)
+}
+
+// GetRequestContext implements ports.HTTPContext.GetRequestContext
+func (g *GinContext) GetRequestContext() context.Context {
+	return g.ctx.Request.Context()
+}
+
+// GetMethod implements ports.HTTPContext.GetMethod
+func (g *GinContext) GetMethod() string {
+	return g.ctx.Request.Method
+}
+
+// JSON implements ports.HTTPContext.JSON
+func (g *GinContext) JSON(code int, obj interface{}) {
+	g.ctx.JSON(code, obj)
+}
+
+// String implements ports.HTTPContext.String
+func (g *GinContext) String(code int, message string) {
+	g.ctx.String(code, message)
+}
+
+// NoContent implements ports.HTTPContext.NoContent
+func (g *GinContext) NoContent(code int) {
+	g.ctx.Status(code)
+}
+
+// SetHeader implements ports.HTTPContext.SetHeader
+func (g *GinContext) SetHeader(key, value string) {
+	g.ctx.Header(key, value)
+}
+
+// ClientIP implements ports.HTTPContext.ClientIP
+func (g *GinContext) ClientIP() string {
+	return g.ctx.ClientIP()
+}
+
+// GinRouter adapts gin.Engine to implement ports.Router
+type GinRouter struct {
+	engine *gin.Engine
+}
+
+// NewGinRouter creates a new GinRouter
+func NewGinRouter() ports.Router {
+	gin.SetMode(gin.ReleaseMode)
+	engine := gin.New()
+	return &GinRouter{engine: engine}
+}
+
+// adaptHandler converts ports.HTTPHandler to gin.HandlerFunc
+func (r *GinRouter) adaptHandler(handler ports.HTTPHandler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		handler(&GinContext{ctx: c})
+	}
+}
+
+// GET implements ports.Router.GET
+func (r *GinRouter) GET(path string, handler ports.HTTPHandler) {
+	r.engine.GET(path, r.adaptHandler(handler))
+}
+
+// POST implements ports.Router.POST
+func (r *GinRouter) POST(path string, handler ports.HTTPHandler) {
+	r.engine.POST(path, r.adaptHandler(handler))
+}
+
+// PUT implements ports.Router.PUT
+func (r *GinRouter) PUT(path string, handler ports.HTTPHandler) {
+	r.engine.PUT(path, r.adaptHandler(handler))
+}
+
+// DELETE implements ports.Router.DELETE
+func (r *GinRouter) DELETE(path string, handler ports.HTTPHandler) {
+	r.engine.DELETE(path, r.adaptHandler(handler))
+}
+
+// PATCH implements ports.Router.PATCH
+func (r *GinRouter) PATCH(path string, handler ports.HTTPHandler) {
+	r.engine.PATCH(path, r.adaptHandler(handler))
+}
+
+// Use implements ports.Router.Use
+func (r *GinRouter) Use(middleware ports.HTTPHandler) {
+	r.engine.Use(r.adaptHandler(middleware))
+}
+
+// Group implements ports.Router.Group
+func (r *GinRouter) Group(prefix string) ports.RouteGroup {
+	group := r.engine.Group(prefix)
+	return &GinRouteGroup{group: group}
+}
+
+// GinRouteGroup adapts gin.RouterGroup to implement ports.RouteGroup
+type GinRouteGroup struct {
+	group *gin.RouterGroup
+}
+
+// adaptHandler for route group
+func (g *GinRouteGroup) adaptHandler(handler ports.HTTPHandler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		handler(&GinContext{ctx: c})
+	}
+}
+
+// GET implements ports.RouteGroup.GET
+func (g *GinRouteGroup) GET(path string, handler ports.HTTPHandler) {
+	g.group.GET(path, g.adaptHandler(handler))
+}
+
+// POST implements ports.RouteGroup.POST
+func (g *GinRouteGroup) POST(path string, handler ports.HTTPHandler) {
+	g.group.POST(path, g.adaptHandler(handler))
+}
+
+// PUT implements ports.RouteGroup.PUT
+func (g *GinRouteGroup) PUT(path string, handler ports.HTTPHandler) {
+	g.group.PUT(path, g.adaptHandler(handler))
+}
+
+// DELETE implements ports.RouteGroup.DELETE
+func (g *GinRouteGroup) DELETE(path string, handler ports.HTTPHandler) {
+	g.group.DELETE(path, g.adaptHandler(handler))
+}
+
+// PATCH implements ports.RouteGroup.PATCH
+func (g *GinRouteGroup) PATCH(path string, handler ports.HTTPHandler) {
+	g.group.PATCH(path, g.adaptHandler(handler))
+}
+
+// Use implements ports.RouteGroup.Use
+func (g *GinRouteGroup) Use(middleware ports.HTTPHandler) {
+	g.group.Use(g.adaptHandler(middleware))
+}
+
+// Group implements ports.RouteGroup.Group
+func (g *GinRouteGroup) Group(prefix string) ports.RouteGroup {
+	subGroup := g.group.Group(prefix)
+	return &GinRouteGroup{group: subGroup}
+}
+
+// GinWebServer adapts gin.Engine to implement ports.WebServer
+type GinWebServer struct {
+	engine *gin.Engine
+}
+
+// NewGinWebServer creates a new GinWebServer
+func NewGinWebServer(router ports.Router) ports.WebServer {
+	ginRouter := router.(*GinRouter)
+	return &GinWebServer{engine: ginRouter.engine}
+}
+
+// Start implements ports.WebServer.Start
+func (s *GinWebServer) Start(addr string) error {
+	return s.engine.Run(addr)
+}
+
+// Stop implements ports.WebServer.Stop
+func (s *GinWebServer) Stop() error {
+	// Gin doesn't have a built-in graceful shutdown, 
+	// this would be handled at a higher level
+	return nil
+}
+
+// Handler implements ports.WebServer.Handler
+func (s *GinWebServer) Handler() http.Handler {
+	return s.engine
+}
+{{end}}

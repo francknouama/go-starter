@@ -1,0 +1,63 @@
+package ports
+
+import (
+	"context"
+	"net/http"
+)
+
+// HTTPContext represents the HTTP context abstraction at the domain level
+// This is a domain interface that web frameworks must implement
+type HTTPContext interface {
+	// Request data
+	GetParam(key string) string
+	GetQuery(key string) string
+	GetHeader(key string) string
+	BindJSON(obj interface{}) error
+	GetRequestContext() context.Context
+	GetMethod() string
+	
+	// Response
+	JSON(code int, obj interface{})
+	String(code int, message string)
+	NoContent(code int)
+	SetHeader(key, value string)
+	
+	// Client info
+	ClientIP() string
+}
+
+// HTTPHandler represents a domain-level HTTP handler
+type HTTPHandler func(HTTPContext)
+
+// WebServer represents the web server interface at the domain level
+type WebServer interface {
+	Start(addr string) error
+	Stop() error
+	Handler() http.Handler
+}
+
+// Router represents routing capabilities at the domain level
+type Router interface {
+	GET(path string, handler HTTPHandler)
+	POST(path string, handler HTTPHandler)
+	PUT(path string, handler HTTPHandler)
+	DELETE(path string, handler HTTPHandler)
+	PATCH(path string, handler HTTPHandler)
+	
+	// Middleware
+	Use(middleware HTTPHandler)
+	
+	// Route groups
+	Group(prefix string) RouteGroup
+}
+
+// RouteGroup represents a group of routes
+type RouteGroup interface {
+	GET(path string, handler HTTPHandler)
+	POST(path string, handler HTTPHandler)
+	PUT(path string, handler HTTPHandler)
+	DELETE(path string, handler HTTPHandler)
+	PATCH(path string, handler HTTPHandler)
+	Use(middleware HTTPHandler)
+	Group(prefix string) RouteGroup
+}

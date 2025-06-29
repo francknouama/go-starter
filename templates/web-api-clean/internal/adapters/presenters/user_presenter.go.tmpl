@@ -1,0 +1,139 @@
+package presenters
+
+import (
+	"time"
+	"{{.ModulePath}}/internal/domain/entities"
+)
+
+// UserPresenter formats user data for API responses
+// This is an interface adapter that converts entities to presentation format
+type UserPresenter struct{}
+
+// UserResponse represents a user in API responses
+type UserResponse struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Username  string    `json:"username"`
+	FirstName string    `json:"first_name"`
+	LastName  string    `json:"last_name"`
+	FullName  string    `json:"full_name"`
+	IsActive  bool      `json:"is_active"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// UserListResponse represents a paginated list of users
+type UserListResponse struct {
+	Users      []UserResponse `json:"users"`
+	Pagination Pagination     `json:"pagination"`
+}
+
+// Pagination represents pagination metadata
+type Pagination struct {
+	Offset int `json:"offset"`
+	Limit  int `json:"limit"`
+	Total  int `json:"total"`
+}
+
+// ErrorResponse represents an error in API responses
+type ErrorResponse struct {
+	Error   string `json:"error"`
+	Code    int    `json:"code,omitempty"`
+	Message string `json:"message"`
+}
+
+// NewUserPresenter creates a new UserPresenter instance
+func NewUserPresenter() *UserPresenter {
+	return &UserPresenter{}
+}
+
+// PresentUser converts a User entity to UserResponse
+func (up *UserPresenter) PresentUser(user *entities.User) UserResponse {
+	if user == nil {
+		return UserResponse{}
+	}
+
+	return UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Username:  user.Username,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		FullName:  user.GetFullName(),
+		IsActive:  user.IsActive,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
+}
+
+// PresentUserList converts a slice of User entities to UserListResponse
+func (up *UserPresenter) PresentUserList(users []*entities.User, offset, limit int) UserListResponse {
+	userResponses := make([]UserResponse, 0, len(users))
+	
+	for _, user := range users {
+		userResponses = append(userResponses, up.PresentUser(user))
+	}
+
+	return UserListResponse{
+		Users: userResponses,
+		Pagination: Pagination{
+			Offset: offset,
+			Limit:  limit,
+			Total:  len(users), // In a real implementation, this would be the total count from the repository
+		},
+	}
+}
+
+// PresentError converts an error to ErrorResponse
+func (up *UserPresenter) PresentError(err error) ErrorResponse {
+	if err == nil {
+		return ErrorResponse{}
+	}
+
+	// Map domain errors to appropriate messages
+	switch err {
+	case entities.ErrUserNotFound:
+		return ErrorResponse{
+			Error:   "USER_NOT_FOUND",
+			Message: "The requested user was not found",
+		}
+	case entities.ErrInvalidEmail:
+		return ErrorResponse{
+			Error:   "INVALID_EMAIL",
+			Message: "The provided email address is invalid",
+		}
+	case entities.ErrInvalidUsername:
+		return ErrorResponse{
+			Error:   "INVALID_USERNAME",
+			Message: "The provided username is invalid",
+		}
+	case entities.ErrWeakPassword:
+		return ErrorResponse{
+			Error:   "WEAK_PASSWORD",
+			Message: "The password does not meet security requirements",
+		}
+	case entities.ErrEmailAlreadyExists:
+		return ErrorResponse{
+			Error:   "EMAIL_EXISTS",
+			Message: "A user with this email address already exists",
+		}
+	case entities.ErrUsernameAlreadyExists:
+		return ErrorResponse{
+			Error:   "USERNAME_EXISTS",
+			Message: "A user with this username already exists",
+		}
+	default:
+		return ErrorResponse{
+			Error:   "INTERNAL_ERROR",
+			Message: "An internal error occurred",
+		}
+	}
+}
+
+// PresentValidationError converts validation errors to ErrorResponse
+func (up *UserPresenter) PresentValidationError(err error) ErrorResponse {
+	return ErrorResponse{
+		Error:   "VALIDATION_ERROR",
+		Message: err.Error(),
+	}
+}

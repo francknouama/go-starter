@@ -1,0 +1,36 @@
+package middleware
+
+import (
+	"net/http"
+	"runtime/debug"
+
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// Recovery returns a recovery middleware that handles panics
+func Recovery(logger ports.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				// Log the panic with stack trace
+				logger.Error("Panic recovered",
+					"error", err,
+					"path", c.Request.URL.Path,
+					"method", c.Request.Method,
+					"stack", string(debug.Stack()),
+				)
+
+				// Return generic error response
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"error":   "INTERNAL_ERROR",
+					"message": "An internal server error occurred",
+				})
+
+				c.Abort()
+			}
+		}()
+
+		c.Next()
+	}
+}

@@ -1,0 +1,73 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=development
+      {{if ne .DatabaseDriver ""}}
+      - DB_HOST={{.DatabaseDriver}}
+      - DB_PORT={{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{end}}
+      - DB_NAME={{.ProjectName}}_dev
+      - DB_USER={{.ProjectName}}
+      - DB_PASSWORD=password
+      {{end}}
+      {{if ne .AuthType ""}}
+      - JWT_SECRET=dev-jwt-secret-change-this
+      {{end}}
+    depends_on:
+      {{if ne .DatabaseDriver ""}}
+      - {{.DatabaseDriver}}
+      {{end}}
+    volumes:
+      - .:/app
+    restart: unless-stopped
+
+  {{if eq .DatabaseDriver "postgres"}}
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB={{.ProjectName}}_dev
+      - POSTGRES_USER={{.ProjectName}}
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+  {{end}}
+
+  {{if eq .DatabaseDriver "mysql"}}
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_DATABASE={{.ProjectName}}_dev
+      - MYSQL_USER={{.ProjectName}}
+      - MYSQL_PASSWORD=password
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+  {{end}}
+
+  # Development tools
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    restart: unless-stopped
+
+volumes:
+  {{if eq .DatabaseDriver "postgres"}}
+  postgres_data:
+  {{end}}
+  {{if eq .DatabaseDriver "mysql"}}
+  mysql_data:
+  {{end}}

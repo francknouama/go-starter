@@ -1,0 +1,325 @@
+# {{.ProjectName}}
+
+A Go web API built with **Clean Architecture** principles, providing a maintainable and testable foundation for enterprise applications.
+
+## 🏗️ Architecture
+
+This project follows **Clean Architecture** (also known as Onion Architecture) with clear separation of concerns:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                   Frameworks & Drivers                      │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Interface Adapters                     │    │
+│  │  ┌─────────────────────────────────────────────┐   │    │
+│  │  │                Use Cases                    │   │    │
+│  │  │  ┌─────────────────────────────────────┐   │   │    │
+│  │  │  │            Entities                 │   │   │    │
+│  │  │  │                                     │   │   │    │
+│  │  │  │  Business Rules & Domain Logic      │   │   │    │
+│  │  │  │                                     │   │   │    │
+│  │  │  └─────────────────────────────────────┘   │   │    │
+│  │  │                                             │   │    │
+│  │  │  Application Business Rules                 │   │    │
+│  │  │                                             │   │    │
+│  │  └─────────────────────────────────────────────┘   │    │
+│  │                                                     │    │
+│  │  Controllers, Presenters, Gateways                 │    │
+│  │                                                     │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                             │
+│  Web, Database, External Services                          │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Layer Details
+
+#### 🔹 **Entities** (`internal/domain/entities/`)
+- Core business objects with domain logic
+- Independent of external frameworks
+- Contains business rules and validation
+
+#### 🔹 **Use Cases** (`internal/domain/usecases/`)
+- Application-specific business rules
+- Orchestrates data flow between entities
+- Independent of UI and persistence details
+
+#### 🔹 **Interface Adapters** (`internal/adapters/`)
+- **Controllers**: Convert HTTP requests to use case calls
+- **Presenters**: Format responses for the web
+- Bridge between use cases and external world
+
+#### 🔹 **Frameworks & Drivers** (`internal/infrastructure/`)
+- **Web Framework**: Gin HTTP router and middleware
+- **Database**: {{.DatabaseDriver | title}} with GORM
+- **External Services**: Email, authentication, logging
+
+## 🚀 Features
+
+- ✅ **Clean Architecture** with proper dependency direction
+- ✅ **{{.Framework | title}} Web Framework** with middleware support
+- ✅ **{{.Logger | title}} Logging** with structured output
+{{if ne .DatabaseDriver ""}}
+- ✅ **{{.DatabaseDriver | title}} Database** with GORM ORM
+{{end}}
+{{if ne .AuthType ""}}
+- ✅ **{{.AuthType | upper}} Authentication** with session management
+{{end}}
+- ✅ **Dependency Injection** container
+- ✅ **Graceful Shutdown** handling
+- ✅ **Health Checks** (health, readiness, liveness)
+- ✅ **CORS Support** with configurable origins
+- ✅ **Security Headers** and middleware
+- ✅ **Request Logging** with structured format
+- ✅ **Error Handling** with recovery middleware
+- ✅ **Configuration Management** with Viper
+- ✅ **Docker Support** with multi-stage builds
+
+## 📁 Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/server/              # Application entry point
+├── internal/
+│   ├── domain/              # Business logic (inner layers)
+│   │   ├── entities/        # Core business objects
+│   │   ├── usecases/        # Application business rules
+│   │   └── ports/           # Interfaces (contracts)
+│   ├── adapters/            # Interface adapters
+│   │   ├── controllers/     # HTTP request handlers
+│   │   └── presenters/      # Response formatters
+│   └── infrastructure/      # Frameworks & drivers (outer layer)
+│       ├── config/          # Configuration management
+│       ├── persistence/     # Database implementations
+│       ├── web/             # Web framework setup
+│       ├── services/        # External service implementations
+│       ├── logger/          # Logging implementations
+│       └── container/       # Dependency injection
+├── configs/                 # Configuration files
+├── migrations/              # Database migrations
+├── tests/                   # Test files
+├── api/                     # API documentation
+└── scripts/                 # Utility scripts
+```
+
+## 🛠️ Getting Started
+
+### Prerequisites
+
+- Go {{.GoVersion}}+
+{{if ne .DatabaseDriver ""}}
+- {{.DatabaseDriver | title}} database
+{{end}}
+- Make (optional)
+
+### Installation
+
+1. **Clone the repository**
+   ```bash
+   git clone <repository-url>
+   cd {{.ProjectName}}
+   ```
+
+2. **Install dependencies**
+   ```bash
+   go mod download
+   ```
+
+3. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+{{if ne .DatabaseDriver ""}}
+4. **Set up the database**
+   ```bash
+   # Create database
+   {{if eq .DatabaseDriver "postgres"}}
+   createdb {{.ProjectName}}
+   {{else if eq .DatabaseDriver "mysql"}}
+   mysql -u root -p -e "CREATE DATABASE {{.ProjectName}};"
+   {{end}}
+   
+   # Run migrations
+   make migrate-up
+   ```
+{{end}}
+
+5. **Run the application**
+   ```bash
+   # Development mode
+   make dev
+   
+   # Or directly with go
+   go run cmd/server/main.go
+   ```
+
+## 🔧 Configuration
+
+The application uses a hierarchical configuration system:
+
+1. **Default values** (in code)
+2. **Configuration files** (`configs/config.dev.yaml`, etc.)
+3. **Environment variables** (highest priority)
+
+### Environment Variables
+
+```bash
+# Server
+PORT=8080
+ENVIRONMENT=development
+
+{{if ne .DatabaseDriver ""}}
+# Database
+DB_HOST=localhost
+DB_PORT={{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{end}}
+DB_NAME={{.ProjectName}}
+DB_USER={{.ProjectName}}
+DB_PASSWORD=password
+{{end}}
+
+{{if ne .AuthType ""}}
+# Authentication
+JWT_SECRET=your-super-secret-jwt-key
+{{end}}
+
+# Email
+SMTP_HOST=localhost
+SMTP_USER=user
+SMTP_PASSWORD=password
+```
+
+## 📊 API Endpoints
+
+### Health Checks
+- `GET /health` - Application health status
+- `GET /ready` - Readiness probe (Kubernetes)
+- `GET /live` - Liveness probe (Kubernetes)
+
+{{if ne .DatabaseDriver ""}}
+### Users
+- `POST /api/v1/users` - Create user
+- `GET /api/v1/users` - List users (paginated)
+- `GET /api/v1/users/{id}` - Get user by ID
+- `PUT /api/v1/users/{id}` - Update user
+- `DELETE /api/v1/users/{id}` - Delete user
+{{end}}
+
+{{if ne .AuthType ""}}
+### Authentication
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/refresh` - Refresh access token
+- `POST /api/v1/auth/logout` - Logout current session
+- `POST /api/v1/auth/logout-all` - Logout all sessions
+- `GET /api/v1/auth/me` - Get current user info
+{{end}}
+
+## 🧪 Testing
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Run integration tests
+make test-integration
+
+# Run specific test package
+go test -v ./internal/domain/usecases/...
+```
+
+## 🐳 Docker
+
+```bash
+# Build Docker image
+make docker-build
+
+# Run with Docker Compose
+docker-compose up -d
+
+# Run tests in Docker
+make docker-test
+```
+
+## 🚀 Deployment
+
+### Production Build
+
+```bash
+# Build optimized binary
+make build-prod
+
+# Or build for multiple platforms
+make build-all
+```
+
+### Environment Setup
+
+1. **Production Configuration**
+   ```bash
+   # Use production config
+   export ENVIRONMENT=production
+   ```
+
+2. **Security**
+   - Set strong JWT secret
+   - Configure TLS certificates
+   - Set up proper CORS origins
+   - Enable security headers
+
+## 📈 Clean Architecture Benefits
+
+### ✅ **Testability**
+- Business logic is isolated and easily testable
+- Dependencies are mocked through interfaces
+- Fast unit tests without external dependencies
+
+### ✅ **Maintainability**  
+- Clear separation of concerns
+- Changes in one layer don't affect others
+- Easy to understand and modify
+
+### ✅ **Framework Independence**
+- Business logic doesn't depend on frameworks
+- Easy to swap web frameworks or databases
+- Future-proof architecture
+
+### ✅ **Database Independence**
+- Repository pattern abstracts database access
+- Easy to switch between different databases
+- Business logic remains unchanged
+
+## 🔄 Development Workflow
+
+1. **Add Business Logic** → Entities & Use Cases
+2. **Define Contracts** → Ports (interfaces)
+3. **Implement Infrastructure** → Repository, Services
+4. **Add Web Layer** → Controllers, Presenters
+5. **Wire Dependencies** → Container
+6. **Test Everything** → Unit & Integration tests
+
+## 📚 Resources
+
+- [Clean Architecture by Uncle Bob](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)
+- [Domain-Driven Design](https://domainlanguage.com/ddd/)
+- [Dependency Inversion Principle](https://en.wikipedia.org/wiki/Dependency_inversion_principle)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Follow Clean Architecture principles
+4. Add tests for new features
+5. Submit a pull request
+
+## 📄 License
+
+This project is licensed under the {{.License}} License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+**Built with ❤️ using Clean Architecture principles**

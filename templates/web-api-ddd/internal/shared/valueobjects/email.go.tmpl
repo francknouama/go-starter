@@ -1,0 +1,80 @@
+package valueobjects
+
+import (
+	"{{.ModulePath}}/internal/shared/errors"
+	"regexp"
+	"strings"
+)
+
+// Email represents an email address value object
+type Email struct {
+	value string
+}
+
+// emailRegex validates email format
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// NewEmail creates a new email value object
+func NewEmail(value string) (Email, error) {
+	value = strings.TrimSpace(strings.ToLower(value))
+	
+	if value == "" {
+		return Email{}, errors.ErrInvalidEmail.WithDetails("reason", "empty email")
+	}
+	
+	if len(value) > 254 {
+		return Email{}, errors.ErrInvalidEmail.WithDetails("reason", "email too long")
+	}
+	
+	if !emailRegex.MatchString(value) {
+		return Email{}, errors.ErrInvalidEmail.WithDetails("reason", "invalid email format")
+	}
+	
+	return Email{value: value}, nil
+}
+
+// String returns the string representation of the email
+func (e Email) String() string {
+	return e.value
+}
+
+// Value returns the underlying value
+func (e Email) Value() string {
+	return e.value
+}
+
+// Domain returns the domain part of the email
+func (e Email) Domain() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+// LocalPart returns the local part of the email
+func (e Email) LocalPart() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
+}
+
+// Equals checks if two emails are equal
+func (e Email) Equals(other Email) bool {
+	return e.value == other.value
+}
+
+// IsEmpty checks if the email is empty
+func (e Email) IsEmpty() bool {
+	return e.value == ""
+}
+
+// IsValid checks if the email is valid
+func (e Email) IsValid() bool {
+	if e.value == "" {
+		return false
+	}
+	return emailRegex.MatchString(e.value)
+}

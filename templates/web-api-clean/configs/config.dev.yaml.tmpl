@@ -1,0 +1,51 @@
+server:
+  host: "0.0.0.0"
+  port: "8080"
+  environment: "development"
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 60
+
+{{if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+  host: "localhost"
+  {{if eq .DatabaseDriver "postgres"}}
+  port: 5432
+  {{else if eq .DatabaseDriver "mysql"}}
+  port: 3306
+  {{else if eq .DatabaseDriver "sqlite"}}
+  port: 0
+  {{end}}
+  database: "{{.ProjectName}}_dev"
+  username: "{{.ProjectName}}"
+  password: "password"
+  ssl_mode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 300
+{{end}}
+
+{{if ne .AuthType ""}}
+auth:
+  jwt_secret: "dev-jwt-secret-change-this-in-production"
+  access_token_expiry: 15   # minutes
+  refresh_token_expiry: 7   # days
+  password_min_length: 8
+  session_timeout: 60       # minutes
+  max_active_sessions: 5
+{{end}}
+
+logger:
+  level: "debug"
+  format: "console"
+  output: "stdout"
+
+email:
+  provider: "smtp"
+  smtp_host: "localhost"
+  smtp_port: 1025  # MailHog for development
+  smtp_user: ""
+  smtp_pass: ""
+  from_email: "noreply@{{.ProjectName}}.local"
+  from_name: "{{.ProjectName}} Dev"

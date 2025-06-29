@@ -1,0 +1,430 @@
+name: "web-api-clean"
+description: "Clean Architecture Web API template with layered design"
+type: "web-api"
+architecture: "clean"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the project"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "Author"
+    description: "Project author"
+    type: "string"
+    required: false
+    default: ""
+
+  - name: "Email"
+    description: "Author email"
+    type: "string"
+    required: false
+    default: ""
+
+  - name: "License"
+    description: "Project license"
+    type: "string"
+    required: false
+    default: "MIT"
+    choices:
+      - "MIT"
+      - "Apache-2.0"
+      - "GPL-3.0"
+      - "BSD-3-Clause"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+  - name: "Framework"
+    description: "Web framework"
+    type: "string"
+    required: false
+    default: "gin"
+
+  - name: "Logger"
+    description: "Logging library"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+  - name: "DatabaseDriver"
+    description: "Database driver"
+    type: "string"
+    required: false
+    default: "postgres"
+    choices:
+      - ""
+      - "postgres"
+      - "mysql"
+      - "sqlite"
+
+  - name: "DatabaseORM"
+    description: "Database ORM/query builder"
+    type: "string"
+    required: false
+    default: "gorm"
+    choices:
+      - "gorm"
+      - "sqlx"
+
+  - name: "AuthType"
+    description: "Authentication type"
+    type: "string"
+    required: false
+    default: "jwt"
+    choices:
+      - ""
+      - "jwt"
+      - "oauth2"
+      - "session"
+
+files:
+  # Core application files
+  - source: "cmd/server/main.go.tmpl"
+    destination: "cmd/server/main.go"
+
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+
+  # === ENTITIES LAYER (Innermost) ===
+  # Core business objects - no dependencies on external layers
+  - source: "internal/domain/entities/user.go.tmpl"
+    destination: "internal/domain/entities/user.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/domain/entities/auth.go.tmpl"
+    destination: "internal/domain/entities/auth.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # === USE CASES LAYER ===
+  # Application business rules - depends only on entities
+  - source: "internal/domain/usecases/user_usecase.go.tmpl"
+    destination: "internal/domain/usecases/user_usecase.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/domain/usecases/auth_usecase.go.tmpl"
+    destination: "internal/domain/usecases/auth_usecase.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Use case interfaces (ports)
+  - source: "internal/domain/ports/repositories.go.tmpl"
+    destination: "internal/domain/ports/repositories.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/domain/ports/services.go.tmpl"
+    destination: "internal/domain/ports/services.go"
+
+  # === INTERFACE ADAPTERS LAYER ===
+  # Controllers (HTTP handlers)
+  - source: "internal/adapters/controllers/health_controller.go.tmpl"
+    destination: "internal/adapters/controllers/health_controller.go"
+
+  - source: "internal/adapters/controllers/user_controller.go.tmpl"
+    destination: "internal/adapters/controllers/user_controller.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/adapters/controllers/auth_controller.go.tmpl"
+    destination: "internal/adapters/controllers/auth_controller.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Presenters (Response formatting)
+  - source: "internal/adapters/presenters/user_presenter.go.tmpl"
+    destination: "internal/adapters/presenters/user_presenter.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/adapters/presenters/auth_presenter.go.tmpl"
+    destination: "internal/adapters/presenters/auth_presenter.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # === FRAMEWORKS & DRIVERS LAYER (Outermost) ===
+  # Configuration
+  - source: "internal/infrastructure/config/config.go.tmpl"
+    destination: "internal/infrastructure/config/config.go"
+
+  # Database implementations
+  - source: "internal/infrastructure/persistence/database.go.tmpl"
+    destination: "internal/infrastructure/persistence/database.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/infrastructure/persistence/user_repository.go.tmpl"
+    destination: "internal/infrastructure/persistence/user_repository.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/infrastructure/persistence/migrations.go.tmpl"
+    destination: "internal/infrastructure/persistence/migrations.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/infrastructure/persistence/repository.go.tmpl"
+    destination: "internal/infrastructure/persistence/repository.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/infrastructure/persistence/auth_session_repository.go.tmpl"
+    destination: "internal/infrastructure/persistence/auth_session_repository.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Web framework setup
+  - source: "internal/infrastructure/web/router.go.tmpl"
+    destination: "internal/infrastructure/web/router.go"
+
+  - source: "internal/infrastructure/web/middleware/cors.go.tmpl"
+    destination: "internal/infrastructure/web/middleware/cors.go"
+
+  - source: "internal/infrastructure/web/middleware/logger.go.tmpl"
+    destination: "internal/infrastructure/web/middleware/logger.go"
+
+  - source: "internal/infrastructure/web/middleware/recovery.go.tmpl"
+    destination: "internal/infrastructure/web/middleware/recovery.go"
+
+  - source: "internal/infrastructure/web/middleware/auth.go.tmpl"
+    destination: "internal/infrastructure/web/middleware/auth.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # External services
+  - source: "internal/infrastructure/services/auth_service.go.tmpl"
+    destination: "internal/infrastructure/services/auth_service.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  - source: "internal/infrastructure/services/password_service.go.tmpl"
+    destination: "internal/infrastructure/services/password_service.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  - source: "internal/infrastructure/services/email_service.go.tmpl"
+    destination: "internal/infrastructure/services/email_service.go"
+
+  # Logger implementations
+  - source: "internal/infrastructure/logger/interface.go.tmpl"
+    destination: "internal/infrastructure/logger/interface.go"
+
+  - source: "internal/infrastructure/logger/factory.go.tmpl"
+    destination: "internal/infrastructure/logger/factory.go"
+
+  - source: "internal/infrastructure/logger/slog.go.tmpl"
+    destination: "internal/infrastructure/logger/slog.go"
+    condition: "{{eq .Logger \"slog\"}}"
+
+  - source: "internal/infrastructure/logger/zap.go.tmpl"
+    destination: "internal/infrastructure/logger/zap.go"
+    condition: "{{eq .Logger \"zap\"}}"
+
+  - source: "internal/infrastructure/logger/logrus.go.tmpl"
+    destination: "internal/infrastructure/logger/logrus.go"
+    condition: "{{eq .Logger \"logrus\"}}"
+
+  - source: "internal/infrastructure/logger/zerolog.go.tmpl"
+    destination: "internal/infrastructure/logger/zerolog.go"
+    condition: "{{eq .Logger \"zerolog\"}}"
+
+  # Domain web interfaces
+  - source: "internal/domain/ports/web.go.tmpl"
+    destination: "internal/domain/ports/web.go"
+  
+  # Web infrastructure factory
+  - source: "internal/infrastructure/web/factory.go.tmpl"
+    destination: "internal/infrastructure/web/factory.go"
+  
+  # Framework adapters (only the selected one is generated)
+  - source: "internal/infrastructure/web/adapters/gin_adapter.go.tmpl"
+    destination: "internal/infrastructure/web/adapters/gin_adapter.go"
+    condition: "{{eq .Framework \"gin\"}}"
+  
+  - source: "internal/infrastructure/web/adapters/echo_adapter.go.tmpl"
+    destination: "internal/infrastructure/web/adapters/echo_adapter.go"
+    condition: "{{eq .Framework \"echo\"}}"
+  
+  - source: "internal/infrastructure/web/adapters/fiber_adapter.go.tmpl"
+    destination: "internal/infrastructure/web/adapters/fiber_adapter.go"
+    condition: "{{eq .Framework \"fiber\"}}"
+  
+  - source: "internal/infrastructure/web/adapters/chi_adapter.go.tmpl"
+    destination: "internal/infrastructure/web/adapters/chi_adapter.go"
+    condition: "{{eq .Framework \"chi\"}}"
+
+  # Dependency injection / container
+  - source: "internal/infrastructure/container/container.go.tmpl"
+    destination: "internal/infrastructure/container/container.go"
+
+  # Docker
+  - source: "Dockerfile.tmpl"
+    destination: "Dockerfile"
+
+  - source: "docker-compose.yml.tmpl"
+    destination: "docker-compose.yml"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  # Configuration files
+  - source: "configs/config.dev.yaml.tmpl"
+    destination: "configs/config.dev.yaml"
+
+  - source: "configs/config.prod.yaml.tmpl"
+    destination: "configs/config.prod.yaml"
+
+  - source: "configs/config.test.yaml.tmpl"
+    destination: "configs/config.test.yaml"
+
+  # Environment and Git
+  - source: ".env.example.tmpl"
+    destination: ".env.example"
+
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+  # API Documentation
+  - source: "api/openapi.yaml.tmpl"
+    destination: "api/openapi.yaml"
+
+  # Database migrations
+  - source: "migrations/001_create_users.up.sql.tmpl"
+    destination: "migrations/001_create_users.up.sql"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "migrations/001_create_users.down.sql.tmpl"
+    destination: "migrations/001_create_users.down.sql"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "migrations/embed.go.tmpl"
+    destination: "migrations/embed.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  # Tests
+  - source: "tests/unit/entities_test.go.tmpl"
+    destination: "tests/unit/entities_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "tests/unit/usecases_test.go.tmpl"
+    destination: "tests/unit/usecases_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "tests/integration/api_test.go.tmpl"
+    destination: "tests/integration/api_test.go"
+
+  - source: "tests/testdata/fixtures.json.tmpl"
+    destination: "tests/testdata/fixtures.json"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  # Test mocks
+  - source: "tests/mocks/MockUserRepository.go"
+    destination: "tests/mocks/MockUserRepository.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "tests/mocks/MockLogger.go"
+    destination: "tests/mocks/MockLogger.go"
+
+  # Scripts
+  - source: "scripts/migrate.sh.tmpl"
+    destination: "scripts/migrate.sh"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "scripts/dev.sh.tmpl"
+    destination: "scripts/dev.sh"
+
+dependencies:
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+  - module: "github.com/spf13/viper"
+    version: "v1.16.0"
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .Logger \"zap\"}}"
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .Logger \"logrus\"}}"
+  - module: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .Logger \"zerolog\"}}"
+  - module: "github.com/lib/pq"
+    version: "v1.10.9"
+    condition: "{{eq .DatabaseDriver \"postgres\"}}"
+  - module: "gorm.io/gorm"
+    version: "v1.25.4"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  - module: "gorm.io/driver/postgres"
+    version: "v1.5.2"
+    condition: "{{eq .DatabaseDriver \"postgres\"}}"
+  - module: "gorm.io/driver/mysql"
+    version: "v1.5.2"
+    condition: "{{eq .DatabaseDriver \"mysql\"}}"
+  - module: "gorm.io/driver/sqlite"
+    version: "v1.5.4"
+    condition: "{{eq .DatabaseDriver \"sqlite\"}}"
+  - module: "github.com/golang-jwt/jwt/v5"
+    version: "v5.0.0"
+    condition: "{{eq .AuthType \"jwt\"}}"
+  - module: "github.com/stretchr/testify"
+    version: "v1.8.4"
+
+post_hooks:
+  - name: "clean_dependencies"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+    
+  - name: "format_code"
+    command: "go fmt ./..."
+    work_dir: "{{.OutputPath}}"
+
+  - name: "make_scripts_executable" 
+    command: "chmod +x scripts/*.sh"
+    work_dir: "{{.OutputPath}}"
+
+features:
+  - name: "clean_architecture"
+    description: "Clean Architecture with layered design and dependency inversion"
+    enabled_when: "true"
+    
+  - name: "logging"
+    description: "Structured logging with configurable logger"
+    enabled_when: "true"
+    
+  - name: "database"
+    description: "Database integration with repository pattern"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
+  - name: "authentication"
+    description: "JWT authentication with use cases"
+    enabled_when: "{{ne .AuthType \"\"}}"
+    
+  - name: "docker"
+    description: "Docker containerization"
+    enabled_when: "true"
+    
+  - name: "openapi"
+    description: "OpenAPI/Swagger documentation"
+    enabled_when: "true"
+
+  - name: "dependency_injection"
+    description: "Dependency injection container for Clean Architecture"
+    enabled_when: "true"
+
+validation:
+  - name: "go_version_compatibility"
+    description: "Ensure Go version is compatible"
+    value: "1.18"
+    
+  - name: "module_path_format"
+    description: "Validate module path format"
+    
+  - name: "project_name_format"
+    description: "Validate project name format"

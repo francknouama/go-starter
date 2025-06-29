@@ -1,0 +1,195 @@
+package persistence
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// AuthSessionRepository implements the AuthSessionRepository interface using GORM
+type AuthSessionRepository struct {
+	db     *gorm.DB
+	logger ports.Logger
+}
+
+// AuthSessionModel represents the auth_sessions table structure for GORM
+type AuthSessionModel struct {
+	ID           string `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	UserID       string `gorm:"not null;index"`
+	AccessToken  string `gorm:"uniqueIndex;not null"`
+	RefreshToken string `gorm:"uniqueIndex;not null"`
+	ExpiresAt    int64  `gorm:"not null;index"`
+	CreatedAt    int64  `gorm:"autoCreateTime"`
+	LastUsedAt   int64  `gorm:"not null"`
+	IPAddress    string `gorm:"not null"`
+	UserAgent    string `gorm:"type:text"`
+}
+
+// TableName specifies the table name for GORM
+func (AuthSessionModel) TableName() string {
+	return "auth_sessions"
+}
+
+// NewAuthSessionRepository creates a new AuthSessionRepository instance
+func NewAuthSessionRepository(db *gorm.DB, logger ports.Logger) ports.AuthSessionRepository {
+	return &AuthSessionRepository{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// Create creates a new authentication session
+func (r *AuthSessionRepository) Create(ctx context.Context, session *entities.AuthSession) error {
+	model := r.entityToModel(session)
+	
+	if err := r.db.WithContext(ctx).Create(model).Error; err != nil {
+		r.logger.Error("Failed to create auth session", "error", err, "user_id", session.UserID)
+		return err
+	}
+
+	// Update entity with generated ID
+	session.ID = model.ID
+	
+	r.logger.Info("Auth session created successfully", "session_id", session.ID, "user_id", session.UserID)
+	return nil
+}
+
+// GetByAccessToken retrieves a session by access token
+func (r *AuthSessionRepository) GetByAccessToken(ctx context.Context, accessToken string) (*entities.AuthSession, error) {
+	var model AuthSessionModel
+	
+	if err := r.db.WithContext(ctx).Where("access_token = ?", accessToken).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, entities.ErrSessionNotFound
+		}
+		r.logger.Error("Failed to get session by access token", "error", err)
+		return nil, err
+	}
+
+	return r.modelToEntity(&model), nil
+}
+
+// GetByRefreshToken retrieves a session by refresh token
+func (r *AuthSessionRepository) GetByRefreshToken(ctx context.Context, refreshToken string) (*entities.AuthSession, error) {
+	var model AuthSessionModel
+	
+	if err := r.db.WithContext(ctx).Where("refresh_token = ?", refreshToken).First(&model).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, entities.ErrSessionNotFound
+		}
+		r.logger.Error("Failed to get session by refresh token", "error", err)
+		return nil, err
+	}
+
+	return r.modelToEntity(&model), nil
+}
+
+// GetByUserID retrieves all active sessions for a user
+func (r *AuthSessionRepository) GetByUserID(ctx context.Context, userID string) ([]*entities.AuthSession, error) {
+	var models []AuthSessionModel
+	
+	if err := r.db.WithContext(ctx).Where("user_id = ? AND expires_at > ?", userID, time.Now().Unix()).Find(&models).Error; err != nil {
+		r.logger.Error("Failed to get sessions by user ID", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	sessions := make([]*entities.AuthSession, len(models))
+	for i, model := range models {
+		sessions[i] = r.modelToEntity(&model)
+	}
+
+	return sessions, nil
+}
+
+// Update modifies an existing session
+func (r *AuthSessionRepository) Update(ctx context.Context, session *entities.AuthSession) error {
+	model := r.entityToModel(session)
+	
+	result := r.db.WithContext(ctx).Where("id = ?", session.ID).Updates(model)
+	if result.Error != nil {
+		r.logger.Error("Failed to update auth session", "error", result.Error, "session_id", session.ID)
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return entities.ErrSessionNotFound
+	}
+
+	r.logger.Info("Auth session updated successfully", "session_id", session.ID)
+	return nil
+}
+
+// Delete removes a session
+func (r *AuthSessionRepository) Delete(ctx context.Context, sessionID string) error {
+	result := r.db.WithContext(ctx).Delete(&AuthSessionModel{}, "id = ?", sessionID)
+	if result.Error != nil {
+		r.logger.Error("Failed to delete auth session", "error", result.Error, "session_id", sessionID)
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return entities.ErrSessionNotFound
+	}
+
+	r.logger.Info("Auth session deleted successfully", "session_id", sessionID)
+	return nil
+}
+
+// DeleteByUserID removes all sessions for a user
+func (r *AuthSessionRepository) DeleteByUserID(ctx context.Context, userID string) error {
+	result := r.db.WithContext(ctx).Delete(&AuthSessionModel{}, "user_id = ?", userID)
+	if result.Error != nil {
+		r.logger.Error("Failed to delete sessions by user ID", "error", result.Error, "user_id", userID)
+		return result.Error
+	}
+
+	r.logger.Info("Auth sessions deleted successfully", "user_id", userID, "count", result.RowsAffected)
+	return nil
+}
+
+// DeleteExpired removes all expired sessions
+func (r *AuthSessionRepository) DeleteExpired(ctx context.Context) error {
+	now := time.Now().Unix()
+	result := r.db.WithContext(ctx).Delete(&AuthSessionModel{}, "expires_at <= ?", now)
+	if result.Error != nil {
+		r.logger.Error("Failed to delete expired sessions", "error", result.Error)
+		return result.Error
+	}
+
+	r.logger.Info("Expired sessions deleted successfully", "count", result.RowsAffected)
+	return nil
+}
+
+// entityToModel converts an entities.AuthSession to AuthSessionModel
+func (r *AuthSessionRepository) entityToModel(session *entities.AuthSession) *AuthSessionModel {
+	return &AuthSessionModel{
+		ID:           session.ID,
+		UserID:       session.UserID,
+		AccessToken:  session.AccessToken,
+		RefreshToken: session.RefreshToken,
+		ExpiresAt:    session.ExpiresAt.Unix(),
+		CreatedAt:    session.CreatedAt.Unix(),
+		LastUsedAt:   session.LastUsedAt.Unix(),
+		IPAddress:    session.IPAddress,
+		UserAgent:    session.UserAgent,
+	}
+}
+
+// modelToEntity converts an AuthSessionModel to entities.AuthSession
+func (r *AuthSessionRepository) modelToEntity(model *AuthSessionModel) *entities.AuthSession {
+	return &entities.AuthSession{
+		ID:           model.ID,
+		UserID:       model.UserID,
+		AccessToken:  model.AccessToken,
+		RefreshToken: model.RefreshToken,
+		ExpiresAt:    time.Unix(model.ExpiresAt, 0),
+		CreatedAt:    time.Unix(model.CreatedAt, 0),
+		LastUsedAt:   time.Unix(model.LastUsedAt, 0),
+		IPAddress:    model.IPAddress,
+		UserAgent:    model.UserAgent,
+	}
+}

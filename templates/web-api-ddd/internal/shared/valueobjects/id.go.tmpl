@@ -1,0 +1,71 @@
+package valueobjects
+
+import (
+	"{{.ModulePath}}/internal/shared/errors"
+	"github.com/google/uuid"
+)
+
+// ID represents a unique identifier value object
+type ID struct {
+	value string
+}
+
+// NewID creates a new ID from a string
+func NewID(value string) (ID, error) {
+	if value == "" {
+		return ID{}, errors.ErrInvalidID.WithDetails("reason", "empty ID")
+	}
+	
+	// Validate UUID format
+	if _, err := uuid.Parse(value); err != nil {
+		return ID{}, errors.ErrInvalidID.WithDetails("reason", "invalid UUID format")
+	}
+	
+	return ID{value: value}, nil
+}
+
+// NewIDFromUUID creates a new ID from a UUID
+func NewIDFromUUID(id uuid.UUID) ID {
+	return ID{value: id.String()}
+}
+
+// GenerateID generates a new random ID
+func GenerateID() ID {
+	return ID{value: uuid.New().String()}
+}
+
+// String returns the string representation of the ID
+func (id ID) String() string {
+	return id.value
+}
+
+// Value returns the underlying value
+func (id ID) Value() string {
+	return id.value
+}
+
+// UUID returns the UUID representation
+func (id ID) UUID() uuid.UUID {
+	// Safe to ignore error since we validate on creation
+	uid, _ := uuid.Parse(id.value)
+	return uid
+}
+
+// Equals checks if two IDs are equal
+func (id ID) Equals(other ID) bool {
+	return id.value == other.value
+}
+
+// IsEmpty checks if the ID is empty
+func (id ID) IsEmpty() bool {
+	return id.value == ""
+}
+
+// IsValid checks if the ID is valid
+func (id ID) IsValid() bool {
+	if id.value == "" {
+		return false
+	}
+	_, err := uuid.Parse(id.value)
+	return err == nil
+}

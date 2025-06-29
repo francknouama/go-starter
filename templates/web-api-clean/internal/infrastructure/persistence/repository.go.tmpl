@@ -1,0 +1,92 @@
+package persistence
+
+import (
+	"context"
+
+	"gorm.io/gorm"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// Repository implements the main repository interface using GORM
+type Repository struct {
+	db                    *gorm.DB
+	logger                ports.Logger
+	userRepository        ports.UserRepository
+	authSessionRepository ports.AuthSessionRepository
+}
+
+// NewRepository creates a new Repository instance
+func NewRepository(db *gorm.DB, logger ports.Logger) ports.Repository {
+	return &Repository{
+		db:                    db,
+		logger:                logger,
+		userRepository:        NewUserRepository(db, logger),
+		authSessionRepository: NewAuthSessionRepository(db, logger),
+	}
+}
+
+// UserRepository returns the user repository instance
+func (r *Repository) UserRepository() ports.UserRepository {
+	return r.userRepository
+}
+
+// AuthSessionRepository returns the auth session repository instance
+func (r *Repository) AuthSessionRepository() ports.AuthSessionRepository {
+	return r.authSessionRepository
+}
+
+// BeginTransaction starts a new database transaction
+func (r *Repository) BeginTransaction(ctx context.Context) (ports.Transaction, error) {
+	tx := r.db.WithContext(ctx).Begin()
+	if tx.Error != nil {
+		return nil, tx.Error
+	}
+
+	return &Transaction{
+		tx:     tx,
+		logger: r.logger,
+	}, nil
+}
+
+// Close closes the repository (database connection)
+func (r *Repository) Close() error {
+	sqlDB, err := r.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+
+// Transaction implements the transaction interface
+type Transaction struct {
+	tx                    *gorm.DB
+	logger                ports.Logger
+	userRepository        ports.UserRepository
+	authSessionRepository ports.AuthSessionRepository
+}
+
+// UserRepository returns the user repository for this transaction
+func (t *Transaction) UserRepository() ports.UserRepository {
+	if t.userRepository == nil {
+		t.userRepository = NewUserRepository(t.tx, t.logger)
+	}
+	return t.userRepository
+}
+
+// AuthSessionRepository returns the auth session repository for this transaction
+func (t *Transaction) AuthSessionRepository() ports.AuthSessionRepository {
+	if t.authSessionRepository == nil {
+		t.authSessionRepository = NewAuthSessionRepository(t.tx, t.logger)
+	}
+	return t.authSessionRepository
+}
+
+// Commit commits the transaction
+func (t *Transaction) Commit() error {
+	return t.tx.Commit().Error
+}
+
+// Rollback rolls back the transaction
+func (t *Transaction) Rollback() error {
+	return t.tx.Rollback().Error
+}

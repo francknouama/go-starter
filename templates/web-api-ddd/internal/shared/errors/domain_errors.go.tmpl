@@ -1,0 +1,64 @@
+package errors
+
+import (
+	"fmt"
+)
+
+// DomainError represents errors that occur in the domain layer
+type DomainError struct {
+	Code    string
+	Message string
+	Details map[string]interface{}
+}
+
+func (e DomainError) Error() string {
+	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+// NewDomainError creates a new domain error
+func NewDomainError(code, message string) DomainError {
+	return DomainError{
+		Code:    code,
+		Message: message,
+		Details: make(map[string]interface{}),
+	}
+}
+
+// WithDetails adds details to the domain error
+func (e DomainError) WithDetails(key string, value interface{}) DomainError {
+	e.Details[key] = value
+	return e
+}
+
+// Common domain errors
+var (
+	// Entity errors
+	ErrEntityNotFound = NewDomainError("ENTITY_NOT_FOUND", "Entity not found")
+	ErrEntityAlreadyExists = NewDomainError("ENTITY_ALREADY_EXISTS", "Entity already exists")
+	ErrInvalidEntityState = NewDomainError("INVALID_ENTITY_STATE", "Entity is in an invalid state")
+	
+	// Value object errors
+	ErrInvalidValueObject = NewDomainError("INVALID_VALUE_OBJECT", "Value object is invalid")
+	ErrInvalidEmail = NewDomainError("INVALID_EMAIL", "Email address is invalid")
+	ErrInvalidID = NewDomainError("INVALID_ID", "ID is invalid")
+	
+	// Business rule errors
+	ErrBusinessRuleViolation = NewDomainError("BUSINESS_RULE_VIOLATION", "Business rule violation")
+	ErrDomainInvariantViolation = NewDomainError("DOMAIN_INVARIANT_VIOLATION", "Domain invariant violation")
+	
+	// Aggregate errors
+	ErrConcurrencyConflict = NewDomainError("CONCURRENCY_CONFLICT", "Concurrency conflict detected")
+	ErrAggregateVersionMismatch = NewDomainError("AGGREGATE_VERSION_MISMATCH", "Aggregate version mismatch")
+)
+
+// IsDomainError checks if an error is a domain error
+func IsDomainError(err error) bool {
+	_, ok := err.(DomainError)
+	return ok
+}
+
+// GetDomainError extracts domain error from error
+func GetDomainError(err error) (DomainError, bool) {
+	domainErr, ok := err.(DomainError)
+	return domainErr, ok
+}

@@ -1,0 +1,124 @@
+package events
+
+import (
+	"sync"
+)
+
+// EventDispatcher dispatches domain events to registered handlers
+type EventDispatcher interface {
+	Dispatch(event DomainEvent) error
+	Register(eventType string, handler EventHandler)
+	Unregister(eventType string, handler EventHandler)
+}
+
+// InMemoryEventDispatcher is an in-memory implementation of EventDispatcher
+type InMemoryEventDispatcher struct {
+	handlers map[string][]EventHandler
+	mutex    sync.RWMutex
+}
+
+// NewInMemoryEventDispatcher creates a new in-memory event dispatcher
+func NewInMemoryEventDispatcher() *InMemoryEventDispatcher {
+	return &InMemoryEventDispatcher{
+		handlers: make(map[string][]EventHandler),
+	}
+}
+
+// Dispatch dispatches an event to all registered handlers for that event type
+func (d *InMemoryEventDispatcher) Dispatch(event DomainEvent) error {
+	d.mutex.RLock()
+	handlers, exists := d.handlers[event.EventType()]
+	d.mutex.RUnlock()
+	
+	if !exists {
+		return nil // No handlers registered for this event type
+	}
+	
+	// Handle events concurrently
+	var wg sync.WaitGroup
+	errors := make(chan error, len(handlers))
+	
+	for _, handler := range handlers {
+		wg.Add(1)
+		go func(h EventHandler) {
+			defer wg.Done()
+			if err := h.Handle(event); err != nil {
+				errors <- err
+			}
+		}(handler)
+	}
+	
+	wg.Wait()
+	close(errors)
+	
+	// Check for any errors
+	for err := range errors {
+		if err != nil {
+			return err // Return first error encountered
+		}
+	}
+	
+	return nil
+}
+
+// Register registers an event handler for a specific event type
+func (d *InMemoryEventDispatcher) Register(eventType string, handler EventHandler) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	
+	if _, exists := d.handlers[eventType]; !exists {
+		d.handlers[eventType] = make([]EventHandler, 0)
+	}
+	
+	d.handlers[eventType] = append(d.handlers[eventType], handler)
+}
+
+// Unregister removes an event handler for a specific event type
+func (d *InMemoryEventDispatcher) Unregister(eventType string, handler EventHandler) {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	
+	handlers, exists := d.handlers[eventType]
+	if !exists {
+		return
+	}
+	
+	// Find and remove the handler
+	for i, h := range handlers {
+		if h == handler {
+			d.handlers[eventType] = append(handlers[:i], handlers[i+1:]...)
+			break
+		}
+	}
+	
+	// Remove the event type if no handlers left
+	if len(d.handlers[eventType]) == 0 {
+		delete(d.handlers, eventType)
+	}
+}
+
+// GetHandlerCount returns the number of handlers registered for an event type
+func (d *InMemoryEventDispatcher) GetHandlerCount(eventType string) int {
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+	
+	handlers, exists := d.handlers[eventType]
+	if !exists {
+		return 0
+	}
+	
+	return len(handlers)
+}
+
+// GetRegisteredEventTypes returns all registered event types
+func (d *InMemoryEventDispatcher) GetRegisteredEventTypes() []string {
+	d.mutex.RLock()
+	defer d.mutex.RUnlock()
+	
+	eventTypes := make([]string, 0, len(d.handlers))
+	for eventType := range d.handlers {
+		eventTypes = append(eventTypes, eventType)
+	}
+	
+	return eventTypes
+}

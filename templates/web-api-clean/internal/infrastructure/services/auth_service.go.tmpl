@@ -1,0 +1,175 @@
+package services
+
+import (
+	"crypto/rand"
+	"fmt"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// TokenService implements JWT token operations
+type TokenService struct {
+	config *config.AuthConfig
+	logger ports.Logger
+}
+
+// NewTokenService creates a new TokenService instance
+func NewTokenService(config *config.AuthConfig, logger ports.Logger) ports.TokenService {
+	return &TokenService{
+		config: config,
+		logger: logger,
+	}
+}
+
+// GenerateAccessToken creates a new access token for the user
+func (s *TokenService) GenerateAccessToken(userID string) (*entities.AuthToken, error) {
+	now := time.Now()
+	expiresAt := now.Add(time.Duration(s.config.AccessTokenExpiry) * time.Minute)
+
+	// Create JWT claims
+	claims := jwt.MapClaims{
+		"sub":  userID,
+		"type": "access",
+		"iat":  now.Unix(),
+		"exp":  expiresAt.Unix(),
+		"jti":  s.generateJTI(),
+	}
+
+	// Create token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(s.config.JWTSecret))
+	if err != nil {
+		s.logger.Error("Failed to sign access token", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	return &entities.AuthToken{
+		Token:     tokenString,
+		TokenType: "Bearer",
+		ExpiresAt: expiresAt,
+		UserID:    userID,
+	}, nil
+}
+
+// GenerateRefreshToken creates a new refresh token for the user
+func (s *TokenService) GenerateRefreshToken(userID string) (*entities.AuthToken, error) {
+	now := time.Now()
+	expiresAt := now.Add(time.Duration(s.config.RefreshTokenExpiry) * 24 * time.Hour)
+
+	// Create JWT claims
+	claims := jwt.MapClaims{
+		"sub":  userID,
+		"type": "refresh",
+		"iat":  now.Unix(),
+		"exp":  expiresAt.Unix(),
+		"jti":  s.generateJTI(),
+	}
+
+	// Create token
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(s.config.JWTSecret))
+	if err != nil {
+		s.logger.Error("Failed to sign refresh token", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	return &entities.AuthToken{
+		Token:     tokenString,
+		TokenType: "Bearer",
+		ExpiresAt: expiresAt,
+		UserID:    userID,
+	}, nil
+}
+
+// ValidateToken validates a token and returns the user ID
+func (s *TokenService) ValidateToken(tokenString string) (string, error) {
+	// Parse token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		// Validate signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.config.JWTSecret), nil
+	})
+
+	if err != nil {
+		s.logger.Debug("Token validation failed", "error", err)
+		return "", entities.ErrInvalidToken
+	}
+
+	// Validate claims
+	if !token.Valid {
+		return "", entities.ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", entities.ErrInvalidToken
+	}
+
+	// Check token type (should be access token for validation)
+	if tokenType, ok := claims["type"].(string); ok && tokenType != "access" {
+		return "", entities.ErrInvalidToken
+	}
+
+	// Extract user ID
+	userID, ok := claims["sub"].(string)
+	if !ok {
+		return "", entities.ErrInvalidToken
+	}
+
+	return userID, nil
+}
+
+// RefreshToken generates a new access token from a refresh token
+func (s *TokenService) RefreshToken(refreshToken string) (*entities.AuthToken, error) {
+	// Parse refresh token
+	token, err := jwt.Parse(refreshToken, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.config.JWTSecret), nil
+	})
+
+	if err != nil {
+		s.logger.Debug("Refresh token validation failed", "error", err)
+		return nil, entities.ErrInvalidToken
+	}
+
+	if !token.Valid {
+		return nil, entities.ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, entities.ErrInvalidToken
+	}
+
+	// Check token type (should be refresh token)
+	if tokenType, ok := claims["type"].(string); ok && tokenType != "refresh" {
+		return nil, entities.ErrInvalidToken
+	}
+
+	// Extract user ID
+	userID, ok := claims["sub"].(string)
+	if !ok {
+		return nil, entities.ErrInvalidToken
+	}
+
+	// Generate new access token
+	return s.GenerateAccessToken(userID)
+}
+
+// generateJTI generates a unique JWT ID
+func (s *TokenService) generateJTI() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to timestamp-based ID if random generation fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%x", bytes)
+}

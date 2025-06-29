@@ -1,0 +1,84 @@
+package main
+
+import (
+	"context"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/internal/infrastructure/config"
+	"{{.ModulePath}}/internal/infrastructure/container"
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Create dependency injection container
+	app, err := container.NewContainer(cfg)
+	if err != nil {
+		log.Fatalf("Failed to create application container: %v", err)
+	}
+
+	// Setup graceful shutdown
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+	// Get router and start server
+	router := app.GetRouter()
+	server := &http.Server{
+		Addr:         cfg.Server.Host + ":" + cfg.Server.Port,
+		Handler:      router.GetEngine().Handler(),
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		app.Logger.Info("Starting {{.ProjectName}} server", 
+			"address", server.Addr,
+			"environment", cfg.Server.Environment,
+		)
+		
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			app.Logger.Fatal("Failed to start server", "error", err)
+		}
+	}()
+
+	app.Logger.Info("{{.ProjectName}} server started successfully")
+
+	// Wait for interrupt signal
+	<-done
+	app.Logger.Info("Shutting down server...")
+
+	// Create a deadline for graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := server.Shutdown(ctx); err != nil {
+		app.Logger.Error("Server forced to shutdown", "error", err)
+	}
+
+	// Cleanup application resources
+	if err := app.Cleanup(); err != nil {
+		app.Logger.Error("Failed to cleanup application", "error", err)
+	}
+
+	app.Logger.Info("{{.ProjectName}} server stopped gracefully")
+}
+
+// init initializes the application before main()
+func init() {
+	// Set default values or perform any necessary initialization
+	if os.Getenv("GIN_MODE") == "" {
+		os.Setenv("GIN_MODE", "debug")
+	}
+}

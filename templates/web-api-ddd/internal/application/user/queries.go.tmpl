@@ -1,0 +1,168 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+)
+
+// Query represents a query in the CQRS pattern
+type Query interface {
+	QueryType() string
+}
+
+// Get{{.DomainName | title}}ByIDQuery represents a query to get a {{.DomainName}} by ID
+type Get{{.DomainName | title}}ByIDQuery struct {
+	ID string `json:"id" validate:"required,uuid"`
+}
+
+// QueryType returns the query type
+func (q Get{{.DomainName | title}}ByIDQuery) QueryType() string {
+	return "get_{{.DomainName}}_by_id"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object
+func (q Get{{.DomainName | title}}ByIDQuery) GetID() (valueobjects.ID, error) {
+	return valueobjects.NewID(q.ID)
+}
+
+// Get{{.DomainName | title}}ByEmailQuery represents a query to get a {{.DomainName}} by email
+type Get{{.DomainName | title}}ByEmailQuery struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// QueryType returns the query type
+func (q Get{{.DomainName | title}}ByEmailQuery) QueryType() string {
+	return "get_{{.DomainName}}_by_email"
+}
+
+// GetEmail returns the email as a value object
+func (q Get{{.DomainName | title}}ByEmailQuery) GetEmail() (valueobjects.Email, error) {
+	return valueobjects.NewEmail(q.Email)
+}
+
+// List{{.DomainName | title}}sQuery represents a query to list {{.DomainName}}s with pagination
+type List{{.DomainName | title}}sQuery struct {
+	Page   int                    `json:"page" validate:"min=1"`
+	Limit  int                    `json:"limit" validate:"min=1,max=100"`
+	Status *string                `json:"status,omitempty" validate:"omitempty,oneof=active inactive deleted"`
+	Filter map[string]interface{} `json:"filter,omitempty"`
+}
+
+// QueryType returns the query type
+func (q List{{.DomainName | title}}sQuery) QueryType() string {
+	return "list_{{.DomainName}}s"
+}
+
+// GetStatus returns the status as a value object if provided
+func (q List{{.DomainName | title}}sQuery) GetStatus() (*{{.DomainName}}.Status, error) {
+	if q.Status == nil {
+		return nil, nil
+	}
+	status, err := {{.DomainName}}.ParseStatus(*q.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// GetOffset returns the offset for pagination
+func (q List{{.DomainName | title}}sQuery) GetOffset() int {
+	if q.Page <= 1 {
+		return 0
+	}
+	return (q.Page - 1) * q.Limit
+}
+
+// Count{{.DomainName | title}}sQuery represents a query to count {{.DomainName}}s
+type Count{{.DomainName | title}}sQuery struct {
+	Status *string                `json:"status,omitempty" validate:"omitempty,oneof=active inactive deleted"`
+	Filter map[string]interface{} `json:"filter,omitempty"`
+}
+
+// QueryType returns the query type
+func (q Count{{.DomainName | title}}sQuery) QueryType() string {
+	return "count_{{.DomainName}}s"
+}
+
+// GetStatus returns the status as a value object if provided
+func (q Count{{.DomainName | title}}sQuery) GetStatus() (*{{.DomainName}}.Status, error) {
+	if q.Status == nil {
+		return nil, nil
+	}
+	status, err := {{.DomainName}}.ParseStatus(*q.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// Search{{.DomainName | title}}sQuery represents a query to search {{.DomainName}}s
+type Search{{.DomainName | title}}sQuery struct {
+	Term   string                 `json:"term" validate:"required,min=1"`
+	Page   int                    `json:"page" validate:"min=1"`
+	Limit  int                    `json:"limit" validate:"min=1,max=100"`
+	Status *string                `json:"status,omitempty" validate:"omitempty,oneof=active inactive deleted"`
+	Filter map[string]interface{} `json:"filter,omitempty"`
+}
+
+// QueryType returns the query type
+func (q Search{{.DomainName | title}}sQuery) QueryType() string {
+	return "search_{{.DomainName}}s"
+}
+
+// GetStatus returns the status as a value object if provided
+func (q Search{{.DomainName | title}}sQuery) GetStatus() (*{{.DomainName}}.Status, error) {
+	if q.Status == nil {
+		return nil, nil
+	}
+	status, err := {{.DomainName}}.ParseStatus(*q.Status)
+	if err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// GetOffset returns the offset for pagination
+func (q Search{{.DomainName | title}}sQuery) GetOffset() int {
+	if q.Page <= 1 {
+		return 0
+	}
+	return (q.Page - 1) * q.Limit
+}
+
+// Exists{{.DomainName | title}}Query represents a query to check if a {{.DomainName}} exists
+type Exists{{.DomainName | title}}Query struct {
+	ID    *string `json:"id,omitempty" validate:"omitempty,uuid"`
+	Email *string `json:"email,omitempty" validate:"omitempty,email"`
+}
+
+// QueryType returns the query type
+func (q Exists{{.DomainName | title}}Query) QueryType() string {
+	return "exists_{{.DomainName}}"
+}
+
+// GetID returns the {{.DomainName}} ID as a value object if provided
+func (q Exists{{.DomainName | title}}Query) GetID() (*valueobjects.ID, error) {
+	if q.ID == nil {
+		return nil, nil
+	}
+	id, err := valueobjects.NewID(*q.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &id, nil
+}
+
+// GetEmail returns the email as a value object if provided
+func (q Exists{{.DomainName | title}}Query) GetEmail() (*valueobjects.Email, error) {
+	if q.Email == nil {
+		return nil, nil
+	}
+	email, err := valueobjects.NewEmail(*q.Email)
+	if err != nil {
+		return nil, err
+	}
+	return &email, nil
+}
+{{- end}}

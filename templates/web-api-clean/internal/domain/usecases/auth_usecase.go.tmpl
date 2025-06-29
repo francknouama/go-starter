@@ -1,0 +1,297 @@
+package usecases
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// AuthUseCase implements business logic for authentication operations
+type AuthUseCase struct {
+	userRepo        ports.UserRepository
+	sessionRepo     ports.AuthSessionRepository
+	passwordService ports.PasswordService
+	tokenService    ports.TokenService
+	logger          ports.Logger
+}
+
+// LoginInput represents login request input
+type LoginInput struct {
+	Identifier string `json:"identifier"` // email or username
+	Password   string `json:"password"`
+	IPAddress  string `json:"-"`
+	UserAgent  string `json:"-"`
+}
+
+// LoginOutput represents login response output
+type LoginOutput struct {
+	User         *entities.User      `json:"user"`
+	AccessToken  string              `json:"access_token"`
+	RefreshToken string              `json:"refresh_token"`
+	TokenType    string              `json:"token_type"`
+	ExpiresIn    int64               `json:"expires_in"`
+	Session      *entities.AuthSession `json:"-"`
+}
+
+// RefreshTokenInput represents refresh token request input
+type RefreshTokenInput struct {
+	RefreshToken string `json:"refresh_token"`
+	IPAddress    string `json:"-"`
+	UserAgent    string `json:"-"`
+}
+
+// NewAuthUseCase creates a new AuthUseCase instance
+func NewAuthUseCase(
+	userRepo ports.UserRepository,
+	sessionRepo ports.AuthSessionRepository,
+	passwordService ports.PasswordService,
+	tokenService ports.TokenService,
+	logger ports.Logger,
+) *AuthUseCase {
+	return &AuthUseCase{
+		userRepo:        userRepo,
+		sessionRepo:     sessionRepo,
+		passwordService: passwordService,
+		tokenService:    tokenService,
+		logger:          logger,
+	}
+}
+
+// Login authenticates a user and creates a session
+func (uc *AuthUseCase) Login(ctx context.Context, input LoginInput) (*LoginOutput, error) {
+	uc.logger.Info("User login attempt", "identifier", input.Identifier)
+
+	// Create login credentials entity
+	credentials, err := entities.NewLoginCredentials(input.Identifier, input.Password)
+	if err != nil {
+		uc.logger.Warn("Invalid login credentials format", "error", err)
+		return nil, entities.ErrInvalidCredentials
+	}
+
+	// Find user by email or username
+	var user *entities.User
+	if credentials.Email != "" {
+		user, err = uc.userRepo.GetByEmail(ctx, credentials.Email)
+	} else {
+		user, err = uc.userRepo.GetByUsername(ctx, credentials.Username)
+	}
+
+	if err != nil {
+		uc.logger.Warn("User not found during login", "identifier", input.Identifier)
+		return nil, entities.ErrInvalidCredentials
+	}
+
+	// Verify password
+	if err := uc.passwordService.Verify(input.Password, user.Password); err != nil {
+		uc.logger.Warn("Invalid password during login", "user_id", user.ID)
+		return nil, entities.ErrInvalidCredentials
+	}
+
+	// Check if user is active
+	if !user.IsActive {
+		uc.logger.Warn("Inactive user login attempt", "user_id", user.ID)
+		return nil, entities.ErrInvalidCredentials
+	}
+
+	// Generate tokens
+	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID)
+	if err != nil {
+		uc.logger.Error("Failed to generate access token", "error", err, "user_id", user.ID)
+		return nil, err
+	}
+
+	refreshToken, err := uc.tokenService.GenerateRefreshToken(user.ID)
+	if err != nil {
+		uc.logger.Error("Failed to generate refresh token", "error", err, "user_id", user.ID)
+		return nil, err
+	}
+
+	// Create session
+	session := entities.NewAuthSession(
+		user.ID,
+		accessToken.Token,
+		refreshToken.Token,
+		input.IPAddress,
+		input.UserAgent,
+		accessToken.ExpiresAt.Sub(accessToken.ExpiresAt),
+	)
+
+	// Save session
+	if err := uc.sessionRepo.Create(ctx, session); err != nil {
+		uc.logger.Error("Failed to create session", "error", err, "user_id", user.ID)
+		return nil, err
+	}
+
+	uc.logger.Info("User logged in successfully", "user_id", user.ID, "session_id", session.ID)
+
+	return &LoginOutput{
+		User:         user,
+		AccessToken:  accessToken.Token,
+		RefreshToken: refreshToken.Token,
+		TokenType:    accessToken.TokenType,
+		ExpiresIn:    int64(accessToken.ExpiresAt.Sub(accessToken.ExpiresAt).Seconds()),
+		Session:      session,
+	}, nil
+}
+
+// RefreshToken generates new tokens from a refresh token
+func (uc *AuthUseCase) RefreshToken(ctx context.Context, input RefreshTokenInput) (*LoginOutput, error) {
+	uc.logger.Debug("Token refresh attempt")
+
+	// Get session by refresh token
+	session, err := uc.sessionRepo.GetByRefreshToken(ctx, input.RefreshToken)
+	if err != nil {
+		uc.logger.Warn("Invalid refresh token", "error", err)
+		return nil, entities.ErrInvalidToken
+	}
+
+	// Check if session is expired
+	if session.IsExpired() {
+		uc.logger.Warn("Expired session refresh attempt", "session_id", session.ID)
+		// Clean up expired session
+		_ = uc.sessionRepo.Delete(ctx, session.ID)
+		return nil, entities.ErrSessionExpired
+	}
+
+	// Get user
+	user, err := uc.userRepo.GetByID(ctx, session.UserID)
+	if err != nil {
+		uc.logger.Error("Failed to get user for token refresh", "error", err, "user_id", session.UserID)
+		return nil, err
+	}
+
+	// Check if user is still active
+	if !user.IsActive {
+		uc.logger.Warn("Token refresh for inactive user", "user_id", user.ID)
+		_ = uc.sessionRepo.Delete(ctx, session.ID)
+		return nil, entities.ErrInvalidCredentials
+	}
+
+	// Generate new tokens
+	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID)
+	if err != nil {
+		uc.logger.Error("Failed to generate new access token", "error", err, "user_id", user.ID)
+		return nil, err
+	}
+
+	refreshToken, err := uc.tokenService.GenerateRefreshToken(user.ID)
+	if err != nil {
+		uc.logger.Error("Failed to generate new refresh token", "error", err, "user_id", user.ID)
+		return nil, err
+	}
+
+	// Update session with new tokens
+	session.Refresh(
+		accessToken.Token,
+		refreshToken.Token,
+		accessToken.ExpiresAt.Sub(accessToken.ExpiresAt),
+	)
+
+	// Save updated session
+	if err := uc.sessionRepo.Update(ctx, session); err != nil {
+		uc.logger.Error("Failed to update session", "error", err, "session_id", session.ID)
+		return nil, err
+	}
+
+	uc.logger.Info("Token refreshed successfully", "user_id", user.ID, "session_id", session.ID)
+
+	return &LoginOutput{
+		User:         user,
+		AccessToken:  accessToken.Token,
+		RefreshToken: refreshToken.Token,
+		TokenType:    accessToken.TokenType,
+		ExpiresIn:    int64(accessToken.ExpiresAt.Sub(accessToken.ExpiresAt).Seconds()),
+		Session:      session,
+	}, nil
+}
+
+// Logout invalidates a user session
+func (uc *AuthUseCase) Logout(ctx context.Context, accessToken string) error {
+	uc.logger.Debug("User logout attempt")
+
+	// Get session by access token
+	session, err := uc.sessionRepo.GetByAccessToken(ctx, accessToken)
+	if err != nil {
+		uc.logger.Warn("Session not found for logout", "error", err)
+		return entities.ErrSessionNotFound
+	}
+
+	// Delete session
+	if err := uc.sessionRepo.Delete(ctx, session.ID); err != nil {
+		uc.logger.Error("Failed to delete session during logout", "error", err, "session_id", session.ID)
+		return err
+	}
+
+	uc.logger.Info("User logged out successfully", "user_id", session.UserID, "session_id", session.ID)
+	return nil
+}
+
+// LogoutAll invalidates all sessions for a user
+func (uc *AuthUseCase) LogoutAll(ctx context.Context, userID string) error {
+	uc.logger.Info("Logging out all sessions for user", "user_id", userID)
+
+	if err := uc.sessionRepo.DeleteByUserID(ctx, userID); err != nil {
+		uc.logger.Error("Failed to delete all sessions", "error", err, "user_id", userID)
+		return err
+	}
+
+	uc.logger.Info("All sessions logged out successfully", "user_id", userID)
+	return nil
+}
+
+// ValidateSession validates an access token and returns the user
+func (uc *AuthUseCase) ValidateSession(ctx context.Context, accessToken string) (*entities.User, error) {
+	// Validate token format and extract user ID
+	userID, err := uc.tokenService.ValidateToken(accessToken)
+	if err != nil {
+		uc.logger.Debug("Invalid access token", "error", err)
+		return nil, entities.ErrInvalidToken
+	}
+
+	// Get session
+	session, err := uc.sessionRepo.GetByAccessToken(ctx, accessToken)
+	if err != nil {
+		uc.logger.Debug("Session not found", "error", err)
+		return nil, entities.ErrSessionNotFound
+	}
+
+	// Check if session is expired
+	if session.IsExpired() {
+		uc.logger.Debug("Session expired", "session_id", session.ID)
+		_ = uc.sessionRepo.Delete(ctx, session.ID)
+		return nil, entities.ErrSessionExpired
+	}
+
+	// Get user
+	user, err := uc.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		uc.logger.Error("Failed to get user for session validation", "error", err, "user_id", userID)
+		return nil, err
+	}
+
+	// Check if user is active
+	if !user.IsActive {
+		uc.logger.Warn("Session validation for inactive user", "user_id", user.ID)
+		_ = uc.sessionRepo.Delete(ctx, session.ID)
+		return nil, entities.ErrInvalidCredentials
+	}
+
+	// Update last used timestamp
+	session.UpdateLastUsed()
+	_ = uc.sessionRepo.Update(ctx, session)
+
+	return user, nil
+}
+
+// CleanupExpiredSessions removes expired sessions
+func (uc *AuthUseCase) CleanupExpiredSessions(ctx context.Context) error {
+	uc.logger.Debug("Cleaning up expired sessions")
+
+	if err := uc.sessionRepo.DeleteExpired(ctx); err != nil {
+		uc.logger.Error("Failed to cleanup expired sessions", "error", err)
+		return err
+	}
+
+	uc.logger.Info("Expired sessions cleaned up successfully")
+	return nil
+}

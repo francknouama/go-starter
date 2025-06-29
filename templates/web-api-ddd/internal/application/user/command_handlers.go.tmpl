@@ -1,0 +1,291 @@
+{{- if ne .DatabaseDriver ""}}
+package {{.DomainName}}
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/errors"
+	"{{.ModulePath}}/internal/shared/events"
+)
+
+// CommandHandler defines the interface for command handlers
+type CommandHandler interface {
+	Handle(ctx context.Context, command Command) (interface{}, error)
+	CanHandle(commandType string) bool
+}
+
+// Create{{.DomainName | title}}Handler handles the creation of {{.DomainName}}s
+type Create{{.DomainName | title}}Handler struct {
+	repository      {{.DomainName}}.Repository
+	domainService   {{.DomainName}}.Service
+	eventDispatcher events.EventDispatcher
+}
+
+// NewCreate{{.DomainName | title}}Handler creates a new Create{{.DomainName | title}}Handler
+func NewCreate{{.DomainName | title}}Handler(
+	repository {{.DomainName}}.Repository,
+	domainService {{.DomainName}}.Service,
+	eventDispatcher events.EventDispatcher,
+) *Create{{.DomainName | title}}Handler {
+	return &Create{{.DomainName | title}}Handler{
+		repository:      repository,
+		domainService:   domainService,
+		eventDispatcher: eventDispatcher,
+	}
+}
+
+// Handle processes the Create{{.DomainName | title}}Command
+func (h *Create{{.DomainName | title}}Handler) Handle(ctx context.Context, command Command) (interface{}, error) {
+	cmd, ok := command.(Create{{.DomainName | title}}Command)
+	if !ok {
+		return nil, errors.ErrInvalidCommand.WithDetails("expectedType", "Create{{.DomainName | title}}Command")
+	}
+	
+	// Create value objects
+	email, err := valueobjects.NewEmail(cmd.Email)
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "email").WithDetails("value", cmd.Email)
+	}
+	
+	name, err := {{.DomainName}}.NewName(cmd.FirstName, cmd.LastName)
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "name")
+	}
+	
+	// Validate business rules
+	if err := h.domainService.ValidateForCreation(email, name); err != nil {
+		return nil, err
+	}
+	
+	// Create {{.DomainName}} aggregate
+	{{.DomainName}}Entity, err := {{.DomainName}}.New{{.DomainName | title}}(email, cmd.FirstName, cmd.LastName)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Save {{.DomainName}}
+	if err := h.repository.Save(ctx, {{.DomainName}}Entity); err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "save")
+	}
+	
+	// Dispatch domain events
+	for _, event := range {{.DomainName}}Entity.DomainEvents() {
+		if err := h.eventDispatcher.Dispatch(event); err != nil {
+			// Log error but don't fail the command
+			// In a real system, you might want to store failed events for retry
+		}
+	}
+	
+	{{.DomainName}}Entity.ClearDomainEvents()
+	
+	return From{{.DomainName | title}}({{.DomainName}}Entity), nil
+}
+
+// CanHandle returns true if this handler can handle the command type
+func (h *Create{{.DomainName | title}}Handler) CanHandle(commandType string) bool {
+	return commandType == "create_{{.DomainName}}"
+}
+
+// Update{{.DomainName | title}}Handler handles the updating of {{.DomainName}}s
+type Update{{.DomainName | title}}Handler struct {
+	repository      {{.DomainName}}.Repository
+	domainService   {{.DomainName}}.Service
+	eventDispatcher events.EventDispatcher
+}
+
+// NewUpdate{{.DomainName | title}}Handler creates a new Update{{.DomainName | title}}Handler
+func NewUpdate{{.DomainName | title}}Handler(
+	repository {{.DomainName}}.Repository,
+	domainService {{.DomainName}}.Service,
+	eventDispatcher events.EventDispatcher,
+) *Update{{.DomainName | title}}Handler {
+	return &Update{{.DomainName | title}}Handler{
+		repository:      repository,
+		domainService:   domainService,
+		eventDispatcher: eventDispatcher,
+	}
+}
+
+// Handle processes the Update{{.DomainName | title}}Command
+func (h *Update{{.DomainName | title}}Handler) Handle(ctx context.Context, command Command) (interface{}, error) {
+	cmd, ok := command.(Update{{.DomainName | title}}Command)
+	if !ok {
+		return nil, errors.ErrInvalidCommand.WithDetails("expectedType", "Update{{.DomainName | title}}Command")
+	}
+	
+	// Get {{.DomainName}} ID
+	{{.DomainName}}ID, err := cmd.GetID()
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "id")
+	}
+	
+	// Find existing {{.DomainName}}
+	{{.DomainName}}Entity, err := h.repository.FindByID(ctx, {{.DomainName}}ID)
+	if err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "findByID")
+	}
+	if {{.DomainName}}Entity == nil {
+		return nil, errors.ErrEntityNotFound.WithDetails("id", {{.DomainName}}ID.String())
+	}
+	
+	// Prepare updates
+	var newEmail *valueobjects.Email
+	var newName *{{.DomainName}}.Name
+	
+	if cmd.Email != nil {
+		email, err := valueobjects.NewEmail(*cmd.Email)
+		if err != nil {
+			return nil, errors.ErrValidation.WithDetails("field", "email")
+		}
+		newEmail = &email
+	}
+	
+	if cmd.FirstName != nil && cmd.LastName != nil {
+		name, err := {{.DomainName}}.NewName(*cmd.FirstName, *cmd.LastName)
+		if err != nil {
+			return nil, errors.ErrValidation.WithDetails("field", "name")
+		}
+		newName = &name
+	}
+	
+	// Validate business rules
+	if err := h.domainService.ValidateForUpdate({{.DomainName}}Entity, newEmail, newName); err != nil {
+		return nil, err
+	}
+	
+	// Apply changes
+	if newEmail != nil {
+		if err := {{.DomainName}}Entity.ChangeEmail(*newEmail); err != nil {
+			return nil, err
+		}
+	}
+	
+	if newName != nil {
+		if err := {{.DomainName}}Entity.ChangeName(newName.FirstName(), newName.LastName()); err != nil {
+			return nil, err
+		}
+	}
+	
+	// Save {{.DomainName}}
+	if err := h.repository.Save(ctx, {{.DomainName}}Entity); err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "save")
+	}
+	
+	// Dispatch domain events
+	for _, event := range {{.DomainName}}Entity.DomainEvents() {
+		if err := h.eventDispatcher.Dispatch(event); err != nil {
+			// Log error but don't fail the command
+		}
+	}
+	
+	{{.DomainName}}Entity.ClearDomainEvents()
+	
+	return From{{.DomainName | title}}({{.DomainName}}Entity), nil
+}
+
+// CanHandle returns true if this handler can handle the command type
+func (h *Update{{.DomainName | title}}Handler) CanHandle(commandType string) bool {
+	return commandType == "update_{{.DomainName}}"
+}
+
+// Delete{{.DomainName | title}}Handler handles the deletion of {{.DomainName}}s
+type Delete{{.DomainName | title}}Handler struct {
+	repository      {{.DomainName}}.Repository
+	eventDispatcher events.EventDispatcher
+}
+
+// NewDelete{{.DomainName | title}}Handler creates a new Delete{{.DomainName | title}}Handler
+func NewDelete{{.DomainName | title}}Handler(
+	repository {{.DomainName}}.Repository,
+	eventDispatcher events.EventDispatcher,
+) *Delete{{.DomainName | title}}Handler {
+	return &Delete{{.DomainName | title}}Handler{
+		repository:      repository,
+		eventDispatcher: eventDispatcher,
+	}
+}
+
+// Handle processes the Delete{{.DomainName | title}}Command
+func (h *Delete{{.DomainName | title}}Handler) Handle(ctx context.Context, command Command) (interface{}, error) {
+	cmd, ok := command.(Delete{{.DomainName | title}}Command)
+	if !ok {
+		return nil, errors.ErrInvalidCommand.WithDetails("expectedType", "Delete{{.DomainName | title}}Command")
+	}
+	
+	// Get {{.DomainName}} ID
+	{{.DomainName}}ID, err := cmd.GetID()
+	if err != nil {
+		return nil, errors.ErrValidation.WithDetails("field", "id")
+	}
+	
+	// Find existing {{.DomainName}}
+	{{.DomainName}}Entity, err := h.repository.FindByID(ctx, {{.DomainName}}ID)
+	if err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "findByID")
+	}
+	if {{.DomainName}}Entity == nil {
+		return nil, errors.ErrEntityNotFound.WithDetails("id", {{.DomainName}}ID.String())
+	}
+	
+	// Apply business rules for deletion
+	canDelete := {{.DomainName}}.NewCanBeDeletedSpecification()
+	if !canDelete.IsSatisfiedBy({{.DomainName}}Entity) {
+		return nil, canDelete.WhyNotSatisfiedBy({{.DomainName}}Entity)
+	}
+	
+	// Mark as deleted
+	if err := {{.DomainName}}Entity.Delete(); err != nil {
+		return nil, err
+	}
+	
+	// Save {{.DomainName}}
+	if err := h.repository.Save(ctx, {{.DomainName}}Entity); err != nil {
+		return nil, errors.ErrRepository.WithDetails("operation", "save")
+	}
+	
+	// Dispatch domain events
+	for _, event := range {{.DomainName}}Entity.DomainEvents() {
+		if err := h.eventDispatcher.Dispatch(event); err != nil {
+			// Log error but don't fail the command
+		}
+	}
+	
+	{{.DomainName}}Entity.ClearDomainEvents()
+	
+	return nil, nil
+}
+
+// CanHandle returns true if this handler can handle the command type
+func (h *Delete{{.DomainName | title}}Handler) CanHandle(commandType string) bool {
+	return commandType == "delete_{{.DomainName}}"
+}
+
+// CommandBus coordinates command handling
+type CommandBus struct {
+	handlers []CommandHandler
+}
+
+// NewCommandBus creates a new command bus
+func NewCommandBus() *CommandBus {
+	return &CommandBus{
+		handlers: make([]CommandHandler, 0),
+	}
+}
+
+// RegisterHandler registers a command handler
+func (b *CommandBus) RegisterHandler(handler CommandHandler) {
+	b.handlers = append(b.handlers, handler)
+}
+
+// Execute executes a command
+func (b *CommandBus) Execute(ctx context.Context, command Command) (interface{}, error) {
+	for _, handler := range b.handlers {
+		if handler.CanHandle(command.CommandType()) {
+			return handler.Handle(ctx, command)
+		}
+	}
+	
+	return nil, errors.ErrCommandHandling.WithDetails("commandType", command.CommandType())
+}
+{{- end}}
