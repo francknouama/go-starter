@@ -139,6 +139,14 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 		return g.handleMissingTemplate(config, result)
 	}
 
+	// Skip file system operations in dry run mode
+	if options.DryRun {
+		// In dry run mode, just validate the template and return success
+		result.Success = true
+		result.Duration = time.Since(startTime)
+		return result, nil
+	}
+
 	// Create output directory
 	if err := os.MkdirAll(options.OutputPath, 0755); err != nil {
 		result.Error = types.NewFileSystemError("failed to create output directory", err)
@@ -392,10 +400,16 @@ func (g *Generator) processTemplatePath(path string, config types.ProjectConfig)
 
 // createTemplateContext creates a template context with all variables
 func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types.Template) map[string]any {
+	// Resolve Go version (handle empty, "auto" cases)
+	goVersion := config.GoVersion
+	if goVersion == "" || goVersion == "auto" {
+		goVersion = "1.21" // Default to latest stable supported version
+	}
+	
 	context := map[string]any{
 		"ProjectName":  config.Name,
 		"ModulePath":   config.Module,
-		"GoVersion":    config.GoVersion,
+		"GoVersion":    goVersion,
 		"Framework":    config.Framework,
 		"Architecture": config.Architecture,
 		"Author":       config.Author,

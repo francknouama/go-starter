@@ -185,6 +185,11 @@ func (l *TemplateLoader) FileExists(templateDir, filePath string) bool {
 // processIncludes processes include directives in template configuration
 func (l *TemplateLoader) processIncludes(template *types.Template, templateDir string) error {
 	includes := template.Include
+	
+	// If no includes specified, nothing to process
+	if includes == nil {
+		return nil
+	}
 
 	// Load variables if specified
 	if includes.Variables != "" {

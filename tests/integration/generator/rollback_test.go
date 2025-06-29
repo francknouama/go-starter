@@ -94,7 +94,7 @@ func TestGenerator_Rollback_FileTracking(t *testing.T) {
 	require.NoError(t, err)
 	initialCount := len(initialEntries)
 
-	result, err := gen.Generate(config, options)
+	result, _ := gen.Generate(config, options)
 
 	// Check final state
 	finalEntries, err := os.ReadDir(tmpDir)
