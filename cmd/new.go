@@ -16,17 +16,20 @@ import (
 )
 
 var (
-	projectName   string
-	projectModule string
-	projectType   string
-	goVersion     string
-	outputDir     string
-	framework     string
-	logger        string
-	advanced      bool
-	dryRun        bool
-	noGit         bool
-	randomName    bool
+	projectName    string
+	projectModule  string
+	projectType    string
+	goVersion      string
+	outputDir      string
+	framework      string
+	logger         string
+	databaseDriver string
+	databaseORM    string
+	authType       string
+	advanced       bool
+	dryRun         bool
+	noGit          bool
+	randomName     bool
 )
 
 // newCmd represents the new command
@@ -62,6 +65,9 @@ func init() {
 	newCmd.Flags().StringVar(&framework, "framework", "", "Framework to use (gin, echo, cobra, etc.)")
 	newCmd.Flags().StringVar(&logger, "logger", "", "Logger to use (slog, zap, logrus, zerolog)")
 	newCmd.Flags().StringVar(&outputDir, "output", ".", "Output directory")
+	newCmd.Flags().StringVar(&databaseDriver, "database-driver", "", "Database driver (postgres, mysql, sqlite)")
+	newCmd.Flags().StringVar(&databaseORM, "database-orm", "", "Database ORM/query builder (gorm, sqlx)")
+	newCmd.Flags().StringVar(&authType, "auth-type", "", "Authentication type (jwt, oauth2, session)")
 
 	// Generation options
 	newCmd.Flags().BoolVar(&advanced, "advanced", false, "Enable advanced configuration mode")
@@ -88,13 +94,22 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	// Get project configuration through interactive prompts or flags
 		config, err := prompter.GetProjectConfig(types.ProjectConfig{
-		Name:      projectName,
-		Module:    projectModule,
-		Type:      projectType,
-		GoVersion: goVersion,
-		Framework: framework,
-		Logger:    logger,
-	}, advanced)
+			Name:      projectName,
+			Module:    projectModule,
+			Type:      projectType,
+			GoVersion: goVersion,
+			Framework: framework,
+			Logger:    logger,
+			Features: &types.Features{
+				Database: types.DatabaseConfig{
+					Driver: databaseDriver,
+					ORM:    databaseORM,
+				},
+				Authentication: types.AuthConfig{
+					Type: authType,
+				},
+			},
+		}, advanced)
 	if err != nil {
 		printErrorMessage("Failed to get project configuration", err)
 		return fmt.Errorf("failed to get project configuration: %w", err)
