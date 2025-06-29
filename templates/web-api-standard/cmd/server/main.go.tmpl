@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net/http"
+{{if or (eq .Framework "echo") (eq .Framework "stdlib")}}	"net/http"{{end}}
 	"os"
 	"os/signal"
 	"syscall"
@@ -330,8 +330,12 @@ func main() {
 			"address": addr,
 			"environment": cfg.Environment,
 		})
-{{if eq .Framework "gin"}}		if err := router.Run(addr); err != nil {{{end}}{{if eq .Framework "echo"}}		if err := router.Start(addr); err != nil {{{end}}{{if eq .Framework "fiber"}}		if err := router.Listen(addr); err != nil {{{end}}{{if eq .Framework "chi"}}		if err := http.ListenAndServe(addr, router); err != nil {{{end}}{{if eq .Framework "stdlib"}}		if err := http.ListenAndServe(addr, mux); err != nil {{{end}}
-			appLogger.ErrorWith("Failed to start server", internalLogger.Fields{"error": err})
+{{if eq .Framework "gin"}}		if err := router.Run(addr); err != nil {
+{{end}}{{if eq .Framework "echo"}}		if err := router.Start(addr); err != nil {
+{{end}}{{if eq .Framework "fiber"}}		if err := router.Listen(addr); err != nil {
+{{end}}{{if eq .Framework "chi"}}		if err := http.ListenAndServe(addr, router); err != nil {
+{{end}}{{if eq .Framework "stdlib"}}		if err := http.ListenAndServe(addr, mux); err != nil {
+{{end}}			appLogger.ErrorWith("Failed to start server", internalLogger.Fields{"error": err})
 			os.Exit(1)
 		}
 	}()
@@ -353,7 +357,8 @@ func main() {
 	_ = ctx // placeholder{{end}}{{else}}	// Fiber shutdown
 	if err := router.Shutdown(); err != nil {
 		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
-	}{{end}}
+	}
+{{end}}
 
 	appLogger.Info("Server exited")
 }
