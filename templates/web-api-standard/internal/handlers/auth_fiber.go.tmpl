@@ -1,0 +1,117 @@
+{{- if ne .AuthType ""}}
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// AuthHandler handles authentication-related HTTP requests
+type AuthHandler struct {
+	authService services.AuthService
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler(authService services.AuthService) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+	}
+}
+
+// Login handles POST /api/v1/auth/login
+func (h *AuthHandler) Login(c *fiber.Ctx) error {
+	var req models.LoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+	}
+
+	token, user, err := h.authService.Login(req.Email, req.Password)
+	if err != nil {
+		if err.Error() == "invalid credentials" {
+			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid credentials",
+				"code":  "INVALID_CREDENTIALS",
+			})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Authentication failed",
+			"code":  "AUTH_ERROR",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"token": token,
+		"user":  user,
+	})
+}
+
+// Register handles POST /api/v1/auth/register
+func (h *AuthHandler) Register(c *fiber.Ctx) error {
+	var req models.RegisterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+	}
+
+	user, err := h.authService.Register(req)
+	if err != nil {
+		if err.Error() == "user already exists" {
+			return c.Status(http.StatusConflict).JSON(fiber.Map{
+				"error": "User already exists",
+				"code":  "USER_EXISTS",
+			})
+		}
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Registration failed",
+			"code":  "REGISTRATION_ERROR",
+		})
+	}
+
+	return c.Status(http.StatusCreated).JSON(fiber.Map{
+		"data": user,
+	})
+}
+
+// Refresh handles POST /api/v1/auth/refresh  
+func (h *AuthHandler) Refresh(c *fiber.Ctx) error {
+	// Get the current user from middleware
+	userID := c.Locals("userID")
+	if userID == nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Invalid token",
+			"code":  "INVALID_TOKEN",
+		})
+	}
+
+	token, err := h.authService.RefreshToken(userID.(uint))
+	if err != nil {
+		return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+			"error": "Failed to refresh token",
+			"code":  "TOKEN_REFRESH_ERROR",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"token": token,
+	})
+}
+
+// Logout handles POST /api/v1/auth/logout
+func (h *AuthHandler) Logout(c *fiber.Ctx) error {
+	// In a stateless JWT setup, logout is typically handled client-side
+	// by removing the token. However, you might want to implement token
+	// blacklisting for additional security.
+	
+	return c.JSON(fiber.Map{
+		"message": "Logged out successfully",
+	})
+}
+{{- end}}

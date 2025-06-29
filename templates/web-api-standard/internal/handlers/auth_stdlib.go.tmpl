@@ -1,0 +1,144 @@
+{{- if ne .AuthType ""}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// AuthHandler handles authentication-related HTTP requests
+type AuthHandler struct {
+	authService services.AuthService
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler(authService services.AuthService) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+	}
+}
+
+// Login handles POST /api/v1/auth/login
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var req models.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+		return
+	}
+
+	token, user, err := h.authService.Login(req.Email, req.Password)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "invalid credentials" {
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "Invalid credentials",
+				"code":  "INVALID_CREDENTIALS",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Authentication failed",
+			"code":  "AUTH_ERROR",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"token": token,
+		"user":  user,
+	})
+}
+
+// Register handles POST /api/v1/auth/register
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	var req models.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+		return
+	}
+
+	user, err := h.authService.Register(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "user already exists" {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "User already exists",
+				"code":  "USER_EXISTS",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Registration failed",
+			"code":  "REGISTRATION_ERROR",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": user,
+	})
+}
+
+// Refresh handles POST /api/v1/auth/refresh  
+func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
+	// Get the current user from context (set by auth middleware)
+	userID := r.Context().Value("userID")
+	if userID == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid token",
+			"code":  "INVALID_TOKEN",
+		})
+		return
+	}
+
+	token, err := h.authService.RefreshToken(userID.(uint))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to refresh token",
+			"code":  "TOKEN_REFRESH_ERROR",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"token": token,
+	})
+}
+
+// Logout handles POST /api/v1/auth/logout
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	// In a stateless JWT setup, logout is typically handled client-side
+	// by removing the token. However, you might want to implement token
+	// blacklisting for additional security.
+	
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message": "Logged out successfully",
+	})
+}
+{{- end}}

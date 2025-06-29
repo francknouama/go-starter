@@ -1,0 +1,206 @@
+{{- if ne .DatabaseDriver ""}}
+package handlers
+
+import (
+	"net/http"
+	"strconv"
+
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// UsersHandler handles user-related HTTP requests
+type UsersHandler struct {
+	userService services.UserService
+}
+
+// NewUserHandler creates a new users handler
+func NewUserHandler(userService services.UserService) *UsersHandler {
+	return &UsersHandler{
+		userService: userService,
+	}
+}
+
+// NewUsersHandler creates a new users handler (alias for compatibility)
+func NewUsersHandler(userService services.UserService) *UsersHandler {
+	return NewUserHandler(userService)
+}
+
+// GetUsers handles GET /api/v1/users
+func (h *UsersHandler) GetUsers(c *gin.Context) {
+	// Parse pagination parameters
+	page := 1
+	if p := c.Query("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	limit := 10
+	if l := c.Query("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	users, total, err := h.userService.GetUsers(page, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to retrieve users",
+			"code":  "USERS_FETCH_ERROR",
+		})
+		return
+	}
+
+	totalPages := (total + limit - 1) / limit
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": users,
+		"pagination": gin.H{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+			"pages": totalPages,
+		},
+	})
+}
+
+// GetUser handles GET /api/v1/users/:id
+func (h *UsersHandler) GetUser(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	user, err := h.userService.GetUserByID(uint(id))
+	if err != nil {
+		if err.Error() == "user not found" {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to retrieve user",
+			"code":  "USER_FETCH_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": user,
+	})
+}
+
+// CreateUser handles POST /api/v1/users
+func (h *UsersHandler) CreateUser(c *gin.Context) {
+	var req models.CreateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+		return
+	}
+
+	user, err := h.userService.CreateUser(req)
+	if err != nil {
+		if err.Error() == "user already exists" {
+			c.JSON(http.StatusConflict, gin.H{
+				"error": "User already exists",
+				"code":  "USER_EXISTS",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to create user",
+			"code":  "USER_CREATE_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"data": user,
+	})
+}
+
+// UpdateUser handles PUT /api/v1/users/:id
+func (h *UsersHandler) UpdateUser(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	var req models.UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+		return
+	}
+
+	user, err := h.userService.UpdateUser(uint(id), req)
+	if err != nil {
+		if err.Error() == "user not found" {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to update user",
+			"code":  "USER_UPDATE_ERROR",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": user,
+	})
+}
+
+// DeleteUser handles DELETE /api/v1/users/:id
+func (h *UsersHandler) DeleteUser(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	err = h.userService.DeleteUser(uint(id))
+	if err != nil {
+		if err.Error() == "user not found" {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "Failed to delete user",
+			"code":  "USER_DELETE_ERROR",
+		})
+		return
+	}
+
+	c.Status(http.StatusNoContent)
+}
+{{- end}}

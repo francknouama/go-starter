@@ -1,0 +1,117 @@
+{{- if ne .AuthType ""}}
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// AuthHandler handles authentication-related HTTP requests
+type AuthHandler struct {
+	authService services.AuthService
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler(authService services.AuthService) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+	}
+}
+
+// Login handles POST /api/v1/auth/login
+func (h *AuthHandler) Login(c echo.Context) error {
+	var req models.LoginRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+	}
+
+	token, user, err := h.authService.Login(req.Email, req.Password)
+	if err != nil {
+		if err.Error() == "invalid credentials" {
+			return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+				"error": "Invalid credentials",
+				"code":  "INVALID_CREDENTIALS",
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"error": "Authentication failed",
+			"code":  "AUTH_ERROR",
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"token": token,
+		"user":  user,
+	})
+}
+
+// Register handles POST /api/v1/auth/register
+func (h *AuthHandler) Register(c echo.Context) error {
+	var req models.RegisterRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]interface{}{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+	}
+
+	user, err := h.authService.Register(req)
+	if err != nil {
+		if err.Error() == "user already exists" {
+			return c.JSON(http.StatusConflict, map[string]interface{}{
+				"error": "User already exists",
+				"code":  "USER_EXISTS",
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+			"error": "Registration failed",
+			"code":  "REGISTRATION_ERROR",
+		})
+	}
+
+	return c.JSON(http.StatusCreated, map[string]interface{}{
+		"data": user,
+	})
+}
+
+// Refresh handles POST /api/v1/auth/refresh  
+func (h *AuthHandler) Refresh(c echo.Context) error {
+	// Get the current user from middleware
+	userID := c.Get("userID")
+	if userID == nil {
+		return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+			"error": "Invalid token",
+			"code":  "INVALID_TOKEN",
+		})
+	}
+
+	token, err := h.authService.RefreshToken(userID.(uint))
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+			"error": "Failed to refresh token",
+			"code":  "TOKEN_REFRESH_ERROR",
+		})
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"token": token,
+	})
+}
+
+// Logout handles POST /api/v1/auth/logout
+func (h *AuthHandler) Logout(c echo.Context) error {
+	// In a stateless JWT setup, logout is typically handled client-side
+	// by removing the token. However, you might want to implement token
+	// blacklisting for additional security.
+	
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Logged out successfully",
+	})
+}
+{{- end}}

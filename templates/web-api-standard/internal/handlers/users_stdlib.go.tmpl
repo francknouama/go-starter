@@ -1,0 +1,272 @@
+{{- if ne .DatabaseDriver ""}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// UsersHandler handles user-related HTTP requests
+type UsersHandler struct {
+	userService services.UserService
+}
+
+// NewUserHandler creates a new users handler
+func NewUserHandler(userService services.UserService) *UsersHandler {
+	return &UsersHandler{
+		userService: userService,
+	}
+}
+
+// NewUsersHandler creates a new users handler (alias for compatibility)
+func NewUsersHandler(userService services.UserService) *UsersHandler {
+	return NewUserHandler(userService)
+}
+
+// GetUsers handles GET /api/v1/users
+func (h *UsersHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
+	// Parse pagination parameters
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	users, total, err := h.userService.GetUsers(page, limit)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to retrieve users",
+			"code":  "USERS_FETCH_ERROR",
+		})
+		return
+	}
+
+	totalPages := (total + limit - 1) / limit
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": users,
+		"pagination": map[string]interface{}{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+			"pages": totalPages,
+		},
+	})
+}
+
+// GetUser handles GET /api/v1/users/{id}
+func (h *UsersHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	// Extract ID from URL path (e.g., /api/v1/users/123)
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	idStr := pathParts[len(pathParts)-1]
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	user, err := h.userService.GetUserByID(uint(id))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "user not found" {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to retrieve user",
+			"code":  "USER_FETCH_ERROR",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": user,
+	})
+}
+
+// CreateUser handles POST /api/v1/users
+func (h *UsersHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	var req models.CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+		return
+	}
+
+	user, err := h.userService.CreateUser(req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "user already exists" {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "User already exists",
+				"code":  "USER_EXISTS",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to create user",
+			"code":  "USER_CREATE_ERROR",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": user,
+	})
+}
+
+// UpdateUser handles PUT /api/v1/users/{id}
+func (h *UsersHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	// Extract ID from URL path
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	idStr := pathParts[len(pathParts)-1]
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	var req models.UpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid request data",
+			"code":  "INVALID_REQUEST_DATA",
+		})
+		return
+	}
+
+	user, err := h.userService.UpdateUser(uint(id), req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "user not found" {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to update user",
+			"code":  "USER_UPDATE_ERROR",
+		})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"data": user,
+	})
+}
+
+// DeleteUser handles DELETE /api/v1/users/{id}
+func (h *UsersHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	// Extract ID from URL path
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 3 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	idStr := pathParts[len(pathParts)-1]
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Invalid user ID",
+			"code":  "INVALID_USER_ID",
+		})
+		return
+	}
+
+	err = h.userService.DeleteUser(uint(id))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		if err.Error() == "user not found" {
+			w.WriteHeader(http.StatusNotFound)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"error": "User not found",
+				"code":  "USER_NOT_FOUND",
+			})
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "Failed to delete user",
+			"code":  "USER_DELETE_ERROR",
+		})
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+{{- end}}

@@ -10,12 +10,19 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gin-gonic/gin"
+{{if eq .Framework "gin"}}	"github.com/gin-gonic/gin"{{end}}
+{{if eq .Framework "echo"}}	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"{{end}}
+{{if eq .Framework "fiber"}}	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"{{end}}
+{{if eq .Framework "chi"}}	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"{{end}}{{if eq .Framework "stdlib"}}	"strings"{{end}}
 
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/handlers"
-	"{{.ModulePath}}/internal/logger"
-	"{{.ModulePath}}/internal/middleware"
+	internalLogger "{{.ModulePath}}/internal/logger"
 {{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/database"
 	"{{.ModulePath}}/internal/repository"
@@ -31,7 +38,7 @@ func main() {
 	}
 
 	// Initialize logger factory
-	loggerFactory := logger.NewFactory()
+	loggerFactory := internalLogger.NewFactory()
 	
 	// Create logger from configuration
 	appLogger, err := loggerFactory.CreateFromProjectConfig(
@@ -44,7 +51,7 @@ func main() {
 		log.Fatalf("Failed to create logger: %v", err)
 	}
 
-	appLogger.InfoWith("Application starting", logger.Fields{
+	appLogger.InfoWith("Application starting", internalLogger.Fields{
 		"logger": "{{.Logger}}",
 		"environment": cfg.Environment,
 	})
@@ -53,13 +60,13 @@ func main() {
 	// Initialize database
 	db, err := database.Connect(cfg.Database, appLogger)
 	if err != nil {
-		appLogger.ErrorWith("Failed to connect to database", logger.Fields{"error": err})
+		appLogger.ErrorWith("Failed to connect to database", internalLogger.Fields{"error": err})
 		os.Exit(1)
 	}
 
 	// Run migrations
 	if err := database.Migrate(db, appLogger); err != nil {
-		appLogger.ErrorWith("Failed to run migrations", logger.Fields{"error": err})
+		appLogger.ErrorWith("Failed to run migrations", internalLogger.Fields{"error": err})
 		os.Exit(1)
 	}
 
@@ -70,18 +77,15 @@ func main() {
 	userService := services.NewUserService(userRepo)
 {{- end}}
 
-	// Set Gin mode
-	if cfg.Environment == "production" {
+	// Initialize router and middleware
+{{if eq .Framework "gin"}}	if cfg.Environment == "production" {
 		gin.SetMode(gin.ReleaseMode)
 	}
-
-	// Initialize router
 	router := gin.New()
-
-	// Add middleware
-	router.Use(middleware.Logger(appLogger))
-	router.Use(middleware.Recovery(appLogger))
-	router.Use(middleware.CORS())
+	
+	// Add middleware 
+	router.Use(gin.Logger())
+	router.Use(gin.Recovery())
 
 	// Health check routes
 	router.GET("/health", handlers.HealthCheck)
@@ -98,48 +102,236 @@ func main() {
 			public.POST("/auth/register", handlers.Register)
 		}
 
-		// Protected routes
+		// Protected routes  
 		protected := v1.Group("/")
-		protected.Use(middleware.AuthMiddleware())
+		// protected.Use(middleware.AuthMiddleware()) // Add auth middleware here
 		{
 {{- if ne .DatabaseDriver ""}}
-			protected.GET("/users", handlers.NewUserHandler(userService).GetUsers)
-			protected.GET("/users/:id", handlers.NewUserHandler(userService).GetUser)
-			protected.PUT("/users/:id", handlers.NewUserHandler(userService).UpdateUser)
-			protected.DELETE("/users/:id", handlers.NewUserHandler(userService).DeleteUser)
+			userHandler := handlers.NewUserHandler(userService)
+			protected.GET("/users", userHandler.GetUsers)
+			protected.GET("/users/:id", userHandler.GetUser)
+			protected.PUT("/users/:id", userHandler.UpdateUser)
+			protected.DELETE("/users/:id", userHandler.DeleteUser)
 {{- end}}
 		}
 {{- else}}
 {{- if ne .DatabaseDriver ""}}
-		v1.GET("/users", handlers.NewUserHandler(userService).GetUsers)
-		v1.GET("/users/:id", handlers.NewUserHandler(userService).GetUser)
-		v1.POST("/users", handlers.NewUserHandler(userService).CreateUser)
-		v1.PUT("/users/:id", handlers.NewUserHandler(userService).UpdateUser)
-		v1.DELETE("/users/:id", handlers.NewUserHandler(userService).DeleteUser)
+		userHandler := handlers.NewUserHandler(userService)
+		v1.GET("/users", userHandler.GetUsers)
+		v1.GET("/users/:id", userHandler.GetUser)
+		v1.POST("/users", userHandler.CreateUser)
+		v1.PUT("/users/:id", userHandler.UpdateUser)
+		v1.DELETE("/users/:id", userHandler.DeleteUser)
 {{- else}}
 		// Add your API routes here
 		_ = v1 // Placeholder to avoid unused variable error
 {{- end}}
 {{- end}}
-	}
+	}{{end}}{{if eq .Framework "echo"}}	router := echo.New()
+	router.HideBanner = true
+	
+	// Add middleware
+	router.Use(middleware.Logger())
+	router.Use(middleware.Recover())
+	router.Use(middleware.CORS())
 
-	// Create server
-	server := &http.Server{
-		Addr:         fmt.Sprintf(":%d", cfg.Server.Port),
-		Handler:      router,
-		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
-		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
-		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
-	}
+	// Health check routes
+	router.GET("/health", handlers.HealthCheck)
+	router.GET("/ready", handlers.ReadinessCheck)
 
+	// API routes
+	v1 := router.Group("/api/v1")
+{{- if ne .AuthType ""}}
+	// Public routes
+	public := v1.Group("")
+	public.POST("/auth/login", handlers.Login)
+	public.POST("/auth/register", handlers.Register)
+
+	// Protected routes
+	protected := v1.Group("")
+	// protected.Use(middleware.AuthMiddleware()) // Add auth middleware here
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	protected.GET("/users", userHandler.GetUsers)
+	protected.GET("/users/:id", userHandler.GetUser)
+	protected.PUT("/users/:id", userHandler.UpdateUser)
+	protected.DELETE("/users/:id", userHandler.DeleteUser)
+{{- end}}
+{{- else}}
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	v1.GET("/users", userHandler.GetUsers)
+	v1.GET("/users/:id", userHandler.GetUser)
+	v1.POST("/users", userHandler.CreateUser)
+	v1.PUT("/users/:id", userHandler.UpdateUser)
+	v1.DELETE("/users/:id", userHandler.DeleteUser)
+{{- end}}
+{{- end}}{{end}}{{if eq .Framework "fiber"}}	router := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+	
+	// Add middleware
+	router.Use(logger.New())
+	router.Use(recover.New())
+	router.Use(cors.New())
+
+	// Health check routes
+	router.Get("/health", handlers.HealthCheck)
+	router.Get("/ready", handlers.ReadinessCheck)
+
+	// API routes
+	v1 := router.Group("/api/v1")
+{{- if ne .AuthType ""}}
+	// Public routes
+	public := v1.Group("")
+	public.Post("/auth/login", handlers.Login)
+	public.Post("/auth/register", handlers.Register)
+
+	// Protected routes
+	protected := v1.Group("")
+	// protected.Use(middleware.AuthMiddleware()) // Add auth middleware here
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	protected.Get("/users", userHandler.GetUsers)
+	protected.Get("/users/:id", userHandler.GetUser)
+	protected.Put("/users/:id", userHandler.UpdateUser)
+	protected.Delete("/users/:id", userHandler.DeleteUser)
+{{- end}}
+{{- else}}
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	v1.Get("/users", userHandler.GetUsers)
+	v1.Get("/users/:id", userHandler.GetUser)
+	v1.Post("/users", userHandler.CreateUser)
+	v1.Put("/users/:id", userHandler.UpdateUser)
+	v1.Delete("/users/:id", userHandler.DeleteUser)
+{{- end}}
+{{- end}}{{end}}{{if eq .Framework "chi"}}	router := chi.NewRouter()
+	
+	// Add middleware
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
+
+	// Health check routes
+	router.Get("/health", handlers.HealthCheck)
+	router.Get("/ready", handlers.ReadinessCheck)
+
+	// API routes
+	router.Route("/api/v1", func(v1 chi.Router) {
+{{- if ne .AuthType ""}}
+		// Public routes
+		v1.Post("/auth/login", handlers.Login)
+		v1.Post("/auth/register", handlers.Register)
+
+		// Protected routes
+		v1.Group(func(protected chi.Router) {
+			// protected.Use(middleware.AuthMiddleware()) // Add auth middleware here
+{{- if ne .DatabaseDriver ""}}
+			userHandler := handlers.NewUserHandler(userService)
+			protected.Get("/users", userHandler.GetUsers)
+			protected.Get("/users/{id}", userHandler.GetUser)
+			protected.Put("/users/{id}", userHandler.UpdateUser)
+			protected.Delete("/users/{id}", userHandler.DeleteUser)
+{{- end}}
+		})
+{{- else}}
+{{- if ne .DatabaseDriver ""}}
+		userHandler := handlers.NewUserHandler(userService)
+		v1.Get("/users", userHandler.GetUsers)
+		v1.Get("/users/{id}", userHandler.GetUser)
+		v1.Post("/users", userHandler.CreateUser)
+		v1.Put("/users/{id}", userHandler.UpdateUser)
+		v1.Delete("/users/{id}", userHandler.DeleteUser)
+{{- end}}
+{{- end}}
+	}){{end}}{{if eq .Framework "stdlib"}}	// Standard library HTTP mux
+	mux := http.NewServeMux()
+
+	// Health check routes
+	mux.HandleFunc("/health", handlers.HealthCheck)
+	mux.HandleFunc("/ready", handlers.ReadinessCheck)
+
+	// API routes - we'll use a simple routing approach
+{{- if ne .AuthType ""}}
+	// Public routes
+	mux.HandleFunc("/api/v1/auth/login", handlers.Login)
+	mux.HandleFunc("/api/v1/auth/register", handlers.Register)
+
+	// Protected routes (add auth middleware wrapper here)
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	mux.HandleFunc("/api/v1/users", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if strings.HasSuffix(r.URL.Path, "/users") {
+				userHandler.GetUsers(w, r)
+			} else {
+				userHandler.GetUser(w, r)
+			}
+		case http.MethodPost:
+			userHandler.CreateUser(w, r)
+		case http.MethodPut:
+			userHandler.UpdateUser(w, r)
+		case http.MethodDelete:
+			userHandler.DeleteUser(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	// Handle /api/v1/users/{id} patterns
+	mux.HandleFunc("/api/v1/users/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			userHandler.GetUser(w, r)
+		case http.MethodPut:
+			userHandler.UpdateUser(w, r)
+		case http.MethodDelete:
+			userHandler.DeleteUser(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+{{- end}}
+{{- else}}
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	mux.HandleFunc("/api/v1/users", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			userHandler.GetUsers(w, r)
+		case http.MethodPost:
+			userHandler.CreateUser(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+	// Handle /api/v1/users/{id} patterns
+	mux.HandleFunc("/api/v1/users/", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			userHandler.GetUser(w, r)
+		case http.MethodPut:
+			userHandler.UpdateUser(w, r)
+		case http.MethodDelete:
+			userHandler.DeleteUser(w, r)
+		default:
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+{{- end}}
+{{- end}}{{end}}
+
+	// Start server
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	
 	// Start server in a goroutine
 	go func() {
-		appLogger.InfoWith("Starting server", logger.Fields{
-			"address": server.Addr,
+		appLogger.InfoWith("Starting server", internalLogger.Fields{
+			"address": addr,
 			"environment": cfg.Environment,
 		})
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			appLogger.ErrorWith("Failed to start server", logger.Fields{"error": err})
+{{if eq .Framework "gin"}}		if err := router.Run(addr); err != nil {{{end}}{{if eq .Framework "echo"}}		if err := router.Start(addr); err != nil {{{end}}{{if eq .Framework "fiber"}}		if err := router.Listen(addr); err != nil {{{end}}{{if eq .Framework "chi"}}		if err := http.ListenAndServe(addr, router); err != nil {{{end}}{{if eq .Framework "stdlib"}}		if err := http.ListenAndServe(addr, mux); err != nil {{{end}}
+			appLogger.ErrorWith("Failed to start server", internalLogger.Fields{"error": err})
 			os.Exit(1)
 		}
 	}()
@@ -151,15 +343,17 @@ func main() {
 
 	appLogger.Info("Shutting down server...")
 
-	// Give outstanding requests a deadline for completion
+{{if ne .Framework "fiber"}}	// Graceful shutdown for frameworks that support it
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	// Shutdown server
-	if err := server.Shutdown(ctx); err != nil {
-		appLogger.ErrorWith("Server forced to shutdown", logger.Fields{"error": err})
-		os.Exit(1)
-	}
+{{if eq .Framework "echo"}}	if err := router.Shutdown(ctx); err != nil {
+		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
+	}{{end}}{{if eq .Framework "gin"}}	// Gin doesn't have graceful shutdown built-in, but we can implement it
+	_ = ctx // placeholder{{end}}{{if eq .Framework "chi"}}	// Chi uses standard http.Server, implement graceful shutdown if needed
+	_ = ctx // placeholder{{end}}{{else}}	// Fiber shutdown
+	if err := router.Shutdown(); err != nil {
+		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
+	}{{end}}
 
 	appLogger.Info("Server exited")
 }

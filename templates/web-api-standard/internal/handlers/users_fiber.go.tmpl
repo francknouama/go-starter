@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gofiber/fiber/v2"
 	"{{.ModulePath}}/internal/models"
 	"{{.ModulePath}}/internal/services"
 )
@@ -28,7 +28,7 @@ func NewUsersHandler(userService services.UserService) *UsersHandler {
 }
 
 // GetUsers handles GET /api/v1/users
-func (h *UsersHandler) GetUsers(c *gin.Context) {
+func (h *UsersHandler) GetUsers(c *fiber.Ctx) error {
 	// Parse pagination parameters
 	page := 1
 	if p := c.Query("page"); p != "" {
@@ -46,18 +46,17 @@ func (h *UsersHandler) GetUsers(c *gin.Context) {
 
 	users, total, err := h.userService.GetUsers(page, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to retrieve users",
 			"code":  "USERS_FETCH_ERROR",
 		})
-		return
 	}
 
 	totalPages := (total + limit - 1) / limit
 
-	c.JSON(http.StatusOK, gin.H{
+	return c.JSON(fiber.Map{
 		"data": users,
-		"pagination": gin.H{
+		"pagination": fiber.Map{
 			"page":  page,
 			"limit": limit,
 			"total": total,
@@ -67,141 +66,127 @@ func (h *UsersHandler) GetUsers(c *gin.Context) {
 }
 
 // GetUser handles GET /api/v1/users/:id
-func (h *UsersHandler) GetUser(c *gin.Context) {
-	idStr := c.Param("id")
+func (h *UsersHandler) GetUser(c *fiber.Ctx) error {
+	idStr := c.Params("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid user ID",
 			"code":  "INVALID_USER_ID",
 		})
-		return
 	}
 
 	user, err := h.userService.GetUserByID(uint(id))
 	if err != nil {
-		// Check for user not found error - we need to compare with the actual error message
 		if err.Error() == "user not found" {
-			c.JSON(http.StatusNotFound, gin.H{
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{
 				"error": "User not found",
 				"code":  "USER_NOT_FOUND",
 			})
-			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to retrieve user",
 			"code":  "USER_FETCH_ERROR",
 		})
-		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	return c.JSON(fiber.Map{
 		"data": user,
 	})
 }
 
 // CreateUser handles POST /api/v1/users
-func (h *UsersHandler) CreateUser(c *gin.Context) {
+func (h *UsersHandler) CreateUser(c *fiber.Ctx) error {
 	var req models.CreateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid request data",
 			"code":  "INVALID_REQUEST_DATA",
 		})
-		return
 	}
 
 	user, err := h.userService.CreateUser(req)
 	if err != nil {
 		if err.Error() == "user already exists" {
-			c.JSON(http.StatusConflict, gin.H{
+			return c.Status(http.StatusConflict).JSON(fiber.Map{
 				"error": "User already exists",
 				"code":  "USER_EXISTS",
 			})
-			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to create user",
 			"code":  "USER_CREATE_ERROR",
 		})
-		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{
+	return c.Status(http.StatusCreated).JSON(fiber.Map{
 		"data": user,
 	})
 }
 
 // UpdateUser handles PUT /api/v1/users/:id
-func (h *UsersHandler) UpdateUser(c *gin.Context) {
-	idStr := c.Param("id")
+func (h *UsersHandler) UpdateUser(c *fiber.Ctx) error {
+	idStr := c.Params("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid user ID",
 			"code":  "INVALID_USER_ID",
 		})
-		return
 	}
 
 	var req models.UpdateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid request data",
 			"code":  "INVALID_REQUEST_DATA",
 		})
-		return
 	}
 
 	user, err := h.userService.UpdateUser(uint(id), req)
 	if err != nil {
 		if err.Error() == "user not found" {
-			c.JSON(http.StatusNotFound, gin.H{
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{
 				"error": "User not found",
 				"code":  "USER_NOT_FOUND",
 			})
-			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to update user",
 			"code":  "USER_UPDATE_ERROR",
 		})
-		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	return c.JSON(fiber.Map{
 		"data": user,
 	})
 }
 
 // DeleteUser handles DELETE /api/v1/users/:id
-func (h *UsersHandler) DeleteUser(c *gin.Context) {
-	idStr := c.Param("id")
+func (h *UsersHandler) DeleteUser(c *fiber.Ctx) error {
+	idStr := c.Params("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
 			"error": "Invalid user ID",
 			"code":  "INVALID_USER_ID",
 		})
-		return
 	}
 
 	err = h.userService.DeleteUser(uint(id))
 	if err != nil {
 		if err.Error() == "user not found" {
-			c.JSON(http.StatusNotFound, gin.H{
+			return c.Status(http.StatusNotFound).JSON(fiber.Map{
 				"error": "User not found",
 				"code":  "USER_NOT_FOUND",
 			})
-			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
+		return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Failed to delete user",
 			"code":  "USER_DELETE_ERROR",
 		})
-		return
 	}
 
-	c.Status(http.StatusNoContent)
+	return c.SendStatus(http.StatusNoContent)
 }
 {{- end}}
