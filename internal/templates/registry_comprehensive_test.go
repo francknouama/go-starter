@@ -101,7 +101,7 @@ files:
 		_, err := registry.Get("nonexistent")
 
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "template not found: nonexistent")
+		assert.Contains(t, err.Error(), "template 'nonexistent' not found")
 	})
 
 	t.Run("List_MultipleTemplates", func(t *testing.T) {
@@ -216,7 +216,7 @@ files:
 		err := registry.Remove("nonexistent")
 
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "template not found: nonexistent")
+		assert.Contains(t, err.Error(), "template 'nonexistent' not found")
 	})
 
 	t.Run("GetTemplateTypes_MultipleTypes", func(t *testing.T) {
@@ -327,8 +327,8 @@ func TestRegistryConcurrency(t *testing.T) {
 					Name: "Test Template 1",
 					Type: "test",
 				}
-				registry.Register(template)
-				registry.Remove("test-template-1")
+				_ = registry.Register(template)
+				_ = registry.Remove("test-template-1")
 			}
 			done <- true
 		}()
@@ -340,8 +340,8 @@ func TestRegistryConcurrency(t *testing.T) {
 					Name: "Test Template 2",
 					Type: "test",
 				}
-				registry.Register(template)
-				registry.Remove("test-template-2")
+				_ = registry.Register(template)
+				_ = registry.Remove("test-template-2")
 			}
 			done <- true
 		}()

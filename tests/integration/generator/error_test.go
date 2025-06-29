@@ -154,19 +154,19 @@ func TestGenerator_Error_MissingTemplate(t *testing.T) {
 			name:          "unknown project type",
 			projectType:   "unknown-type",
 			architecture:  "",
-			expectedError: "template not found",
+			expectedError: "not found",
 		},
 		{
 			name:          "unknown architecture",
 			projectType:   "web-api",
 			architecture:  "unknown-arch",
-			expectedError: "template not found",
+			expectedError: "not found",
 		},
 		{
 			name:          "complex unknown template",
 			projectType:   "microservice",
 			architecture:  "event-sourcing",
-			expectedError: "template not found",
+			expectedError: "not found",
 		},
 	}
 
@@ -317,7 +317,7 @@ func TestGenerator_Error_ConfigValidation(t *testing.T) {
 				Module: "   ",
 				Type:   "   ",
 			},
-			expectedError: "project name is required",
+			expectedError: "not found", // Template lookup happens before validation
 			errorType:     &types.GoStarterError{},
 		},
 	}

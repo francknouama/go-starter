@@ -1,0 +1,97 @@
+server:
+  host: "localhost"
+  port: 8081
+  read_timeout: "5s"
+  write_timeout: "5s"
+  idle_timeout: "10s"
+
+logging:
+  level: "debug"
+  format: "text"
+  output: "stdout"
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+  {{- if eq .DatabaseDriver "postgres"}}
+  host: "localhost"
+  port: 5432
+  username: "{{.ProjectName}}_test"
+  password: "{{.ProjectName}}_test_password"
+  database: "{{.ProjectName}}_test"
+  ssl_mode: "disable"
+  max_open_conns: 5
+  max_idle_conns: 2
+  max_lifetime: "1m"
+  {{- else if eq .DatabaseDriver "mysql"}}
+  host: "localhost"
+  port: 3306
+  username: "{{.ProjectName}}_test"
+  password: "{{.ProjectName}}_test_password"
+  database: "{{.ProjectName}}_test"
+  charset: "utf8mb4"
+  parse_time: true
+  max_open_conns: 5
+  max_idle_conns: 2
+  max_lifetime: "1m"
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  file: ":memory:"
+  journal_mode: "MEMORY"
+  synchronous: "OFF"
+  {{- else if eq .DatabaseDriver "redis"}}
+  host: "localhost"
+  port: 6379
+  password: ""
+  database: 1
+  max_retries: 1
+  pool_size: 2
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: "test-jwt-secret-key-for-testing-only"
+    expires_in: "1h"
+    refresh_expires_in: "2h"
+    issuer: "{{.ProjectName}}-test"
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    google:
+      client_id: "test-google-client-id"
+      client_secret: "test-google-client-secret"
+      redirect_url: "http://localhost:8081/auth/google/callback"
+    github:
+      client_id: "test-github-client-id"
+      client_secret: "test-github-client-secret"
+      redirect_url: "http://localhost:8081/auth/github/callback"
+  {{- else if eq .AuthType "session"}}
+  session:
+    secret: "test-session-secret-key-for-testing-only"
+    max_age: 3600
+    secure: false
+    http_only: true
+  {{- end}}
+{{- end}}
+
+cors:
+  allowed_origins:
+    - "*"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "*"
+  allow_credentials: true
+  max_age: 300
+
+domain:
+  name: "{{.DomainName}}"
+  events:
+    enabled: true
+    async_processing: false  # Synchronous for tests
+    max_retry_attempts: 1

@@ -1,0 +1,125 @@
+package logger
+
+import (
+	"context"
+	"log/slog"
+)
+
+// SlogDomainLogger implements DomainLogger using slog
+type SlogDomainLogger struct {
+	logger *slog.Logger
+	ctx    context.Context
+	fields map[string]interface{}
+}
+
+// NewSlogDomainLogger creates a new slog-based domain logger
+func NewSlogDomainLogger(logger *slog.Logger) *SlogDomainLogger {
+	return &SlogDomainLogger{
+		logger: logger,
+		ctx:    context.Background(),
+		fields: make(map[string]interface{}),
+	}
+}
+
+// Debug logs debug messages
+func (l *SlogDomainLogger) Debug(msg string, keysAndValues ...interface{}) {
+	args := l.mergeArgs(keysAndValues...)
+	l.logger.DebugContext(l.ctx, msg, args...)
+}
+
+// Info logs info messages
+func (l *SlogDomainLogger) Info(msg string, keysAndValues ...interface{}) {
+	args := l.mergeArgs(keysAndValues...)
+	l.logger.InfoContext(l.ctx, msg, args...)
+}
+
+// Warn logs warning messages
+func (l *SlogDomainLogger) Warn(msg string, keysAndValues ...interface{}) {
+	args := l.mergeArgs(keysAndValues...)
+	l.logger.WarnContext(l.ctx, msg, args...)
+}
+
+// Error logs error messages
+func (l *SlogDomainLogger) Error(msg string, keysAndValues ...interface{}) {
+	args := l.mergeArgs(keysAndValues...)
+	l.logger.ErrorContext(l.ctx, msg, args...)
+}
+
+// WithContext returns a logger with context
+func (l *SlogDomainLogger) WithContext(ctx context.Context) Logger {
+	return &SlogDomainLogger{
+		logger: l.logger,
+		ctx:    ctx,
+		fields: l.fields,
+	}
+}
+
+// WithFields returns a logger with predefined fields
+func (l *SlogDomainLogger) WithFields(fields map[string]interface{}) Logger {
+	newFields := make(map[string]interface{})
+	for k, v := range l.fields {
+		newFields[k] = v
+	}
+	for k, v := range fields {
+		newFields[k] = v
+	}
+	
+	return &SlogDomainLogger{
+		logger: l.logger,
+		ctx:    l.ctx,
+		fields: newFields,
+	}
+}
+
+// LogDomainEvent logs domain events
+func (l *SlogDomainLogger) LogDomainEvent(event string, entity string, entityID string, keysAndValues ...interface{}) {
+	args := []interface{}{
+		"event_type", "domain_event",
+		"event", event,
+		"entity", entity,
+		"entity_id", entityID,
+	}
+	args = append(args, keysAndValues...)
+	args = l.mergeArgs(args...)
+	
+	l.logger.InfoContext(l.ctx, "Domain event occurred", args...)
+}
+
+// LogCommand logs command execution
+func (l *SlogDomainLogger) LogCommand(command string, keysAndValues ...interface{}) {
+	args := []interface{}{
+		"operation_type", "command",
+		"command", command,
+	}
+	args = append(args, keysAndValues...)
+	args = l.mergeArgs(args...)
+	
+	l.logger.InfoContext(l.ctx, "Command executed", args...)
+}
+
+// LogQuery logs query execution
+func (l *SlogDomainLogger) LogQuery(query string, keysAndValues ...interface{}) {
+	args := []interface{}{
+		"operation_type", "query",
+		"query", query,
+	}
+	args = append(args, keysAndValues...)
+	args = l.mergeArgs(args...)
+	
+	l.logger.InfoContext(l.ctx, "Query executed", args...)
+}
+
+// mergeArgs merges predefined fields with provided key-value pairs
+func (l *SlogDomainLogger) mergeArgs(keysAndValues ...interface{}) []interface{} {
+	var args []interface{}
+	
+	// Add predefined fields
+	for k, v := range l.fields {
+		args = append(args, k, v)
+	}
+	
+	// Add provided key-value pairs
+	args = append(args, keysAndValues...)
+	
+	return args
+}

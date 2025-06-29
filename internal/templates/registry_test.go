@@ -83,10 +83,10 @@ func TestRegistry_Get(t *testing.T) {
 func TestRegistry_List(t *testing.T) {
 	registry := NewRegistry()
 
-	// Test registry with pre-loaded templates (web-api, cli, library, lambda)
+	// Test registry with pre-loaded templates (web-api-standard, web-api-clean, web-api-ddd, cli-standard, library-standard, lambda-standard, microservice-standard)
 	templates := registry.List()
-	if len(templates) != 4 {
-		t.Errorf("Expected 4 templates (pre-loaded), got %d", len(templates))
+	if len(templates) != 7 {
+		t.Errorf("Expected 7 templates (pre-loaded), got %d", len(templates))
 	}
 
 	// Add some templates
@@ -97,8 +97,8 @@ func TestRegistry_List(t *testing.T) {
 	_ = registry.Register(template2)
 
 	templates = registry.List()
-	if len(templates) != 6 {
-		t.Errorf("Expected 6 templates (4 pre-loaded + 2 added), got %d", len(templates))
+	if len(templates) != 9 {
+		t.Errorf("Expected 9 templates (7 pre-loaded + 2 added), got %d", len(templates))
 	}
 }
 

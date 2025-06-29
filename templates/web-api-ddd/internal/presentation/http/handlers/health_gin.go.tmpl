@@ -1,0 +1,44 @@
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+// HealthHandler handles health check requests
+type HealthHandler struct {
+	// Add dependencies if needed
+}
+
+// NewHealthHandler creates a new health handler
+func NewHealthHandler() *HealthHandler {
+	return &HealthHandler{}
+}
+
+// Check returns the health status of the application
+func (h *HealthHandler) Check(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status":  "healthy",
+		"service": "{{.ProjectName}}",
+		"version": "1.0.0",
+	})
+}
+
+// Ready returns readiness status
+func (h *HealthHandler) Ready(c *gin.Context) {
+	// Add readiness checks here (database connectivity, etc.)
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ready",
+		"checks": gin.H{
+			"database": "ok",
+		},
+	})
+}
+
+// Live returns liveness status
+func (h *HealthHandler) Live(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "alive",
+	})
+}
