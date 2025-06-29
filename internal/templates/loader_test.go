@@ -14,11 +14,11 @@ import (
 // RED PHASE: Write failing tests for walkTemplatesFromRoot
 func TestTemplateLoader_walkTemplatesFromRoot(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupFS        func() fs.FS
-		expectedCount  int
-		shouldError    bool
-		errorContains  string
+		name          string
+		setupFS       func() fs.FS
+		expectedCount int
+		shouldError   bool
+		errorContains string
 	}{
 		{
 			name: "should find templates in filesystem walk",
@@ -86,8 +86,8 @@ version: "1.0.0"
 					},
 				}
 			},
-			expectedCount:  0,
-			shouldError:    true,
+			expectedCount: 0,
+			shouldError:   true,
 			errorContains: "failed to load template",
 		},
 	}
@@ -117,13 +117,13 @@ version: "1.0.0"
 // RED PHASE: Write failing tests for LoadTemplateFile
 func TestTemplateLoader_LoadTemplateFile(t *testing.T) {
 	tests := []struct {
-		name           string
-		setupFS        func() fs.FS
-		templateDir    string
-		filePath       string
+		name            string
+		setupFS         func() fs.FS
+		templateDir     string
+		filePath        string
 		expectedContent string
-		shouldError    bool
-		errorContains  string
+		shouldError     bool
+		errorContains   string
 	}{
 		{
 			name: "should load template file content successfully",
@@ -213,7 +213,7 @@ func TestTemplateLoader_GetTemplatePath(t *testing.T) {
 		{
 			name:         "should construct path without .tmpl extension",
 			templateDir:  "web-api",
-			filePath:     "main.go.tmpl", 
+			filePath:     "main.go.tmpl",
 			expectedPath: filepath.Join("web-api", "main.go"),
 		},
 		{
@@ -414,7 +414,7 @@ version: "1.0.0"
 			} else {
 				require.NoError(t, err)
 				assert.Len(t, templates, tt.expectedCount)
-				
+
 				// Verify each template has proper metadata
 				for _, template := range templates {
 					assert.NotEmpty(t, template.ID)

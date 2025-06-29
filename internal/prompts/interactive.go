@@ -11,8 +11,8 @@ import (
 )
 
 // Prompter handles interactive prompts for project configuration
-type SurveyPrompter struct{
-	useFang bool
+type SurveyPrompter struct {
+	useFang       bool
 	surveyAdapter SurveyAdapter
 }
 

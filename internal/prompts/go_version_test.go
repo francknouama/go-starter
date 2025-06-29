@@ -87,7 +87,7 @@ func TestGetSupportedGoVersions(t *testing.T) {
 func TestPromptGoVersionInteractive(t *testing.T) {
 	// Test the PromptGoVersion method exists and has correct signature
 	prompter := New()
-	
+
 	// This would normally require mocking survey for automated testing
 	// For now, we'll just verify the method exists and returns correct types
 	t.Run("method signature verification", func(t *testing.T) {

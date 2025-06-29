@@ -555,7 +555,7 @@ func TestGenerator_createTemplateContext(t *testing.T) {
 				Default: "DefaultValue",
 			},
 			{
-				Name: "ExistingVar", // Should not override config variable
+				Name:    "ExistingVar", // Should not override config variable
 				Default: "ShouldNotUse",
 			},
 		},

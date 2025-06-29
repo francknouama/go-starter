@@ -320,15 +320,15 @@ func TestInputSanitization(t *testing.T) {
 			assert.NotContains(t, config.Author, "<script", "Author should not contain script tags")
 			assert.NotContains(t, config.Email, "<script", "Email should not contain script tags")
 			assert.NotContains(t, config.License, "<script", "License should not contain script tags")
-			
+
 			assert.NotContains(t, config.Author, "javascript:", "Author should not contain javascript:")
 			assert.NotContains(t, config.Email, "javascript:", "Email should not contain javascript:")
 			assert.NotContains(t, config.License, "javascript:", "License should not contain javascript:")
-			
+
 			assert.NotContains(t, config.Author, "\x00", "Author should not contain null bytes")
 			assert.NotContains(t, config.Email, "\x00", "Email should not contain null bytes")
 			assert.NotContains(t, config.License, "\x00", "License should not contain null bytes")
-			
+
 			// Check length limits
 			assert.LessOrEqual(t, len(config.Author), 255, "Author should be truncated to 255 chars")
 			assert.LessOrEqual(t, len(config.Email), 255, "Email should be truncated to 255 chars")
@@ -361,10 +361,10 @@ func TestVariableNameSanitization(t *testing.T) {
 		{
 			name: "Invalid characters",
 			input: map[string]string{
-				"var@name":    "value1",
-				"var name":    "value2",
-				"var#name":    "value3",
-				"var$name":    "value4",
+				"var@name": "value1",
+				"var name": "value2",
+				"var#name": "value3",
+				"var$name": "value4",
 			},
 			// Note: All these inputs will sanitize to the same key "varname"
 			// so we expect only the last one to remain in the map
@@ -417,7 +417,7 @@ func TestVariableNameSanitization(t *testing.T) {
 					assert.Equal(t, expectedValue, config.Variables[expectedKey], "Variable value should match expected")
 				}
 			}
-			
+
 			// Check that no dangerous characters remain in keys
 			for key := range config.Variables {
 				assert.NotContains(t, key, "@", "Sanitized key should not contain @")

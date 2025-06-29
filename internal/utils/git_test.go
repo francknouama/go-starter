@@ -179,7 +179,7 @@ func TestAddGitIgnore(t *testing.T) {
 			}
 
 			assert.NoError(t, err)
-			
+
 			// Verify .gitignore file was created
 			gitIgnorePath := filepath.Join(tempDir, ".gitignore")
 			assert.FileExists(t, gitIgnorePath)

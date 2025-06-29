@@ -36,7 +36,7 @@ func listTemplates() {
 			Bold(true).
 			Foreground(lipgloss.Color("9")).
 			MarginLeft(2)
-		
+
 		fmt.Println(noTemplatesStyle.Render("No templates available yet."))
 		fmt.Println(noTemplatesStyle.Render("Templates will be added in upcoming releases."))
 		return
@@ -67,7 +67,7 @@ func listTemplates() {
 		Foreground(lipgloss.Color("11")).
 		MarginLeft(2).
 		MarginTop(2)
-	
+
 	fmt.Println(totalStyle.Render(fmt.Sprintf("📊 Total: %d template(s) available", len(templateList))))
 }
 
@@ -96,11 +96,11 @@ func renderTemplate(template types.Template, isLast bool) {
 	fmt.Println(idStyle.Render("● " + template.ID))
 	fmt.Println(labelStyle.Render("Name:") + valueStyle.Render(template.Name))
 	fmt.Println(labelStyle.Render("Type:") + valueStyle.Render(template.Type))
-	
+
 	if template.Architecture != "" {
 		fmt.Println(labelStyle.Render("Architecture:") + valueStyle.Render(template.Architecture))
 	}
-	
+
 	// Wrap description text
 	wrappedDesc := wrapText(template.Description, 60)
 	fmt.Println(labelStyle.Render("Description:"))

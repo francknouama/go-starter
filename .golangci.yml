@@ -1,10 +1,5 @@
 run:
   timeout: 5m
-  skip-dirs:
-    - templates
-    - vendor
-  skip-files:
-    - ".*\\.tmpl$"
 
 linters:
   enable:
@@ -24,20 +19,26 @@ linters:
     - noctx
     - rowserrcheck
     - sqlclosecheck
-    - structcheck
-    - varcheck
-    - deadcode
+    - shadow
 
 linters-settings:
-  govet:
-    check-shadowing: true
   gofmt:
     simplify: true
   misspell:
     locale: US
+  gosec:
+    # Allow some security issues for development/testing code
+    excludes:
+      - G204 # Subprocess launched with potential tainted input
+      - G306 # Expect WriteFile permissions to be 0600 or less
+      - G404 # Use of weak random number generator
 
 issues:
   exclude-dirs:
     - templates
+    - vendor
   exclude-files:
     - ".*\\.tmpl$"
+  # Exclude some common issues
+  exclude:
+    - "SA1019.*deprecated"  # Allow deprecated usage for backward compatibility

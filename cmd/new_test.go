@@ -198,7 +198,7 @@ func TestGlobalVariables(t *testing.T) {
 func TestFlagBinding(t *testing.T) {
 	// Test that flags are properly bound and accessible
 	flags := newCmd.Flags()
-	
+
 	flagTests := []struct {
 		name string
 		typ  string
@@ -219,11 +219,10 @@ func TestFlagBinding(t *testing.T) {
 			if flag == nil {
 				t.Fatalf("Flag %s should exist", ft.name)
 			}
-			
+
 			if flag.Value.Type() != ft.typ {
 				t.Errorf("Flag %s should be %s, got %s", ft.name, ft.typ, flag.Value.Type())
 			}
 		})
 	}
 }
-

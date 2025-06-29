@@ -99,10 +99,10 @@ func TestGenerator_Error_PermissionDenied(t *testing.T) {
 	// Create a directory with restricted permissions
 	tmpDir := t.TempDir()
 	restrictedDir := filepath.Join(tmpDir, "restricted")
-	
+
 	err := os.Mkdir(restrictedDir, 0000) // No permissions
 	require.NoError(t, err)
-	
+
 	// Cleanup with proper permissions
 	defer func() {
 		os.Chmod(restrictedDir, 0755)
@@ -131,7 +131,7 @@ func TestGenerator_Error_PermissionDenied(t *testing.T) {
 	// Should fail due to permission error
 	assert.Error(t, err, "Expected permission error")
 	assert.False(t, result.Success, "Result should indicate failure")
-	
+
 	// Error should be a filesystem error
 	if err != nil {
 		if goErr, ok := err.(*types.GoStarterError); ok {
@@ -145,27 +145,27 @@ func TestGenerator_Error_MissingTemplate(t *testing.T) {
 	setupTestTemplates(t)
 
 	tests := []struct {
-		name         string
-		projectType  string
-		architecture string
+		name          string
+		projectType   string
+		architecture  string
 		expectedError string
 	}{
 		{
-			name:         "unknown project type",
-			projectType:  "unknown-type",
-			architecture: "",
+			name:          "unknown project type",
+			projectType:   "unknown-type",
+			architecture:  "",
 			expectedError: "template not found",
 		},
 		{
-			name:         "unknown architecture",
-			projectType:  "web-api",
-			architecture: "unknown-arch",
+			name:          "unknown architecture",
+			projectType:   "web-api",
+			architecture:  "unknown-arch",
 			expectedError: "template not found",
 		},
 		{
-			name:         "complex unknown template",
-			projectType:  "microservice",
-			architecture: "event-sourcing",
+			name:          "complex unknown template",
+			projectType:   "microservice",
+			architecture:  "event-sourcing",
 			expectedError: "template not found",
 		},
 	}
@@ -196,14 +196,14 @@ func TestGenerator_Error_MissingTemplate(t *testing.T) {
 			// Should fail with template not found error
 			assert.Error(t, err, "Expected template not found error")
 			assert.False(t, result.Success, "Result should indicate failure")
-			
+
 			// Error should be a template not found error
-			assert.IsType(t, &types.GoStarterError{}, err, 
+			assert.IsType(t, &types.GoStarterError{}, err,
 				"Should be a template not found error")
 
 			// Error message should contain expected text
 			if tt.expectedError != "" {
-				assert.Contains(t, strings.ToLower(err.Error()), 
+				assert.Contains(t, strings.ToLower(err.Error()),
 					strings.ToLower(tt.expectedError),
 					"Error message should contain expected text")
 			}
@@ -276,7 +276,7 @@ func TestGenerator_Error_ConfigValidation(t *testing.T) {
 		errorType     interface{}
 	}{
 		{
-			name: "all required fields missing",
+			name:   "all required fields missing",
 			config: types.ProjectConfig{
 				// All required fields empty
 			},
@@ -371,7 +371,7 @@ func TestGenerator_Error_DiskSpaceAndIO(t *testing.T) {
 	// Test with a path that's potentially problematic
 	tmpDir := t.TempDir()
 	longPath := filepath.Join(tmpDir, strings.Repeat("long-directory-name", 20))
-	
+
 	options := types.GenerationOptions{
 		OutputPath: longPath,
 		DryRun:     false,
@@ -386,7 +386,7 @@ func TestGenerator_Error_DiskSpaceAndIO(t *testing.T) {
 	if err != nil {
 		assert.False(t, result.Success, "Result should indicate failure")
 		assert.NotNil(t, result.Error, "Result should contain error")
-		
+
 		// Error should be appropriately typed
 		if goErr, ok := err.(*types.GoStarterError); ok {
 			switch goErr.Code {
@@ -422,7 +422,7 @@ func TestGenerator_Error_Recovery(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, config.Name)
-	
+
 	options := types.GenerationOptions{
 		OutputPath: outputPath,
 		DryRun:     false,
@@ -437,11 +437,11 @@ func TestGenerator_Error_Recovery(t *testing.T) {
 	result2, err2 := gen.Generate(config, options)
 
 	// Both attempts should behave consistently
-	assert.Equal(t, result1.Success, result2.Success, 
+	assert.Equal(t, result1.Success, result2.Success,
 		"Multiple generation attempts should behave consistently")
-	
+
 	if err1 != nil && err2 != nil {
-		assert.IsType(t, err1, err2, 
+		assert.IsType(t, err1, err2,
 			"Error types should be consistent across attempts")
 	}
 
@@ -459,7 +459,7 @@ func TestGenerator_Error_ConcurrentAccess(t *testing.T) {
 
 	config := types.ProjectConfig{
 		Name:      "concurrent-test",
-		Module:    "github.com/test/concurrent-test", 
+		Module:    "github.com/test/concurrent-test",
 		Type:      "library",
 		GoVersion: "1.21",
 	}
@@ -472,7 +472,7 @@ func TestGenerator_Error_ConcurrentAccess(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, config.Name)
-	
+
 	options := types.GenerationOptions{
 		OutputPath: outputPath,
 		DryRun:     false,

@@ -12,20 +12,20 @@ func TestGetProjectConfig_InteractiveMode(t *testing.T) {
 	// Test case 1: Fully interactive, no initial config
 	t.Run("fully interactive", func(t *testing.T) {
 		mockAdapter := NewMockSurveyAdapter(map[string]interface{}{
-			"What's your project name?": "my-test-project",
-			"Module path:": "github.com/user/my-test-project",
-			"What type of project?": "Web API - REST API or web service",
-			"Select Go version:": "Go 1.23 (latest)",
-			"Which web framework?": "Gin (recommended)",
-			"Which logger?": "slog - Go built-in structured logging (recommended)",
+			"What's your project name?":                     "my-test-project",
+			"Module path:":                                  "github.com/user/my-test-project",
+			"What type of project?":                         "Web API - REST API or web service",
+			"Select Go version:":                            "Go 1.23 (latest)",
+			"Which web framework?":                          "Gin (recommended)",
+			"Which logger?":                                 "slog - Go built-in structured logging (recommended)",
 			"Which ORM/database abstraction do you prefer?": "gorm - Feature-rich ORM with associations and migrations (recommended) ✅",
-			"Authentication type?": "JWT",
-			"Log level?": "info - General application flow (recommended)",
-			"Log format?": "json - Structured JSON format (recommended)",
+			"Authentication type?":                          "JWT",
+			"Log level?":                                    "info - General application flow (recommended)",
+			"Log format?":                                   "json - Structured JSON format (recommended)",
 			"Which databases do you want to use? (Space to select, Enter to confirm)": []string{"PostgreSQL"},
-			"Would you like to configure advanced options?": true,
+			"Would you like to configure advanced options?":                           true,
 			"Add database support?": true,
-			"Add authentication?": true,
+			"Add authentication?":   true,
 		})
 
 		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
@@ -49,9 +49,9 @@ func TestGetProjectConfig_InteractiveMode(t *testing.T) {
 	t.Run("partially interactive", func(t *testing.T) {
 		mockAdapter := NewMockSurveyAdapter(map[string]interface{}{
 			"What type of project?": "CLI Application - Command-line tool",
-			"Which CLI framework?": "Cobra (recommended)",
-			"Which logger?": "zap - High-performance, zero-allocation logging",
-			"Select Go version:": "Go 1.23 (latest)",
+			"Which CLI framework?":  "Cobra (recommended)",
+			"Which logger?":         "zap - High-performance, zero-allocation logging",
+			"Select Go version:":    "Go 1.23 (latest)",
 		})
 
 		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
@@ -142,7 +142,7 @@ func TestMapFrameworkSelection(t *testing.T) {
 func TestMapDatabaseSelection(t *testing.T) {
 	// Database selections map directly
 	databases := []string{"PostgreSQL", "MySQL", "MongoDB", "SQLite", "Redis"}
-	
+
 	for _, db := range databases {
 		t.Run(db, func(t *testing.T) {
 			assert.NotEmpty(t, db)
@@ -237,7 +237,7 @@ func TestErrorHandling(t *testing.T) {
 
 		prompter := &SurveyPrompter{useFang: false, surveyAdapter: mockAdapter}
 		_, err := prompter.GetProjectConfig(types.ProjectConfig{}, true)
-		
+
 		// We expect no error because the mock doesn't return errors by default
 		assert.NoError(t, err)
 	})

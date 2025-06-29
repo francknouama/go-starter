@@ -93,23 +93,23 @@ func runNew(cmd *cobra.Command, args []string) error {
 	prompter := prompts.NewSurvey()
 
 	// Get project configuration through interactive prompts or flags
-		config, err := prompter.GetProjectConfig(types.ProjectConfig{
-			Name:      projectName,
-			Module:    projectModule,
-			Type:      projectType,
-			GoVersion: goVersion,
-			Framework: framework,
-			Logger:    logger,
-			Features: &types.Features{
-				Database: types.DatabaseConfig{
-					Driver: databaseDriver,
-					ORM:    databaseORM,
-				},
-				Authentication: types.AuthConfig{
-					Type: authType,
-				},
+	config, err := prompter.GetProjectConfig(types.ProjectConfig{
+		Name:      projectName,
+		Module:    projectModule,
+		Type:      projectType,
+		GoVersion: goVersion,
+		Framework: framework,
+		Logger:    logger,
+		Features: &types.Features{
+			Database: types.DatabaseConfig{
+				Driver: databaseDriver,
+				ORM:    databaseORM,
 			},
-		}, advanced)
+			Authentication: types.AuthConfig{
+				Type: authType,
+			},
+		},
+	}, advanced)
 	if err != nil {
 		printErrorMessage("Failed to get project configuration", err)
 		return fmt.Errorf("failed to get project configuration: %w", err)
@@ -228,7 +228,7 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 	fmt.Println(headerStyle.Render("📋 Project Details"))
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Name:") + " " + valueStyle.Render(config.Name))
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Type:") + " " + valueStyle.Render(config.Type))
-	
+
 	if config.GoVersion != "" {
 		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Go Version:") + " " + valueStyle.Render(config.GoVersion))
 	}
@@ -238,14 +238,14 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 	if config.Logger != "" {
 		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Logger:") + " " + valueStyle.Render(config.Logger))
 	}
-	
+
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Module:") + " " + valueStyle.Render(config.Module))
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Files created:") + " " + valueStyle.Render(fmt.Sprintf("%d", len(result.FilesCreated))))
-	
+
 	if !noGit {
 		fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Git repository:") + " " + valueStyle.Render("Initialized"))
 	}
-	
+
 	fmt.Println(checkStyle.Render("✓") + " " + labelStyle.Render("Duration:") + " " + valueStyle.Render(result.Duration.String()))
 
 	// Print next steps
@@ -269,7 +269,7 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 		Foreground(lipgloss.Color("8")).
 		Italic(true).
 		MarginLeft(2)
-	
+
 	fmt.Println(tipStyle.Render("💡 Tip: Run 'make help' inside your project to see all available commands"))
 }
 

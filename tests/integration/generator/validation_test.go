@@ -15,9 +15,9 @@ func TestGenerator_Validation_ProjectName(t *testing.T) {
 	setupTestTemplates(t)
 
 	tests := []struct {
-		name         string
-		projectName  string
-		shouldFail   bool
+		name          string
+		projectName   string
+		shouldFail    bool
 		errorContains string
 	}{
 		{
@@ -273,38 +273,38 @@ func TestGenerator_Validation_GoVersion(t *testing.T) {
 	setupTestTemplates(t)
 
 	tests := []struct {
-		name      string
-		goVersion string
+		name       string
+		goVersion  string
 		shouldFail bool
 	}{
 		{
-			name:      "valid go version 1.21",
-			goVersion: "1.21",
+			name:       "valid go version 1.21",
+			goVersion:  "1.21",
 			shouldFail: false,
 		},
 		{
-			name:      "valid go version 1.22",
-			goVersion: "1.22",
+			name:       "valid go version 1.22",
+			goVersion:  "1.22",
 			shouldFail: false,
 		},
 		{
-			name:      "valid go version 1.20",
-			goVersion: "1.20",
+			name:       "valid go version 1.20",
+			goVersion:  "1.20",
 			shouldFail: false,
 		},
 		{
-			name:      "valid go version with patch",
-			goVersion: "1.21.0",
+			name:       "valid go version with patch",
+			goVersion:  "1.21.0",
 			shouldFail: false,
 		},
 		{
-			name:      "empty go version (should use default)",
-			goVersion: "",
+			name:       "empty go version (should use default)",
+			goVersion:  "",
 			shouldFail: false,
 		},
 		{
-			name:      "auto go version",
-			goVersion: "auto",
+			name:       "auto go version",
+			goVersion:  "auto",
 			shouldFail: false,
 		},
 	}

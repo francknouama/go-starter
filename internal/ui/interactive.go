@@ -108,7 +108,7 @@ func (m SelectionModel) View() string {
 // RunSelection runs an interactive selection and returns the chosen value
 func RunSelection(title string, items []SelectionItem) (string, error) {
 	model := NewSelectionModel(title, items)
-	
+
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {
@@ -129,8 +129,8 @@ func runNumberedSelection(title string, items []SelectionItem) (string, error) {
 	fmt.Print("\n\n")
 
 	for i, item := range items {
-		fmt.Printf("  %d) %s - %s\n", i+1, 
-			normalItemStyle.Render(item.title), 
+		fmt.Printf("  %d) %s - %s\n", i+1,
+			normalItemStyle.Render(item.title),
 			item.description)
 	}
 
@@ -214,7 +214,7 @@ func (m TextInputModel) View() string {
 // RunTextInput runs an interactive text input and returns the entered value
 func RunTextInput(title, help, defaultValue string) (string, error) {
 	model := NewTextInputModel(title, help, defaultValue)
-	
+
 	p := tea.NewProgram(model)
 	finalModel, err := p.Run()
 	if err != nil {

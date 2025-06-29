@@ -12,18 +12,18 @@ import (
 
 // TemplateSecurityValidator validates templates for security risks
 type TemplateSecurityValidator struct {
-	allowedFunctions map[string]bool
-	maxTemplateSize  int64
-	maxRenderTime    time.Duration
+	allowedFunctions  map[string]bool
+	maxTemplateSize   int64
+	maxRenderTime     time.Duration
 	dangerousPatterns []*regexp.Regexp
 }
 
 // NewTemplateSecurityValidator creates a new template security validator
 func NewTemplateSecurityValidator() *TemplateSecurityValidator {
 	return &TemplateSecurityValidator{
-		allowedFunctions: getAllowedTemplateFunctions(),
-		maxTemplateSize:  1024 * 1024, // 1MB max template size
-		maxRenderTime:    5 * time.Second,
+		allowedFunctions:  getAllowedTemplateFunctions(),
+		maxTemplateSize:   1024 * 1024, // 1MB max template size
+		maxRenderTime:     5 * time.Second,
 		dangerousPatterns: getDangerousPatterns(),
 	}
 }
@@ -104,70 +104,70 @@ func getAllowedTemplateFunctions() map[string]bool {
 	// Sprig functions that are considered safe
 	safeFunctions := map[string]bool{
 		// String functions
-		"upper":    true,
-		"lower":    true,
-		"title":    true,
-		"trim":     true,
-		"trimAll":  true,
-		"replace":  true,
-		"quote":    true,
-		"squote":   true,
-		"split":    true,
-		"join":     true,
-		"contains": true,
+		"upper":     true,
+		"lower":     true,
+		"title":     true,
+		"trim":      true,
+		"trimAll":   true,
+		"replace":   true,
+		"quote":     true,
+		"squote":    true,
+		"split":     true,
+		"join":      true,
+		"contains":  true,
 		"hasPrefix": true,
 		"hasSuffix": true,
-		
+
 		// Number functions
-		"add":      true,
-		"sub":      true,
-		"mul":      true,
-		"div":      true,
-		"mod":      true,
-		"max":      true,
-		"min":      true,
-		
+		"add": true,
+		"sub": true,
+		"mul": true,
+		"div": true,
+		"mod": true,
+		"max": true,
+		"min": true,
+
 		// Logic functions
-		"and":      true,
-		"or":       true,
-		"not":      true,
-		"eq":       true,
-		"ne":       true,
-		"lt":       true,
-		"le":       true,
-		"gt":       true,
-		"ge":       true,
-		
+		"and": true,
+		"or":  true,
+		"not": true,
+		"eq":  true,
+		"ne":  true,
+		"lt":  true,
+		"le":  true,
+		"gt":  true,
+		"ge":  true,
+
 		// Default function
 		"default": true,
-		
+
 		// Safe encoding functions
 		"b64enc":   true,
 		"b64dec":   true,
 		"urlquery": true,
-		
+
 		// Safe random functions
 		"randAlphaNum": true,
 		"randAlpha":    true,
 		"randNumeric":  true,
-		
+
 		// Date functions (read-only)
-		"now":     true,
-		"date":    true,
+		"now":        true,
+		"date":       true,
 		"dateModify": true,
-		
+
 		// List functions
-		"list":     true,
-		"first":    true,
-		"last":     true,
-		"initial":  true,
-		"rest":     true,
-		"reverse":  true,
-		"uniq":     true,
-		"compact":  true,
-		"slice":    true,
+		"list":    true,
+		"first":   true,
+		"last":    true,
+		"initial": true,
+		"rest":    true,
+		"reverse": true,
+		"uniq":    true,
+		"compact": true,
+		"slice":   true,
 	}
-	
+
 	return safeFunctions
 }
 
@@ -180,46 +180,46 @@ func getDangerousPatterns() []*regexp.Regexp {
 		`\{\{\s*exec\s*\.`,
 		`\{\{\s*system\s*\.`,
 		`\{\{\s*cmd\s*\.`,
-		
+
 		// Environment variable access
 		`\{\{\s*\.Env\s*\.*`,
 		`\{\{\s*env\s*\.`,
 		`\{\{\s*getenv\s*`,
 		`\{\{\s*range\s*\.Env\s*\}\}`,
-		
+
 		// File system access
 		`\{\{\s*\.File\s*\.`,
 		`\{\{\s*file\s*\.`,
 		`\{\{\s*readFile\s*`,
 		`\{\{\s*writeFile\s*`,
-		
+
 		// Network access
 		`\{\{\s*\.HTTP\s*\.`,
 		`\{\{\s*http\s*\.`,
 		`\{\{\s*url\s*\.`,
 		`\{\{\s*fetch\s*\.`,
-		
+
 		// Dangerous template functions
 		`\{\{\s*include\s*"[^"]*\.\./`,  // Path traversal in includes
 		`\{\{\s*template\s*"[^"]*\.\./`, // Path traversal in templates
-		
+
 		// Potential code injection
 		`\{\{\s*printf\s*.*%[0-9]*[xXsp]`, // Format string attacks
-		`\{\{\s*.*eval\s*`,                 // Eval functions
-		`\{\{\s*.*exec\s*`,                 // Exec functions
-		
+		`\{\{\s*.*eval\s*`,                // Eval functions
+		`\{\{\s*.*exec\s*`,                // Exec functions
+
 		// Resource exhaustion patterns
 		`\{\{\s*range\s*.*\{\{\s*range\s*.*\{\{\s*range`, // Deep nested loops
-		`\{\{\s*printf\s*"%[0-9]{6,}s"`,                   // Large format strings
+		`\{\{\s*printf\s*"%[0-9]{6,}s"`,                  // Large format strings
 	}
-	
+
 	var patterns []*regexp.Regexp
 	for _, pattern := range dangerousPatterns {
 		if regex, err := regexp.Compile(pattern); err == nil {
 			patterns = append(patterns, regex)
 		}
 	}
-	
+
 	return patterns
 }
 
@@ -235,7 +235,7 @@ type SecurityViolation struct {
 // ScanTemplate performs a comprehensive security scan of template content
 func (v *TemplateSecurityValidator) ScanTemplate(content string) []SecurityViolation {
 	var violations []SecurityViolation
-	
+
 	lines := strings.Split(content, "\n")
 	for lineNum, line := range lines {
 		// Check each line for dangerous patterns
@@ -250,20 +250,20 @@ func (v *TemplateSecurityValidator) ScanTemplate(content string) []SecurityViola
 				})
 			}
 		}
-		
+
 		// Check for other security issues
 		if strings.Contains(line, "{{") && strings.Contains(line, "}}") {
 			violations = append(violations, v.checkTemplateExpression(line, lineNum+1)...)
 		}
 	}
-	
+
 	return violations
 }
 
 // checkTemplateExpression analyzes a template expression for security issues
 func (v *TemplateSecurityValidator) checkTemplateExpression(line string, lineNum int) []SecurityViolation {
 	var violations []SecurityViolation
-	
+
 	// Look for potentially unsafe function calls
 	unsafeFunctions := []string{"printf", "sprintf", "include", "template"}
 	for _, fn := range unsafeFunctions {
@@ -277,6 +277,6 @@ func (v *TemplateSecurityValidator) checkTemplateExpression(line string, lineNum
 			})
 		}
 	}
-	
+
 	return violations
 }

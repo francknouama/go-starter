@@ -118,6 +118,6 @@ func initConfig() error {
 			fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
 		}
 	}
-	
+
 	return nil
 }

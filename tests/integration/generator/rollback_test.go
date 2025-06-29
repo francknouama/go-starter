@@ -54,7 +54,7 @@ func TestGenerator_Rollback_TransactionCreation(t *testing.T) {
 		// Check that rollback cleaned up properly
 		entries, err := os.ReadDir(tmpDir)
 		require.NoError(t, err)
-		
+
 		// If rollback worked properly, there should be minimal artifacts
 		for _, entry := range entries {
 			t.Logf("Remaining entry after rollback: %s", entry.Name())
@@ -81,7 +81,7 @@ func TestGenerator_Rollback_FileTracking(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, config.Name)
-	
+
 	options := types.GenerationOptions{
 		OutputPath: outputPath,
 		DryRun:     false,
@@ -102,9 +102,9 @@ func TestGenerator_Rollback_FileTracking(t *testing.T) {
 
 	if result.Success {
 		// If successful, files should be created
-		assert.Greater(t, len(finalEntries), initialCount, 
+		assert.Greater(t, len(finalEntries), initialCount,
 			"Successful generation should create files")
-		
+
 		// Output directory should exist
 		_, err := os.Stat(outputPath)
 		assert.NoError(t, err, "Output directory should exist after successful generation")
@@ -116,10 +116,10 @@ func TestGenerator_Rollback_FileTracking(t *testing.T) {
 		} else {
 			// Other errors should trigger rollback
 			t.Logf("Generation failed with error: %v", err)
-			
+
 			// Check that cleanup occurred
 			// Note: Some cleanup might be partial due to system limitations
-			t.Logf("Directory entries after rollback: %d (was %d)", 
+			t.Logf("Directory entries after rollback: %d (was %d)",
 				len(finalEntries), initialCount)
 		}
 	}
@@ -152,7 +152,7 @@ func TestGenerator_Rollback_PartialFailure(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, config.Name)
-	
+
 	options := types.GenerationOptions{
 		OutputPath: outputPath,
 		DryRun:     false,
@@ -165,14 +165,14 @@ func TestGenerator_Rollback_PartialFailure(t *testing.T) {
 	// Test that rollback handles partial failures appropriately
 	if err != nil {
 		assert.False(t, result.Success, "Result should indicate failure")
-		
+
 		// Check rollback behavior
 		if goErr, ok := err.(*types.GoStarterError); ok && goErr.Code == types.ErrCodeTemplateNotFound {
 			t.Log("Template not found - expected partial failure scenario")
 		} else {
 			// For other errors, verify rollback occurred
 			t.Logf("Partial failure error: %v", err)
-			
+
 			// Output path should not exist or be empty after rollback
 			if _, statErr := os.Stat(outputPath); statErr == nil {
 				// If directory exists, it should be empty or nearly empty
@@ -189,7 +189,7 @@ func TestGenerator_Rollback_PartialFailure(t *testing.T) {
 		// If generation succeeded, verify proper structure
 		assert.True(t, result.Success, "Result should indicate success")
 		assert.NotEmpty(t, result.FilesCreated, "Should have created files")
-		
+
 		// Output directory should exist and have content
 		stat, statErr := os.Stat(outputPath)
 		assert.NoError(t, statErr, "Output directory should exist")
@@ -219,21 +219,21 @@ func TestGenerator_Rollback_PermissionFailure(t *testing.T) {
 	require.NotNil(t, gen)
 
 	tmpDir := t.TempDir()
-	
+
 	// Create a directory structure that will cause permission issues
 	restrictedDir := filepath.Join(tmpDir, "restricted")
 	err := os.Mkdir(restrictedDir, 0755)
 	require.NoError(t, err)
-	
+
 	// Create a subdirectory and then remove permissions from parent
 	projectDir := filepath.Join(restrictedDir, config.Name)
 	err = os.Mkdir(projectDir, 0755)
 	require.NoError(t, err)
-	
+
 	// Remove write permissions from restricted directory
 	err = os.Chmod(restrictedDir, 0555) // Read and execute only
 	require.NoError(t, err)
-	
+
 	// Cleanup function to restore permissions
 	defer func() {
 		os.Chmod(restrictedDir, 0755)
@@ -289,13 +289,13 @@ func TestGenerator_Rollback_DiskSpaceFailure(t *testing.T) {
 	require.NotNil(t, gen)
 
 	tmpDir := t.TempDir()
-	
+
 	// Create a very deep directory structure to potentially trigger issues
 	deepPath := tmpDir
 	for i := 0; i < 50; i++ {
 		deepPath = filepath.Join(deepPath, fmt.Sprintf("very-long-directory-name-%d", i))
 	}
-	
+
 	options := types.GenerationOptions{
 		OutputPath: filepath.Join(deepPath, config.Name),
 		DryRun:     false,
@@ -308,7 +308,7 @@ func TestGenerator_Rollback_DiskSpaceFailure(t *testing.T) {
 	// This might succeed or fail depending on system limits
 	if err != nil {
 		assert.False(t, result.Success, "Result should indicate failure")
-		
+
 		// Check that appropriate error types are returned
 		if goErr, ok := err.(*types.GoStarterError); ok {
 			switch goErr.Code {
@@ -322,7 +322,7 @@ func TestGenerator_Rollback_DiskSpaceFailure(t *testing.T) {
 		} else {
 			t.Logf("Got error: %T - %v", err, err)
 		}
-		
+
 		// Verify that no partial structures remain in the temp directory
 		entries, readErr := os.ReadDir(tmpDir)
 		if readErr == nil {
@@ -358,7 +358,7 @@ func TestGenerator_Rollback_ResourceCleanup(t *testing.T) {
 		t.Run(fmt.Sprintf("attempt_%d", i+1), func(t *testing.T) {
 			tmpDir := t.TempDir()
 			outputPath := filepath.Join(tmpDir, fmt.Sprintf("%s-%d", config.Name, i))
-			
+
 			options := types.GenerationOptions{
 				OutputPath: outputPath,
 				DryRun:     false,
@@ -370,7 +370,7 @@ func TestGenerator_Rollback_ResourceCleanup(t *testing.T) {
 
 			// Each attempt should be independent and handle resources properly
 			require.NotNil(t, result, "Result should not be nil")
-			
+
 			if err != nil {
 				if goErr, ok := err.(*types.GoStarterError); ok && goErr.Code == types.ErrCodeTemplateNotFound {
 					t.Log("Template not found - expected for this test")
@@ -409,14 +409,14 @@ func TestGenerator_Rollback_ConcurrentRollback(t *testing.T) {
 	require.NotNil(t, gen2)
 
 	tmpDir := t.TempDir()
-	
+
 	options1 := types.GenerationOptions{
 		OutputPath: filepath.Join(tmpDir, config.Name+"-1"),
 		DryRun:     false,
 		NoGit:      true,
 		Verbose:    false,
 	}
-	
+
 	options2 := types.GenerationOptions{
 		OutputPath: filepath.Join(tmpDir, config.Name+"-2"),
 		DryRun:     false,
@@ -443,7 +443,7 @@ func TestGenerator_Rollback_ConcurrentRollback(t *testing.T) {
 	}
 
 	if err2 != nil {
-		assert.False(t, result2.Success, "Result2 should indicate failure") 
+		assert.False(t, result2.Success, "Result2 should indicate failure")
 		if _, ok := err2.(*types.GoStarterError); ok {
 			t.Log("Generator 2: Template not found")
 		} else {
@@ -454,7 +454,7 @@ func TestGenerator_Rollback_ConcurrentRollback(t *testing.T) {
 	// Verify directory state is consistent
 	entries, err := os.ReadDir(tmpDir)
 	require.NoError(t, err)
-	
+
 	t.Logf("Final directory entries: %d", len(entries))
 	for _, entry := range entries {
 		t.Logf("  - %s", entry.Name())
@@ -478,7 +478,7 @@ func TestGenerator_Rollback_MemoryManagement(t *testing.T) {
 
 	// Add many variables to test memory usage
 	for i := 0; i < 1000; i++ {
-		config.Variables[fmt.Sprintf("LargeVariable%04d", i)] = fmt.Sprintf("LargeValue%04d_" + 
+		config.Variables[fmt.Sprintf("LargeVariable%04d", i)] = fmt.Sprintf("LargeValue%04d_"+
 			"This_is_a_very_long_value_that_takes_up_memory_and_tests_allocation_patterns", i)
 	}
 
@@ -500,7 +500,7 @@ func TestGenerator_Rollback_MemoryManagement(t *testing.T) {
 
 	if err != nil {
 		assert.False(t, result.Success, "Result should indicate failure")
-		
+
 		if goErr, ok := err.(*types.GoStarterError); ok && goErr.Code == types.ErrCodeTemplateNotFound {
 			t.Log("Template not found - memory management test with large config completed")
 		} else {

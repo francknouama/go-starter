@@ -114,7 +114,7 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 
 	// Create transaction for rollback support
 	tx := NewGenerationTransaction(options.OutputPath)
-	
+
 	// Set up recovery mechanism
 	defer func() {
 		if r := recover(); r != nil {

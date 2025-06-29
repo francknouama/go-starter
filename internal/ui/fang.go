@@ -37,7 +37,6 @@ var (
 			Foreground(lipgloss.Color("8")).
 			Italic(true).
 			MarginTop(1)
-
 )
 
 // FangPrompter is a Fang-based UI prompter with Survey fallback
@@ -123,7 +122,7 @@ func (f *FangPrompter) GetProjectConfig(initial types.ProjectConfig, advanced bo
 		config.Framework = framework
 	}
 
-	// Go version selection  
+	// Go version selection
 	if config.GoVersion == "" {
 		goVersion, err := f.promptGoVersion()
 		if err != nil {
@@ -165,7 +164,7 @@ func (f *FangPrompter) promptProjectName() (string, error) {
 	suggestion := utils.GenerateRandomProjectName()
 	alternatives := utils.GenerateMultipleNames(3)
 
-	help := fmt.Sprintf("Press Enter for: %s\nOther suggestions: %s", 
+	help := fmt.Sprintf("Press Enter for: %s\nOther suggestions: %s",
 		suggestion, strings.Join(alternatives, ", "))
 
 	if f.useEnhancedUI {
@@ -542,7 +541,7 @@ func (f *FangPrompter) promptGoVersion() (string, error) {
 func (f *FangPrompter) promptGoVersionSurvey() (string, error) {
 	options := []string{
 		"1.21 - Stable LTS release (recommended)",
-		"1.22 - Latest stable release", 
+		"1.22 - Latest stable release",
 		"1.23 - Latest release",
 		"1.24 - Development release",
 	}
@@ -597,4 +596,3 @@ func (f *FangPrompter) promptArchitectureSurvey(config *types.ProjectConfig) err
 	config.Architecture = archMap[selection]
 	return nil
 }
-

@@ -76,17 +76,17 @@ func TestGenerator_Config_Integration(t *testing.T) {
 				Name:         "override-test",
 				Module:       "github.com/test/override-test",
 				Type:         "web-api",
-				GoVersion:    "1.22",    // Override profile default
-				Framework:    "fiber",   // Override profile default
-				Architecture: "ddd",     // Override profile default
-				Logger:       "logrus",  // Override profile default
-				Author:       "Custom Author", // Override profile
+				GoVersion:    "1.22",               // Override profile default
+				Framework:    "fiber",              // Override profile default
+				Architecture: "ddd",                // Override profile default
+				Logger:       "logrus",             // Override profile default
+				Author:       "Custom Author",      // Override profile
 				Email:        "custom@example.com", // Override profile
-				License:      "BSD-3-Clause", // Override profile
+				License:      "BSD-3-Clause",       // Override profile
 			},
 			expectedValues: map[string]string{
 				"Author":       "Custom Author",
-				"Email":        "custom@example.com", 
+				"Email":        "custom@example.com",
 				"License":      "BSD-3-Clause",
 				"GoVersion":    "1.22",
 				"Framework":    "fiber",
@@ -148,7 +148,7 @@ func TestGenerator_Config_Integration(t *testing.T) {
 			// Apply configuration values to project config
 			// In a real scenario, this would be done by the CLI layer
 			profile := tt.config.Profiles[tt.config.CurrentProfile]
-			
+
 			// Apply profile values if not explicitly set in project config
 			if tt.projectConfig.Author == "" {
 				tt.projectConfig.Author = profile.Author
@@ -210,8 +210,8 @@ func TestGenerator_Config_Integration(t *testing.T) {
 				case "Logger":
 					actualValue = tt.projectConfig.Logger
 				}
-				
-				assert.Equal(t, expectedValue, actualValue, 
+
+				assert.Equal(t, expectedValue, actualValue,
 					"Configuration value %s should match expected value", key)
 			}
 
@@ -245,29 +245,29 @@ func TestGenerator_Config_Variables(t *testing.T) {
 		{
 			name: "variables with special characters",
 			variables: map[string]string{
-				"DatabaseURL":    "postgresql://user:pass@localhost:5432/db",
-				"APIKey":         "sk-1234567890abcdef",
-				"ServerAddress":  "0.0.0.0:8080",
+				"DatabaseURL":   "postgresql://user:pass@localhost:5432/db",
+				"APIKey":        "sk-1234567890abcdef",
+				"ServerAddress": "0.0.0.0:8080",
 			},
 			expected: map[string]string{
-				"DatabaseURL":    "postgresql://user:pass@localhost:5432/db",
-				"APIKey":         "sk-1234567890abcdef",
-				"ServerAddress":  "0.0.0.0:8080",
+				"DatabaseURL":   "postgresql://user:pass@localhost:5432/db",
+				"APIKey":        "sk-1234567890abcdef",
+				"ServerAddress": "0.0.0.0:8080",
 			},
 		},
 		{
 			name: "boolean and numeric variables as strings",
 			variables: map[string]string{
-				"Debug":       "true",
-				"Port":        "8080",
-				"MaxWorkers":  "10",
-				"EnableTLS":   "false",
+				"Debug":      "true",
+				"Port":       "8080",
+				"MaxWorkers": "10",
+				"EnableTLS":  "false",
 			},
 			expected: map[string]string{
-				"Debug":       "true",
-				"Port":        "8080",
-				"MaxWorkers":  "10",
-				"EnableTLS":   "false",
+				"Debug":      "true",
+				"Port":       "8080",
+				"MaxWorkers": "10",
+				"EnableTLS":  "false",
 			},
 		},
 		{
@@ -321,7 +321,7 @@ func TestGenerator_Config_Variables(t *testing.T) {
 				for key, expectedValue := range tt.expected {
 					actualValue, exists := config.Variables[key]
 					assert.True(t, exists, "Variable %s should exist", key)
-					assert.Equal(t, expectedValue, actualValue, 
+					assert.Equal(t, expectedValue, actualValue,
 						"Variable %s should have expected value", key)
 				}
 			}
@@ -456,19 +456,19 @@ func TestGenerator_Config_Features(t *testing.T) {
 			},
 			validate: func(t *testing.T, features *types.Features) {
 				require.NotNil(t, features)
-				
+
 				// Database
 				assert.Equal(t, "postgresql", features.Database.Driver)
 				assert.Equal(t, "gorm", features.Database.ORM)
-				
+
 				// Authentication
 				assert.Equal(t, "oauth2", features.Authentication.Type)
-				
+
 				// Logging
 				assert.Equal(t, "slog", features.Logging.Type)
 				assert.Equal(t, "info", features.Logging.Level)
 				assert.Equal(t, "text", features.Logging.Format)
-				
+
 				// Testing
 				assert.Equal(t, "ginkgo", features.Testing.Framework)
 				assert.False(t, features.Testing.Coverage)
@@ -569,21 +569,21 @@ func TestGenerator_Config_ProfileDefaults(t *testing.T) {
 		{
 			name: "partial override of defaults",
 			projectConfig: types.ProjectConfig{
-				Name:         "partial-test",
-				Module:       "github.com/test/partial-test",
-				Type:         "web-api",
-				Framework:    "echo", // Override default
-				Logger:       "slog", // Override default
+				Name:      "partial-test",
+				Module:    "github.com/test/partial-test",
+				Type:      "web-api",
+				Framework: "echo", // Override default
+				Logger:    "slog", // Override default
 			},
 			applyDefaults: true,
 			expected: types.ProjectConfig{
 				Name:         "partial-test",
 				Module:       "github.com/test/partial-test",
 				Type:         "web-api",
-				GoVersion:    "1.21",     // From profile
-				Framework:    "echo",     // Explicit override
-				Architecture: "clean",    // From profile
-				Logger:       "slog",     // Explicit override
+				GoVersion:    "1.21",  // From profile
+				Framework:    "echo",  // Explicit override
+				Architecture: "clean", // From profile
+				Logger:       "slog",  // Explicit override
 				Author:       "Profile Author",
 				Email:        "profile@example.com",
 				License:      "MIT",

@@ -135,7 +135,7 @@ func scanConfig(configPath string, verbose bool, outputFormat string) error {
 	// For now, just validate that the sanitizer works with a dummy config
 	// In a real implementation, you would load and validate the actual config file
 	sanitizer := security.NewInputSanitizer()
-	
+
 	if verbose {
 		fmt.Printf("Scanning configuration: %s\n", configPath)
 	}
@@ -177,10 +177,10 @@ func outputSecurityResults(violations []security.SecurityViolation, format strin
 	default:
 		fmt.Printf("Found %d security violations:\n\n", len(violations))
 		for _, violation := range violations {
-			fmt.Printf("❌ %s (Line %d) - %s: %s\n", 
-				violation.Severity, 
-				violation.Line, 
-				violation.Type, 
+			fmt.Printf("❌ %s (Line %d) - %s: %s\n",
+				violation.Severity,
+				violation.Line,
+				violation.Type,
 				violation.Description)
 		}
 	}

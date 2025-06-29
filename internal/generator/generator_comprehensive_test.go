@@ -127,10 +127,10 @@ func TestGeneratorComprehensive(t *testing.T) {
 	t.Run("Generate_TemplateNotFound", func(t *testing.T) {
 		generator := New()
 		config := types.ProjectConfig{
-			Name:         "test-project",
-			Module:       "github.com/test/project",
-			Type:         "nonexistent-type",
-			GoVersion:    "1.21",
+			Name:      "test-project",
+			Module:    "github.com/test/project",
+			Type:      "nonexistent-type",
+			GoVersion: "1.21",
 		}
 		options := types.GenerationOptions{
 			OutputPath: t.TempDir(),
@@ -148,9 +148,9 @@ func TestGeneratorTemplateID(t *testing.T) {
 	generator := New()
 
 	testCases := []struct {
-		name         string
-		config       types.ProjectConfig
-		expectedID   string
+		name       string
+		config     types.ProjectConfig
+		expectedID string
 	}{
 		{
 			name: "Standard web-api",

@@ -45,12 +45,12 @@ func TestGoVersionIntegration(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			// Arrange
 			config := types.ProjectConfig{
-				Name:       "test-project",
-				Module:     "github.com/test/project",
-				Type:       "web-api",
-				GoVersion:  tt.goVersion,
-				Framework:  "gin",
-				Logger:     "slog",
+				Name:      "test-project",
+				Module:    "github.com/test/project",
+				Type:      "web-api",
+				GoVersion: tt.goVersion,
+				Framework: "gin",
+				Logger:    "slog",
 			}
 
 			// Act
@@ -73,12 +73,12 @@ func TestGoVersionTemplateIntegration(t *testing.T) {
 	t.Run("go version used in template generation", func(t *testing.T) {
 		// Arrange
 		config := types.ProjectConfig{
-			Name:       "test-project",
-			Module:     "github.com/test/project",
-			Type:       "web-api",
-			GoVersion:  "1.23",
-			Framework:  "gin",
-			Logger:     "slog",
+			Name:      "test-project",
+			Module:    "github.com/test/project",
+			Type:      "web-api",
+			GoVersion: "1.23",
+			Framework: "gin",
+			Logger:    "slog",
 		}
 
 		tempDir := t.TempDir()

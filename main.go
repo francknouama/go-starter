@@ -13,7 +13,7 @@ var templatesFS embed.FS
 func main() {
 	// Initialize the templates filesystem
 	templates.SetTemplatesFS(templatesFS)
-	
+
 	// Execute the CLI
 	cmd.Execute()
 }

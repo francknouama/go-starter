@@ -53,7 +53,7 @@ func (s *InputSanitizer) SanitizeProjectConfig(config *types.ProjectConfig) erro
 		for key, value := range config.Variables {
 			sanitizedKey := s.sanitizeVariableName(key)
 			sanitizedValue := s.sanitizeTextField(value)
-			
+
 			if sanitizedKey != key {
 				delete(config.Variables, key)
 				config.Variables[sanitizedKey] = sanitizedValue
@@ -157,7 +157,7 @@ func (s *InputSanitizer) sanitizeTextField(text string) string {
 
 	// Remove null bytes and other control characters
 	cleaned := strings.ReplaceAll(text, "\x00", "")
-	
+
 	// Remove common injection patterns (case insensitive)
 	patterns := []string{
 		"<script",
@@ -198,19 +198,19 @@ func (s *InputSanitizer) sanitizeVariableName(name string) string {
 			result.WriteRune(r)
 		}
 	}
-	
+
 	sanitized := result.String()
-	
+
 	// Ensure it starts with a letter
 	if len(sanitized) > 0 && !unicode.IsLetter(rune(sanitized[0])) {
 		sanitized = "var_" + sanitized
 	}
-	
+
 	// Limit length
 	if len(sanitized) > 64 {
 		sanitized = sanitized[:64]
 	}
-	
+
 	return sanitized
 }
 
@@ -277,7 +277,7 @@ type ModulePathValidator struct {
 func NewModulePathValidator() *ModulePathValidator {
 	// Basic regex for Go module paths
 	moduleRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9\-._/])*[a-zA-Z0-9]$`)
-	
+
 	return &ModulePathValidator{
 		modulePathRegex: moduleRegex,
 	}
@@ -319,7 +319,7 @@ func (m *ModulePathValidator) ValidateModulePath(modulePath string) error {
 		"localhost",
 		"127.0.0.1",
 		"0.0.0.0",
-		"169.254.169.254", // AWS metadata service
+		"169.254.169.254",          // AWS metadata service
 		"metadata.google.internal", // GCP metadata service
 	}
 
@@ -335,17 +335,17 @@ func (m *ModulePathValidator) ValidateModulePath(modulePath string) error {
 
 // ResourceLimiter enforces resource usage limits
 type ResourceLimiter struct {
-	maxFileSize     int64
-	maxFiles        int
-	maxDirectories  int
+	maxFileSize    int64
+	maxFiles       int
+	maxDirectories int
 }
 
 // NewResourceLimiter creates a new resource limiter
 func NewResourceLimiter() *ResourceLimiter {
 	return &ResourceLimiter{
 		maxFileSize:    10 * 1024 * 1024, // 10MB per file
-		maxFiles:       1000,              // Max files per project
-		maxDirectories: 100,               // Max directories per project
+		maxFiles:       1000,             // Max files per project
+		maxDirectories: 100,              // Max directories per project
 	}
 }
 

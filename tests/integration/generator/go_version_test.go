@@ -123,7 +123,7 @@ slog - Go built-in structured logging (recommended)
 			if tt.shouldFail {
 				assert.Error(t, err, "Expected command to fail")
 				if tt.expectedMsg != "" {
-					assert.Contains(t, string(output), tt.expectedMsg, 
+					assert.Contains(t, string(output), tt.expectedMsg,
 						"Expected output to contain '%s', but got '%s'", tt.expectedMsg, string(output))
 				}
 			} else {
@@ -146,15 +146,15 @@ slog - Go built-in structured logging (recommended)
 						}
 						t.Fatalf("Failed to read go.mod file: %v", err)
 					}
-					
+
 					if tt.goVersion == "auto" {
 						// For auto version, just verify go directive exists
-						assert.Contains(t, string(content), "go ", 
+						assert.Contains(t, string(content), "go ",
 							"go.mod should contain go directive")
 					} else {
 						expectedGoVersion := "go " + tt.goVersion
-						assert.Contains(t, string(content), expectedGoVersion, 
-							"go.mod does not contain the correct go version. Expected '%s', Content: %s", 
+						assert.Contains(t, string(content), expectedGoVersion,
+							"go.mod does not contain the correct go version. Expected '%s', Content: %s",
 							expectedGoVersion, string(content))
 					}
 				}
@@ -258,10 +258,10 @@ func TestGenerator_GoVersion_Config(t *testing.T) {
 
 				if tt.goVersion == "" || tt.goVersion == "auto" {
 					// For empty or auto version, just check that go directive exists
-					assert.Contains(t, string(content), "go ", 
+					assert.Contains(t, string(content), "go ",
 						"go.mod should contain go directive")
 				} else {
-					assert.Contains(t, string(content), tt.expectedInMod, 
+					assert.Contains(t, string(content), tt.expectedInMod,
 						"go.mod should contain expected Go version")
 				}
 			}
@@ -411,7 +411,7 @@ func TestGenerator_GoVersion_ContextVariables(t *testing.T) {
 			}
 
 			// Verify the Go version is set correctly in the config
-			assert.Equal(t, tt.expected, config.GoVersion, 
+			assert.Equal(t, tt.expected, config.GoVersion,
 				"Go version in config should match expected value")
 
 			t.Logf("Go version context test passed for version: %s", tt.goVersion)
@@ -462,7 +462,7 @@ func TestGenerator_GoVersion_DefaultBehavior(t *testing.T) {
 		require.NoError(t, err, "Should be able to read go.mod")
 
 		// Should contain some go directive
-		assert.Contains(t, string(content), "go ", 
+		assert.Contains(t, string(content), "go ",
 			"go.mod should contain go directive even with default version")
 	}
 

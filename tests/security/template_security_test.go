@@ -159,9 +159,9 @@ func TestTemplateSyntaxValidation(t *testing.T) {
 	validator := security.NewTemplateSecurityValidator()
 
 	invalidTemplates := []string{
-		"{{.ProjectName",     // Missing closing brace
-		"{{.ProjectName)}}",  // Wrong closing character
-		"{{range}}{{end}}",   // Invalid range syntax
+		"{{.ProjectName",    // Missing closing brace
+		"{{.ProjectName)}}", // Wrong closing character
+		"{{range}}{{end}}",  // Invalid range syntax
 	}
 
 	for _, template := range invalidTemplates {
@@ -184,16 +184,16 @@ func TestTemplateSecurityScanning(t *testing.T) {
 `
 
 	violations := validator.ScanTemplate(testTemplate)
-	
+
 	// Should find multiple violations
 	assert.Greater(t, len(violations), 0, "Should find security violations")
-	
+
 	// Check that violations contain expected types
 	violationTypes := make(map[string]bool)
 	for _, v := range violations {
 		violationTypes[v.Type] = true
 	}
-	
+
 	assert.True(t, violationTypes["DangerousPattern"], "Should detect dangerous patterns")
 }
 
@@ -213,7 +213,7 @@ func TestNestedLoopPrevention(t *testing.T) {
 {{end}}`
 
 	violations := validator.ScanTemplate(nestedLoopTemplate)
-	
+
 	// This should trigger security concerns (though this specific pattern might not be caught by current regex)
 	// In a production system, you'd want AST-based analysis for this
 	t.Logf("Found %d violations in nested loop template", len(violations))
@@ -275,15 +275,15 @@ Line 3: {{include "../../../etc/passwd"}}
 Line 4: {{.Author}}`
 
 	violations := validator.ScanTemplate(template)
-	
+
 	require.Greater(t, len(violations), 0, "Should find violations")
-	
+
 	for _, violation := range violations {
 		assert.NotEmpty(t, violation.Type, "Violation should have a type")
 		assert.NotEmpty(t, violation.Description, "Violation should have a description")
 		assert.Greater(t, violation.Line, 0, "Violation should have a line number")
 		assert.NotEmpty(t, violation.Severity, "Violation should have a severity")
-		
+
 		t.Logf("Violation: %s at line %d: %s", violation.Type, violation.Line, violation.Description)
 	}
 }

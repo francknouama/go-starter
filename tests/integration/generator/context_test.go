@@ -15,9 +15,9 @@ func TestGenerator_Context_BasicVariables(t *testing.T) {
 	setupTestTemplates(t)
 
 	tests := []struct {
-		name           string
-		config         types.ProjectConfig
-		expectedVars   map[string]interface{}
+		name            string
+		config          types.ProjectConfig
+		expectedVars    map[string]interface{}
 		checkLoggerVars bool
 	}{
 		{
@@ -96,7 +96,7 @@ func TestGenerator_Context_BasicVariables(t *testing.T) {
 			// Use generator for testing configuration structure
 			gen := generator.New()
 			require.NotNil(t, gen)
-			
+
 			// Note: Since createTemplateContext is not exported, we'll test it indirectly
 			// through the Generate method and check the resulting context
 			// For now, we'll verify that the configuration is properly structured
@@ -146,7 +146,7 @@ func TestGenerator_Context_BasicVariables(t *testing.T) {
 			}
 
 			_, err := gen.Generate(tt.config, options)
-			
+
 			// Accept template not found errors as we're testing context creation
 			if err != nil {
 				if goErr, ok := err.(*types.GoStarterError); ok && goErr.Code == types.ErrCodeTemplateNotFound {
@@ -259,7 +259,7 @@ func TestGenerator_Context_LoggerConfiguration(t *testing.T) {
 
 			// Verify logger configuration is properly set
 			assert.Equal(t, tt.logger, config.Logger, "Logger should be set correctly")
-			
+
 			// Additional verification would require accessing the internal context
 			// For now, we verify the configuration is structured correctly
 			t.Logf("Logger context test passed for logger: %s", tt.logger)
@@ -285,10 +285,10 @@ func TestGenerator_Context_DatabaseConfiguration(t *testing.T) {
 				},
 			},
 			expected: map[string]interface{}{
-				"DatabaseDriver":  "postgresql",
-				"DatabaseORM":     "gorm",
-				"HasDatabase":     true,
-				"HasPostgreSQL":   true,
+				"DatabaseDriver": "postgresql",
+				"DatabaseORM":    "gorm",
+				"HasDatabase":    true,
+				"HasPostgreSQL":  true,
 			},
 		},
 		{
@@ -315,10 +315,10 @@ func TestGenerator_Context_DatabaseConfiguration(t *testing.T) {
 				},
 			},
 			expected: map[string]interface{}{
-				"DatabaseDriver":  "mysql",
-				"DatabaseORM":     "raw",
-				"HasDatabase":     true,
-				"HasMySQL":        true,
+				"DatabaseDriver": "mysql",
+				"DatabaseORM":    "raw",
+				"HasDatabase":    true,
+				"HasMySQL":       true,
 			},
 		},
 		{
@@ -463,7 +463,7 @@ func TestGenerator_Context_AuthenticationConfiguration(t *testing.T) {
 
 			// Verify authentication configuration
 			if tt.features != nil {
-				assert.Equal(t, tt.expected, tt.features.Authentication.Type, 
+				assert.Equal(t, tt.expected, tt.features.Authentication.Type,
 					"Authentication type should match expected value")
 			}
 
@@ -569,8 +569,8 @@ func TestGenerator_Context_TemplateVariables(t *testing.T) {
 		Type:      "library",
 		GoVersion: "1.21",
 		Variables: map[string]string{
-			"TestVar2":    "override2", // Override default
-			"CustomVar":   "custom",    // Additional custom variable
+			"TestVar2":  "override2", // Override default
+			"CustomVar": "custom",    // Additional custom variable
 		},
 	}
 

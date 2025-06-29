@@ -1,8 +1,8 @@
 package mocks
 
 import (
-	"github.com/stretchr/testify/mock"
 	"github.com/francknouama/go-starter/pkg/types"
+	"github.com/stretchr/testify/mock"
 )
 
 // MockTemplateRegistry is a mock implementation of the template registry.

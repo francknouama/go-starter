@@ -23,11 +23,11 @@ func setupTemplatesForTesting(t *testing.T) {
 // TestIntegration_BasicProjectGeneration tests the generation of a basic web-api project.
 func TestIntegration_BasicProjectGeneration(t *testing.T) {
 	setupTemplatesForTesting(t)
-	
+
 	config := types.ProjectConfig{
-		Name:    "test-basic-api",
-		Module:  "github.com/test/test-basic-api",
-		Type:    "web-api",
+		Name:      "test-basic-api",
+		Module:    "github.com/test/test-basic-api",
+		Type:      "web-api",
 		GoVersion: "1.21",
 		Framework: "gin",
 		Logger:    "slog",

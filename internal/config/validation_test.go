@@ -297,7 +297,7 @@ func TestValidateAuthor(t *testing.T) {
 			shouldError: false,
 		},
 
-		// Invalid authors  
+		// Invalid authors
 		{
 			name:          "author with control characters should error",
 			author:        "John\x00Doe",

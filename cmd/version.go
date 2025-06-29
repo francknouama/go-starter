@@ -66,7 +66,7 @@ func showVersion() {
 	fmt.Println()
 	fmt.Println(headerStyle.Render("🚀 Go-Starter Version Information"))
 	fmt.Println()
-	
+
 	fmt.Println(labelStyle.Render("Version:") + " " + valueStyle.Render(Version))
 	fmt.Println(labelStyle.Render("Commit: ") + " " + valueStyle.Render(Commit))
 	fmt.Println(labelStyle.Render("Built:  ") + " " + valueStyle.Render(Date))

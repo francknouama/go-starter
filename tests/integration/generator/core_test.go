@@ -73,7 +73,7 @@ func TestGenerator_Generate_BasicFunctionality(t *testing.T) {
 				GoVersion: "1.21",
 			},
 			options: types.GenerationOptions{
-				OutputPath: "",  // Will be set in test
+				OutputPath: "", // Will be set in test
 				DryRun:     false,
 				NoGit:      true,
 				Verbose:    false,
@@ -91,7 +91,7 @@ func TestGenerator_Generate_BasicFunctionality(t *testing.T) {
 				Logger:    "slog",
 			},
 			options: types.GenerationOptions{
-				OutputPath: "",  // Will be set in test
+				OutputPath: "", // Will be set in test
 				DryRun:     false,
 				NoGit:      true,
 				Verbose:    false,
@@ -107,7 +107,7 @@ func TestGenerator_Generate_BasicFunctionality(t *testing.T) {
 				GoVersion: "1.21",
 			},
 			options: types.GenerationOptions{
-				OutputPath: "",  // Will be set in test
+				OutputPath: "", // Will be set in test
 				DryRun:     false,
 				NoGit:      true,
 				Verbose:    false,
@@ -124,7 +124,7 @@ func TestGenerator_Generate_BasicFunctionality(t *testing.T) {
 				GoVersion: "1.21",
 			},
 			options: types.GenerationOptions{
-				OutputPath: "",  // Will be set in test
+				OutputPath: "", // Will be set in test
 				DryRun:     false,
 				NoGit:      true,
 				Verbose:    false,
@@ -141,7 +141,7 @@ func TestGenerator_Generate_BasicFunctionality(t *testing.T) {
 				GoVersion: "1.21",
 			},
 			options: types.GenerationOptions{
-				OutputPath: "",  // Will be set in test
+				OutputPath: "", // Will be set in test
 				DryRun:     false,
 				NoGit:      true,
 				Verbose:    false,
@@ -315,7 +315,7 @@ func TestGenerator_DryRun(t *testing.T) {
 
 	// In dry run mode, no files should be created
 	_, err = os.Stat(options.OutputPath)
-	assert.True(t, os.IsNotExist(err) || isEmptyDir(t, options.OutputPath), 
+	assert.True(t, os.IsNotExist(err) || isEmptyDir(t, options.OutputPath),
 		"Dry run should not create files")
 }
 
@@ -324,8 +324,8 @@ func TestGenerator_GitInitialization(t *testing.T) {
 	setupTestTemplates(t)
 
 	tests := []struct {
-		name   string
-		noGit  bool
+		name      string
+		noGit     bool
 		expectGit bool
 	}{
 		{
@@ -396,7 +396,7 @@ func TestGenerator_GitInitialization(t *testing.T) {
 // isEmptyDir checks if a directory is empty
 func isEmptyDir(t *testing.T, dir string) bool {
 	t.Helper()
-	
+
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return true // Directory doesn't exist or can't be read, consider it empty

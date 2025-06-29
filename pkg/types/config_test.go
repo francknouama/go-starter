@@ -22,19 +22,19 @@ func TestProjectConfig_BasicFields(t *testing.T) {
 	if config.Name != "test-project" {
 		t.Errorf("Expected name 'test-project', got '%s'", config.Name)
 	}
-	
+
 	if config.Module != "github.com/user/test-project" {
 		t.Errorf("Expected module 'github.com/user/test-project', got '%s'", config.Module)
 	}
-	
+
 	if config.Type != "web-api" {
 		t.Errorf("Expected type 'web-api', got '%s'", config.Type)
 	}
-	
+
 	if config.GoVersion != "1.21" {
 		t.Errorf("Expected Go version '1.21', got '%s'", config.GoVersion)
 	}
-	
+
 	if config.Framework != "gin" {
 		t.Errorf("Expected framework 'gin', got '%s'", config.Framework)
 	}

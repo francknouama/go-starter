@@ -11,12 +11,12 @@ import (
 
 func TestCopyFile(t *testing.T) {
 	tests := []struct {
-		name        string
-		setupSrc    func(t *testing.T, tempDir string) string
-		setupDst    func(t *testing.T, tempDir string) string
-		content     string
-		mode        os.FileMode
-		shouldError bool
+		name          string
+		setupSrc      func(t *testing.T, tempDir string) string
+		setupDst      func(t *testing.T, tempDir string) string
+		content       string
+		mode          os.FileMode
+		shouldError   bool
 		errorContains string
 	}{
 		{
@@ -346,20 +346,20 @@ func TestCopyDir(t *testing.T) {
 				srcDir := filepath.Join(tempDir, "source")
 				err := os.MkdirAll(srcDir, 0755)
 				require.NoError(t, err)
-				
+
 				// Create test files
 				err = os.WriteFile(filepath.Join(srcDir, "file1.txt"), []byte("content1"), 0644)
 				require.NoError(t, err)
 				err = os.WriteFile(filepath.Join(srcDir, "file2.txt"), []byte("content2"), 0644)
 				require.NoError(t, err)
-				
+
 				// Create subdirectory
 				subDir := filepath.Join(srcDir, "subdir")
 				err = os.MkdirAll(subDir, 0755)
 				require.NoError(t, err)
 				err = os.WriteFile(filepath.Join(subDir, "nested.txt"), []byte("nested"), 0644)
 				require.NoError(t, err)
-				
+
 				return srcDir
 			},
 			setupDst: func(t *testing.T, tempDir string) string {

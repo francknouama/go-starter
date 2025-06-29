@@ -100,7 +100,7 @@ func ReadFileContent(t *testing.T, filePath string) string {
 // FindFiles finds files matching pattern in directory
 func FindFiles(t *testing.T, dir string, pattern string) []string {
 	t.Helper()
-	
+
 	var files []string
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -117,12 +117,12 @@ func FindFiles(t *testing.T, dir string, pattern string) []string {
 		}
 		return nil
 	})
-	
+
 	if err != nil {
 		t.Logf("Warning: Could not walk directory %s: %v", dir, err)
 		return []string{}
 	}
-	
+
 	return files
 }
 
