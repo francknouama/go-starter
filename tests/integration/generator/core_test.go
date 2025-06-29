@@ -261,11 +261,9 @@ func TestGenerator_GenerationResult(t *testing.T) {
 	result, err := gen.Generate(config, options)
 
 	// For now, accept template not found errors
-	if err != nil {
-		if _, ok := err.(*types.GoStarterError); ok {
-			t.Skip("Skipping test as template is not yet implemented")
-			return
-		}
+	if _, ok := err.(*types.GoStarterError); ok {
+		t.Skip("Skipping test as template is not yet implemented")
+		return
 	}
 
 	require.NoError(t, err)
@@ -303,11 +301,9 @@ func TestGenerator_DryRun(t *testing.T) {
 	result, err := gen.Generate(config, options)
 
 	// For now, accept template not found errors
-	if err != nil {
-		if _, ok := err.(*types.GoStarterError); ok {
-			t.Skip("Skipping test as template is not yet implemented")
-			return
-		}
+	if _, ok := err.(*types.GoStarterError); ok {
+		t.Skip("Skipping test as template is not yet implemented")
+		return
 	}
 
 	require.NoError(t, err)
