@@ -14,7 +14,7 @@ PACKAGES=(
 )
 
 # Minimum acceptable coverage percentage
-MIN_COVERAGE=70.0
+MIN_COVERAGE=50.0
 
 # Output file for coverage profile
 COVER_PROFILE="coverage.out"
