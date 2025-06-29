@@ -7,10 +7,16 @@ type Template struct {
 	Description  string             `yaml:"description" json:"description"`
 	Type         string             `yaml:"type" json:"type"`
 	Architecture string             `yaml:"architecture" json:"architecture"`
+	Version      string             `yaml:"version" json:"version"`
+	Author       string             `yaml:"author" json:"author"`
+	License      string             `yaml:"license" json:"license"`
+	Include      *TemplateIncludes  `yaml:"include" json:"include"`
 	Variables    []TemplateVariable `yaml:"variables" json:"variables"`
 	Files        []TemplateFile     `yaml:"files" json:"files"`
 	Dependencies []Dependency       `yaml:"dependencies" json:"dependencies"`
 	PostHooks    []Hook             `yaml:"post_hooks" json:"post_hooks"`
+	Features     []TemplateFeature  `yaml:"features" json:"features"`
+	Validation   []ValidationRule   `yaml:"validation" json:"validation"`
 	Metadata     map[string]any     `yaml:"metadata" json:"metadata"`
 }
 
@@ -46,6 +52,27 @@ type Hook struct {
 	Command string   `yaml:"command" json:"command"`
 	Args    []string `yaml:"args" json:"args"`
 	WorkDir string   `yaml:"work_dir" json:"work_dir"`
+}
+
+// TemplateIncludes represents external file includes
+type TemplateIncludes struct {
+	Variables    string `yaml:"variables" json:"variables"`
+	Dependencies string `yaml:"dependencies" json:"dependencies"`
+	Features     string `yaml:"features" json:"features"`
+}
+
+// TemplateFeature represents a feature provided by the template
+type TemplateFeature struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+	EnabledWhen string `yaml:"enabled_when" json:"enabled_when"`
+}
+
+// ValidationRule represents a validation rule for the template
+type ValidationRule struct {
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description" json:"description"`
+	Value       string `yaml:"value" json:"value"`
 }
 
 // TemplateMetadata represents metadata about available templates

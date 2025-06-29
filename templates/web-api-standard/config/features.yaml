@@ -1,0 +1,47 @@
+# Template Features and Validation Configuration
+# This file defines features provided by the template and validation rules
+
+features:
+  - name: "logging"
+    description: "Structured logging with configurable logger"
+    enabled_when: "true"
+    
+  - name: "database"
+    description: "Database integration (supports multiple ORMs or standard library)"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
+  - name: "authentication"
+    description: "JWT authentication middleware"
+    enabled_when: "{{ne .AuthType \"\"}}"
+    
+  - name: "docker"
+    description: "Docker containerization"
+    enabled_when: "true"
+    
+  - name: "openapi"
+    description: "OpenAPI/Swagger documentation"
+    enabled_when: "true"
+
+validation:
+  - name: "go_version_compatibility"
+    description: "Ensure Go version is compatible"
+    value: "1.18"
+    
+  - name: "module_path_format"
+    description: "Validate module path format"
+    
+  - name: "project_name_format"
+    description: "Validate project name format"
+
+post_hooks:
+  - name: "clean_dependencies"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+    
+  - name: "format_code"
+    command: "go fmt ./..."
+    work_dir: "{{.OutputPath}}"
+
+  - name: "make_scripts_executable" 
+    command: "chmod +x scripts/*.sh"
+    work_dir: "{{.OutputPath}}"

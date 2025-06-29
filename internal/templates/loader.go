@@ -114,6 +114,13 @@ func (l *TemplateLoader) LoadTemplate(templateDir string) (types.Template, error
 		return types.Template{}, fmt.Errorf("failed to parse template.yaml: %w", err)
 	}
 
+	// Process includes if present
+	if template.Include != nil {
+		if err := l.processIncludes(&template, templateDir); err != nil {
+			return types.Template{}, fmt.Errorf("failed to process includes: %w", err)
+		}
+	}
+
 	// Set the template ID based on type and architecture
 	if template.ID == "" {
 		if template.Architecture != "" && template.Architecture != "standard" {
@@ -173,4 +180,123 @@ func (l *TemplateLoader) FileExists(templateDir, filePath string) bool {
 		fmt.Printf("Warning: failed to close file %s: %v\n", fullPath, err)
 	}
 	return true
+}
+
+// processIncludes processes include directives in template configuration
+func (l *TemplateLoader) processIncludes(template *types.Template, templateDir string) error {
+	includes := template.Include
+
+	// Load variables if specified
+	if includes.Variables != "" {
+		if err := l.loadVariablesInclude(template, templateDir, includes.Variables); err != nil {
+			return fmt.Errorf("failed to load variables include: %w", err)
+		}
+	}
+
+	// Load dependencies if specified
+	if includes.Dependencies != "" {
+		if err := l.loadDependenciesInclude(template, templateDir, includes.Dependencies); err != nil {
+			return fmt.Errorf("failed to load dependencies include: %w", err)
+		}
+	}
+
+	// Load features if specified
+	if includes.Features != "" {
+		if err := l.loadFeaturesInclude(template, templateDir, includes.Features); err != nil {
+			return fmt.Errorf("failed to load features include: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// loadVariablesInclude loads variables from an included file
+func (l *TemplateLoader) loadVariablesInclude(template *types.Template, templateDir, includePath string) error {
+	fullPath := filepath.Join(templateDir, includePath)
+	
+	file, err := l.fs.Open(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to open variables include file %s: %w", includePath, err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("failed to read variables include file: %w", err)
+	}
+
+	var variablesConfig struct {
+		Variables []types.TemplateVariable `yaml:"variables"`
+	}
+	
+	if err := yaml.Unmarshal(data, &variablesConfig); err != nil {
+		return fmt.Errorf("failed to parse variables include file: %w", err)
+	}
+
+	// Merge variables (included variables take precedence)
+	template.Variables = append(template.Variables, variablesConfig.Variables...)
+	
+	return nil
+}
+
+// loadDependenciesInclude loads dependencies from an included file
+func (l *TemplateLoader) loadDependenciesInclude(template *types.Template, templateDir, includePath string) error {
+	fullPath := filepath.Join(templateDir, includePath)
+	
+	file, err := l.fs.Open(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to open dependencies include file %s: %w", includePath, err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("failed to read dependencies include file: %w", err)
+	}
+
+	var dependenciesConfig struct {
+		Dependencies []types.Dependency `yaml:"dependencies"`
+	}
+	
+	if err := yaml.Unmarshal(data, &dependenciesConfig); err != nil {
+		return fmt.Errorf("failed to parse dependencies include file: %w", err)
+	}
+
+	// Merge dependencies (included dependencies take precedence)
+	template.Dependencies = append(template.Dependencies, dependenciesConfig.Dependencies...)
+	
+	return nil
+}
+
+// loadFeaturesInclude loads features from an included file
+func (l *TemplateLoader) loadFeaturesInclude(template *types.Template, templateDir, includePath string) error {
+	fullPath := filepath.Join(templateDir, includePath)
+	
+	file, err := l.fs.Open(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to open features include file %s: %w", includePath, err)
+	}
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return fmt.Errorf("failed to read features include file: %w", err)
+	}
+
+	var featuresConfig struct {
+		Features   []types.TemplateFeature `yaml:"features"`
+		Validation []types.ValidationRule  `yaml:"validation"`
+		PostHooks  []types.Hook            `yaml:"post_hooks"`
+	}
+	
+	if err := yaml.Unmarshal(data, &featuresConfig); err != nil {
+		return fmt.Errorf("failed to parse features include file: %w", err)
+	}
+
+	// Merge features, validation, and post hooks
+	template.Features = append(template.Features, featuresConfig.Features...)
+	template.Validation = append(template.Validation, featuresConfig.Validation...)
+	template.PostHooks = append(template.PostHooks, featuresConfig.PostHooks...)
+	
+	return nil
 }

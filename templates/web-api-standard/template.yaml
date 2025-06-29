@@ -1,101 +1,21 @@
+# Standard Web API Template
+# A flexible web API template supporting multiple frameworks, databases, and architectures
+
 name: "web-api-standard"
-description: "Standard Web API template with Gin framework"
+description: "Standard Web API template with multiple framework options"
 type: "web-api"
 architecture: "standard"
 version: "1.0.0"
 author: "Go-Starter Team"
 license: "MIT"
 
-variables:
-  - name: "ProjectName"
-    description: "Name of the project"
-    type: "string"
-    required: true
-    validation: "^[a-zA-Z0-9_-]+$"
+# Include variable definitions from separate file
+include:
+  variables: "config/variables.yaml"
+  dependencies: "config/dependencies.yaml" 
+  features: "config/features.yaml"
 
-  - name: "ModulePath"
-    description: "Go module path"
-    type: "string"
-    required: true
-    validation: "^[a-zA-Z0-9._/-]+$"
-
-  - name: "Author"
-    description: "Project author"
-    type: "string"
-    required: false
-    default: ""
-
-  - name: "Email"
-    description: "Author email"
-    type: "string"
-    required: false
-    default: ""
-
-  - name: "License"
-    description: "Project license"
-    type: "string"
-    required: false
-    default: "MIT"
-    choices:
-      - "MIT"
-      - "Apache-2.0"
-      - "GPL-3.0"
-      - "BSD-3-Clause"
-
-  - name: "GoVersion"
-    description: "Go version to use"
-    type: "string"
-    required: false
-    default: "1.21"
-
-  - name: "Framework"
-    description: "Web framework"
-    type: "string"
-    required: false
-    default: "gin"
-
-  - name: "Logger"
-    description: "Logging library"
-    type: "string"
-    required: false
-    default: "slog"
-    choices:
-      - "slog"
-      - "zap"
-      - "logrus"
-      - "zerolog"
-
-  - name: "DatabaseDriver"
-    description: "Database driver"
-    type: "string"
-    required: false
-    default: "postgres"
-    choices:
-      - ""
-      - "postgres"
-      - "mysql"
-      - "sqlite"
-
-  - name: "DatabaseORM"
-    description: "Database ORM/query builder"
-    type: "string"
-    required: false
-    default: "gorm"
-    choices:
-      - "gorm"
-      - "sqlx"
-
-  - name: "AuthType"
-    description: "Authentication type"
-    type: "string"
-    required: false
-    default: "jwt"
-    choices:
-      - ""
-      - "jwt"
-      - "oauth2"
-      - "session"
-
+# File generation definitions
 files:
   # Core application files
   - source: "cmd/server/main.go.tmpl"
@@ -114,17 +34,66 @@ files:
   - source: "internal/config/config.go.tmpl"
     destination: "internal/config/config.go"
 
-  # Handlers
-  - source: "internal/handlers/health.go.tmpl"
+  # Handlers - Framework specific
+  - source: "internal/handlers/health_gin.go.tmpl"
     destination: "internal/handlers/health.go"
+    condition: "{{eq .Framework \"gin\"}}"
 
-  - source: "internal/handlers/users.go.tmpl"
+  - source: "internal/handlers/health_echo.go.tmpl"
+    destination: "internal/handlers/health.go"
+    condition: "{{eq .Framework \"echo\"}}"
+
+  - source: "internal/handlers/health_fiber.go.tmpl"
+    destination: "internal/handlers/health.go"
+    condition: "{{eq .Framework \"fiber\"}}"
+
+  - source: "internal/handlers/health_chi.go.tmpl"
+    destination: "internal/handlers/health.go"
+    condition: "{{eq .Framework \"chi\"}}"
+
+  - source: "internal/handlers/health_stdlib.go.tmpl"
+    destination: "internal/handlers/health.go"
+    condition: "{{eq .Framework \"stdlib\"}}"
+
+  - source: "internal/handlers/users_gin.go.tmpl"
     destination: "internal/handlers/users.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"gin\")}}"
 
-  - source: "internal/handlers/auth.go.tmpl"
+  - source: "internal/handlers/users_echo.go.tmpl"
+    destination: "internal/handlers/users.go"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"echo\")}}"
+
+  - source: "internal/handlers/users_fiber.go.tmpl"
+    destination: "internal/handlers/users.go"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"fiber\")}}"
+
+  - source: "internal/handlers/users_chi.go.tmpl"
+    destination: "internal/handlers/users.go"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"chi\")}}"
+
+  - source: "internal/handlers/users_stdlib.go.tmpl"
+    destination: "internal/handlers/users.go"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"stdlib\")}}"
+
+  - source: "internal/handlers/auth_gin.go.tmpl"
     destination: "internal/handlers/auth.go"
-    condition: "{{ne .AuthType \"\"}}"
+    condition: "{{and (ne .AuthType \"\") (eq .Framework \"gin\")}}"
+
+  - source: "internal/handlers/auth_echo.go.tmpl"
+    destination: "internal/handlers/auth.go"
+    condition: "{{and (ne .AuthType \"\") (eq .Framework \"echo\")}}"
+
+  - source: "internal/handlers/auth_fiber.go.tmpl"
+    destination: "internal/handlers/auth.go"
+    condition: "{{and (ne .AuthType \"\") (eq .Framework \"fiber\")}}"
+
+  - source: "internal/handlers/auth_chi.go.tmpl"
+    destination: "internal/handlers/auth.go"
+    condition: "{{and (ne .AuthType \"\") (eq .Framework \"chi\")}}"
+
+  - source: "internal/handlers/auth_stdlib.go.tmpl"
+    destination: "internal/handlers/auth.go"
+    condition: "{{and (ne .AuthType \"\") (eq .Framework \"stdlib\")}}"
 
   # Logger
   - source: "internal/logger/interface.go.tmpl"
@@ -149,16 +118,7 @@ files:
     destination: "internal/logger/zerolog.go"
     condition: "{{eq .Logger \"zerolog\"}}"
 
-  # Middleware
-  - source: "internal/middleware/cors.go.tmpl"
-    destination: "internal/middleware/cors.go"
-
-  - source: "internal/middleware/logger.go.tmpl"
-    destination: "internal/middleware/logger.go"
-
-  - source: "internal/middleware/recovery.go.tmpl"
-    destination: "internal/middleware/recovery.go"
-
+  # Middleware (optional - frameworks provide built-in middleware)
   - source: "internal/middleware/auth.go.tmpl"
     destination: "internal/middleware/auth.go"
     condition: "{{ne .AuthType \"\"}}"
@@ -260,83 +220,3 @@ files:
 
   - source: "scripts/dev.sh.tmpl"
     destination: "scripts/dev.sh"
-
-dependencies:
-  - module: "github.com/gin-gonic/gin"
-    version: "v1.9.1"
-  - module: "github.com/spf13/viper"
-    version: "v1.16.0"
-  - module: "go.uber.org/zap"
-    version: "v1.26.0"
-    condition: "{{eq .Logger \"zap\"}}"
-  - module: "github.com/sirupsen/logrus"
-    version: "v1.9.3"
-    condition: "{{eq .Logger \"logrus\"}}"
-  - module: "github.com/rs/zerolog"
-    version: "v1.31.0"
-    condition: "{{eq .Logger \"zerolog\"}}"
-  - module: "github.com/lib/pq"
-    version: "v1.10.9"
-    condition: "{{eq .DatabaseDriver \"postgres\"}}"
-  - module: "gorm.io/gorm"
-    version: "v1.25.4"
-    condition: "{{ne .DatabaseDriver \"\"}}"
-  - module: "gorm.io/driver/postgres"
-    version: "v1.5.2"
-    condition: "{{eq .DatabaseDriver \"postgres\"}}"
-  - module: "gorm.io/driver/mysql"
-    version: "v1.5.2"
-    condition: "{{eq .DatabaseDriver \"mysql\"}}"
-  - module: "gorm.io/driver/sqlite"
-    version: "v1.5.4"
-    condition: "{{eq .DatabaseDriver \"sqlite\"}}"
-  - module: "github.com/golang-jwt/jwt/v5"
-    version: "v5.0.0"
-    condition: "{{eq .AuthType \"jwt\"}}"
-  - module: "github.com/stretchr/testify"
-    version: "v1.8.4"
-
-post_hooks:
-  - name: "clean_dependencies"
-    command: "go mod tidy"
-    work_dir: "{{.OutputPath}}"
-    
-  - name: "format_code"
-    command: "go fmt ./..."
-    work_dir: "{{.OutputPath}}"
-
-  - name: "make_scripts_executable" 
-    command: "chmod +x scripts/*.sh"
-    work_dir: "{{.OutputPath}}"
-
-features:
-  - name: "logging"
-    description: "Structured logging with configurable logger"
-    enabled_when: "true"
-    
-  - name: "database"
-    description: "Database integration with GORM"
-    enabled_when: "{{ne .DatabaseDriver \"\"}}"
-    
-  - name: "authentication"
-    description: "JWT authentication middleware"
-    enabled_when: "{{ne .AuthType \"\"}}"
-    
-  - name: "docker"
-    description: "Docker containerization"
-    enabled_when: "true"
-    
-  - name: "openapi"
-    description: "OpenAPI/Swagger documentation"
-    enabled_when: "true"
-
-validation:
-  - name: "go_version_compatibility"
-    description: "Ensure Go version is compatible"
-    value: "1.18"
-    
-  - name: "module_path_format"
-    description: "Validate module path format"
-    
-  - name: "project_name_format"
-    description: "Validate project name format"
