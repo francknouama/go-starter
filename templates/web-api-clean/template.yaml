@@ -53,6 +53,12 @@ variables:
     type: "string"
     required: false
     default: "gin"
+    choices:
+      - "gin"
+      - "echo"
+      - "fiber"
+      - "chi"
+      - "stdlib"
 
   - name: "Logger"
     description: "Logging library"
@@ -326,12 +332,19 @@ files:
     condition: "{{ne .DatabaseDriver \"\"}}"
 
   # Test mocks
-  - source: "tests/mocks/MockUserRepository.go"
+  - source: "tests/mocks/MockUserRepository.go.tmpl"
     destination: "tests/mocks/MockUserRepository.go"
     condition: "{{ne .DatabaseDriver \"\"}}"
 
-  - source: "tests/mocks/MockLogger.go"
+  - source: "tests/mocks/MockLogger.go.tmpl"
     destination: "tests/mocks/MockLogger.go"
+
+  - source: "tests/mocks/MockEmailService.go.tmpl"
+    destination: "tests/mocks/MockEmailService.go"
+
+  - source: "tests/mocks/MockPasswordService.go.tmpl"
+    destination: "tests/mocks/MockPasswordService.go"
+    condition: "{{ne .AuthType \"\"}}"
 
   # Scripts
   - source: "scripts/migrate.sh.tmpl"

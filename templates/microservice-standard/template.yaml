@@ -1,0 +1,150 @@
+name: "microservice-standard"
+description: "Standard Go Microservice template with gRPC, service discovery, and containerization"
+type: "microservice"
+architecture: "standard"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the microservice project"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path (e.g., github.com/user/microservice)"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+  - name: "Logger"
+    description: "Logging library for microservice"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+  - name: "Port"
+    description: "Port for the gRPC server"
+    type: "int"
+    required: false
+    default: 50051
+
+  - name: "ServiceDiscovery"
+    description: "Service discovery mechanism"
+    type: "string"
+    required: false
+    default: "none"
+    choices:
+      - "none"
+      - "consul"
+      - "kubernetes"
+
+  - name: "CommunicationProtocol"
+    description: "Inter-service communication protocol"
+    type: "string"
+    required: false
+    default: "grpc"
+    choices:
+      - "grpc"
+      - "rest"
+      - "nats"
+
+files:
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+
+  - source: "main.go.tmpl"
+    destination: "main.go"
+
+  - source: "Dockerfile.tmpl"
+    destination: "Dockerfile"
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+  # gRPC related files
+  - source: "proto/service.proto.tmpl"
+    destination: "proto/service.proto"
+    condition: "{{eq .CommunicationProtocol \"grpc\"}}"
+
+  - source: "internal/server/grpc.go.tmpl"
+    destination: "internal/server/grpc.go"
+    condition: "{{eq .CommunicationProtocol \"grpc\"}}"
+
+  - source: "internal/handler/handler.go.tmpl"
+    destination: "internal/handler/handler.go"
+
+  # REST related files
+  - source: "internal/server/http.go.tmpl"
+    destination: "internal/server/http.go"
+    condition: "{{eq .CommunicationProtocol \"rest\"}}"
+
+  # Service Discovery related files
+  - source: "internal/discovery/consul.go.tmpl"
+    destination: "internal/discovery/consul.go"
+    condition: "{{eq .ServiceDiscovery \"consul\"}}"
+
+  - source: "internal/discovery/kubernetes.go.tmpl"
+    destination: "internal/discovery/kubernetes.go"
+    condition: "{{eq .ServiceDiscovery \"kubernetes\"}}"
+
+  # Configuration
+  - source: "configs/config.yaml.tmpl"
+    destination: "configs/config.yaml"
+
+dependencies:
+  - module: "google.golang.org/grpc"
+    version: "v1.58.0"
+    condition: "{{eq .CommunicationProtocol \"grpc\"}}"
+  - module: "github.com/hashicorp/consul/api"
+    version: "v1.25.1"
+    condition: "{{eq .ServiceDiscovery \"consul\"}}"
+  - module: "k8s.io/client-go"
+    version: "v0.28.3"
+    condition: "{{eq .ServiceDiscovery \"kubernetes\"}}"
+  - module: "github.com/nats-io/nats.go"
+    version: "v1.30.0"
+    condition: "{{eq .CommunicationProtocol \"nats\"}}"
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+    condition: "{{eq .CommunicationProtocol \"rest\"}}"
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .Logger \"zap\"}}"
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .Logger \"logrus\"}}"
+  - module: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .Logger \"zerolog\"}}"
+
+post_hooks:
+  - name: "go_mod_tidy"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+  - name: "go_fmt"
+    command: "go fmt ./..."
+    work_dir: "{{.OutputPath}}"
+  - name: "generate_proto"
+    command: "protoc --go_out=. --go-grpc_out=. proto/service.proto"
+    work_dir: "{{.OutputPath}}"
+    condition: "{{eq .CommunicationProtocol \"grpc\"}}"
