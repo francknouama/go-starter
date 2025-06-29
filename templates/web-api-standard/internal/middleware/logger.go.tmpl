@@ -1,0 +1,137 @@
+package middleware
+
+import (
+	"time"
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	{{- else if eq .Framework "chi"}}
+	"net/http"
+	"github.com/go-chi/chi/v5/middleware"
+	{{- else if eq .Framework "stdlib"}}
+	"net/http"
+	"fmt"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+{{- if eq .Framework "gin"}}
+// Logger returns a logging middleware for Gin
+func Logger(log logger.Logger) gin.HandlerFunc {
+	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		log.Info("HTTP Request",
+			"method", param.Method,
+			"path", param.Path,
+			"status", param.StatusCode,
+			"latency", param.Latency,
+			"client_ip", param.ClientIP,
+			"user_agent", param.Request.UserAgent(),
+		)
+		return ""
+	})
+}
+{{- else if eq .Framework "echo"}}
+// Logger returns a logging middleware for Echo
+func Logger(log logger.Logger) echo.MiddlewareFunc {
+	return middleware.RequestLoggerWithConfig(middleware.RequestLoggerConfig{
+		LogStatus:   true,
+		LogURI:      true,
+		LogError:    true,
+		LogLatency:  true,
+		LogMethod:   true,
+		LogRemoteIP: true,
+		LogUserAgent: true,
+		LogValuesFunc: func(c echo.Context, v middleware.RequestLoggerValues) error {
+			log.Info("HTTP Request",
+				"method", v.Method,
+				"uri", v.URI,
+				"status", v.Status,
+				"latency", v.Latency,
+				"remote_ip", v.RemoteIP,
+				"user_agent", v.UserAgent,
+			)
+			if v.Error != nil {
+				log.Error("HTTP Request Error", "error", v.Error)
+			}
+			return nil
+		},
+	})
+}
+{{- else if eq .Framework "fiber"}}
+// Logger returns a logging middleware for Fiber
+func Logger(log logger.Logger) fiber.Handler {
+	return logger.New(logger.Config{
+		Format: "${time} | ${status} | ${latency} | ${ip} | ${method} | ${path} | ${error}\n",
+		TimeFormat: "15:04:05",
+		TimeZone: "Local",
+		Output: &loggerWriter{log: log},
+	})
+}
+
+// loggerWriter wraps our logger to implement io.Writer
+type loggerWriter struct {
+	log logger.Logger
+}
+
+func (w *loggerWriter) Write(p []byte) (n int, err error) {
+	w.log.Info("HTTP Request", "message", string(p))
+	return len(p), nil
+}
+{{- else if eq .Framework "chi"}}
+// Logger returns a logging middleware for Chi
+func Logger(log logger.Logger) func(http.Handler) http.Handler {
+	return middleware.RequestLogger(&middleware.DefaultLogFormatter{
+		Logger:  &chiLogger{log: log},
+		NoColor: true,
+	})
+}
+
+// chiLogger wraps our logger to implement chi's logger interface
+type chiLogger struct {
+	log logger.Logger
+}
+
+func (l *chiLogger) Print(v ...interface{}) {
+	l.log.Info("HTTP Request", "message", fmt.Sprint(v...))
+}
+{{- else if eq .Framework "stdlib"}}
+// Logger returns a logging middleware for standard library
+func Logger(log logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			
+			// Wrap the response writer to capture status code
+			ww := &responseWriter{ResponseWriter: w, statusCode: 200}
+			
+			next.ServeHTTP(ww, r)
+			
+			log.Info("HTTP Request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.statusCode,
+				"latency", time.Since(start),
+				"remote_addr", r.RemoteAddr,
+				"user_agent", r.UserAgent(),
+			)
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+{{- end}}
