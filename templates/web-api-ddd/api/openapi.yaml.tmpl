@@ -1,0 +1,97 @@
+openapi: 3.0.0
+info:
+  title: {{.ProjectName}} DDD API
+  version: 1.0.0
+  description: API documentation for {{.ProjectName}} based on Domain-Driven Design
+
+servers:
+  - url: /api/v1
+    description: Primary API server
+
+paths:
+  /health:
+    get:
+      summary: Health check endpoint
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "UP"
+
+  {{if ne .DatabaseDriver ""}}
+  /{{.DomainName}}s:
+    get:
+      summary: Get all {{.DomainName}}s
+      responses:
+        '200':
+          description: List of {{.DomainName}}s
+    post:
+      summary: Create a new {{.DomainName}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '201':
+          description: {{.DomainName}} created successfully
+  {{end}}
+
+  {{if ne .AuthType ""}}
+  /auth/register:
+    post:
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '201':
+          description: User registered successfully
+  /auth/login:
+    post:
+      summary: Login user and get JWT token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+  {{end}}

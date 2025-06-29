@@ -1,0 +1,93 @@
+package discovery
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+)
+
+// RegisterWithKubernetes (simplified) - In a real Kubernetes environment,
+// service discovery is typically handled by Kubernetes itself via Services and Endpoints.
+// This function is a placeholder to illustrate where registration logic *might* go
+// if you were implementing a custom discovery mechanism within a pod.
+func RegisterWithKubernetes(serviceName string, servicePort int) error {
+	// This is a simplified representation.
+	// In a real K8s setup, you'd typically rely on K8s Service objects
+	// and DNS for service discovery.
+	log.Printf("Simulating registration for service %s on port %d in Kubernetes", serviceName, servicePort)
+	return nil
+}
+
+// DeregisterFromKubernetes (simplified) - Similar to registration, deregistration
+// is usually handled by Kubernetes' lifecycle management.
+func DeregisterFromKubernetes(serviceName string) error {
+	log.Printf("Simulating deregistration for service %s from Kubernetes", serviceName)
+	return nil
+}
+
+// GetServiceEndpoint (simplified) - Example of how a client might discover a service
+// within Kubernetes using the client-go library.
+func GetServiceEndpoint(ctx context.Context, serviceName, namespace string) (string, error) {
+	// creates the in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		return "", fmt.Errorf("failed to create in-cluster config: %w", err)
+	}
+	// creates the clientset
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	// Get the service
+	svc, err := clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to get service %s/%s: %w", namespace, serviceName, err)
+	}
+
+	if len(svc.Spec.Ports) == 0 {
+		return "", fmt.Errorf("service %s/%s has no ports defined", namespace, serviceName)
+	}
+
+	// Assuming the first port is the one we want
+	port := svc.Spec.Ports[0].Port
+
+	// In-cluster DNS usually resolves to serviceName.namespace.svc.cluster.local
+	// For simplicity, we'll just return serviceName:port
+	endpoint := fmt.Sprintf("%s:%d", serviceName, port)
+	log.Printf("Discovered service %s endpoint: %s", serviceName, endpoint)
+
+	return endpoint, nil
+}
+
+// WatchForServiceChanges (simplified) - Example of watching for service changes
+func WatchForServiceChanges(ctx context.Context, serviceName, namespace string) {
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		log.Printf("Error creating in-cluster config: %v", err)
+		return
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		log.Printf("Error creating clientset: %v", err)
+		return
+	}
+
+	watcher, err := clientset.CoreV1().Services(namespace).Watch(ctx, metav1.ListOptions{FieldSelector: fmt.Sprintf("metadata.name=%s", serviceName)})
+	if err != nil {
+		log.Printf("Error watching service: %v", err)
+		return
+	}
+
+	log.Printf("Watching for changes to service %s/%s", namespace, serviceName)
+	for event := range watcher.ResultChan() {
+		log.Printf("Service %s/%s changed: %s", serviceName, namespace, event.Type)
+		// Here you would handle the event, e.g., update internal service registry
+	}
+	log.Printf("Stopped watching for changes to service %s/%s", serviceName, namespace)
+}

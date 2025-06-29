@@ -16,30 +16,45 @@ import (
 func TestUserUseCase_CreateUser(t *testing.T) {
 	mockRepo := new(mocks.MockUserRepository)
 	mockLogger := new(mocks.MockLogger)
-	useCase := usecases.NewUserUseCase(mockRepo, mockLogger)
+	mockPasswordService := new(mocks.MockPasswordService)
+	mockEmailService := new(mocks.MockEmailService)
+	useCase := usecases.NewUserUseCase(mockRepo, mockPasswordService, mockLogger, mockEmailService)
 
 	ctx := context.Background()
-	user := &entities.User{
-		Email:    "test@example.com",
-		Password: "password123",
+	input := usecases.UserUseCaseInput{
+		Email:     "test@example.com",
+		Username:  "testuser",
+		FirstName: "Test",
+		LastName:  "User",
+		Password:  "password123",
 	}
 
 	// Test case 1: Successful user creation
-	mockRepo.On("CreateUser", ctx, user).Return(nil).Once()
-	mockLogger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return().Once()
+	mockRepo.On("ExistsByEmail", ctx, input.Email).Return(false, nil).Once()
+	mockRepo.On("ExistsByUsername", ctx, input.Username).Return(false, nil).Once()
+	mockPasswordService.On("Hash", input.Password).Return("hashed_password", nil).Once()
+	mockRepo.On("Create", ctx, mock.AnythingOfType("*entities.User")).Return(nil).Once()
+	mockEmailService.On("SendWelcomeEmail", mock.Anything, mock.AnythingOfType("*entities.User")).Return(nil).Maybe()
+	mockLogger.ExpectInfo("Creating new user").Return().Once()
+	mockLogger.ExpectInfo("User created successfully").Return().Once()
 
-	err := useCase.CreateUser(ctx, user)
+	output, err := useCase.CreateUser(ctx, input)
 	assert.NoError(t, err)
+	assert.NotNil(t, output)
+	assert.NotNil(t, output.User)
+	assert.Equal(t, input.Email, output.User.Email)
+	assert.Equal(t, input.Username, output.User.Username)
 	mockRepo.AssertExpectations(t)
 	mockLogger.AssertExpectations(t)
 
-	// Test case 2: User creation fails
-	mockRepo.On("CreateUser", ctx, user).Return(errors.New("db error")).Once()
-	mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+	// Test case 2: Email already exists
+	mockRepo.On("ExistsByEmail", ctx, input.Email).Return(true, nil).Once()
+	mockLogger.ExpectInfo("Creating new user").Return().Once()
 
-	err = useCase.CreateUser(ctx, user)
+	output, err = useCase.CreateUser(ctx, input)
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "db error")
+	assert.Equal(t, entities.ErrEmailAlreadyExists, err)
+	assert.Nil(t, output)
 	mockRepo.AssertExpectations(t)
 	mockLogger.AssertExpectations(t)
 }

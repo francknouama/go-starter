@@ -1,0 +1,135 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"{{.ModulePath}}/configs"
+	"{{.ModulePath}}/internal/handler"
+	"{{.ModulePath}}/internal/server"
+
+	{{if eq .CommunicationProtocol "grpc"}}
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
+	pb "{{.ModulePath}}/proto"
+	{{end}}
+
+	{{if eq .CommunicationProtocol "rest"}}
+	"github.com/gin-gonic/gin"
+	{{end}}
+
+	{{if eq .ServiceDiscovery "consul"}}
+	"{{.ModulePath}}/internal/discovery"
+	"github.com/hashicorp/consul/api"
+	{{end}}
+)
+
+func main() {
+	cfg := configs.LoadConfig()
+
+	// Setup handler
+	svcHandler := handler.NewServiceHandler()
+
+	// Start server based on communication protocol
+	switch cfg.CommunicationProtocol {
+	case "grpc":
+		startGrpcServer(cfg, svcHandler)
+	case "rest":
+		startRestServer(cfg, svcHandler)
+	default:
+		log.Fatalf("Unsupported communication protocol: %s", cfg.CommunicationProtocol)
+	}
+}
+
+{{if eq .CommunicationProtocol "grpc"}}
+func startGrpcServer(cfg *configs.Config, svcHandler *handler.ServiceHandler) {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+
+	s := grpc.NewServer()
+	pb.Register{{.ProjectName}}Server(s, svcHandler)
+	reflection.Register(s) // Enable reflection for gRPCurl
+
+	log.Printf("gRPC server listening on port %d", cfg.Port)
+
+	{{if eq .ServiceDiscovery "consul"}}
+	consulClient, err := api.NewClient(api.DefaultConfig())
+	if err != nil {
+		log.Fatalf("failed to create Consul client: %v", err)
+	}
+
+	serviceID := fmt.Sprintf("%s-%d", cfg.ProjectName, cfg.Port)
+	registration := &api.AgentServiceRegistration{
+		ID:      serviceID,
+		Name:    cfg.ProjectName,
+		Port:    cfg.Port,
+		Address: "127.0.0.1", // Replace with actual host IP in production
+		Check: &api.AgentServiceCheck{
+			GRPC:     fmt.Sprintf("127.0.0.1:%d", cfg.Port),
+			Interval: "10s",
+			Timeout:  "1s",
+		},
+	}
+
+	err = consulClient.Agent().ServiceRegister(registration)
+	if err != nil {
+		log.Fatalf("failed to register service with Consul: %v", err)
+	}
+	log.Printf("Service registered with Consul: %s", serviceID)
+
+	defer func() {
+		log.Printf("Deregistering service %s from Consul", serviceID)
+		err := consulClient.Agent().ServiceDeregister(serviceID)
+		if err != nil {
+			log.Printf("Error deregistering service from Consul: %v", err)
+		}
+	}()
+	{{end}}
+
+	go func() {
+		if err := s.Serve(lis); err != nil && err != grpc.ErrServerStopped {
+			log.Fatalf("failed to serve: %v", err)
+		}
+	}()
+
+	waitForShutdown(s)
+}
+{{end}}
+
+{{if eq .CommunicationProtocol "rest"}}
+func startRestServer(cfg *configs.Config, svcHandler *handler.ServiceHandler) {
+	r := gin.Default()
+	server.SetupRoutes(r, svcHandler)
+
+	log.Printf("REST server listening on port %d", cfg.Port)
+
+	go func() {
+		if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
+			log.Fatalf("failed to run REST server: %v", err)
+		}
+	}()
+
+	// For REST, we don't have a direct server.Stop() like gRPC, so we'll just wait for OS signals
+	// and then exit.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down REST server...")
+}
+{{end}}
+
+func waitForShutdown(s *grpc.Server) {
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("Shutting down server...")
+	s.GracefulStop()
+	log.Println("Server stopped.")
+}

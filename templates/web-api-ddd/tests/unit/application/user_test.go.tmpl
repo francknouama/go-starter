@@ -1,0 +1,48 @@
+package application_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"{{.ModulePath}}/internal/application/{{.DomainName}}"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/tests/mocks"
+)
+
+func TestCreate{{.DomainName | title}}CommandHandler_Handle(t *testing.T) {
+	mockRepo := new(mocks.Mock{{.DomainName | title}}Repository)
+	mockLogger := new(mocks.MockLogger)
+	handler := {{.DomainName}}.NewCreate{{.DomainName | title}}CommandHandler(mockRepo, mockLogger)
+
+	ctx := context.Background()
+	cmd := {{.DomainName}}.Create{{.DomainName | title}}Command{
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+
+	// Test case 1: Successful creation
+	mockRepo.On("Save", ctx, mock.AnythingOfType("*{{.DomainName}}.{{.DomainName | title}}")).Return(nil).Once()
+	mockLogger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return().Once()
+
+	resp, err := handler.Handle(ctx, cmd)
+	assert.NoError(t, err)
+	assert.NotNil(t, resp)
+	assert.NotEmpty(t, resp.ID)
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
+
+	// Test case 2: Repository returns error
+	mockRepo.On("Save", ctx, mock.AnythingOfType("*{{.DomainName}}.{{.DomainName | title}}")).Return(errors.New("db error")).Once()
+	mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+
+	resp, err = handler.Handle(ctx, cmd)
+	assert.Error(t, err)
+	assert.Nil(t, resp)
+	assert.Contains(t, err.Error(), "db error")
+	mockRepo.AssertExpectations(t)
+	mockLogger.AssertExpectations(t)
+}

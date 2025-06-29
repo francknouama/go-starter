@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=development
+      - DB_HOST=db
+      - DB_PORT={{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{else if eq .DatabaseDriver "sqlite"}}0{{end}}
+      - DB_USER={{.ProjectName}}
+      - DB_PASSWORD=password
+      - DB_NAME={{.ProjectName}}_dev
+      - JWT_SECRET=supersecretjwtkey
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+
+  db:
+    image: {{if eq .DatabaseDriver "postgres"}}postgres:13{{else if eq .DatabaseDriver "mysql"}}mysql:8{{else if eq .DatabaseDriver "sqlite"}}alpine/git{{end}}
+    environment:
+      {{if eq .DatabaseDriver "postgres"}}
+      POSTGRES_DB: {{.ProjectName}}_dev
+      POSTGRES_USER: {{.ProjectName}}
+      POSTGRES_PASSWORD: password
+      {{else if eq .DatabaseDriver "mysql"}}
+      MYSQL_DATABASE: {{.ProjectName}}_dev
+      MYSQL_USER: {{.ProjectName}}
+      MYSQL_PASSWORD: password
+      MYSQL_ROOT_PASSWORD: rootpassword
+      {{end}}
+    ports:
+      - "{{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{else if eq .DatabaseDriver "sqlite"}}0{{end}}:{{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{else if eq .DatabaseDriver "sqlite"}}0{{end}}"
+    volumes:
+      - db_data:/var/lib/{{if eq .DatabaseDriver "postgres"}}postgresql{{else if eq .DatabaseDriver "mysql"}}mysql{{end}}/data
+
+volumes:
+  db_data:

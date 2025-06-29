@@ -1,0 +1,54 @@
+package discovery
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/hashicorp/consul/api"
+)
+
+// RegisterWithConsul registers the service with Consul
+func RegisterWithConsul(serviceName string, serviceID string, port int) error {
+	config := api.DefaultConfig()
+	client, err := api.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("failed to create Consul client: %w", err)
+	}
+
+	registration := &api.AgentServiceRegistration{
+		ID:      serviceID,
+		Name:    serviceName,
+		Port:    port,
+		Address: "127.0.0.1", // Replace with actual host IP in production
+		Check: &api.AgentServiceCheck{
+			TCP:      fmt.Sprintf("127.0.0.1:%d", port),
+			Interval: "10s",
+			Timeout:  "1s",
+		},
+	}
+
+	err = client.Agent().ServiceRegister(registration)
+	if err != nil {
+		return fmt.Errorf("failed to register service with Consul: %w", err)
+	}
+
+	log.Printf("Service '%s' registered with Consul", serviceID)
+	return nil
+}
+
+// DeregisterFromConsul deregisters the service from Consul
+func DeregisterFromConsul(serviceID string) error {
+	config := api.DefaultConfig()
+	client, err := api.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("failed to create Consul client: %w", err)
+	}
+
+	err = client.Agent().ServiceDeregister(serviceID)
+	if err != nil {
+		return fmt.Errorf("failed to deregister service from Consul: %w", err)
+	}
+
+	log.Printf("Service '%s' deregistered from Consul", serviceID)
+	return nil
+}

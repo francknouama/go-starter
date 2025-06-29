@@ -12,7 +12,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        go-version: ['1.21', '1.22']
+        go-version: ['1.22', '1.23']
         os: [ubuntu-latest]
 
     steps:
@@ -29,11 +29,11 @@ jobs:
     - name: Download dependencies
       run: go mod download
 
-    - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+    - name: Run tests and check coverage
+      run: ./scripts/check_coverage.sh
 
     - name: Upload coverage to Codecov
-      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.21'
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == '1.23'
       uses: codecov/codecov-action@v3
       with:
         file: ./coverage.out
@@ -51,7 +51,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: 1.21
+        go-version: 1.23
 
     - name: golangci-lint
       uses: golangci/golangci-lint-action@v3
@@ -69,7 +69,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: 1.21
+        go-version: 1.23
 
     - name: Build go-starter
       run: make build
@@ -100,7 +100,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: 1.21
+        go-version: 1.23
 
     - name: Build
       run: go build -o bin/go-starter .
@@ -112,20 +112,21 @@ jobs:
         ./bin/go-starter list
         ./bin/go-starter --help
 
-  # security:
-  #   name: Security Scan
-  #   runs-on: ubuntu-latest
-    
-  #   steps:
-  #   - name: Check out code
-  #     uses: actions/checkout@v4
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
 
-  #   - name: Set up Go
-  #     uses: actions/setup-go@v4
-  #     with:
-  #       go-version: 1.21
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.23
 
-  #   - name: Run Gosec Security Scanner
-  #     run: |
-  #       go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
-  #       gosec ./...
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run benchmarks
+      run: go test -bench=. -benchmem -cpuprofile=cpu.prof -memprofile=mem.prof ./tests/benchmarks/...
+

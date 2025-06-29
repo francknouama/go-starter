@@ -1,0 +1,32 @@
+FROM golang:{{.GoVersion}} AS builder
+
+WORKDIR /app
+
+COPY go.mod ./go.mod
+COPY go.sum ./go.sum
+RUN go mod download
+
+COPY . .
+
+{{if eq .CommunicationProtocol "grpc"}}
+# Install protoc and grpc-go plugins
+RUN apt-get update && apt-get install -y protobuf-compiler
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+ENV PATH="/go/bin:"${PATH}"
+
+# Generate protobuf code
+RUN protoc --go_out=. --go-grpc_out=. proto/service.proto
+{{end}}
+
+RUN go build -o {{.ProjectName}} main.go
+
+FROM alpine:latest
+
+WORKDIR /app
+
+COPY --from=builder /app/{{.ProjectName}} .
+
+EXPOSE {{.Port}}
+
+CMD ["./{{.ProjectName}}"]

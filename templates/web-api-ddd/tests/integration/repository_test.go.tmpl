@@ -1,0 +1,73 @@
+package integration_test
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"{{.ModulePath}}/configs"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/infrastructure/persistence"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+func TestIntegration_{{.DomainName | title}}Repository(t *testing.T) {
+	// Load config for test database
+	cfg := configs.LoadConfig()
+	cfg.Database.Database = cfg.Database.Database + "_test_repo"
+
+	// Setup logger
+	appLogger := logger.NewLogger(&cfg.Logger)
+
+	// Connect to test database
+	db, err := persistence.NewDatabaseConnection(&cfg.Database)
+	assert.NoError(t, err)
+	defer db.Close()
+
+	// Run migrations
+	err = persistence.RunMigrations(db, cfg.Database.Driver)
+	assert.NoError(t, err)
+
+	// Create repository
+	repo := persistence.New{{.DomainName | title}}Repository(db, appLogger)
+	ctx := context.Background()
+
+	// Test Save and GetByID
+	email, _ := valueobjects.NewEmail("test_repo@example.com")
+	{{.DomainName}}, err := {{.DomainName}}.New{{.DomainName | title}}("Repo", "Test", email, "password123")
+	assert.NoError(t, err)
+
+	err = repo.Save(ctx, {{.DomainName}})
+	assert.NoError(t, err)
+	assert.NotEmpty(t, {{.DomainName}}.ID.String())
+
+	found{{.DomainName | title}}, err := repo.GetByID(ctx, {{.DomainName}}.ID.String())
+	assert.NoError(t, err)
+	assert.NotNil(t, found{{.DomainName | title}})
+	assert.Equal(t, {{.DomainName}}.ID, found{{.DomainName | title}}.ID)
+	assert.Equal(t, {{.DomainName}}.Email.String(), found{{.DomainName | title}}.Email.String())
+
+	// Test GetByEmail
+	found{{.DomainName | title}}, err = repo.GetByEmail(ctx, email.String())
+	assert.NoError(t, err)
+	assert.NotNil(t, found{{.DomainName | title}})
+	assert.Equal(t, {{.DomainName}}.ID, found{{.DomainName | title}}.ID)
+
+	// Test Update
+	{{.DomainName}}.UpdateFirstName("UpdatedRepo")
+	err = repo.Save(ctx, {{.DomainName}})
+	assert.NoError(t, err)
+
+	found{{.DomainName | title}}, err = repo.GetByID(ctx, {{.DomainName}}.ID.String())
+	assert.NoError(t, err)
+	assert.Equal(t, "UpdatedRepo", found{{.DomainName | title}}.FirstName)
+
+	// Test Delete
+	err = repo.Delete(ctx, {{.DomainName}}.ID.String())
+	assert.NoError(t, err)
+
+	found{{.DomainName | title}}, err = repo.GetByID(ctx, {{.DomainName}}.ID.String())
+	assert.Error(t, err)
+	assert.Nil(t, found{{.DomainName | title}})
+}

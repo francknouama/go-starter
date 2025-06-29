@@ -12,6 +12,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// setupTestTemplates initializes the template registry for testing
+func setupTestTemplates(t *testing.T) {
+	t.Helper()
+	// Initialize templates filesystem from the templates directory
+	templatesDir := "../../templates"
+	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
+		t.Fatalf("Templates directory not found: %s", templatesDir)
+	}
+	templates.SetTemplatesFS(os.DirFS(templatesDir))
+}
+
 // TestCompleteTemplateWorkflow tests the complete template generation workflow for Phase 1
 func TestCompleteTemplateWorkflow(t *testing.T) {
 	// Initialize templates filesystem for testing

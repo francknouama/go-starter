@@ -1,0 +1,224 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/configs"
+	"{{.ModulePath}}/internal/application/auth"
+	"{{.ModulePath}}/internal/application/{{.DomainName}}"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/infrastructure/persistence"
+	"{{.ModulePath}}/internal/presentation/http/handlers"
+	"{{.ModulePath}}/internal/presentation/http/middleware"
+
+	{{if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{end}}
+	{{if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+	{{end}}
+	{{if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	{{end}}
+	{{if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	{{end}}
+)
+
+func main() {
+	cfg := configs.LoadConfig()
+
+	appLogger := logger.NewLogger(&cfg.Logger)
+
+	{{if ne .DatabaseDriver ""}}
+	db, err := persistence.NewDatabaseConnection(&cfg.Database)
+	if err != nil {
+		appLogger.Fatal("Failed to connect to database", "error", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			appLogger.Error("Failed to close database connection", "error", err)
+		}
+	}()
+
+	userRepo := persistence.New{{.DomainName | title}}Repository(db, appLogger)
+	{{end}}
+
+	{{if ne .AuthType ""}}
+	authService := auth.NewAuthService(userRepo, appLogger)
+	{{end}}
+
+	{{.DomainName}}CommandHandlers := {{.DomainName}}.NewCommandHandlers(userRepo, appLogger)
+	{{.DomainName}}QueryHandlers := {{.DomainName}}.NewQueryHandlers(userRepo, appLogger)
+
+	{{if eq .Framework "gin"}}
+	r := gin.Default()
+	r.Use(middleware.GinLogger(appLogger))
+	r.Use(gin.Recovery())
+	r.Use(middleware.CORS())
+
+	h := handlers.NewGinHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	h.RegisterRoutes(r)
+	{{if ne .AuthType ""}}
+	authHandlers := handlers.NewAuthGinHandlers(authService, appLogger)
+	authHandlers.RegisterRoutes(r)
+	{{end}}
+
+	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	appLogger.Info("Starting Gin server", "port", cfg.Server.Port)
+	httpServer := &http.Server{
+		Addr:         serverAddr,
+		Handler:      r,
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	}
+
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Fatal("Gin server failed to start", "error", err)
+		}
+	}()
+
+	{{else if eq .Framework "echo"}}
+	e := echo.New()
+	e.Use(middleware.EchoLogger(appLogger))
+	e.Use(middleware.Recover())
+	e.Use(middleware.CORS())
+
+	h := handlers.NewEchoHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	h.RegisterRoutes(e)
+	{{if ne .AuthType ""}}
+	authHandlers := handlers.NewAuthEchoHandlers(authService, appLogger)
+	authHandlers.RegisterRoutes(e)
+	{{end}}
+
+	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	appLogger.Info("Starting Echo server", "port", cfg.Server.Port)
+
+	go func() {
+		if err := e.Start(serverAddr); err != nil && err != http.ErrServerClosed {
+			appLogger.Fatal("Echo server failed to start", "error", err)
+		}
+	}()
+
+	{{else if eq .Framework "fiber"}}
+	app := fiber.New(fiber.Config{
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	})
+	app.Use(middleware.FiberLogger(appLogger))
+	app.Use(recover.New())
+	app.Use(cors.New())
+
+	h := handlers.NewFiberHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	h.RegisterRoutes(app)
+	{{if ne .AuthType ""}}
+	authHandlers := handlers.NewAuthFiberHandlers(authService, appLogger)
+	authHandlers.RegisterRoutes(app)
+	{{end}}
+
+	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	appLogger.Info("Starting Fiber server", "port", cfg.Server.Port)
+
+	go func() {
+		if err := app.Listen(serverAddr); err != nil && err != http.ErrServerClosed {
+			appLogger.Fatal("Fiber server failed to start", "error", err)
+		}
+	}()
+
+	{{else if eq .Framework "chi"}}
+	r := chi.NewRouter()
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+	r.Use(middleware.ChiCORS())
+
+	h := handlers.NewChiHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	h.RegisterRoutes(r)
+	{{if ne .AuthType ""}}
+	authHandlers := handlers.NewAuthChiHandlers(authService, appLogger)
+	authHandlers.RegisterRoutes(r)
+	{{end}}
+
+	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	appLogger.Info("Starting Chi server", "port", cfg.Server.Port)
+	httpServer := &http.Server{
+		Addr:         serverAddr,
+		Handler:      r,
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	}
+
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Fatal("Chi server failed to start", "error", err)
+		}
+	}()
+
+	{{else if eq .Framework "stdlib"}}
+	mux := http.NewServeMux()
+	h := handlers.NewStdlibHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	h.RegisterRoutes(mux)
+	{{if ne .AuthType ""}}
+	authHandlers := handlers.NewAuthStdlibHandlers(authService, appLogger)
+	authHandlers.RegisterRoutes(mux)
+	{{end}}
+
+	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	appLogger.Info("Starting standard library server", "port", cfg.Server.Port)
+	httpServer := &http.Server{
+		Addr:         serverAddr,
+		Handler:      mux,
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	}
+
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			appLogger.Fatal("Standard library server failed to start", "error", err)
+		}
+	}()
+
+	{{end}}
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	appLogger.Info("Shutting down server...")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	{{if or (eq .Framework "gin") (eq .Framework "chi") (eq .Framework "stdlib")}}
+	if err := httpServer.Shutdown(ctx); err != nil {
+		appLogger.Fatal("Server forced to shutdown", "error", err)
+	}
+	{{else if eq .Framework "echo"}}
+	if err := e.Shutdown(ctx); err != nil {
+		appLogger.Fatal("Server forced to shutdown", "error", err)
+	}
+	{{else if eq .Framework "fiber"}}
+	if err := app.Shutdown(); err != nil {
+		appLogger.Fatal("Server forced to shutdown", "error", err)
+	}
+	{{end}}
+
+	appLogger.Info("Server exiting")
+}
