@@ -236,7 +236,7 @@ func TestGenerator_Rollback_PermissionFailure(t *testing.T) {
 
 	// Cleanup function to restore permissions
 	defer func() {
-		os.Chmod(restrictedDir, 0755)
+		_ = os.Chmod(restrictedDir, 0755)
 		os.RemoveAll(restrictedDir)
 	}()
 

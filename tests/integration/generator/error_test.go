@@ -105,7 +105,7 @@ func TestGenerator_Error_PermissionDenied(t *testing.T) {
 
 	// Cleanup with proper permissions
 	defer func() {
-		os.Chmod(restrictedDir, 0755)
+		_ = os.Chmod(restrictedDir, 0755)
 		os.RemoveAll(restrictedDir)
 	}()
 

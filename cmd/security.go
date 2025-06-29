@@ -131,7 +131,7 @@ func scanTemplates(templatePath string, verbose bool, outputFormat string) error
 }
 
 // scanConfig validates a project configuration for security issues
-func scanConfig(configPath string, verbose bool, outputFormat string) error {
+func scanConfig(configPath string, verbose bool, _ string) error {
 	// For now, just validate that the sanitizer works with a dummy config
 	// In a real implementation, you would load and validate the actual config file
 	sanitizer := security.NewInputSanitizer()
@@ -164,7 +164,7 @@ func scanConfig(configPath string, verbose bool, outputFormat string) error {
 }
 
 // outputSecurityResults outputs security scan results in the specified format
-func outputSecurityResults(violations []security.SecurityViolation, format string, verbose bool) error {
+func outputSecurityResults(violations []security.SecurityViolation, format string, _ bool) error {
 	if len(violations) == 0 {
 		fmt.Println("✓ No security violations found")
 		return nil
