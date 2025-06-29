@@ -218,7 +218,7 @@ func (l *TemplateLoader) loadVariablesInclude(template *types.Template, template
 	if err != nil {
 		return fmt.Errorf("failed to open variables include file %s: %w", includePath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -247,7 +247,7 @@ func (l *TemplateLoader) loadDependenciesInclude(template *types.Template, templ
 	if err != nil {
 		return fmt.Errorf("failed to open dependencies include file %s: %w", includePath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
@@ -276,7 +276,7 @@ func (l *TemplateLoader) loadFeaturesInclude(template *types.Template, templateD
 	if err != nil {
 		return fmt.Errorf("failed to open features include file %s: %w", includePath, err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	data, err := io.ReadAll(file)
 	if err != nil {
