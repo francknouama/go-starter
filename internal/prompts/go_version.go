@@ -2,8 +2,9 @@ package prompts
 
 import (
 	"fmt"
-	"github.com/AlecAivazis/survey/v2"
 	"slices"
+
+	"github.com/AlecAivazis/survey/v2"
 )
 
 // Supported Go versions (latest 3 major versions)

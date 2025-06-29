@@ -34,7 +34,7 @@ func setupBenchmarkTemplates(b *testing.B) {
 func BenchmarkGenerator_GenerateWebAPI(b *testing.B) {
 	// Initialize templates
 	setupBenchmarkTemplates(b)
-	
+
 	config := types.ProjectConfig{
 		Name:      "benchmark-web-api",
 		Module:    "github.com/benchmark/web-api",
