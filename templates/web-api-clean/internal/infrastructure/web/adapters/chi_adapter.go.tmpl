@@ -4,8 +4,6 @@ package adapters
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	
@@ -100,6 +98,34 @@ func (c *ChiContext) ClientIP() string {
 		return c.request.RemoteAddr[:idx]
 	}
 	return c.request.RemoteAddr
+}
+
+// GetClientIP implements ports.HTTPContext.GetClientIP
+func (c *ChiContext) GetClientIP() string {
+	return c.ClientIP()
+}
+
+// GetRequest implements ports.HTTPContext.GetRequest
+func (c *ChiContext) GetRequest() *http.Request {
+	return c.request
+}
+
+// GetStatusCode implements ports.HTTPContext.GetStatusCode
+func (c *ChiContext) GetStatusCode() int {
+	return c.statusCode
+}
+
+// Next implements ports.HTTPContext.Next
+func (c *ChiContext) Next() {
+	// Chi handles middleware chaining differently
+	// This is typically handled in the middleware adapter
+}
+
+// GetErrors implements ports.HTTPContext.GetErrors
+func (c *ChiContext) GetErrors() []string {
+	// Chi doesn't have a built-in error collection like Gin
+	// In a real implementation, you might store errors in context values
+	return []string{}
 }
 
 // ChiRouter adapts chi.Router to implement ports.Router

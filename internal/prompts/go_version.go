@@ -3,8 +3,6 @@ package prompts
 import (
 	"fmt"
 	"slices"
-
-	"github.com/AlecAivazis/survey/v2"
 )
 
 // Supported Go versions (latest 3 major versions)
@@ -31,29 +29,6 @@ func mapSelectionToVersion(selection string) string {
 	}
 }
 
-// PromptGoVersion prompts the user to select a Go version
-func (p *SurveyPrompter) PromptGoVersion() (string, error) {
-	options := []string{
-		"Auto-detect (recommended)",
-		"Go 1.23 (latest)",
-		"Go 1.22",
-		"Go 1.21",
-	}
-
-	prompt := &survey.Select{
-		Message: "Select Go version:",
-		Options: options,
-		Default: "Auto-detect (recommended)",
-		Help:    "Choose the Go version for your project. Auto-detect uses your system's current Go version.",
-	}
-
-	var selection string
-	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
-		return "", err
-	}
-
-	return mapSelectionToVersion(selection), nil
-}
 
 // ValidateGoVersion validates if the provided Go version is supported
 func ValidateGoVersion(version string) error {

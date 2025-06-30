@@ -10,11 +10,15 @@ import (
 	"syscall"
 	"time"
 
-	"{{.ModulePath}}/configs"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	{{if ne .AuthType ""}}
 	"{{.ModulePath}}/internal/application/auth"
+	{{end}}
+	{{if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/application/{{.DomainName}}"
-	"{{.ModulePath}}/internal/infrastructure/logger"
 	"{{.ModulePath}}/internal/infrastructure/persistence"
+	{{end}}
+	"{{.ModulePath}}/internal/infrastructure/logger"
 	"{{.ModulePath}}/internal/presentation/http/handlers"
 	"{{.ModulePath}}/internal/presentation/http/middleware"
 
@@ -37,7 +41,7 @@ import (
 )
 
 func main() {
-	cfg := configs.LoadConfig()
+	cfg := config.LoadConfig()
 
 	appLogger := logger.NewLogger(&cfg.Logger)
 
@@ -59,8 +63,10 @@ func main() {
 	authService := auth.NewAuthService(userRepo, appLogger)
 	{{end}}
 
+	{{if ne .DatabaseDriver ""}}
 	{{.DomainName}}CommandHandlers := {{.DomainName}}.NewCommandHandlers(userRepo, appLogger)
 	{{.DomainName}}QueryHandlers := {{.DomainName}}.NewQueryHandlers(userRepo, appLogger)
+	{{end}}
 
 	{{if eq .Framework "gin"}}
 	r := gin.Default()
@@ -68,7 +74,7 @@ func main() {
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
 
-	h := handlers.NewGinHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	h := handlers.NewGinHandlers({{if ne .DatabaseDriver ""}}{{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, {{end}}appLogger)
 	h.RegisterRoutes(r)
 	{{if ne .AuthType ""}}
 	authHandlers := handlers.NewAuthGinHandlers(authService, appLogger)

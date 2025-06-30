@@ -2,7 +2,9 @@ package ports
 
 import (
 	"context"
+	{{if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/domain/entities"
+	{{end}}
 )
 
 // PasswordService defines the contract for password operations
@@ -14,6 +16,7 @@ type PasswordService interface {
 	Verify(password, hash string) error
 }
 
+{{if ne .AuthType ""}}
 // TokenService defines the contract for token operations
 type TokenService interface {
 	// GenerateAccessToken creates a new access token for the user
@@ -28,6 +31,7 @@ type TokenService interface {
 	// RefreshToken generates a new access token from a refresh token
 	RefreshToken(refreshToken string) (*entities.AuthToken, error)
 }
+{{end}}
 
 // Logger defines the contract for logging operations
 type Logger interface {
@@ -52,6 +56,7 @@ type Logger interface {
 
 // EmailService defines the contract for email operations
 type EmailService interface {
+	{{if ne .DatabaseDriver ""}}
 	// SendWelcomeEmail sends a welcome email to a new user
 	SendWelcomeEmail(ctx context.Context, user *entities.User) error
 	
@@ -60,6 +65,10 @@ type EmailService interface {
 	
 	// SendEmailVerification sends an email verification message
 	SendEmailVerification(ctx context.Context, user *entities.User, verificationToken string) error
+	{{else}}
+	// SendNotificationEmail sends a general notification email
+	SendNotificationEmail(ctx context.Context, to, subject, body string) error
+	{{end}}
 }
 
 // CacheService defines the contract for caching operations

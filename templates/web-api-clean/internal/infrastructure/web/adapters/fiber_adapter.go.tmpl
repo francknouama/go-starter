@@ -3,7 +3,6 @@ package adapters
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	
 	"github.com/gofiber/fiber/v2"
@@ -72,6 +71,47 @@ func (f *FiberContext) SetHeader(key, value string) {
 // ClientIP implements ports.HTTPContext.ClientIP
 func (f *FiberContext) ClientIP() string {
 	return f.ctx.IP()
+}
+
+// GetClientIP implements ports.HTTPContext.GetClientIP
+func (f *FiberContext) GetClientIP() string {
+	return f.ctx.IP()
+}
+
+// GetRequest implements ports.HTTPContext.GetRequest
+func (f *FiberContext) GetRequest() *http.Request {
+	// Convert Fiber request to standard http.Request
+	// Note: This is a simplified conversion for compatibility
+	req := &http.Request{
+		Method:     f.ctx.Method(),
+		Header:     make(http.Header),
+		Host:       string(f.ctx.Request().Host()),
+		RequestURI: string(f.ctx.Request().RequestURI()),
+	}
+	
+	// Copy headers
+	f.ctx.Request().Header.VisitAll(func(key, value []byte) {
+		req.Header.Add(string(key), string(value))
+	})
+	
+	return req
+}
+
+// GetStatusCode implements ports.HTTPContext.GetStatusCode
+func (f *FiberContext) GetStatusCode() int {
+	return f.ctx.Response().StatusCode()
+}
+
+// Next implements ports.HTTPContext.Next
+func (f *FiberContext) Next() {
+	f.ctx.Next()
+}
+
+// GetErrors implements ports.HTTPContext.GetErrors
+func (f *FiberContext) GetErrors() []string {
+	// Fiber doesn't have a built-in error collection like Gin
+	// In a real implementation, you might store errors in context values
+	return []string{}
 }
 
 // FiberRouter adapts fiber.App to implement ports.Router

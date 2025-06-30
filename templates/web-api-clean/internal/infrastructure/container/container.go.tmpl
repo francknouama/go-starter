@@ -2,12 +2,14 @@ package container
 
 import (
 	"{{.ModulePath}}/internal/adapters/controllers"
+	{{if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/adapters/presenters"
-	"{{.ModulePath}}/internal/domain/ports"
 	"{{.ModulePath}}/internal/domain/usecases"
+	"{{.ModulePath}}/internal/infrastructure/persistence"
+	{{end}}
+	"{{.ModulePath}}/internal/domain/ports"
 	"{{.ModulePath}}/internal/infrastructure/config"
 	"{{.ModulePath}}/internal/infrastructure/logger"
-	"{{.ModulePath}}/internal/infrastructure/persistence"
 	"{{.ModulePath}}/internal/infrastructure/services"
 	"{{.ModulePath}}/internal/infrastructure/web"
 )
@@ -20,26 +22,42 @@ type Container struct {
 
 	// Infrastructure Services
 	Logger          ports.Logger
+	{{if ne .DatabaseDriver ""}}
 	Repository      ports.Repository
+	{{end}}
 	PasswordService ports.PasswordService
+	{{if ne .AuthType ""}}
 	TokenService    ports.TokenService
+	{{end}}
 	EmailService    ports.EmailService
 
+	{{if ne .DatabaseDriver ""}}
 	// Use Cases
 	UserUseCase *usecases.UserUseCase
+	{{end}}
+	{{if ne .AuthType ""}}
 	AuthUseCase *usecases.AuthUseCase
+	{{end}}
 
+	{{if ne .DatabaseDriver ""}}
 	// Presenters
 	UserPresenter *presenters.UserPresenter
+	{{end}}
+	{{if ne .AuthType ""}}
 	AuthPresenter *presenters.AuthPresenter
+	{{end}}
 
 	// Controllers
 	HealthController *controllers.HealthController
+	{{if ne .DatabaseDriver ""}}
 	UserController   *controllers.UserController
+	{{end}}
+	{{if ne .AuthType ""}}
 	AuthController   *controllers.AuthController
+	{{end}}
 
 	// Web Infrastructure
-	Router *web.Router
+	Router *web.RouterService
 }
 
 // NewContainer creates and wires all dependencies
@@ -92,8 +110,10 @@ func (c *Container) initInfrastructure() error {
 	c.Repository = persistence.NewRepository(db.GetDB(), c.Logger)
 	{{end}}
 
+	{{if ne .AuthType ""}}
 	// Initialize external services
 	c.PasswordService = services.NewPasswordService(c.Logger)
+	{{end}}
 	
 	{{if ne .AuthType ""}}
 	c.TokenService = services.NewTokenService(c.Config.Auth, c.Logger)
@@ -132,8 +152,12 @@ func (c *Container) initUseCases() error {
 
 // initPresenters initializes all presenters
 func (c *Container) initPresenters() error {
+	{{if ne .DatabaseDriver ""}}
 	c.UserPresenter = presenters.NewUserPresenter()
+	{{end}}
+	{{if ne .AuthType ""}}
 	c.AuthPresenter = presenters.NewAuthPresenter()
+	{{end}}
 	return nil
 }
 
@@ -165,7 +189,11 @@ func (c *Container) initControllers() error {
 
 // initWeb initializes the web layer
 func (c *Container) initWeb() error {
-	c.Router = web.NewRouter(c.Config.Server, c.Logger)
+	router, err := web.NewRouterService(c.Config.Server, c.Logger)
+	if err != nil {
+		return err
+	}
+	c.Router = router
 
 	// Register routes
 	c.registerRoutes()
@@ -190,7 +218,7 @@ func (c *Container) registerRoutes() {
 }
 
 // GetRouter returns the configured router
-func (c *Container) GetRouter() *web.Router {
+func (c *Container) GetRouter() *web.RouterService {
 	return c.Router
 }
 

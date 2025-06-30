@@ -30,11 +30,16 @@ func main() {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	// Get router and start server
-	router := app.GetRouter()
+	// Get router and create web server
+	routerService := app.GetRouter()
+	webServer, err := routerService.CreateWebServer()
+	if err != nil {
+		app.Logger.Fatal("Failed to create web server", "error", err)
+	}
+	
 	server := &http.Server{
 		Addr:         cfg.Server.Host + ":" + cfg.Server.Port,
-		Handler:      router.GetEngine().Handler(),
+		Handler:      webServer.Handler(),
 		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,

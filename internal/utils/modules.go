@@ -323,6 +323,9 @@ func isValidGoVersion(version string) bool {
 // It returns the current installed Go version in major.minor format,
 // or falls back to a sensible default if detection fails
 func GetOptimalGoVersion() string {
+	// Supported versions in order of preference (latest first)
+	supportedVersions := []string{"1.23", "1.22", "1.21"}
+	
 	// Try to get the current Go version
 	currentVersion, err := GoVersion()
 	if err != nil {
@@ -335,9 +338,17 @@ func GetOptimalGoVersion() string {
 	if len(parts) >= 2 {
 		majorMinor := fmt.Sprintf("%s.%s", parts[0], parts[1])
 
-		// Validate the version is supported
+		// Check if the current version is in our supported list
+		for _, supportedVersion := range supportedVersions {
+			if majorMinor == supportedVersion {
+				return majorMinor
+			}
+		}
+		
+		// If current version is newer than supported (e.g., 1.24), use the latest supported
 		if isValidGoVersion(majorMinor) {
-			return majorMinor
+			// Return the latest supported version for newer Go versions
+			return "1.23"
 		}
 	}
 

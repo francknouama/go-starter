@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -62,7 +63,7 @@ func (c *UserController) CreateUser(ctx ports.HTTPContext) {
 	var req CreateUserRequest
 	if err := ctx.BindJSON(&req); err != nil {
 		c.logger.Debug("Invalid request payload", "error", err)
-		ctx.JSON(http.StatusBadRequest, c.userPresenter.PresentError("Invalid request payload"))
+		ctx.JSON(http.StatusBadRequest, c.userPresenter.PresentError(fmt.Errorf("invalid request payload")))
 		return
 	}
 
@@ -80,12 +81,12 @@ func (c *UserController) CreateUser(ctx ports.HTTPContext) {
 	if err != nil {
 		switch err {
 		case entities.ErrEmailAlreadyExists:
-			ctx.JSON(http.StatusConflict, c.userPresenter.PresentError("Email already exists"))
+			ctx.JSON(http.StatusConflict, c.userPresenter.PresentError(fmt.Errorf("email already exists")))
 		case entities.ErrUsernameAlreadyExists:
-			ctx.JSON(http.StatusConflict, c.userPresenter.PresentError("Username already exists"))
+			ctx.JSON(http.StatusConflict, c.userPresenter.PresentError(fmt.Errorf("username already exists")))
 		default:
 			c.logger.Error("Failed to create user", "error", err)
-			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to create user"))
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError(fmt.Errorf("failed to create user")))
 		}
 		return
 	}
@@ -112,10 +113,10 @@ func (c *UserController) GetUser(ctx ports.HTTPContext) {
 	if err != nil {
 		switch err {
 		case entities.ErrUserNotFound:
-			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError("User not found"))
+			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError(fmt.Errorf("user not found")))
 		default:
 			c.logger.Error("Failed to get user", "error", err, "user_id", userID)
-			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to get user"))
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError(fmt.Errorf("failed to get user")))
 		}
 		return
 	}
@@ -142,7 +143,7 @@ func (c *UserController) UpdateUser(ctx ports.HTTPContext) {
 	var req UpdateUserRequest
 	if err := ctx.BindJSON(&req); err != nil {
 		c.logger.Debug("Invalid request payload", "error", err)
-		ctx.JSON(http.StatusBadRequest, c.userPresenter.PresentError("Invalid request payload"))
+		ctx.JSON(http.StatusBadRequest, c.userPresenter.PresentError(fmt.Errorf("invalid request payload")))
 		return
 	}
 
@@ -158,10 +159,10 @@ func (c *UserController) UpdateUser(ctx ports.HTTPContext) {
 	if err != nil {
 		switch err {
 		case entities.ErrUserNotFound:
-			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError("User not found"))
+			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError(fmt.Errorf("user not found")))
 		default:
 			c.logger.Error("Failed to update user", "error", err, "user_id", userID)
-			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to update user"))
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError(fmt.Errorf("failed to update user")))
 		}
 		return
 	}
@@ -186,10 +187,10 @@ func (c *UserController) DeleteUser(ctx ports.HTTPContext) {
 	if err := c.userUseCase.DeleteUser(ctx.GetRequestContext(), userID); err != nil {
 		switch err {
 		case entities.ErrUserNotFound:
-			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError("User not found"))
+			ctx.JSON(http.StatusNotFound, c.userPresenter.PresentError(fmt.Errorf("user not found")))
 		default:
 			c.logger.Error("Failed to delete user", "error", err, "user_id", userID)
-			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to delete user"))
+			ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError(fmt.Errorf("failed to delete user")))
 		}
 		return
 	}
@@ -231,11 +232,11 @@ func (c *UserController) ListUsers(ctx ports.HTTPContext) {
 	users, err := c.userUseCase.ListUsers(ctx.GetRequestContext(), offset, limit)
 	if err != nil {
 		c.logger.Error("Failed to list users", "error", err)
-		ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError("Failed to list users"))
+		ctx.JSON(http.StatusInternalServerError, c.userPresenter.PresentError(fmt.Errorf("failed to list users")))
 		return
 	}
 
-	// For now, we'll pass 0 as total since the use case doesn't return it
+	// For now, we'll use the offset calculation since the use case doesn't return total count
 	// In a real implementation, you'd want to add a Count method to the repository
-	ctx.JSON(http.StatusOK, c.userPresenter.PresentUserList(users, page, limit, 0))
+	ctx.JSON(http.StatusOK, c.userPresenter.PresentUserList(users, offset, limit))
 }

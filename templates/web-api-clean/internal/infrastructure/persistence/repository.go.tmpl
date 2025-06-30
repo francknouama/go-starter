@@ -12,7 +12,9 @@ type Repository struct {
 	db                    *gorm.DB
 	logger                ports.Logger
 	userRepository        ports.UserRepository
+	{{if ne .AuthType ""}}
 	authSessionRepository ports.AuthSessionRepository
+	{{end}}
 }
 
 // NewRepository creates a new Repository instance
@@ -21,7 +23,9 @@ func NewRepository(db *gorm.DB, logger ports.Logger) ports.Repository {
 		db:                    db,
 		logger:                logger,
 		userRepository:        NewUserRepository(db, logger),
+		{{if ne .AuthType ""}}
 		authSessionRepository: NewAuthSessionRepository(db, logger),
+		{{end}}
 	}
 }
 
@@ -30,10 +34,12 @@ func (r *Repository) UserRepository() ports.UserRepository {
 	return r.userRepository
 }
 
+{{if ne .AuthType ""}}
 // AuthSessionRepository returns the auth session repository instance
 func (r *Repository) AuthSessionRepository() ports.AuthSessionRepository {
 	return r.authSessionRepository
 }
+{{end}}
 
 // BeginTransaction starts a new database transaction
 func (r *Repository) BeginTransaction(ctx context.Context) (ports.Transaction, error) {
@@ -62,7 +68,9 @@ type Transaction struct {
 	tx                    *gorm.DB
 	logger                ports.Logger
 	userRepository        ports.UserRepository
+	{{if ne .AuthType ""}}
 	authSessionRepository ports.AuthSessionRepository
+	{{end}}
 }
 
 // UserRepository returns the user repository for this transaction
@@ -73,6 +81,7 @@ func (t *Transaction) UserRepository() ports.UserRepository {
 	return t.userRepository
 }
 
+{{if ne .AuthType ""}}
 // AuthSessionRepository returns the auth session repository for this transaction
 func (t *Transaction) AuthSessionRepository() ports.AuthSessionRepository {
 	if t.authSessionRepository == nil {
@@ -80,6 +89,7 @@ func (t *Transaction) AuthSessionRepository() ports.AuthSessionRepository {
 	}
 	return t.authSessionRepository
 }
+{{end}}
 
 // Commit commits the transaction
 func (t *Transaction) Commit() error {

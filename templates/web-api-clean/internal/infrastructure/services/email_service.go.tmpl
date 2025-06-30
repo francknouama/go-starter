@@ -2,9 +2,10 @@ package services
 
 import (
 	"context"
+	{{if ne .DatabaseDriver ""}}
 	"fmt"
-
 	"{{.ModulePath}}/internal/domain/entities"
+	{{end}}
 	"{{.ModulePath}}/internal/domain/ports"
 	"{{.ModulePath}}/internal/infrastructure/config"
 )
@@ -23,6 +24,7 @@ func NewEmailService(config *config.EmailConfig, logger ports.Logger) ports.Emai
 	}
 }
 
+{{if ne .DatabaseDriver ""}}
 // SendWelcomeEmail sends a welcome email to a new user
 func (s *EmailService) SendWelcomeEmail(ctx context.Context, user *entities.User) error {
 	s.logger.Info("Sending welcome email", "user_id", user.ID, "email", user.Email)
@@ -92,6 +94,28 @@ func (s *EmailService) SendEmailVerification(ctx context.Context, user *entities
 	
 	return nil
 }
+{{else}}
+// SendNotificationEmail sends a general notification email
+func (s *EmailService) SendNotificationEmail(ctx context.Context, to, subject, body string) error {
+	s.logger.Info("Sending notification email", "to", to, "subject", subject)
+
+	// In a real implementation, this would:
+	// 1. Validate email address
+	// 2. Send email via SMTP/SES/SendGrid etc.
+	
+	// For now, just log the action
+	s.logger.Info("Notification email prepared",
+		"to", to,
+		"subject", subject,
+		"body_length", len(body),
+	)
+
+	// TODO: Implement actual email sending
+	// return s.sendEmail(to, subject, body, nil)
+	
+	return nil
+}
+{{end}}
 
 // sendEmail would send the actual email (placeholder for real implementation)
 // func (s *EmailService) sendEmail(to, subject, template string, data interface{}) error {

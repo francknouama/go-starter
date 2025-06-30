@@ -36,6 +36,7 @@ type UserRepository interface {
 	ExistsByUsername(ctx context.Context, username string) (bool, error)
 }
 
+{{if ne .AuthType ""}}
 // AuthSessionRepository defines the contract for authentication session persistence
 type AuthSessionRepository interface {
 	// Create a new authentication session
@@ -62,12 +63,15 @@ type AuthSessionRepository interface {
 	// DeleteExpired removes all expired sessions
 	DeleteExpired(ctx context.Context) error
 }
+{{end}}
 
 // Repository aggregates all repository interfaces
 // This follows the Unit of Work pattern for transaction management
 type Repository interface {
 	UserRepository() UserRepository
+	{{if ne .AuthType ""}}
 	AuthSessionRepository() AuthSessionRepository
+	{{end}}
 	
 	// Transaction management
 	BeginTransaction(ctx context.Context) (Transaction, error)
@@ -76,7 +80,9 @@ type Repository interface {
 // Transaction represents a database transaction
 type Transaction interface {
 	UserRepository() UserRepository
+	{{if ne .AuthType ""}}
 	AuthSessionRepository() AuthSessionRepository
+	{{end}}
 	
 	Commit() error
 	Rollback() error

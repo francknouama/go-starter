@@ -3,23 +3,22 @@ package middleware
 import (
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"{{.ModulePath}}/internal/domain/ports"
 )
 
 // RequestLogger returns a request logging middleware
-func RequestLogger(logger ports.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
+func RequestLogger(logger ports.Logger) ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
 		start := time.Now()
-		path := c.Request.URL.Path
-		method := c.Request.Method
+		path := ctx.GetRequest().URL.Path
+		method := ctx.GetRequest().Method
 
 		// Process request
-		c.Next()
+		ctx.Next()
 
 		// Calculate request duration
 		duration := time.Since(start)
-		status := c.Writer.Status()
+		status := ctx.GetStatusCode()
 
 		// Log request details
 		logger.Info("HTTP Request",
@@ -27,18 +26,19 @@ func RequestLogger(logger ports.Logger) gin.HandlerFunc {
 			"path", path,
 			"status", status,
 			"duration", duration.String(),
-			"ip", c.ClientIP(),
-			"user_agent", c.Request.UserAgent(),
+			"ip", ctx.GetClientIP(),
+			"user_agent", ctx.GetRequest().UserAgent(),
 		)
 
 		// Log errors if status >= 400
 		if status >= 400 {
-			if len(c.Errors) > 0 {
+			errors := ctx.GetErrors()
+			if len(errors) > 0 {
 				logger.Error("Request completed with errors",
 					"method", method,
 					"path", path,
 					"status", status,
-					"errors", c.Errors.String(),
+					"errors", errors,
 				)
 			}
 		}
@@ -46,14 +46,14 @@ func RequestLogger(logger ports.Logger) gin.HandlerFunc {
 }
 
 // SecurityHeaders adds security headers to responses
-func SecurityHeaders() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Header("X-Content-Type-Options", "nosniff")
-		c.Header("X-Frame-Options", "DENY")
-		c.Header("X-XSS-Protection", "1; mode=block")
-		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
-		c.Header("Content-Security-Policy", "default-src 'self'")
+func SecurityHeaders() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		ctx.SetHeader("X-Content-Type-Options", "nosniff")
+		ctx.SetHeader("X-Frame-Options", "DENY")
+		ctx.SetHeader("X-XSS-Protection", "1; mode=block")
+		ctx.SetHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+		ctx.SetHeader("Content-Security-Policy", "default-src 'self'")
 		
-		c.Next()
+		ctx.Next()
 	}
 }

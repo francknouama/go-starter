@@ -4,96 +4,67 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"{{.ModulePath}}/internal/domain/entities"
 	"{{.ModulePath}}/internal/domain/ports"
 	"{{.ModulePath}}/internal/domain/usecases"
 )
 
-// Auth returns an authentication middleware
-func Auth(logger ports.Logger) gin.HandlerFunc {
-	return func(c *gin.Context) {
+// Auth returns an authentication middleware using domain interfaces
+func Auth(authUseCase *usecases.AuthUseCase, logger ports.Logger) ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
 		// Extract token from Authorization header
-		token := extractTokenFromHeader(c)
+		token := extractTokenFromHeader(ctx)
 		if token == "" {
 			logger.Debug("Missing or invalid authorization header")
-			c.JSON(http.StatusUnauthorized, gin.H{
+			ctx.JSON(http.StatusUnauthorized, map[string]interface{}{
 				"error":   "MISSING_TOKEN",
 				"message": "Authorization token is required",
 			})
-			c.Abort()
-			return
-		}
-
-		// Get auth use case from container (this would be injected in a real implementation)
-		// For now, we'll assume it's available through dependency injection
-		authUseCase, exists := c.Get("authUseCase")
-		if !exists {
-			logger.Error("Auth use case not found in context")
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":   "INTERNAL_ERROR",
-				"message": "Authentication service unavailable",
-			})
-			c.Abort()
-			return
-		}
-
-		authUseCaseImpl, ok := authUseCase.(*usecases.AuthUseCase)
-		if !ok {
-			logger.Error("Invalid auth use case type")
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":   "INTERNAL_ERROR",
-				"message": "Authentication service error",
-			})
-			c.Abort()
 			return
 		}
 
 		// Validate token and get user
-		user, err := authUseCaseImpl.ValidateSession(c.Request.Context(), token)
+		user, err := authUseCase.ValidateSession(ctx.GetRequestContext(), token)
 		if err != nil {
 			logger.Debug("Token validation failed", "error", err)
 			
 			switch err {
 			case entities.ErrInvalidToken:
-				c.JSON(http.StatusUnauthorized, gin.H{
+				ctx.JSON(http.StatusUnauthorized, map[string]interface{}{
 					"error":   "INVALID_TOKEN",
 					"message": "The provided token is invalid",
 				})
 			case entities.ErrTokenExpired, entities.ErrSessionExpired:
-				c.JSON(http.StatusUnauthorized, gin.H{
+				ctx.JSON(http.StatusUnauthorized, map[string]interface{}{
 					"error":   "TOKEN_EXPIRED",
 					"message": "The token has expired",
 				})
 			case entities.ErrSessionNotFound:
-				c.JSON(http.StatusUnauthorized, gin.H{
+				ctx.JSON(http.StatusUnauthorized, map[string]interface{}{
 					"error":   "SESSION_NOT_FOUND",
 					"message": "No active session found",
 				})
 			default:
-				c.JSON(http.StatusUnauthorized, gin.H{
+				ctx.JSON(http.StatusUnauthorized, map[string]interface{}{
 					"error":   "AUTHENTICATION_FAILED",
 					"message": "Authentication failed",
 				})
 			}
 			
-			c.Abort()
 			return
 		}
 
-		// Store user in context for use by handlers
-		c.Set("user", user)
-		c.Set("user_id", user.ID)
-
+		// Store user in context for use by handlers (framework-specific implementation)
+		// In a real implementation, this would be handled by the adapter layer
 		logger.Debug("User authenticated successfully", "user_id", user.ID)
 		
-		c.Next()
+		ctx.Next()
 	}
 }
 
 // extractTokenFromHeader extracts the token from the Authorization header
-func extractTokenFromHeader(c *gin.Context) string {
-	authHeader := c.GetHeader("Authorization")
+func extractTokenFromHeader(ctx ports.HTTPContext) string {
+	authHeader := ctx.GetHeader("Authorization")
 	if authHeader == "" {
 		return ""
 	}

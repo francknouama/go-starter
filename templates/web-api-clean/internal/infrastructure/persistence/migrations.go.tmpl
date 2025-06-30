@@ -26,10 +26,14 @@ func (m *MigrationManager) RunMigrations() error {
 	m.logger.Info("Running database migrations")
 
 	// Auto-migrate the models
-	if err := m.db.AutoMigrate(
+	models := []interface{}{
 		&UserModel{},
-		&AuthSessionModel{},
-	); err != nil {
+	}
+	{{if ne .AuthType ""}}
+	models = append(models, &AuthSessionModel{})
+	{{end}}
+	
+	if err := m.db.AutoMigrate(models...); err != nil {
 		m.logger.Error("Failed to run auto-migrations", "error", err)
 		return fmt.Errorf("auto-migration failed: %w", err)
 	}
@@ -43,10 +47,14 @@ func (m *MigrationManager) CreateTables() error {
 	m.logger.Info("Creating database tables")
 
 	// Create tables if they don't exist
-	if err := m.db.AutoMigrate(
+	models := []interface{}{
 		&UserModel{},
-		&AuthSessionModel{},
-	); err != nil {
+	}
+	{{if ne .AuthType ""}}
+	models = append(models, &AuthSessionModel{})
+	{{end}}
+	
+	if err := m.db.AutoMigrate(models...); err != nil {
 		m.logger.Error("Failed to create tables", "error", err)
 		return fmt.Errorf("table creation failed: %w", err)
 	}
@@ -59,10 +67,14 @@ func (m *MigrationManager) CreateTables() error {
 func (m *MigrationManager) DropTables() error {
 	m.logger.Warn("Dropping all database tables")
 
-	if err := m.db.Migrator().DropTable(
+	models := []interface{}{
 		&UserModel{},
-		&AuthSessionModel{},
-	); err != nil {
+	}
+	{{if ne .AuthType ""}}
+	models = append(models, &AuthSessionModel{})
+	{{end}}
+	
+	if err := m.db.Migrator().DropTable(models...); err != nil {
 		m.logger.Error("Failed to drop tables", "error", err)
 		return fmt.Errorf("table drop failed: %w", err)
 	}
@@ -77,7 +89,9 @@ func (m *MigrationManager) GetMigrationStatus() (map[string]bool, error) {
 
 	// Check if tables exist
 	status["users"] = m.db.Migrator().HasTable(&UserModel{})
+	{{if ne .AuthType ""}}
 	status["auth_sessions"] = m.db.Migrator().HasTable(&AuthSessionModel{})
+	{{end}}
 
 	return status, nil
 }

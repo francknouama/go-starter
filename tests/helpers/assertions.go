@@ -45,8 +45,10 @@ func AssertCompilable(t *testing.T, projectDir string) {
 	t.Helper()
 	cmd := exec.Command("go", "build", "./...")
 	cmd.Dir = projectDir
-	err := cmd.Run()
-	assert.NoError(t, err, "Generated project should compile successfully")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("Generated project should compile successfully.\nBuild output:\n%s\nError: %v", string(output), err)
+	}
 }
 
 // AssertFileContains validates file contains expected content

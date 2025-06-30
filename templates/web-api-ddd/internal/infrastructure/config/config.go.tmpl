@@ -3,7 +3,9 @@ package config
 import (
 	"fmt"
 	"os"
+	{{if ne .DatabaseDriver ""}}
 	"strconv"
+	{{end}}
 	"strings"
 
 	"github.com/spf13/viper"
@@ -12,8 +14,12 @@ import (
 // Config holds all application configuration
 type Config struct {
 	Server   *ServerConfig   `mapstructure:"server"`
+	{{if ne .DatabaseDriver ""}}
 	Database *DatabaseConfig `mapstructure:"database"`
+	{{end}}
+	{{if ne .AuthType ""}}
 	Auth     *AuthConfig     `mapstructure:"auth"`
+	{{end}}
 	Logger   *LoggerConfig   `mapstructure:"logger"`
 	Email    *EmailConfig    `mapstructure:"email"`
 }
@@ -257,4 +263,13 @@ func (c *Config) Validate() error {
 	{{end}}
 
 	return nil
+}
+
+// LoadConfig loads configuration using the Load function (alias for convenience)
+func LoadConfig() *Config {
+	config, err := Load()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to load configuration: %v", err))
+	}
+	return config
 }

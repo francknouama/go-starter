@@ -84,15 +84,5 @@ func TestGetSupportedGoVersions(t *testing.T) {
 	assert.Equal(t, expected, versions)
 }
 
-func TestPromptGoVersionInteractive(t *testing.T) {
-	// Test the PromptGoVersion method exists and has correct signature
-	prompter := New()
-
-	// This would normally require mocking survey for automated testing
-	// For now, we'll just verify the method exists and returns correct types
-	t.Run("method signature verification", func(t *testing.T) {
-		// We can't easily test interactive prompts in CI, but we can verify
-		// the method exists and has the right signature
-		assert.NotNil(t, prompter.PromptGoVersion, "PromptGoVersion method should exist")
-	})
-}
+// TestPromptGoVersionInteractive removed - testing is now done at the subpackage level
+// in bubbletea/ and survey/ packages

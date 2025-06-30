@@ -89,8 +89,8 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	// Initialize the prompter for interactive configuration
-	// Use Fang UI by default, set to prompts.NewSurvey() for fallback
-	prompter := prompts.NewSurvey()
+	// Use the new factory pattern with Bubble Tea UI and Survey fallback
+	prompter := prompts.NewDefault()
 
 	// Get project configuration through interactive prompts or flags
 	config, err := prompter.GetProjectConfig(types.ProjectConfig{
