@@ -504,7 +504,7 @@ func TestGenerator_processTemplatePath(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := generator.processTemplatePath(tt.path, tt.config)
+			result := generator.processTemplatePath(tt.path, tt.config, &types.Template{})
 			if result != tt.expected {
 				t.Errorf("processTemplatePath() = %v, want %v", result, tt.expected)
 			}

@@ -1,0 +1,149 @@
+package auth
+
+import (
+	"time"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+// LoginRequest represents a login request DTO
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+// RegisterRequest represents a registration request DTO
+type RegisterRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+	Name     string `json:"name" binding:"required,min=2"`
+}
+
+// RefreshTokenRequest represents a token refresh request DTO
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" binding:"required"`
+}
+
+// LogoutRequest represents a logout request DTO
+type LogoutRequest struct {
+	// Empty as we'll get UserID from the JWT token in middleware
+}
+
+// ChangePasswordRequest represents a password change request DTO
+type ChangePasswordRequest struct {
+	OldPassword string `json:"old_password" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// ForgotPasswordRequest represents a forgot password request DTO
+type ForgotPasswordRequest struct {
+	Email string `json:"email" binding:"required,email"`
+}
+
+// ResetPasswordRequest represents a password reset request DTO
+type ResetPasswordRequest struct {
+	Token       string `json:"token" binding:"required"`
+	NewPassword string `json:"new_password" binding:"required,min=6"`
+}
+
+// AuthResponse represents an authentication response DTO
+type AuthResponse struct {
+	UserID       string    `json:"user_id"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	TokenType    string    `json:"token_type"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	User         UserInfo  `json:"user"`
+}
+
+// UserInfo represents basic user information in auth responses
+type UserInfo struct {
+	ID     string `json:"id"`
+	Email  string `json:"email"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// MessageResponse represents a simple message response
+type MessageResponse struct {
+	Message string `json:"message"`
+}
+
+// ErrorResponse represents an error response
+type ErrorResponse struct {
+	Error   string            `json:"error"`
+	Message string            `json:"message"`
+	Details map[string]string `json:"details,omitempty"`
+}
+
+// ToLoginCommand converts LoginRequest to LoginCommand
+func (r *LoginRequest) ToLoginCommand() LoginCommand {
+	return LoginCommand{
+		Email:    r.Email,
+		Password: r.Password,
+	}
+}
+
+// ToRegisterCommand converts RegisterRequest to RegisterCommand
+func (r *RegisterRequest) ToRegisterCommand() RegisterCommand {
+	return RegisterCommand{
+		Email:    r.Email,
+		Password: r.Password,
+		Name:     r.Name,
+	}
+}
+
+// ToRefreshTokenCommand converts RefreshTokenRequest to RefreshTokenCommand
+func (r *RefreshTokenRequest) ToRefreshTokenCommand() RefreshTokenCommand {
+	return RefreshTokenCommand{
+		RefreshToken: r.RefreshToken,
+	}
+}
+
+// ToLogoutCommand converts LogoutRequest to LogoutCommand
+func (r *LogoutRequest) ToLogoutCommand(userID valueobjects.ID) LogoutCommand {
+	return LogoutCommand{
+		UserID: userID,
+		Token:  "", // Token will be extracted from the Authorization header
+	}
+}
+
+// ToChangePasswordCommand converts ChangePasswordRequest to ChangePasswordCommand
+func (r *ChangePasswordRequest) ToChangePasswordCommand(userID valueobjects.ID) ChangePasswordCommand {
+	return ChangePasswordCommand{
+		UserID:      userID,
+		OldPassword: r.OldPassword,
+		NewPassword: r.NewPassword,
+	}
+}
+
+// ToForgotPasswordCommand converts ForgotPasswordRequest to ForgotPasswordCommand
+func (r *ForgotPasswordRequest) ToForgotPasswordCommand() ForgotPasswordCommand {
+	return ForgotPasswordCommand{
+		Email: r.Email,
+	}
+}
+
+// ToResetPasswordCommand converts ResetPasswordRequest to ResetPasswordCommand
+func (r *ResetPasswordRequest) ToResetPasswordCommand() ResetPasswordCommand {
+	return ResetPasswordCommand{
+		Token:       r.Token,
+		NewPassword: r.NewPassword,
+	}
+}
+
+// FromAuthResult converts AuthResult to AuthResponse
+func FromAuthResult(result *AuthResult, userEmail, userName, userStatus string) *AuthResponse {
+	return &AuthResponse{
+		UserID:       result.UserID.String(),
+		AccessToken:  result.AccessToken,
+		RefreshToken: result.RefreshToken,
+		TokenType:    "Bearer",
+		ExpiresAt:    result.ExpiresAt,
+		User: UserInfo{
+			ID:     result.UserID.String(),
+			Email:  userEmail,
+			Name:   userName,
+			Status: userStatus,
+		},
+	}
+}

@@ -58,8 +58,8 @@ func (h *Create{{.DomainName | title}}Handler) Handle(ctx context.Context, comma
 		return nil, err
 	}
 	
-	// Create {{.DomainName}} aggregate
-	{{.DomainName}}Entity, err := {{.DomainName}}.New{{.DomainName | title}}(email, cmd.FirstName, cmd.LastName)
+	// Create {{.DomainName}} aggregate (placeholder password hash for now)
+	{{.DomainName}}Entity, err := {{.DomainName}}.New{{.DomainName | title}}(cmd.FirstName, cmd.LastName, email, "temp_hash")
 	if err != nil {
 		return nil, err
 	}
@@ -287,5 +287,63 @@ func (b *CommandBus) Execute(ctx context.Context, command Command) (interface{},
 	}
 	
 	return nil, errors.ErrCommandHandling.WithDetails("commandType", command.CommandType())
+}
+
+// CommandHandlers provides a simplified interface for command handling
+type CommandHandlers struct {
+	repository      {{.DomainName}}.Repository
+	domainService   {{.DomainName}}.Service
+	eventDispatcher events.EventDispatcher
+	bus             *CommandBus
+}
+
+// NewCommandHandlers creates a new command handlers instance
+func NewCommandHandlers(
+	repository {{.DomainName}}.Repository,
+	logger interface{}, // Accept logger for compatibility
+) *CommandHandlers {
+	// Create domain service (simplified for now)
+	domainService := {{.DomainName}}.NewService(repository)
+	
+	// Create event dispatcher (simplified for now)
+	eventDispatcher := events.NewNullEventDispatcher()
+	
+	handlers := &CommandHandlers{
+		repository:      repository,
+		domainService:   domainService,
+		eventDispatcher: eventDispatcher,
+		bus:             NewCommandBus(),
+	}
+	
+	// Register command handlers
+	handlers.bus.RegisterHandler(NewCreate{{.DomainName | title}}Handler(repository, domainService, eventDispatcher))
+	handlers.bus.RegisterHandler(NewUpdate{{.DomainName | title}}Handler(repository, domainService, eventDispatcher))
+	handlers.bus.RegisterHandler(NewDelete{{.DomainName | title}}Handler(repository, eventDispatcher))
+	
+	return handlers
+}
+
+// HandleCreate{{.DomainName | title}} handles create {{.DomainName}} command
+func (h *CommandHandlers) HandleCreate{{.DomainName | title}}(ctx context.Context, cmd Create{{.DomainName | title}}Command) ({{.DomainName | title}}DTO, error) {
+	result, err := h.bus.Execute(ctx, cmd)
+	if err != nil {
+		return {{.DomainName | title}}DTO{}, err
+	}
+	return result.({{.DomainName | title}}DTO), nil
+}
+
+// HandleUpdate{{.DomainName | title}} handles update {{.DomainName}} command
+func (h *CommandHandlers) HandleUpdate{{.DomainName | title}}(ctx context.Context, cmd Update{{.DomainName | title}}Command) ({{.DomainName | title}}DTO, error) {
+	result, err := h.bus.Execute(ctx, cmd)
+	if err != nil {
+		return {{.DomainName | title}}DTO{}, err
+	}
+	return result.({{.DomainName | title}}DTO), nil
+}
+
+// HandleDelete{{.DomainName | title}} handles delete {{.DomainName}} command
+func (h *CommandHandlers) HandleDelete{{.DomainName | title}}(ctx context.Context, cmd Delete{{.DomainName | title}}Command) error {
+	_, err := h.bus.Execute(ctx, cmd)
+	return err
 }
 {{- end}}

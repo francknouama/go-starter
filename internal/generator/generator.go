@@ -205,7 +205,7 @@ func (g *Generator) Preview(config types.ProjectConfig, outputDir string) error 
 
 	fmt.Printf("\nFiles to be generated:\n")
 	for _, file := range template.Files {
-		destination := g.processTemplatePath(file.Destination, config)
+		destination := g.processTemplatePath(file.Destination, config, &template)
 		fmt.Printf("  %s\n", destination)
 	}
 
@@ -289,7 +289,7 @@ func (g *Generator) generateProjectFiles(tmpl types.Template, config types.Proje
 		}
 
 		// Process template path with variables
-		destPath := g.processTemplatePath(templateFile.Destination, config)
+		destPath := g.processTemplatePath(templateFile.Destination, config, &tmpl)
 		fullDestPath := filepath.Join(outputPath, destPath)
 
 		// Create directory if it doesn't exist
@@ -370,14 +370,40 @@ func (g *Generator) initGit(projectPath string) error {
 }
 
 // processTemplatePath processes template variables in file paths
-func (g *Generator) processTemplatePath(path string, config types.ProjectConfig) string {
-	// Create a simple context for path processing
+func (g *Generator) processTemplatePath(path string, config types.ProjectConfig, tmplObj *types.Template) string {
+	// Create a comprehensive context for path processing (same as file content)
 	context := map[string]any{
 		"ProjectName":  config.Name,
 		"ModulePath":   config.Module,
 		"GoVersion":    config.GoVersion,
 		"Framework":    config.Framework,
 		"Architecture": config.Architecture,
+		"Logger":       config.Logger,
+		"Author":       config.Author,
+		"Email":        config.Email,
+		"License":      config.License,
+	}
+
+	// Add variables from config.Variables map
+	if config.Variables != nil {
+		for key, value := range config.Variables {
+			context[key] = value
+		}
+	}
+
+	// Add template-specific variables with defaults
+	if tmplObj != nil {
+		for _, variable := range tmplObj.Variables {
+			// Skip if already set from config
+			if _, exists := context[variable.Name]; exists {
+				continue
+			}
+
+			// Add default value if specified
+			if variable.Default != nil {
+				context[variable.Name] = variable.Default
+			}
+		}
 	}
 
 	// Use text/template to process the path
@@ -785,7 +811,7 @@ func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig
 		workDir := outputPath
 		if hook.WorkDir != "" {
 			// Process template variables in work directory
-			workDir = g.processTemplatePath(hook.WorkDir, config)
+			workDir = g.processTemplatePath(hook.WorkDir, config, &tmpl)
 			if !filepath.IsAbs(workDir) {
 				workDir = filepath.Join(outputPath, workDir)
 			}

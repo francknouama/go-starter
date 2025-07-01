@@ -10,18 +10,19 @@ import (
 
 // {{.DomainName | title}} represents the {{.DomainName}} aggregate root
 type {{.DomainName | title}} struct {
-	id          valueobjects.ID
-	email       valueobjects.Email
-	name        Name
-	status      Status
-	createdAt   time.Time
-	updatedAt   time.Time
-	version     int
+	id           valueobjects.ID
+	email        valueobjects.Email
+	name         Name
+	passwordHash string
+	status       Status
+	createdAt    time.Time
+	updatedAt    time.Time
+	version      int
 	domainEvents []events.DomainEvent
 }
 
 // New{{.DomainName | title}} creates a new {{.DomainName}} aggregate
-func New{{.DomainName | title}}(email valueobjects.Email, firstName, lastName string) (*{{.DomainName | title}}, error) {
+func New{{.DomainName | title}}(firstName, lastName string, email valueobjects.Email, passwordHash string) (*{{.DomainName | title}}, error) {
 	// Validate inputs
 	if email.IsEmpty() {
 		return nil, errors.ErrInvalidValueObject.WithDetails("field", "email")
@@ -33,13 +34,14 @@ func New{{.DomainName | title}}(email valueobjects.Email, firstName, lastName st
 	}
 	
 	{{.DomainName}} := &{{.DomainName | title}}{
-		id:        valueobjects.GenerateID(),
-		email:     email,
-		name:      name,
-		status:    StatusActive,
-		createdAt: time.Now().UTC(),
-		updatedAt: time.Now().UTC(),
-		version:   1,
+		id:           valueobjects.GenerateID(),
+		email:        email,
+		name:         name,
+		passwordHash: passwordHash,
+		status:       StatusActive,
+		createdAt:    time.Now().UTC(),
+		updatedAt:    time.Now().UTC(),
+		version:      1,
 		domainEvents: make([]events.DomainEvent, 0),
 	}
 	
@@ -55,18 +57,20 @@ func Reconstruct{{.DomainName | title}}(
 	id valueobjects.ID,
 	email valueobjects.Email,
 	name Name,
+	passwordHash string,
 	status Status,
 	createdAt, updatedAt time.Time,
 	version int,
 ) *{{.DomainName | title}} {
 	return &{{.DomainName | title}}{
-		id:        id,
-		email:     email,
-		name:      name,
-		status:    status,
-		createdAt: createdAt,
-		updatedAt: updatedAt,
-		version:   version,
+		id:           id,
+		email:        email,
+		name:         name,
+		passwordHash: passwordHash,
+		status:       status,
+		createdAt:    createdAt,
+		updatedAt:    updatedAt,
+		version:      version,
 		domainEvents: make([]events.DomainEvent, 0),
 	}
 }
@@ -104,6 +108,48 @@ func (u *{{.DomainName | title}}) UpdatedAt() time.Time {
 // Version returns the {{.DomainName}} version for optimistic locking
 func (u *{{.DomainName | title}}) Version() int {
 	return u.version
+}
+
+// PasswordHash returns the {{.DomainName}} password hash
+func (u *{{.DomainName | title}}) PasswordHash() string {
+	return u.passwordHash
+}
+
+// FirstName returns the {{.DomainName}}'s first name
+func (u *{{.DomainName | title}}) FirstName() string {
+	return u.name.FirstName()
+}
+
+// LastName returns the {{.DomainName}}'s last name
+func (u *{{.DomainName | title}}) LastName() string {
+	return u.name.LastName()
+}
+
+// UpdateFirstName updates the {{.DomainName}}'s first name
+func (u *{{.DomainName | title}}) UpdateFirstName(firstName string) error {
+	return u.ChangeName(firstName, u.name.LastName())
+}
+
+// UpdateLastName updates the {{.DomainName}}'s last name
+func (u *{{.DomainName | title}}) UpdateLastName(lastName string) error {
+	return u.ChangeName(u.name.FirstName(), lastName)
+}
+
+// ChangePassword changes the {{.DomainName}}'s password hash
+func (u *{{.DomainName | title}}) ChangePassword(newPasswordHash string) error {
+	if newPasswordHash == "" {
+		return errors.ErrInvalidValueObject.WithDetails("field", "passwordHash")
+	}
+	
+	u.passwordHash = newPasswordHash
+	u.updatedAt = time.Now().UTC()
+	u.version++
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}PasswordChangedEvent(u.id)
+	u.addDomainEvent(event)
+	
+	return nil
 }
 
 // ChangeEmail changes the {{.DomainName}}'s email address

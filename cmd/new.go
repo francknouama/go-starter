@@ -19,6 +19,7 @@ var (
 	projectName    string
 	projectModule  string
 	projectType    string
+	architecture   string
 	goVersion      string
 	outputDir      string
 	framework      string
@@ -61,6 +62,7 @@ func init() {
 	newCmd.Flags().StringVar(&projectName, "name", "", "Project name")
 	newCmd.Flags().StringVar(&projectModule, "module", "", "Go module path (e.g., github.com/user/project)")
 	newCmd.Flags().StringVar(&projectType, "type", "", "Project type (web-api, cli, library, lambda)")
+	newCmd.Flags().StringVar(&architecture, "architecture", "", "Architecture pattern (standard, clean, ddd, hexagonal)")
 	newCmd.Flags().StringVarP(&goVersion, "go-version", "g", "", "Go version to use (auto, 1.23, 1.22, 1.21)")
 	newCmd.Flags().StringVar(&framework, "framework", "", "Framework to use (gin, echo, cobra, etc.)")
 	newCmd.Flags().StringVar(&logger, "logger", "", "Logger to use (slog, zap, logrus, zerolog)")
@@ -94,12 +96,13 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	// Get project configuration through interactive prompts or flags
 	config, err := prompter.GetProjectConfig(types.ProjectConfig{
-		Name:      projectName,
-		Module:    projectModule,
-		Type:      projectType,
-		GoVersion: goVersion,
-		Framework: framework,
-		Logger:    logger,
+		Name:         projectName,
+		Module:       projectModule,
+		Type:         projectType,
+		Architecture: architecture,
+		GoVersion:    goVersion,
+		Framework:    framework,
+		Logger:       logger,
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
 				Driver: databaseDriver,

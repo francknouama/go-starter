@@ -1,25 +1,31 @@
 package middleware
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/infrastructure/logger"
 )
 
-// LoggingMiddleware provides request logging
+// GinLogger creates a Gin middleware for structured logging
+func GinLogger(log logger.Logger) gin.HandlerFunc {
+	return gin.LoggerWithConfig(gin.LoggerConfig{
+		Formatter: func(param gin.LogFormatterParams) string {
+			log.Info("HTTP Request",
+				"method", param.Method,
+				"path", param.Path,
+				"status", param.StatusCode,
+				"latency", param.Latency,
+				"client_ip", param.ClientIP,
+				"user_agent", param.Request.UserAgent(),
+			)
+			return ""
+		},
+		SkipPaths: []string{"/health"},
+	})
+}
+
+// LoggingMiddleware provides request logging (legacy function)
 func LoggingMiddleware() gin.HandlerFunc {
 	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
-		return fmt.Sprintf("%s - [%s] \"%s %s %s %d %s \"%s\" %s\"\n",
-			param.ClientIP,
-			param.TimeStamp.Format(time.RFC1123),
-			param.Method,
-			param.Path,
-			param.Request.Proto,
-			param.StatusCode,
-			param.Latency,
-			param.Request.UserAgent(),
-			param.ErrorMessage,
-		)
+		return ""
 	})
 }

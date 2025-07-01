@@ -1,0 +1,100 @@
+package persistence
+
+import (
+	"fmt"
+	"gorm.io/gorm"
+	{{- if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{- end}}
+	
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// Database holds the database connection and configuration
+type Database struct {
+	DB     *gorm.DB
+	logger logger.Logger
+}
+
+// DatabaseConfig represents database configuration
+type DatabaseConfig struct {
+	Host     string
+	Port     int
+	Database string
+	Username string
+	Password string
+	SSLMode  string
+}
+
+// NewDatabase creates a new database connection
+func NewDatabase(config DatabaseConfig, log logger.Logger) (*Database, error) {
+	{{- if eq .DatabaseDriver "postgres"}}
+	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s",
+		config.Host, config.Username, config.Password, config.Database, config.Port, config.SSLMode)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	{{- else if eq .DatabaseDriver "mysql"}}
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		config.Username, config.Password, config.Host, config.Port, config.Database)
+	db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	db, err := gorm.Open(sqlite.Open(config.Database), &gorm.Config{})
+	{{- else}}
+	db, err := gorm.Open(nil, &gorm.Config{})
+	{{- end}}
+	
+	if err != nil {
+		log.Error("Failed to connect to database", "error", err)
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	log.Info("Successfully connected to database", "driver", "{{.DatabaseDriver}}")
+
+	return &Database{
+		DB:     db,
+		logger: log,
+	}, nil
+}
+
+// Migrate runs database migrations
+func (d *Database) Migrate() error {
+	d.logger.Info("Running database migrations")
+	
+	// Add your model migrations here
+	// Example: err := d.DB.AutoMigrate(&User{})
+	
+	d.logger.Info("Database migrations completed successfully")
+	return nil
+}
+
+// Close closes the database connection
+func (d *Database) Close() error {
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+	
+	if err := sqlDB.Close(); err != nil {
+		return fmt.Errorf("failed to close database connection: %w", err)
+	}
+	
+	d.logger.Info("Database connection closed")
+	return nil
+}
+
+// Health checks the database connection health
+func (d *Database) Health() error {
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+	
+	if err := sqlDB.Ping(); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+	
+	return nil
+}

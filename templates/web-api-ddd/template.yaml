@@ -144,81 +144,72 @@ files:
   - source: "internal/shared/events/event_dispatcher.go.tmpl"
     destination: "internal/shared/events/event_dispatcher.go"
 
+  - source: "internal/shared/events/null_dispatcher.go.tmpl"
+    destination: "internal/shared/events/null_dispatcher.go"
+
   # Domain Layer - Core business logic
   - source: "internal/domain/user/entity.go.tmpl"
     destination: "internal/domain/{{.DomainName}}/entity.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/domain/user/value_objects.go.tmpl"
     destination: "internal/domain/{{.DomainName}}/value_objects.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/domain/user/repository.go.tmpl"
     destination: "internal/domain/{{.DomainName}}/repository.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/domain/user/service.go.tmpl"
     destination: "internal/domain/{{.DomainName}}/service.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/domain/user/events.go.tmpl"
     destination: "internal/domain/{{.DomainName}}/events.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/domain/user/specifications.go.tmpl"
     destination: "internal/domain/{{.DomainName}}/specifications.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   # Application Layer - Use cases and application services
   - source: "internal/application/user/commands.go.tmpl"
     destination: "internal/application/{{.DomainName}}/commands.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/application/user/queries.go.tmpl"
     destination: "internal/application/{{.DomainName}}/queries.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/application/user/command_handlers.go.tmpl"
     destination: "internal/application/{{.DomainName}}/command_handlers.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/application/user/query_handlers.go.tmpl"
     destination: "internal/application/{{.DomainName}}/query_handlers.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/application/user/dto.go.tmpl"
     destination: "internal/application/{{.DomainName}}/dto.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
+  # Application Layer - Authentication
   - source: "internal/application/auth/commands.go.tmpl"
     destination: "internal/application/auth/commands.go"
-    condition: "{{ne .AuthType \"\"}}"
 
   - source: "internal/application/auth/command_handlers.go.tmpl"
     destination: "internal/application/auth/command_handlers.go"
-    condition: "{{ne .AuthType \"\"}}"
 
   - source: "internal/application/auth/dto.go.tmpl"
     destination: "internal/application/auth/dto.go"
-    condition: "{{ne .AuthType \"\"}}"
+
+  - source: "internal/application/auth/service.go.tmpl"
+    destination: "internal/application/auth/service.go"
+
+  - source: "internal/application/auth/auth_service.go.tmpl"
+    destination: "internal/application/auth/auth_service.go"
 
   # Infrastructure Layer - External concerns
   - source: "internal/infrastructure/config/config.go.tmpl"
     destination: "internal/infrastructure/config/config.go"
 
+  # Persistence layer
   - source: "internal/infrastructure/persistence/database.go.tmpl"
     destination: "internal/infrastructure/persistence/database.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "internal/infrastructure/persistence/user_repository.go.tmpl"
     destination: "internal/infrastructure/persistence/{{.DomainName}}_repository.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
-  - source: "internal/infrastructure/persistence/migrations.go.tmpl"
-    destination: "internal/infrastructure/persistence/migrations.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
-
-  # Logger infrastructure
+  # Logger infrastructure (only existing files)
   - source: "internal/infrastructure/logger/interface.go.tmpl"
     destination: "internal/infrastructure/logger/interface.go"
 
@@ -227,84 +218,19 @@ files:
 
   - source: "internal/infrastructure/logger/slog.go.tmpl"
     destination: "internal/infrastructure/logger/slog.go"
-    condition: "{{eq .Logger \"slog\"}}"
 
-  - source: "internal/infrastructure/logger/zap.go.tmpl"
-    destination: "internal/infrastructure/logger/zap.go"
-    condition: "{{eq .Logger \"zap\"}}"
-
-  - source: "internal/infrastructure/logger/logrus.go.tmpl"
-    destination: "internal/infrastructure/logger/logrus.go"
-    condition: "{{eq .Logger \"logrus\"}}"
-
-  - source: "internal/infrastructure/logger/zerolog.go.tmpl"
-    destination: "internal/infrastructure/logger/zerolog.go"
-    condition: "{{eq .Logger \"zerolog\"}}"
-
-  # Presentation Layer - HTTP handlers and DTOs
+  # Presentation Layer - HTTP handlers
   - source: "internal/presentation/http/handlers/health_gin.go.tmpl"
     destination: "internal/presentation/http/handlers/health.go"
     condition: "{{eq .Framework \"gin\"}}"
 
-  - source: "internal/presentation/http/handlers/health_echo.go.tmpl"
-    destination: "internal/presentation/http/handlers/health.go"
-    condition: "{{eq .Framework \"echo\"}}"
-
-  - source: "internal/presentation/http/handlers/health_fiber.go.tmpl"
-    destination: "internal/presentation/http/handlers/health.go"
-    condition: "{{eq .Framework \"fiber\"}}"
-
-  - source: "internal/presentation/http/handlers/health_chi.go.tmpl"
-    destination: "internal/presentation/http/handlers/health.go"
-    condition: "{{eq .Framework \"chi\"}}"
-
-  - source: "internal/presentation/http/handlers/health_stdlib.go.tmpl"
-    destination: "internal/presentation/http/handlers/health.go"
-    condition: "{{eq .Framework \"stdlib\"}}"
-
   - source: "internal/presentation/http/handlers/user_gin.go.tmpl"
     destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
-    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"gin\")}}"
-
-  - source: "internal/presentation/http/handlers/user_echo.go.tmpl"
-    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
-    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"echo\")}}"
-
-  - source: "internal/presentation/http/handlers/user_fiber.go.tmpl"
-    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
-    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"fiber\")}}"
-
-  - source: "internal/presentation/http/handlers/user_chi.go.tmpl"
-    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
-    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"chi\")}}"
-
-  - source: "internal/presentation/http/handlers/user_stdlib.go.tmpl"
-    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
-    condition: "{{and (ne .DatabaseDriver \"\") (eq .Framework \"stdlib\")}}"
+    condition: "{{eq .Framework \"gin\"}}"
 
   - source: "internal/presentation/http/handlers/auth_gin.go.tmpl"
     destination: "internal/presentation/http/handlers/auth.go"
-    condition: "{{and (ne .AuthType \"\") (eq .Framework \"gin\")}}"
-
-  - source: "internal/presentation/http/handlers/auth_echo.go.tmpl"
-    destination: "internal/presentation/http/handlers/auth.go"
-    condition: "{{and (ne .AuthType \"\") (eq .Framework \"echo\")}}"
-
-  - source: "internal/presentation/http/handlers/auth_fiber.go.tmpl"
-    destination: "internal/presentation/http/handlers/auth.go"
-    condition: "{{and (ne .AuthType \"\") (eq .Framework \"fiber\")}}"
-
-  - source: "internal/presentation/http/handlers/auth_chi.go.tmpl"
-    destination: "internal/presentation/http/handlers/auth.go"
-    condition: "{{and (ne .AuthType \"\") (eq .Framework \"chi\")}}"
-
-  - source: "internal/presentation/http/handlers/auth_stdlib.go.tmpl"
-    destination: "internal/presentation/http/handlers/auth.go"
-    condition: "{{and (ne .AuthType \"\") (eq .Framework \"stdlib\")}}"
-
-  - source: "internal/presentation/http/middleware/auth.go.tmpl"
-    destination: "internal/presentation/http/middleware/auth.go"
-    condition: "{{ne .AuthType \"\"}}"
+    condition: "{{eq .Framework \"gin\"}}"
 
   - source: "internal/presentation/http/middleware/logging.go.tmpl"
     destination: "internal/presentation/http/middleware/logging.go"
@@ -312,21 +238,12 @@ files:
   - source: "internal/presentation/http/middleware/cors.go.tmpl"
     destination: "internal/presentation/http/middleware/cors.go"
 
-  - source: "internal/presentation/http/dto/requests.go.tmpl"
-    destination: "internal/presentation/http/dto/requests.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
-
-  - source: "internal/presentation/http/dto/responses.go.tmpl"
-    destination: "internal/presentation/http/dto/responses.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
-
   # Docker and deployment
   - source: "Dockerfile.tmpl"
     destination: "Dockerfile"
 
   - source: "docker-compose.yml.tmpl"
     destination: "docker-compose.yml"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   # Configuration files
   - source: "configs/config.dev.yaml.tmpl"
@@ -338,13 +255,6 @@ files:
   - source: "configs/config.test.yaml.tmpl"
     destination: "configs/config.test.yaml"
 
-  # Environment and Git
-  - source: ".env.example.tmpl"
-    destination: ".env.example"
-
-  - source: ".gitignore.tmpl"
-    destination: ".gitignore"
-
   # API Documentation
   - source: "api/openapi.yaml.tmpl"
     destination: "api/openapi.yaml"
@@ -352,43 +262,42 @@ files:
   # Database migrations
   - source: "migrations/001_create_users.up.sql.tmpl"
     destination: "migrations/001_create_users.up.sql"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "migrations/001_create_users.down.sql.tmpl"
     destination: "migrations/001_create_users.down.sql"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "migrations/embed.go.tmpl"
     destination: "migrations/embed.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   # Tests - DDD focused testing
   - source: "tests/unit/domain/user_test.go.tmpl"
     destination: "tests/unit/domain/{{.DomainName}}_test.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "tests/unit/application/user_test.go.tmpl"
     destination: "tests/unit/application/{{.DomainName}}_test.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "tests/integration/api_test.go.tmpl"
     destination: "tests/integration/api_test.go"
 
   - source: "tests/integration/repository_test.go.tmpl"
     destination: "tests/integration/repository_test.go"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "tests/testdata/fixtures.json.tmpl"
     destination: "tests/testdata/fixtures.json"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   # Scripts
   - source: "scripts/migrate.sh.tmpl"
     destination: "scripts/migrate.sh"
-    condition: "{{ne .DatabaseDriver \"\"}}"
 
   - source: "scripts/dev.sh.tmpl"
     destination: "scripts/dev.sh"
+
+  # Environment and Git
+  - source: ".env.example.tmpl"
+    destination: ".env.example"
+
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
 
 dependencies:
   - module: "github.com/gin-gonic/gin"

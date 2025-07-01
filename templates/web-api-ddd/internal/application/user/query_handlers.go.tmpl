@@ -274,4 +274,57 @@ func (b *QueryBus) Execute(ctx context.Context, query Query) (interface{}, error
 	
 	return nil, errors.ErrQueryHandling.WithDetails("queryType", query.QueryType())
 }
+
+// QueryHandlers provides a simplified interface for query handling
+type QueryHandlers struct {
+	repository {{.DomainName}}.Repository
+	bus        *QueryBus
+}
+
+// NewQueryHandlers creates a new query handlers instance
+func NewQueryHandlers(
+	repository {{.DomainName}}.Repository,
+	logger interface{}, // Accept logger for compatibility
+) *QueryHandlers {
+	handlers := &QueryHandlers{
+		repository: repository,
+		bus:        NewQueryBus(),
+	}
+	
+	// Register query handlers
+	handlers.bus.RegisterHandler(NewGet{{.DomainName | title}}ByIDHandler(repository))
+	handlers.bus.RegisterHandler(NewGet{{.DomainName | title}}ByEmailHandler(repository))
+	handlers.bus.RegisterHandler(NewList{{.DomainName | title}}sHandler(repository))
+	handlers.bus.RegisterHandler(NewCount{{.DomainName | title}}sHandler(repository))
+	handlers.bus.RegisterHandler(NewExists{{.DomainName | title}}Handler(repository))
+	
+	return handlers
+}
+
+// HandleGet{{.DomainName | title}}ByID handles get {{.DomainName}} by ID query
+func (h *QueryHandlers) HandleGet{{.DomainName | title}}ByID(ctx context.Context, query Get{{.DomainName | title}}ByIDQuery) ({{.DomainName | title}}DTO, error) {
+	result, err := h.bus.Execute(ctx, query)
+	if err != nil {
+		return {{.DomainName | title}}DTO{}, err
+	}
+	return result.({{.DomainName | title}}DTO), nil
+}
+
+// HandleGet{{.DomainName | title}}ByEmail handles get {{.DomainName}} by email query
+func (h *QueryHandlers) HandleGet{{.DomainName | title}}ByEmail(ctx context.Context, query Get{{.DomainName | title}}ByEmailQuery) ({{.DomainName | title}}DTO, error) {
+	result, err := h.bus.Execute(ctx, query)
+	if err != nil {
+		return {{.DomainName | title}}DTO{}, err
+	}
+	return result.({{.DomainName | title}}DTO), nil
+}
+
+// HandleList{{.DomainName | title}}s handles list {{.DomainName}}s query
+func (h *QueryHandlers) HandleList{{.DomainName | title}}s(ctx context.Context, query List{{.DomainName | title}}sQuery) ({{.DomainName | title}}ListDTO, error) {
+	result, err := h.bus.Execute(ctx, query)
+	if err != nil {
+		return {{.DomainName | title}}ListDTO{}, err
+	}
+	return result.({{.DomainName | title}}ListDTO), nil
+}
 {{- end}}

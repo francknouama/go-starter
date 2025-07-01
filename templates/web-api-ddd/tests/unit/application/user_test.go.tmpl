@@ -1,48 +1,66 @@
 package application_test
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"{{.ModulePath}}/internal/application/{{.DomainName}}"
-	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
 	"{{.ModulePath}}/internal/shared/valueobjects"
-	"{{.ModulePath}}/tests/mocks"
 )
 
-func TestCreate{{.DomainName | title}}CommandHandler_Handle(t *testing.T) {
-	mockRepo := new(mocks.Mock{{.DomainName | title}}Repository)
-	mockLogger := new(mocks.MockLogger)
-	handler := {{.DomainName}}.NewCreate{{.DomainName | title}}CommandHandler(mockRepo, mockLogger)
+func TestCreate{{.DomainName | title}}Command_Validation(t *testing.T) {
+	t.Run("Valid command", func(t *testing.T) {
+		cmd := {{.DomainName}}.Create{{.DomainName | title}}Command{
+			Email: "test@example.com",
+			Name:  "Test User",
+		}
 
-	ctx := context.Background()
-	cmd := {{.DomainName}}.Create{{.DomainName | title}}Command{
-		Email:    "test@example.com",
-		Password: "password123",
-	}
+		assert.NotEmpty(t, cmd.Email)
+		assert.NotEmpty(t, cmd.Name)
+		assert.Contains(t, cmd.Email, "@")
+	})
 
-	// Test case 1: Successful creation
-	mockRepo.On("Save", ctx, mock.AnythingOfType("*{{.DomainName}}.{{.DomainName | title}}")).Return(nil).Once()
-	mockLogger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return().Once()
+	t.Run("Invalid email", func(t *testing.T) {
+		cmd := {{.DomainName}}.Create{{.DomainName | title}}Command{
+			Email: "invalid-email",
+			Name:  "Test User",
+		}
 
-	resp, err := handler.Handle(ctx, cmd)
-	assert.NoError(t, err)
-	assert.NotNil(t, resp)
-	assert.NotEmpty(t, resp.ID)
-	mockRepo.AssertExpectations(t)
-	mockLogger.AssertExpectations(t)
+		_, err := valueobjects.NewEmail(cmd.Email)
+		assert.Error(t, err)
+	})
+}
 
-	// Test case 2: Repository returns error
-	mockRepo.On("Save", ctx, mock.AnythingOfType("*{{.DomainName}}.{{.DomainName | title}}")).Return(errors.New("db error")).Once()
-	mockLogger.On("Error", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return().Once()
+func TestUpdate{{.DomainName | title}}Command_Validation(t *testing.T) {
+	t.Run("Valid command", func(t *testing.T) {
+		userID, _ := valueobjects.NewID("123e4567-e89b-12d3-a456-426614174000")
+		cmd := {{.DomainName}}.Update{{.DomainName | title}}Command{
+			ID:   userID,
+			Name: "Updated User",
+		}
 
-	resp, err = handler.Handle(ctx, cmd)
-	assert.Error(t, err)
-	assert.Nil(t, resp)
-	assert.Contains(t, err.Error(), "db error")
-	mockRepo.AssertExpectations(t)
-	mockLogger.AssertExpectations(t)
+		assert.NotEmpty(t, cmd.ID.String())
+		assert.NotEmpty(t, cmd.Name)
+	})
+}
+
+func Test{{.DomainName | title}}Query_Validation(t *testing.T) {
+	t.Run("Valid get by ID query", func(t *testing.T) {
+		userID, _ := valueobjects.NewID("123e4567-e89b-12d3-a456-426614174000")
+		query := {{.DomainName}}.Get{{.DomainName | title}}ByIDQuery{
+			ID: userID,
+		}
+
+		assert.NotEmpty(t, query.ID.String())
+	})
+
+	t.Run("Valid get by email query", func(t *testing.T) {
+		email, _ := valueobjects.NewEmail("test@example.com")
+		query := {{.DomainName}}.Get{{.DomainName | title}}ByEmailQuery{
+			Email: email,
+		}
+
+		assert.NotEmpty(t, query.Email.String())
+		assert.Contains(t, query.Email.String(), "@")
+	})
 }

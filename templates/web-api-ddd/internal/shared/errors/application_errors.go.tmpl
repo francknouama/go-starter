@@ -9,6 +9,7 @@ type ApplicationError struct {
 	Code    string
 	Message string
 	Cause   error
+	Details map[string]any
 }
 
 func (e ApplicationError) Error() string {
@@ -16,6 +17,15 @@ func (e ApplicationError) Error() string {
 		return fmt.Sprintf("[%s] %s: %v", e.Code, e.Message, e.Cause)
 	}
 	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+// WithDetails adds details to the error
+func (e ApplicationError) WithDetails(key string, value any) ApplicationError {
+	if e.Details == nil {
+		e.Details = make(map[string]any)
+	}
+	e.Details[key] = value
+	return e
 }
 
 // Unwrap returns the underlying cause
@@ -28,6 +38,7 @@ func NewApplicationError(code, message string) ApplicationError {
 	return ApplicationError{
 		Code:    code,
 		Message: message,
+		Details: make(map[string]any),
 	}
 }
 
@@ -37,7 +48,18 @@ func NewApplicationErrorWithCause(code, message string, cause error) Application
 		Code:    code,
 		Message: message,
 		Cause:   cause,
+		Details: make(map[string]any),
 	}
+}
+
+// NewValidationError creates a validation error
+func NewValidationError(message string) ApplicationError {
+	return NewApplicationError("VALIDATION_ERROR", message)
+}
+
+// NewAuthenticationError creates an authentication error
+func NewAuthenticationError(message string) ApplicationError {
+	return NewApplicationError("AUTHENTICATION_ERROR", message)
 }
 
 // Common application errors

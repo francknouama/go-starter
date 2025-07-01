@@ -1,0 +1,98 @@
+{{- if ne .AuthType ""}}
+package auth
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"time"
+	
+	"golang.org/x/crypto/bcrypt"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+)
+
+// SimpleAuthService provides basic authentication functionality
+type SimpleAuthService struct{}
+
+// HashPassword hashes a password using bcrypt
+func (s *SimpleAuthService) HashPassword(password string) (string, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash password: %w", err)
+	}
+	return string(hash), nil
+}
+
+// VerifyPassword verifies a password against its hash
+func (s *SimpleAuthService) VerifyPassword(hashedPassword, password string) error {
+	return bcrypt.CompareHashAndPassword([]byte(hashedPassword), []byte(password))
+}
+
+// GenerateToken generates a JWT token (simplified implementation)
+func (s *SimpleAuthService) GenerateToken({{.DomainName}}ID valueobjects.ID) (string, error) {
+	// This is a simplified token generation - in production use a proper JWT library
+	randomBytes := make([]byte, 32)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate token: %w", err)
+	}
+	
+	token := fmt.Sprintf("%s_%s_%d", 
+		{{.DomainName}}ID.String(), 
+		hex.EncodeToString(randomBytes), 
+		time.Now().Unix())
+	
+	return token, nil
+}
+
+// GenerateRefreshToken generates a refresh token
+func (s *SimpleAuthService) GenerateRefreshToken({{.DomainName}}ID valueobjects.ID) (string, error) {
+	randomBytes := make([]byte, 64)
+	_, err := rand.Read(randomBytes)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+	
+	refreshToken := fmt.Sprintf("refresh_%s_%s_%d", 
+		{{.DomainName}}ID.String(), 
+		hex.EncodeToString(randomBytes), 
+		time.Now().Unix())
+	
+	return refreshToken, nil
+}
+
+// ValidateToken validates a JWT token (simplified implementation)
+func (s *SimpleAuthService) ValidateToken(token string) (valueobjects.ID, error) {
+	// This is a simplified validation - in production use a proper JWT library
+	// For now, extract the user ID from the token prefix
+	if len(token) < 36 {
+		return valueobjects.ID{}, fmt.Errorf("invalid token format")
+	}
+	
+	// Extract the UUID part (first 36 characters)
+	idStr := token[:36]
+	id, err := valueobjects.NewID(idStr)
+	if err != nil {
+		return valueobjects.ID{}, fmt.Errorf("invalid token: %w", err)
+	}
+	
+	return id, nil
+}
+
+// ValidateRefreshToken validates a refresh token
+func (s *SimpleAuthService) ValidateRefreshToken(token string) (valueobjects.ID, error) {
+	// This is a simplified validation - in production use a proper JWT library
+	if len(token) < 44 { // "refresh_" + 36 char UUID
+		return valueobjects.ID{}, fmt.Errorf("invalid refresh token format")
+	}
+	
+	// Extract the UUID part (characters 8-44, after "refresh_")
+	idStr := token[8:44]
+	id, err := valueobjects.NewID(idStr)
+	if err != nil {
+		return valueobjects.ID{}, fmt.Errorf("invalid refresh token: %w", err)
+	}
+	
+	return id, nil
+}
+{{- end}}

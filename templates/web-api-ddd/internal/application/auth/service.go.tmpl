@@ -1,0 +1,50 @@
+{{- if ne .AuthType ""}}
+package auth
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// Service provides authentication services
+type Service struct {
+	commandHandler *CommandHandler
+	logger         logger.Logger
+}
+
+// NewAuthService creates a new authentication service
+func NewAuthService(
+	{{.DomainName}}Repo {{.DomainName}}.Repository,
+	log logger.Logger,
+) *Service {
+	// Create a simple auth service implementation
+	authService := &SimpleAuthService{}
+	commandHandler := NewCommandHandler({{.DomainName}}Repo, authService, log)
+	
+	return &Service{
+		commandHandler: commandHandler,
+		logger:         log,
+	}
+}
+
+// HandleLogin handles user login
+func (s *Service) HandleLogin(ctx context.Context, cmd LoginCommand) (*AuthResult, error) {
+	return s.commandHandler.HandleLogin(ctx, cmd)
+}
+
+// HandleRegister handles user registration
+func (s *Service) HandleRegister(ctx context.Context, cmd RegisterCommand) (*AuthResult, error) {
+	return s.commandHandler.HandleRegister(ctx, cmd)
+}
+
+// HandleRefreshToken handles token refresh
+func (s *Service) HandleRefreshToken(ctx context.Context, cmd RefreshTokenCommand) (*AuthResult, error) {
+	return s.commandHandler.HandleRefreshToken(ctx, cmd)
+}
+
+// HandleLogout handles user logout
+func (s *Service) HandleLogout(ctx context.Context, cmd LogoutCommand) error {
+	return s.commandHandler.HandleLogout(ctx, cmd)
+}
+{{- end}}

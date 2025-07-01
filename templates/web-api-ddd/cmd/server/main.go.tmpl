@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -43,12 +42,25 @@ import (
 func main() {
 	cfg := config.LoadConfig()
 
-	appLogger := logger.NewLogger(&cfg.Logger)
+	// Create logger factory
+	loggerFactory := logger.NewFactory(logger.{{.Logger | title}}Logger, cfg.Logger.Level)
+	appLogger, err := loggerFactory.CreateLogger()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create logger: %v", err))
+	}
 
 	{{if ne .DatabaseDriver ""}}
-	db, err := persistence.NewDatabaseConnection(&cfg.Database)
+	db, err := persistence.NewDatabase(persistence.DatabaseConfig{
+		Host:     cfg.Database.Host,
+		Port:     cfg.Database.Port,
+		Database: cfg.Database.Database,
+		Username: cfg.Database.Username,
+		Password: cfg.Database.Password,
+		SSLMode:  cfg.Database.SSLMode,
+	}, appLogger)
 	if err != nil {
-		appLogger.Fatal("Failed to connect to database", "error", err)
+		appLogger.Error("Failed to connect to database", "error", err)
+		panic(fmt.Sprintf("Failed to connect to database: %v", err))
 	}
 	defer func() {
 		if err := db.Close(); err != nil {
@@ -56,7 +68,7 @@ func main() {
 		}
 	}()
 
-	userRepo := persistence.New{{.DomainName | title}}Repository(db, appLogger)
+	userRepo := persistence.New{{.DomainName | title}}Repository(db.DB, appLogger)
 	{{end}}
 
 	{{if ne .AuthType ""}}
@@ -81,7 +93,7 @@ func main() {
 	authHandlers.RegisterRoutes(r)
 	{{end}}
 
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	appLogger.Info("Starting Gin server", "port", cfg.Server.Port)
 	httpServer := &http.Server{
 		Addr:         serverAddr,
@@ -93,7 +105,8 @@ func main() {
 
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			appLogger.Fatal("Gin server failed to start", "error", err)
+			appLogger.Error("Gin server failed to start", "error", err)
+			panic(fmt.Sprintf("Gin server failed to start: %v", err))
 		}
 	}()
 
@@ -110,12 +123,13 @@ func main() {
 	authHandlers.RegisterRoutes(e)
 	{{end}}
 
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	appLogger.Info("Starting Echo server", "port", cfg.Server.Port)
 
 	go func() {
 		if err := e.Start(serverAddr); err != nil && err != http.ErrServerClosed {
-			appLogger.Fatal("Echo server failed to start", "error", err)
+			appLogger.Error("Echo server failed to start", "error", err)
+			panic(fmt.Sprintf("Echo server failed to start: %v", err))
 		}
 	}()
 
@@ -136,12 +150,13 @@ func main() {
 	authHandlers.RegisterRoutes(app)
 	{{end}}
 
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	appLogger.Info("Starting Fiber server", "port", cfg.Server.Port)
 
 	go func() {
 		if err := app.Listen(serverAddr); err != nil && err != http.ErrServerClosed {
-			appLogger.Fatal("Fiber server failed to start", "error", err)
+			appLogger.Error("Fiber server failed to start", "error", err)
+			panic(fmt.Sprintf("Fiber server failed to start: %v", err))
 		}
 	}()
 
@@ -161,7 +176,7 @@ func main() {
 	authHandlers.RegisterRoutes(r)
 	{{end}}
 
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	appLogger.Info("Starting Chi server", "port", cfg.Server.Port)
 	httpServer := &http.Server{
 		Addr:         serverAddr,
@@ -173,7 +188,8 @@ func main() {
 
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			appLogger.Fatal("Chi server failed to start", "error", err)
+			appLogger.Error("Chi server failed to start", "error", err)
+			panic(fmt.Sprintf("Chi server failed to start: %v", err))
 		}
 	}()
 
@@ -186,7 +202,7 @@ func main() {
 	authHandlers.RegisterRoutes(mux)
 	{{end}}
 
-	serverAddr := fmt.Sprintf(":%d", cfg.Server.Port)
+	serverAddr := fmt.Sprintf(":%s", cfg.Server.Port)
 	appLogger.Info("Starting standard library server", "port", cfg.Server.Port)
 	httpServer := &http.Server{
 		Addr:         serverAddr,
@@ -198,7 +214,8 @@ func main() {
 
 	go func() {
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			appLogger.Fatal("Standard library server failed to start", "error", err)
+			appLogger.Error("Standard library server failed to start", "error", err)
+			panic(fmt.Sprintf("Standard library server failed to start: %v", err))
 		}
 	}()
 
@@ -214,15 +231,15 @@ func main() {
 
 	{{if or (eq .Framework "gin") (eq .Framework "chi") (eq .Framework "stdlib")}}
 	if err := httpServer.Shutdown(ctx); err != nil {
-		appLogger.Fatal("Server forced to shutdown", "error", err)
+		appLogger.Error("Server forced to shutdown", "error", err)
 	}
 	{{else if eq .Framework "echo"}}
 	if err := e.Shutdown(ctx); err != nil {
-		appLogger.Fatal("Server forced to shutdown", "error", err)
+		appLogger.Error("Server forced to shutdown", "error", err)
 	}
 	{{else if eq .Framework "fiber"}}
 	if err := app.Shutdown(); err != nil {
-		appLogger.Fatal("Server forced to shutdown", "error", err)
+		appLogger.Error("Server forced to shutdown", "error", err)
 	}
 	{{end}}
 

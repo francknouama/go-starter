@@ -1,0 +1,238 @@
+package auth
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/errors"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// CommandHandler handles authentication commands
+type CommandHandler struct {
+	{{.DomainName}}Repository {{.DomainName}}.Repository
+	authService     AuthService
+	logger          logger.Logger
+}
+
+// NewCommandHandler creates a new authentication command handler
+func NewCommandHandler(
+	{{.DomainName}}Repo {{.DomainName}}.Repository,
+	authSvc AuthService,
+	log logger.Logger,
+) *CommandHandler {
+	return &CommandHandler{
+		{{.DomainName}}Repository: {{.DomainName}}Repo,
+		authService:     authSvc,
+		logger:          log,
+	}
+}
+
+// AuthService defines the authentication service interface
+type AuthService interface {
+	HashPassword(password string) (string, error)
+	VerifyPassword(hashedPassword, password string) error
+	GenerateToken({{.DomainName}}ID valueobjects.ID) (string, error)
+	GenerateRefreshToken({{.DomainName}}ID valueobjects.ID) (string, error)
+	ValidateToken(token string) (valueobjects.ID, error)
+	ValidateRefreshToken(token string) (valueobjects.ID, error)
+}
+
+// AuthResult represents the result of an authentication operation
+type AuthResult struct {
+	UserID       valueobjects.ID `json:"user_id"`
+	AccessToken  string          `json:"access_token"`
+	RefreshToken string          `json:"refresh_token"`
+	ExpiresAt    time.Time       `json:"expires_at"`
+}
+
+// HandleLogin processes a login command
+func (h *CommandHandler) HandleLogin(ctx context.Context, cmd LoginCommand) (*AuthResult, error) {
+	h.logger.Info("Processing login command", "email", cmd.Email)
+
+	// Find {{.DomainName}} by email
+	email, err := valueobjects.NewEmail(cmd.Email)
+	if err != nil {
+		h.logger.Error("Invalid email format", "error", err, "email", cmd.Email)
+		return nil, errors.NewValidationError("invalid email format")
+	}
+
+	{{.DomainName}}Entity, err := h.{{.DomainName}}Repository.FindByEmail(ctx, email)
+	if err != nil {
+		h.logger.Error("Failed to find {{.DomainName}} by email", "error", err, "email", cmd.Email)
+		return nil, errors.NewAuthenticationError("invalid credentials")
+	}
+
+	// Verify password
+	if err := h.authService.VerifyPassword({{.DomainName}}Entity.PasswordHash(), cmd.Password); err != nil {
+		h.logger.Error("Password verification failed", "error", err, "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+		return nil, errors.NewAuthenticationError("invalid credentials")
+	}
+
+	// Check if {{.DomainName}} is active
+	if {{.DomainName}}Entity.Status() != {{.DomainName}}.StatusActive {
+		h.logger.Error("{{.DomainName | title}} account is not active", "{{.DomainName}}_id", {{.DomainName}}Entity.ID(), "status", {{.DomainName}}Entity.Status())
+		return nil, errors.NewAuthenticationError("account is not active")
+	}
+
+	// Generate tokens
+	accessToken, err := h.authService.GenerateToken({{.DomainName}}Entity.ID())
+	if err != nil {
+		h.logger.Error("Failed to generate access token", "error", err, "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+
+	refreshToken, err := h.authService.GenerateRefreshToken({{.DomainName}}Entity.ID())
+	if err != nil {
+		h.logger.Error("Failed to generate refresh token", "error", err, "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	h.logger.Info("Login successful", "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+
+	return &AuthResult{
+		UserID:       {{.DomainName}}Entity.ID(),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    time.Now().Add(24 * time.Hour), // TODO: Make configurable
+	}, nil
+}
+
+// HandleRegister processes a registration command
+func (h *CommandHandler) HandleRegister(ctx context.Context, cmd RegisterCommand) (*AuthResult, error) {
+	h.logger.Info("Processing register command", "email", cmd.Email)
+
+	// Validate email
+	email, err := valueobjects.NewEmail(cmd.Email)
+	if err != nil {
+		h.logger.Error("Invalid email format", "error", err, "email", cmd.Email)
+		return nil, errors.NewValidationError("invalid email format")
+	}
+
+	// Check if {{.DomainName}} already exists
+	existing{{.DomainName | title}}, err := h.{{.DomainName}}Repository.FindByEmail(ctx, email)
+	if err == nil && existing{{.DomainName | title}} != nil {
+		h.logger.Error("{{.DomainName | title}} already exists", "email", cmd.Email)
+		return nil, errors.NewValidationError("{{.DomainName}} already exists with this email")
+	}
+
+	// Hash password
+	hashedPassword, err := h.authService.HashPassword(cmd.Password)
+	if err != nil {
+		h.logger.Error("Failed to hash password", "error", err)
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Split name into first and last name
+	firstLast := strings.Split(strings.TrimSpace(cmd.Name), " ")
+	firstName := firstLast[0]
+	lastName := ""
+	if len(firstLast) > 1 {
+		lastName = strings.Join(firstLast[1:], " ")
+	}
+	
+	if firstName == "" {
+		h.logger.Error("Invalid name: first name is empty", "name", cmd.Name)
+		return nil, errors.NewValidationError("invalid name: first name is required")
+	}
+	if lastName == "" {
+		lastName = firstName // Use firstName as lastName if no lastName provided
+	}
+
+	// Create new {{.DomainName}}
+	{{.DomainName}}Entity, err := {{.DomainName}}.New{{.DomainName | title}}(firstName, lastName, email, hashedPassword)
+	if err != nil {
+		h.logger.Error("Failed to create {{.DomainName}}", "error", err)
+		return nil, fmt.Errorf("failed to create {{.DomainName}}: %w", err)
+	}
+
+	// Save {{.DomainName}}
+	if err := h.{{.DomainName}}Repository.Save(ctx, {{.DomainName}}Entity); err != nil {
+		h.logger.Error("Failed to save {{.DomainName}}", "error", err, "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+		return nil, fmt.Errorf("failed to save {{.DomainName}}: %w", err)
+	}
+
+	// Generate tokens
+	accessToken, err := h.authService.GenerateToken({{.DomainName}}Entity.ID())
+	if err != nil {
+		h.logger.Error("Failed to generate access token", "error", err, "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+
+	refreshToken, err := h.authService.GenerateRefreshToken({{.DomainName}}Entity.ID())
+	if err != nil {
+		h.logger.Error("Failed to generate refresh token", "error", err, "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	h.logger.Info("Registration successful", "{{.DomainName}}_id", {{.DomainName}}Entity.ID())
+
+	return &AuthResult{
+		UserID:       {{.DomainName}}Entity.ID(),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    time.Now().Add(24 * time.Hour), // TODO: Make configurable
+	}, nil
+}
+
+// HandleRefreshToken processes a refresh token command
+func (h *CommandHandler) HandleRefreshToken(ctx context.Context, cmd RefreshTokenCommand) (*AuthResult, error) {
+	h.logger.Info("Processing refresh token command")
+
+	// Validate refresh token
+	{{.DomainName}}ID, err := h.authService.ValidateRefreshToken(cmd.RefreshToken)
+	if err != nil {
+		h.logger.Error("Invalid refresh token", "error", err)
+		return nil, errors.NewAuthenticationError("invalid refresh token")
+	}
+
+	// Find {{.DomainName}}
+	{{.DomainName}}Entity, err := h.{{.DomainName}}Repository.FindByID(ctx, {{.DomainName}}ID)
+	if err != nil {
+		h.logger.Error("Failed to find {{.DomainName}}", "error", err, "{{.DomainName}}_id", {{.DomainName}}ID)
+		return nil, errors.NewAuthenticationError("{{.DomainName}} not found")
+	}
+
+	// Check if {{.DomainName}} is active
+	if {{.DomainName}}Entity.Status() != {{.DomainName}}.StatusActive {
+		h.logger.Error("{{.DomainName | title}} account is not active", "{{.DomainName}}_id", {{.DomainName}}ID, "status", {{.DomainName}}Entity.Status())
+		return nil, errors.NewAuthenticationError("account is not active")
+	}
+
+	// Generate new tokens
+	accessToken, err := h.authService.GenerateToken({{.DomainName}}ID)
+	if err != nil {
+		h.logger.Error("Failed to generate access token", "error", err, "{{.DomainName}}_id", {{.DomainName}}ID)
+		return nil, fmt.Errorf("failed to generate access token: %w", err)
+	}
+
+	refreshToken, err := h.authService.GenerateRefreshToken({{.DomainName}}ID)
+	if err != nil {
+		h.logger.Error("Failed to generate refresh token", "error", err, "{{.DomainName}}_id", {{.DomainName}}ID)
+		return nil, fmt.Errorf("failed to generate refresh token: %w", err)
+	}
+
+	h.logger.Info("Token refresh successful", "{{.DomainName}}_id", {{.DomainName}}ID)
+
+	return &AuthResult{
+		UserID:       {{.DomainName}}ID,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    time.Now().Add(24 * time.Hour), // TODO: Make configurable
+	}, nil
+}
+
+// HandleLogout processes a logout command
+func (h *CommandHandler) HandleLogout(ctx context.Context, cmd LogoutCommand) error {
+	h.logger.Info("Processing logout command", "{{.DomainName}}_id", cmd.UserID)
+
+	// TODO: Implement token blacklisting or invalidation
+	// For now, we just log the logout
+	h.logger.Info("Logout successful", "{{.DomainName}}_id", cmd.UserID)
+
+	return nil
+}
