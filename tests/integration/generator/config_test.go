@@ -350,7 +350,7 @@ func TestGenerator_Config_Features(t *testing.T) {
 			},
 			validate: func(t *testing.T, features *types.Features) {
 				require.NotNil(t, features)
-				assert.Equal(t, "postgresql", features.Database.Driver)
+				assert.Contains(t, features.Database.GetDrivers(), "postgresql")
 				assert.Equal(t, "gorm", features.Database.ORM)
 			},
 		},
@@ -458,7 +458,7 @@ func TestGenerator_Config_Features(t *testing.T) {
 				require.NotNil(t, features)
 
 				// Database
-				assert.Equal(t, "postgresql", features.Database.Driver)
+				assert.Contains(t, features.Database.GetDrivers(), "postgresql")
 				assert.Equal(t, "gorm", features.Database.ORM)
 
 				// Authentication

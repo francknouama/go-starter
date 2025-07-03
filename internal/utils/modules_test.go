@@ -14,7 +14,11 @@ func TestModules(t *testing.T) {
 	// Create temporary directory for testing
 	tempDir, err := os.MkdirTemp("", "go-starter-modules-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("InitGoModule", func(t *testing.T) {
 		projectPath := filepath.Join(tempDir, "test-init-module")
@@ -147,7 +151,11 @@ func TestGoVersion(t *testing.T) {
 func TestModulePathOperations(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "go-starter-module-path-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("GetModulePath", func(t *testing.T) {
 		projectPath := filepath.Join(tempDir, "test-get-module-path")
@@ -214,7 +222,11 @@ func TestModulePathOperations(t *testing.T) {
 func TestGoCommands(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "go-starter-go-commands-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	projectPath := filepath.Join(tempDir, "test-go-commands")
 	err = os.MkdirAll(projectPath, 0755)
@@ -379,7 +391,11 @@ func TestGoVersionValidation(t *testing.T) {
 func TestModuleCreation(t *testing.T) {
 	tempDir, err := os.MkdirTemp("", "go-starter-module-creation-test-*")
 	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir: %v", err)
+		}
+	}()
 
 	t.Run("GenerateGoMod", func(t *testing.T) {
 		content := GenerateGoMod("github.com/test/generate-go-mod", "1.21")

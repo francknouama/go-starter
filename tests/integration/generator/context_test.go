@@ -367,8 +367,8 @@ func TestGenerator_Context_DatabaseConfiguration(t *testing.T) {
 
 			// Verify database configuration is properly structured
 			if tt.features != nil {
-				if tt.features.Database.Driver != "" {
-					assert.NotEmpty(t, tt.features.Database.Driver, "Database driver should be set")
+				if tt.features.Database.HasDatabase() {
+					assert.NotEmpty(t, tt.features.Database.GetDrivers(), "Database drivers should be set")
 				}
 				if tt.features.Database.ORM != "" {
 					assert.NotEmpty(t, tt.features.Database.ORM, "Database ORM should be set")
@@ -524,7 +524,7 @@ func TestGenerator_Context_FeatureVariables(t *testing.T) {
 
 	// Verify all features are properly structured
 	require.NotNil(t, config.Features)
-	assert.Equal(t, "postgresql", config.Features.Database.Driver)
+	assert.Contains(t, config.Features.Database.GetDrivers(), "postgresql")
 	assert.Equal(t, "gorm", config.Features.Database.ORM)
 	assert.Equal(t, "jwt", config.Features.Authentication.Type)
 	assert.Equal(t, "slog", config.Features.Logging.Type)
