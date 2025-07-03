@@ -1,0 +1,92 @@
+package valueobjects
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// Email represents an email address value object
+type Email struct {
+	value string
+}
+
+// emailRegex is a basic email validation regex
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+// NewEmail creates a new Email value object
+func NewEmail(value string) (Email, error) {
+	if value == "" {
+		return Email{}, fmt.Errorf("email cannot be empty")
+	}
+
+	// Normalize the email (trim whitespace, lowercase)
+	normalized := strings.ToLower(strings.TrimSpace(value))
+
+	// Validate email format
+	if !emailRegex.MatchString(normalized) {
+		return Email{}, fmt.Errorf("invalid email format: %s", value)
+	}
+
+	return Email{value: normalized}, nil
+}
+
+// MustNewEmail creates a new Email value object or panics if invalid
+func MustNewEmail(value string) Email {
+	email, err := NewEmail(value)
+	if err != nil {
+		panic(fmt.Sprintf("invalid email: %v", err))
+	}
+	return email
+}
+
+// String returns the string representation of the email
+func (e Email) String() string {
+	return e.value
+}
+
+// Value returns the email value
+func (e Email) Value() string {
+	return e.value
+}
+
+// Domain returns the domain part of the email
+func (e Email) Domain() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+// LocalPart returns the local part of the email (before @)
+func (e Email) LocalPart() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
+}
+
+// Equals checks if two emails are equal
+func (e Email) Equals(other Email) bool {
+	return e.value == other.value
+}
+
+// IsEmpty checks if the email is empty
+func (e Email) IsEmpty() bool {
+	return e.value == ""
+}
+
+// Validate checks if the email is valid
+func (e Email) Validate() error {
+	if e.value == "" {
+		return fmt.Errorf("email cannot be empty")
+	}
+	
+	if !emailRegex.MatchString(e.value) {
+		return fmt.Errorf("invalid email format: %s", e.value)
+	}
+	
+	return nil
+}
