@@ -124,58 +124,58 @@ func (s *ActiveSpecification) WhyNotSatisfiedBy({{.DomainName}} *{{.DomainName |
 	return nil
 }
 
-// ValidEmailSpecification checks if a {{.DomainName}} has a valid email
-type ValidEmailSpecification struct {
+// ValidNameSpecification checks if a {{.DomainName}} has a valid name
+type ValidNameSpecification struct {
 	CompositeSpecification
 }
 
-// NewValidEmailSpecification creates a new valid email specification
-func NewValidEmailSpecification() *ValidEmailSpecification {
-	return &ValidEmailSpecification{}
+// NewValidNameSpecification creates a new valid name specification
+func NewValidNameSpecification() *ValidNameSpecification {
+	return &ValidNameSpecification{}
 }
 
-// IsSatisfiedBy checks if the {{.DomainName}} has a valid email
-func (s *ValidEmailSpecification) IsSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) bool {
-	return {{.DomainName}} != nil && {{.DomainName}}.Email().IsValid()
+// IsSatisfiedBy checks if the {{.DomainName}} has a valid name
+func (s *ValidNameSpecification) IsSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) bool {
+	return {{.DomainName}} != nil && {{.DomainName}}.Name() != ""
 }
 
-// WhyNotSatisfiedBy returns why the {{.DomainName}} doesn't have a valid email
-func (s *ValidEmailSpecification) WhyNotSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) error {
+// WhyNotSatisfiedBy returns why the {{.DomainName}} doesn't have a valid name
+func (s *ValidNameSpecification) WhyNotSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) error {
 	if {{.DomainName}} == nil {
 		return errors.ErrBusinessRuleViolation.WithDetails("reason", "{{.DomainName}} is nil")
 	}
-	if !{{.DomainName}}.Email().IsValid() {
-		return errors.ErrBusinessRuleViolation.WithDetails("reason", "{{.DomainName}} email is invalid")
+	if {{.DomainName}}.Name() == "" {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "{{.DomainName}} name is invalid")
 	}
 	return nil
 }
 
-// EmailDomainSpecification checks if a {{.DomainName}}'s email belongs to allowed domains
-type EmailDomainSpecification struct {
+// NamePatternSpecification checks if a {{.DomainName}}'s name matches allowed patterns
+type NamePatternSpecification struct {
 	CompositeSpecification
-	allowedDomains []string
+	allowedPatterns []string
 }
 
-// NewEmailDomainSpecification creates a new email domain specification
-func NewEmailDomainSpecification(allowedDomains []string) *EmailDomainSpecification {
-	return &EmailDomainSpecification{
-		allowedDomains: allowedDomains,
+// NewNamePatternSpecification creates a new name pattern specification
+func NewNamePatternSpecification(allowedPatterns []string) *NamePatternSpecification {
+	return &NamePatternSpecification{
+		allowedPatterns: allowedPatterns,
 	}
 }
 
-// IsSatisfiedBy checks if the {{.DomainName}}'s email domain is allowed
-func (s *EmailDomainSpecification) IsSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) bool {
+// IsSatisfiedBy checks if the {{.DomainName}}'s name matches allowed patterns
+func (s *NamePatternSpecification) IsSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) bool {
 	if {{.DomainName}} == nil {
 		return false
 	}
 	
-	if len(s.allowedDomains) == 0 {
+	if len(s.allowedPatterns) == 0 {
 		return true // No restrictions
 	}
 	
-	{{.DomainName}}Domain := {{.DomainName}}.Email().Domain()
-	for _, allowedDomain := range s.allowedDomains {
-		if {{.DomainName}}Domain == allowedDomain {
+	{{.DomainName}}Name := {{.DomainName}}.Name()
+	for _, pattern := range s.allowedPatterns {
+		if {{.DomainName}}Name == pattern {
 			return true
 		}
 	}
@@ -183,8 +183,8 @@ func (s *EmailDomainSpecification) IsSatisfiedBy({{.DomainName}} *{{.DomainName 
 	return false
 }
 
-// WhyNotSatisfiedBy returns why the {{.DomainName}}'s email domain is not allowed
-func (s *EmailDomainSpecification) WhyNotSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) error {
+// WhyNotSatisfiedBy returns why the {{.DomainName}}'s name pattern is not allowed
+func (s *NamePatternSpecification) WhyNotSatisfiedBy({{.DomainName}} *{{.DomainName | title}}) error {
 	if {{.DomainName}} == nil {
 		return errors.ErrBusinessRuleViolation.WithDetails("reason", "{{.DomainName}} is nil")
 	}
@@ -195,8 +195,8 @@ func (s *EmailDomainSpecification) WhyNotSatisfiedBy({{.DomainName}} *{{.DomainN
 	
 	return errors.ErrBusinessRuleViolation.WithDetails(
 		"reason", 
-		"email domain not allowed",
-	).WithDetails("domain", {{.DomainName}}.Email().Domain())
+		"name pattern not allowed",
+	).WithDetails("name", {{.DomainName}}.Name())
 }
 
 // CanBeUpdatedSpecification checks if a {{.DomainName}} can be updated

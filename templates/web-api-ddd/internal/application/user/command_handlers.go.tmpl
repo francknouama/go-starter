@@ -42,24 +42,13 @@ func (h *Create{{.DomainName | title}}Handler) Handle(ctx context.Context, comma
 		return nil, errors.ErrInvalidCommand.WithDetails("expectedType", "Create{{.DomainName | title}}Command")
 	}
 	
-	// Create value objects
-	email, err := valueobjects.NewEmail(cmd.Email)
-	if err != nil {
-		return nil, errors.ErrValidation.WithDetails("field", "email").WithDetails("value", cmd.Email)
-	}
-	
-	name, err := {{.DomainName}}.NewName(cmd.FirstName, cmd.LastName)
-	if err != nil {
-		return nil, errors.ErrValidation.WithDetails("field", "name")
-	}
-	
 	// Validate business rules
-	if err := h.domainService.ValidateForCreation(email, name); err != nil {
+	if err := h.domainService.ValidateForCreation(cmd.Name); err != nil {
 		return nil, err
 	}
 	
-	// Create {{.DomainName}} aggregate (placeholder password hash for now)
-	{{.DomainName}}Entity, err := {{.DomainName}}.New{{.DomainName | title}}(cmd.FirstName, cmd.LastName, email, "temp_hash")
+	// Create {{.DomainName}} aggregate
+	{{.DomainName}}Entity, err := {{.DomainName}}.New{{.DomainName | title}}(cmd.Name, cmd.Description)
 	if err != nil {
 		return nil, err
 	}
