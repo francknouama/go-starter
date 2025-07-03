@@ -19,14 +19,16 @@ import (
 	{{end}}
 	"{{.ModulePath}}/internal/infrastructure/logger"
 	"{{.ModulePath}}/internal/presentation/http/handlers"
+	{{if or (eq .Framework "gin") (eq .Framework "chi")}}
 	"{{.ModulePath}}/internal/presentation/http/middleware"
+	{{end}}
 
 	{{if eq .Framework "gin"}}
 	"github.com/gin-gonic/gin"
 	{{end}}
 	{{if eq .Framework "echo"}}
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
+	echomw "github.com/labstack/echo/v4/middleware"
 	{{end}}
 	{{if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
@@ -35,19 +37,18 @@ import (
 	{{end}}
 	{{if eq .Framework "chi"}}
 	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"
+	chimw "github.com/go-chi/chi/v5/middleware"
 	{{end}}
 )
 
 func main() {
-	cfg := config.LoadConfig()
-
-	// Create logger factory
-	loggerFactory := logger.NewFactory(logger.{{.Logger | title}}Logger, cfg.Logger.Level)
-	appLogger, err := loggerFactory.CreateLogger()
+	cfg, err := config.Load()
 	if err != nil {
-		panic(fmt.Sprintf("Failed to create logger: %v", err))
+		panic(fmt.Sprintf("Failed to load configuration: %v", err))
 	}
+
+	// Create logger
+	appLogger := logger.NewWithLevel(cfg.Logger.Level)
 
 	{{if ne .DatabaseDriver ""}}
 	db, err := persistence.NewDatabase(persistence.DatabaseConfig{
@@ -81,10 +82,15 @@ func main() {
 	{{end}}
 
 	{{if eq .Framework "gin"}}
-	r := gin.Default()
+	r := gin.New()
 	r.Use(middleware.GinLogger(appLogger))
 	r.Use(gin.Recovery())
 	r.Use(middleware.CORS())
+
+	// Health check routes
+	healthHandler := handlers.NewHealthHandler(appLogger)
+	r.GET("/health", gin.WrapF(healthHandler.Health))
+	r.GET("/ready", gin.WrapF(healthHandler.Ready))
 
 	h := handlers.NewGinHandlers({{if ne .DatabaseDriver ""}}{{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, {{end}}appLogger)
 	h.RegisterRoutes(r)
@@ -112,11 +118,16 @@ func main() {
 
 	{{else if eq .Framework "echo"}}
 	e := echo.New()
-	e.Use(middleware.EchoLogger(appLogger))
-	e.Use(middleware.Recover())
-	e.Use(middleware.CORS())
+	e.Use(echomw.Logger())
+	e.Use(echomw.Recover())
+	e.Use(echomw.CORS())
 
-	h := handlers.NewEchoHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	// Health check routes
+	healthHandler := handlers.NewHealthHandler(appLogger)
+	e.GET("/health", echo.WrapHandler(http.HandlerFunc(healthHandler.Health)))
+	e.GET("/ready", echo.WrapHandler(http.HandlerFunc(healthHandler.Ready)))
+
+	h := handlers.NewEchoHandlers({{if ne .DatabaseDriver ""}}{{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, {{end}}appLogger)
 	h.RegisterRoutes(e)
 	{{if ne .AuthType ""}}
 	authHandlers := handlers.NewAuthEchoHandlers(authService, appLogger)
@@ -139,11 +150,29 @@ func main() {
 		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
 		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
 	})
-	app.Use(middleware.FiberLogger(appLogger))
 	app.Use(recover.New())
 	app.Use(cors.New())
 
-	h := handlers.NewFiberHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	// Health check routes
+	healthHandler := handlers.NewHealthHandler(appLogger)
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":    "ok",
+			"timestamp": time.Now(),
+			"version":   "1.0.0",
+			"uptime":    time.Since(time.Now()).String(),
+		})
+	})
+	app.Get("/ready", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":    "ready",
+			"timestamp": time.Now(),
+			"checks":    fiber.Map{"memory": "ok", "disk": "ok"},
+			"version":   "1.0.0",
+		})
+	})
+
+	h := handlers.NewFiberHandlers({{if ne .DatabaseDriver ""}}{{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, {{end}}appLogger)
 	h.RegisterRoutes(app)
 	{{if ne .AuthType ""}}
 	authHandlers := handlers.NewAuthFiberHandlers(authService, appLogger)
@@ -162,14 +191,19 @@ func main() {
 
 	{{else if eq .Framework "chi"}}
 	r := chi.NewRouter()
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middleware.Logger)
-	r.Use(middleware.Recoverer)
-	r.Use(middleware.Timeout(60 * time.Second))
-	r.Use(middleware.ChiCORS())
+	r.Use(chimw.RequestID)
+	r.Use(chimw.RealIP)
+	r.Use(chimw.Logger)
+	r.Use(chimw.Recoverer)
+	r.Use(chimw.Timeout(60 * time.Second))
+	r.Use(middleware.CORS())
 
-	h := handlers.NewChiHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+	// Health check routes
+	healthHandler := handlers.NewHealthHandler(appLogger)
+	r.Get("/health", healthHandler.Health)
+	r.Get("/ready", healthHandler.Ready)
+
+	h := handlers.NewChiHandlers({{if ne .DatabaseDriver ""}}{{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, {{end}}appLogger)
 	h.RegisterRoutes(r)
 	{{if ne .AuthType ""}}
 	authHandlers := handlers.NewAuthChiHandlers(authService, appLogger)
@@ -195,7 +229,13 @@ func main() {
 
 	{{else if eq .Framework "stdlib"}}
 	mux := http.NewServeMux()
-	h := handlers.NewStdlibHandlers({{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, appLogger)
+
+	// Health check routes
+	healthHandler := handlers.NewHealthHandler(appLogger)
+	mux.HandleFunc("/health", healthHandler.Health)
+	mux.HandleFunc("/ready", healthHandler.Ready)
+
+	h := handlers.NewStdlibHandlers({{if ne .DatabaseDriver ""}}{{.DomainName}}CommandHandlers, {{.DomainName}}QueryHandlers, {{end}}appLogger)
 	h.RegisterRoutes(mux)
 	{{if ne .AuthType ""}}
 	authHandlers := handlers.NewAuthStdlibHandlers(authService, appLogger)

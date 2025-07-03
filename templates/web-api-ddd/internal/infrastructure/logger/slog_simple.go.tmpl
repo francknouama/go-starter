@@ -1,0 +1,50 @@
+package logger
+
+import (
+	"log/slog"
+	"os"
+)
+
+// Logger provides structured logging for the application
+type Logger struct {
+	*slog.Logger
+}
+
+// New creates a new slog-based logger with default configuration
+func New() *Logger {
+	// Configure slog with JSON output for structured logging
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo, // Default to info level
+	}
+	
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger := slog.New(handler)
+	
+	return &Logger{Logger: logger}
+}
+
+// NewWithLevel creates a new logger with the specified level
+func NewWithLevel(level string) *Logger {
+	var slogLevel slog.Level
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "info":
+		slogLevel = slog.LevelInfo
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{
+		Level: slogLevel,
+	}
+	
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger := slog.New(handler)
+	
+	return &Logger{Logger: logger}
+}

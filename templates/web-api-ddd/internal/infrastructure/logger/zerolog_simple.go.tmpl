@@ -1,0 +1,63 @@
+package logger
+
+import (
+	"os"
+
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+)
+
+// Logger provides structured logging for the application using Zerolog
+type Logger struct {
+	zerolog.Logger
+}
+
+// New creates a new zerolog-based logger with default configuration
+func New() *Logger {
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	
+	return &Logger{Logger: logger}
+}
+
+// NewWithLevel creates a new logger with the specified level
+func NewWithLevel(level string) *Logger {
+	var zerologLevel zerolog.Level
+	switch level {
+	case "debug":
+		zerologLevel = zerolog.DebugLevel
+	case "info":
+		zerologLevel = zerolog.InfoLevel
+	case "warn":
+		zerologLevel = zerolog.WarnLevel
+	case "error":
+		zerologLevel = zerolog.ErrorLevel
+	default:
+		zerologLevel = zerolog.InfoLevel
+	}
+
+	zerolog.SetGlobalLevel(zerologLevel)
+	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	
+	return &Logger{Logger: logger}
+}
+
+// Debug logs a debug message
+func (l *Logger) Debug(msg string, args ...interface{}) {
+	l.Logger.Debug().Msgf(msg, args...)
+}
+
+// Info logs an info message
+func (l *Logger) Info(msg string, args ...interface{}) {
+	l.Logger.Info().Msgf(msg, args...)
+}
+
+// Warn logs a warning message
+func (l *Logger) Warn(msg string, args ...interface{}) {
+	l.Logger.Warn().Msgf(msg, args...)
+}
+
+// Error logs an error message
+func (l *Logger) Error(msg string, args ...interface{}) {
+	l.Logger.Error().Msgf(msg, args...)
+}

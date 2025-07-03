@@ -1,0 +1,206 @@
+{{- if ne .DatabaseDriver ""}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"{{.ModulePath}}/internal/application/{{.DomainName}}"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// StdlibHandlers handles HTTP requests using standard library
+type StdlibHandlers struct {
+	commandHandlers *{{.DomainName}}.CommandHandlers
+	queryHandlers   *{{.DomainName}}.QueryHandlers
+	logger          logger.Logger
+}
+
+// NewStdlibHandlers creates a new standard library handlers instance
+func NewStdlibHandlers(
+	commandHandlers *{{.DomainName}}.CommandHandlers,
+	queryHandlers *{{.DomainName}}.QueryHandlers,
+	log logger.Logger,
+) *StdlibHandlers {
+	return &StdlibHandlers{
+		commandHandlers: commandHandlers,
+		queryHandlers:   queryHandlers,
+		logger:          log,
+	}
+}
+
+// RegisterRoutes registers all routes for the {{.DomainName}} domain
+func (h *StdlibHandlers) RegisterRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/api/v1/{{.DomainName}}s", h.handle{{.DomainName | title}}s)
+	mux.HandleFunc("/api/v1/{{.DomainName}}s/", h.handle{{.DomainName | title}}ByID)
+}
+
+// handle{{.DomainName | title}}s handles requests to /api/v1/{{.DomainName}}s
+func (h *StdlibHandlers) handle{{.DomainName | title}}s(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodPost:
+		h.Create{{.DomainName | title}}(w, r)
+	case http.MethodGet:
+		h.List{{.DomainName | title}}s(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handle{{.DomainName | title}}ByID handles requests to /api/v1/{{.DomainName}}s/{id}
+func (h *StdlibHandlers) handle{{.DomainName | title}}ByID(w http.ResponseWriter, r *http.Request) {
+	// Extract ID from path
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/{{.DomainName}}s/")
+	parts := strings.Split(path, "/")
+	
+	if len(parts) == 0 || parts[0] == "" {
+		http.Error(w, "ID is required", http.StatusBadRequest)
+		return
+	}
+
+	// Check if it's an email lookup
+	if len(parts) > 1 && parts[0] == "email" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.Get{{.DomainName | title}}ByEmail(w, r, parts[1])
+		return
+	}
+
+	// Otherwise it's an ID lookup
+	id := parts[0]
+	
+	switch r.Method {
+	case http.MethodGet:
+		h.Get{{.DomainName | title}}ByID(w, r, id)
+	case http.MethodPut:
+		h.Update{{.DomainName | title}}(w, r, id)
+	case http.MethodDelete:
+		h.Delete{{.DomainName | title}}(w, r, id)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// Create{{.DomainName | title}} handles creating a new {{.DomainName}}
+func (h *StdlibHandlers) Create{{.DomainName | title}}(w http.ResponseWriter, r *http.Request) {
+	var req {{.DomainName}}.Create{{.DomainName | title}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Failed to decode request", "error", err)
+		h.respondWithError(w, http.StatusBadRequest, "Invalid request format")
+		return
+	}
+
+	cmd := req.ToCommand()
+	{{.DomainName}}DTO, err := h.commandHandlers.HandleCreate{{.DomainName | title}}(r.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Failed to create {{.DomainName}}", "error", err)
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to create {{.DomainName}}")
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusCreated, {{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByID handles getting a {{.DomainName}} by ID
+func (h *StdlibHandlers) Get{{.DomainName | title}}ByID(w http.ResponseWriter, r *http.Request, id string) {
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByIDQuery{ID: id}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByID(r.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}}", "error", err, "id", id)
+		h.respondWithError(w, http.StatusNotFound, "{{.DomainName | title}} not found")
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusOK, {{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByEmail handles getting a {{.DomainName}} by email
+func (h *StdlibHandlers) Get{{.DomainName | title}}ByEmail(w http.ResponseWriter, r *http.Request, email string) {
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByEmailQuery{Email: email}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByEmail(r.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}} by email", "error", err, "email", email)
+		h.respondWithError(w, http.StatusNotFound, "{{.DomainName | title}} not found")
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusOK, {{.DomainName}}DTO)
+}
+
+// Update{{.DomainName | title}} handles updating a {{.DomainName}}
+func (h *StdlibHandlers) Update{{.DomainName | title}}(w http.ResponseWriter, r *http.Request, id string) {
+	var req {{.DomainName}}.Update{{.DomainName | title}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Failed to decode request", "error", err)
+		h.respondWithError(w, http.StatusBadRequest, "Invalid request format")
+		return
+	}
+
+	cmd := req.ToCommand(id)
+	{{.DomainName}}DTO, err := h.commandHandlers.HandleUpdate{{.DomainName | title}}(r.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Failed to update {{.DomainName}}", "error", err, "id", id)
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to update {{.DomainName}}")
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusOK, {{.DomainName}}DTO)
+}
+
+// Delete{{.DomainName | title}} handles deleting a {{.DomainName}}
+func (h *StdlibHandlers) Delete{{.DomainName | title}}(w http.ResponseWriter, r *http.Request, id string) {
+	cmd := {{.DomainName}}.Delete{{.DomainName | title}}Command{ID: id}
+	err := h.commandHandlers.HandleDelete{{.DomainName | title}}(r.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Failed to delete {{.DomainName}}", "error", err, "id", id)
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to delete {{.DomainName}}")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// List{{.DomainName | title}}s handles listing {{.DomainName}}s with pagination
+func (h *StdlibHandlers) List{{.DomainName | title}}s(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	query := {{.DomainName}}.List{{.DomainName | title}}sQuery{
+		Page:  page,
+		Limit: limit,
+	}
+
+	{{.DomainName}}List, err := h.queryHandlers.HandleList{{.DomainName | title}}s(r.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to list {{.DomainName}}s", "error", err)
+		h.respondWithError(w, http.StatusInternalServerError, "Failed to list {{.DomainName}}s")
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusOK, {{.DomainName}}List)
+}
+
+// Helper functions
+func (h *StdlibHandlers) respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	if payload != nil {
+		json.NewEncoder(w).Encode(payload)
+	}
+}
+
+func (h *StdlibHandlers) respondWithError(w http.ResponseWriter, code int, message string) {
+	h.respondWithJSON(w, code, map[string]string{"error": message})
+}
+{{- end}}

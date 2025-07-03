@@ -135,9 +135,6 @@ files:
   - source: "internal/shared/valueobjects/id.go.tmpl"
     destination: "internal/shared/valueobjects/id.go"
 
-  - source: "internal/shared/valueobjects/email.go.tmpl"
-    destination: "internal/shared/valueobjects/email.go"
-
   - source: "internal/shared/events/domain_event.go.tmpl"
     destination: "internal/shared/events/domain_event.go"
 
@@ -209,28 +206,69 @@ files:
   - source: "internal/infrastructure/persistence/user_repository.go.tmpl"
     destination: "internal/infrastructure/persistence/{{.DomainName}}_repository.go"
 
-  # Logger infrastructure (only existing files)
-  - source: "internal/infrastructure/logger/interface.go.tmpl"
-    destination: "internal/infrastructure/logger/interface.go"
+  # Logger infrastructure - only generate selected logger implementation
+  - source: "internal/infrastructure/logger/slog_simple.go.tmpl"
+    destination: "internal/infrastructure/logger/logger.go"
+    condition: "{{eq .Logger \"slog\"}}"
 
-  - source: "internal/infrastructure/logger/factory.go.tmpl"
-    destination: "internal/infrastructure/logger/factory.go"
+  - source: "internal/infrastructure/logger/zap_simple.go.tmpl"
+    destination: "internal/infrastructure/logger/logger.go"
+    condition: "{{eq .Logger \"zap\"}}"
 
-  - source: "internal/infrastructure/logger/slog.go.tmpl"
-    destination: "internal/infrastructure/logger/slog.go"
+  - source: "internal/infrastructure/logger/logrus_simple.go.tmpl"
+    destination: "internal/infrastructure/logger/logger.go"
+    condition: "{{eq .Logger \"logrus\"}}"
+
+  - source: "internal/infrastructure/logger/zerolog_simple.go.tmpl"
+    destination: "internal/infrastructure/logger/logger.go"
+    condition: "{{eq .Logger \"zerolog\"}}"
 
   # Presentation Layer - HTTP handlers
-  - source: "internal/presentation/http/handlers/health_gin.go.tmpl"
+  # Health handlers (universal)
+  - source: "internal/presentation/http/handlers/health.go.tmpl"
     destination: "internal/presentation/http/handlers/health.go"
-    condition: "{{eq .Framework \"gin\"}}"
 
+  # Framework-specific user handlers
   - source: "internal/presentation/http/handlers/user_gin.go.tmpl"
     destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
     condition: "{{eq .Framework \"gin\"}}"
 
+  - source: "internal/presentation/http/handlers/user_echo.go.tmpl"
+    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
+    condition: "{{eq .Framework \"echo\"}}"
+
+  - source: "internal/presentation/http/handlers/user_fiber.go.tmpl"
+    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
+    condition: "{{eq .Framework \"fiber\"}}"
+
+  - source: "internal/presentation/http/handlers/user_chi.go.tmpl"
+    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
+    condition: "{{eq .Framework \"chi\"}}"
+
+  - source: "internal/presentation/http/handlers/user_stdlib.go.tmpl"
+    destination: "internal/presentation/http/handlers/{{.DomainName}}.go"
+    condition: "{{eq .Framework \"stdlib\"}}"
+
+  # Framework-specific auth handlers
   - source: "internal/presentation/http/handlers/auth_gin.go.tmpl"
     destination: "internal/presentation/http/handlers/auth.go"
-    condition: "{{eq .Framework \"gin\"}}"
+    condition: "{{and (eq .Framework \"gin\") (ne .AuthType \"\")}}"
+
+  - source: "internal/presentation/http/handlers/auth_echo.go.tmpl"
+    destination: "internal/presentation/http/handlers/auth.go"
+    condition: "{{and (eq .Framework \"echo\") (ne .AuthType \"\")}}"
+
+  - source: "internal/presentation/http/handlers/auth_fiber.go.tmpl"
+    destination: "internal/presentation/http/handlers/auth.go"
+    condition: "{{and (eq .Framework \"fiber\") (ne .AuthType \"\")}}"
+
+  - source: "internal/presentation/http/handlers/auth_chi.go.tmpl"
+    destination: "internal/presentation/http/handlers/auth.go"
+    condition: "{{and (eq .Framework \"chi\") (ne .AuthType \"\")}}"
+
+  - source: "internal/presentation/http/handlers/auth_stdlib.go.tmpl"
+    destination: "internal/presentation/http/handlers/auth.go"
+    condition: "{{and (eq .Framework \"stdlib\") (ne .AuthType \"\")}}"
 
   - source: "internal/presentation/http/middleware/logging.go.tmpl"
     destination: "internal/presentation/http/middleware/logging.go"

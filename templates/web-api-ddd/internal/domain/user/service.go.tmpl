@@ -9,17 +9,17 @@ import (
 
 // Service provides domain services for {{.DomainName}} operations
 type Service interface {
-	// IsEmailUnique checks if an email address is unique
-	IsEmailUnique(ctx context.Context, email valueobjects.Email, excludeID *valueobjects.ID) (bool, error)
+	// IsNameUnique checks if a name is unique
+	IsNameUnique(ctx context.Context, name string, excludeID *valueobjects.ID) (bool, error)
 	
 	// CanChangeStatus determines if a {{.DomainName}} can change to a specific status
 	CanChangeStatus({{.DomainName}} *{{.DomainName | title}}, newStatus Status) error
 	
 	// ValidateForCreation validates a {{.DomainName}} before creation
-	ValidateForCreation(email valueobjects.Email, name Name) error
+	ValidateForCreation(name string) error
 	
 	// ValidateForUpdate validates a {{.DomainName}} before update
-	ValidateForUpdate({{.DomainName}} *{{.DomainName | title}}, newEmail *valueobjects.Email, newName *Name) error
+	ValidateForUpdate({{.DomainName}} *{{.DomainName | title}}, newName *string) error
 }
 
 // DomainService implements the {{.DomainName}} domain service
@@ -39,9 +39,9 @@ func NewService(repository Repository) Service {
 	return NewDomainService(repository)
 }
 
-// IsEmailUnique checks if an email address is unique
-func (s *DomainService) IsEmailUnique(ctx context.Context, email valueobjects.Email, excludeID *valueobjects.ID) (bool, error) {
-	exists, err := s.repository.ExistsByEmail(ctx, email)
+// IsNameUnique checks if a name is unique
+func (s *DomainService) IsNameUnique(ctx context.Context, name string, excludeID *valueobjects.ID) (bool, error) {
+	exists, err := s.repository.ExistsByName(ctx, name)
 	if err != nil {
 		return false, err
 	}
@@ -52,7 +52,7 @@ func (s *DomainService) IsEmailUnique(ctx context.Context, email valueobjects.Em
 	
 	// If excludeID is provided, check if the existing {{.DomainName}} is the one being excluded
 	if excludeID != nil {
-		existing{{.DomainName | title}}, err := s.repository.FindByEmail(ctx, email)
+		existing{{.DomainName | title}}, err := s.repository.FindByName(ctx, name)
 		if err != nil {
 			return false, err
 		}
@@ -105,9 +105,9 @@ func (s *DomainService) CanChangeStatus({{.DomainName}} *{{.DomainName | title}}
 }
 
 // ValidateForCreation validates a {{.DomainName}} before creation
-func (s *DomainService) ValidateForCreation(email valueobjects.Email, name Name) error {
-	// Check email uniqueness
-	unique, err := s.IsEmailUnique(context.Background(), email, nil)
+func (s *DomainService) ValidateForCreation(name string) error {
+	// Check name uniqueness
+	unique, err := s.IsNameUnique(context.Background(), name, nil)
 	if err != nil {
 		return err
 	}
@@ -115,18 +115,18 @@ func (s *DomainService) ValidateForCreation(email valueobjects.Email, name Name)
 	if !unique {
 		return errors.ErrBusinessRuleViolation.WithDetails(
 			"reason", 
-			"email address already exists",
-		).WithDetails("email", email.String())
+			"name already exists",
+		).WithDetails("name", name)
 	}
 	
 	// Additional business rules can be added here
-	// For example: checking against banned email domains, name patterns, etc.
+	// For example: checking against banned name patterns, length restrictions, etc.
 	
 	return nil
 }
 
 // ValidateForUpdate validates a {{.DomainName}} before update
-func (s *DomainService) ValidateForUpdate({{.DomainName}} *{{.DomainName | title}}, newEmail *valueobjects.Email, newName *Name) error {
+func (s *DomainService) ValidateForUpdate({{.DomainName}} *{{.DomainName | title}}, newName *string) error {
 	if {{.DomainName}} == nil {
 		return errors.ErrInvalidEntityState.WithDetails("reason", "{{.DomainName}} is nil")
 	}
@@ -139,10 +139,10 @@ func (s *DomainService) ValidateForUpdate({{.DomainName}} *{{.DomainName | title
 		)
 	}
 	
-	// If email is being changed, check uniqueness
-	if newEmail != nil && !{{.DomainName}}.Email().Equals(*newEmail) {
+	// If name is being changed, check uniqueness
+	if newName != nil && {{.DomainName}}.Name() != *newName {
 		{{.DomainName}}ID := {{.DomainName}}.ID()
-		unique, err := s.IsEmailUnique(context.Background(), *newEmail, &{{.DomainName}}ID)
+		unique, err := s.IsNameUnique(context.Background(), *newName, &{{.DomainName}}ID)
 		if err != nil {
 			return err
 		}
@@ -150,8 +150,8 @@ func (s *DomainService) ValidateForUpdate({{.DomainName}} *{{.DomainName | title
 		if !unique {
 			return errors.ErrBusinessRuleViolation.WithDetails(
 				"reason", 
-				"email address already exists",
-			).WithDetails("email", newEmail.String())
+				"name already exists",
+			).WithDetails("name", *newName)
 		}
 	}
 	

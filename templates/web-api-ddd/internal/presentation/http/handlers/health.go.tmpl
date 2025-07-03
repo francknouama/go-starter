@@ -1,0 +1,80 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// HealthHandler handles health check requests
+type HealthHandler struct {
+	logger *logger.Logger
+}
+
+// NewHealthHandler creates a new health handler
+func NewHealthHandler(log *logger.Logger) *HealthHandler {
+	return &HealthHandler{
+		logger: log,
+	}
+}
+
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+	Version   string    `json:"version,omitempty"`
+	Uptime    string    `json:"uptime,omitempty"`
+}
+
+// ReadinessResponse represents the readiness check response
+type ReadinessResponse struct {
+	Status      string            `json:"status"`
+	Timestamp   time.Time         `json:"timestamp"`
+	Checks      map[string]string `json:"checks"`
+	Version     string            `json:"version,omitempty"`
+}
+
+var startTime = time.Now()
+
+// Health handles health check requests (Gin compatible)
+func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
+	response := HealthResponse{
+		Status:    "ok",
+		Timestamp: time.Now(),
+		Version:   "1.0.0", // TODO: Get from build info
+		Uptime:    time.Since(startTime).String(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// Ready handles readiness check requests (Gin compatible)
+func (h *HealthHandler) Ready(w http.ResponseWriter, r *http.Request) {
+	checks := make(map[string]string)
+	status := "ready"
+
+	// Add database check if configured
+	{{if ne .DatabaseDriver ""}}
+	// TODO: Add actual database connectivity check
+	checks["database"] = "ok"
+	{{end}}
+
+	// Add any other service checks here
+	checks["memory"] = "ok"
+	checks["disk"] = "ok"
+
+	response := ReadinessResponse{
+		Status:    status,
+		Timestamp: time.Now(),
+		Checks:    checks,
+		Version:   "1.0.0", // TODO: Get from build info
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}

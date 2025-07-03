@@ -1,0 +1,56 @@
+package logger
+
+import (
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+// Logger provides structured logging for the application using Zap
+type Logger struct {
+	*zap.SugaredLogger
+}
+
+// New creates a new zap-based logger with default configuration
+func New() *Logger {
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	config.OutputPaths = []string{"stdout"}
+	config.ErrorOutputPaths = []string{"stderr"}
+	
+	zapLogger, _ := config.Build()
+	sugar := zapLogger.Sugar()
+	
+	return &Logger{SugaredLogger: sugar}
+}
+
+// NewWithLevel creates a new logger with the specified level
+func NewWithLevel(level string) *Logger {
+	var zapLevel zapcore.Level
+	switch level {
+	case "debug":
+		zapLevel = zap.DebugLevel
+	case "info":
+		zapLevel = zap.InfoLevel
+	case "warn":
+		zapLevel = zap.WarnLevel
+	case "error":
+		zapLevel = zap.ErrorLevel
+	default:
+		zapLevel = zap.InfoLevel
+	}
+
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(zapLevel)
+	config.OutputPaths = []string{"stdout"}
+	config.ErrorOutputPaths = []string{"stderr"}
+	
+	zapLogger, _ := config.Build()
+	sugar := zapLogger.Sugar()
+	
+	return &Logger{SugaredLogger: sugar}
+}
+
+// Sync flushes any buffered log entries
+func (l *Logger) Sync() error {
+	return l.SugaredLogger.Sync()
+}

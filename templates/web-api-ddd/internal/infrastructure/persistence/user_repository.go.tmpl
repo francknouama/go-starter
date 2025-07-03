@@ -15,11 +15,11 @@ import (
 // {{.DomainName | title}}RepositoryGORM implements the {{.DomainName}}.Repository interface using GORM
 type {{.DomainName | title}}RepositoryGORM struct {
 	db     *gorm.DB
-	logger logger.Logger
+	logger *logger.Logger
 }
 
 // New{{.DomainName | title}}Repository creates a new {{.DomainName}} repository
-func New{{.DomainName | title}}Repository(db *gorm.DB, log logger.Logger) {{.DomainName}}.Repository {
+func New{{.DomainName | title}}Repository(db *gorm.DB, log *logger.Logger) {{.DomainName}}.Repository {
 	return &{{.DomainName | title}}RepositoryGORM{
 		db:     db,
 		logger: log,
@@ -28,15 +28,13 @@ func New{{.DomainName | title}}Repository(db *gorm.DB, log logger.Logger) {{.Dom
 
 // {{.DomainName | title}}Model represents the database model for {{.DomainName}}
 type {{.DomainName | title}}Model struct {
-	ID           string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
-	Email        string    `gorm:"uniqueIndex;not null"`
-	FirstName    string    `gorm:"not null"`
-	LastName     string    `gorm:"not null"`
-	PasswordHash string    `gorm:"not null"`
-	Status       string    `gorm:"not null;default:'active'"`
-	CreatedAt    time.Time `gorm:"autoCreateTime"`
-	UpdatedAt    time.Time `gorm:"autoUpdateTime"`
-	Version      int       `gorm:"not null;default:1"`
+	ID          string    `gorm:"primaryKey;type:uuid;default:gen_random_uuid()"`
+	Name        string    `gorm:"uniqueIndex;not null"`
+	Description string    `gorm:"type:text"`
+	Status      string    `gorm:"not null;default:'active'"`
+	CreatedAt   time.Time `gorm:"autoCreateTime"`
+	UpdatedAt   time.Time `gorm:"autoUpdateTime"`
+	Version     int       `gorm:"not null;default:1"`
 }
 
 // TableName returns the table name for the {{.DomainName}} model
@@ -112,74 +110,74 @@ func (r *{{.DomainName | title}}RepositoryGORM) GetByID(ctx context.Context, id 
 	return entity, nil
 }
 
-// FindByEmail retrieves a {{.DomainName}} entity by email
-func (r *{{.DomainName | title}}RepositoryGORM) FindByEmail(ctx context.Context, email valueobjects.Email) (*{{.DomainName}}.{{.DomainName | title}}, error) {
-	r.logger.Info("Finding {{.DomainName}} by email", "email", email.String())
+// FindByName retrieves a {{.DomainName}} entity by name
+func (r *{{.DomainName | title}}RepositoryGORM) FindByName(ctx context.Context, name string) (*{{.DomainName}}.{{.DomainName | title}}, error) {
+	r.logger.Info("Finding {{.DomainName}} by name", "name", name)
 	
 	var model {{.DomainName | title}}Model
-	result := r.db.WithContext(ctx).Where("email = ?", email.String()).First(&model)
+	result := r.db.WithContext(ctx).Where("name = ?", name).First(&model)
 	
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
-			r.logger.Info("{{.DomainName | title}} not found", "email", email.String())
+			r.logger.Info("{{.DomainName | title}} not found", "name", name)
 			return nil, errors.ErrUserNotFound
 		}
-		r.logger.Error("Failed to find {{.DomainName}} by email", "error", result.Error, "email", email.String())
-		return nil, fmt.Errorf("failed to find {{.DomainName}} by email: %w", result.Error)
+		r.logger.Error("Failed to find {{.DomainName}} by name", "error", result.Error, "name", name)
+		return nil, fmt.Errorf("failed to find {{.DomainName}} by name: %w", result.Error)
 	}
 	
 	entity, err := r.modelToEntity(&model)
 	if err != nil {
-		r.logger.Error("Failed to convert model to entity", "error", err, "email", email.String())
+		r.logger.Error("Failed to convert model to entity", "error", err, "name", name)
 		return nil, fmt.Errorf("failed to convert model to entity: %w", err)
 	}
 	
-	r.logger.Info("{{.DomainName | title}} found by email successfully", "email", email.String())
+	r.logger.Info("{{.DomainName | title}} found by name successfully", "name", name)
 	return entity, nil
 }
 
-// GetByEmail retrieves a {{.DomainName}} entity by email (string version)
-func (r *{{.DomainName | title}}RepositoryGORM) GetByEmail(ctx context.Context, email string) (*{{.DomainName}}.{{.DomainName | title}}, error) {
-	r.logger.Info("Getting {{.DomainName}} by email", "email", email)
+// GetByName retrieves a {{.DomainName}} entity by name (string version)
+func (r *{{.DomainName | title}}RepositoryGORM) GetByName(ctx context.Context, name string) (*{{.DomainName}}.{{.DomainName | title}}, error) {
+	r.logger.Info("Getting {{.DomainName}} by name", "name", name)
 	
 	var model {{.DomainName | title}}Model
-	result := r.db.WithContext(ctx).Where("email = ?", email).First(&model)
+	result := r.db.WithContext(ctx).Where("name = ?", name).First(&model)
 	
 	if result.Error != nil {
 		if result.Error == gorm.ErrRecordNotFound {
-			r.logger.Info("{{.DomainName | title}} not found", "email", email)
+			r.logger.Info("{{.DomainName | title}} not found", "name", name)
 			return nil, errors.ErrUserNotFound
 		}
-		r.logger.Error("Failed to get {{.DomainName}}", "error", result.Error, "email", email)
+		r.logger.Error("Failed to get {{.DomainName}}", "error", result.Error, "name", name)
 		return nil, fmt.Errorf("failed to get {{.DomainName}}: %w", result.Error)
 	}
 	
 	entity, err := r.modelToEntity(&model)
 	if err != nil {
-		r.logger.Error("Failed to convert model to entity", "error", err, "email", email)
+		r.logger.Error("Failed to convert model to entity", "error", err, "name", name)
 		return nil, fmt.Errorf("failed to convert model to entity: %w", err)
 	}
 	
-	r.logger.Info("{{.DomainName | title}} found by email successfully", "email", email)
+	r.logger.Info("{{.DomainName | title}} found by name successfully", "name", name)
 	return entity, nil
 }
 
 // Delete removes a {{.DomainName}} entity from the database
-func (r *{{.DomainName | title}}RepositoryGORM) Delete(ctx context.Context, id string) error {
-	r.logger.Info("Deleting {{.DomainName}}", "id", id)
+func (r *{{.DomainName | title}}RepositoryGORM) Delete(ctx context.Context, id valueobjects.ID) error {
+	r.logger.Info("Deleting {{.DomainName}}", "id", id.String())
 	
-	result := r.db.WithContext(ctx).Delete(&{{.DomainName | title}}Model{}, "id = ?", id)
+	result := r.db.WithContext(ctx).Delete(&{{.DomainName | title}}Model{}, "id = ?", id.String())
 	if result.Error != nil {
-		r.logger.Error("Failed to delete {{.DomainName}}", "error", result.Error, "id", id)
+		r.logger.Error("Failed to delete {{.DomainName}}", "error", result.Error, "id", id.String())
 		return fmt.Errorf("failed to delete {{.DomainName}}: %w", result.Error)
 	}
 	
 	if result.RowsAffected == 0 {
-		r.logger.Info("{{.DomainName | title}} not found for deletion", "id", id)
+		r.logger.Info("{{.DomainName | title}} not found for deletion", "id", id.String())
 		return errors.ErrUserNotFound
 	}
 	
-	r.logger.Info("{{.DomainName | title}} deleted successfully", "id", id)
+	r.logger.Info("{{.DomainName | title}} deleted successfully", "id", id.String())
 	return nil
 }
 
@@ -213,15 +211,13 @@ func (r *{{.DomainName | title}}RepositoryGORM) List(ctx context.Context, limit,
 // entityToModel converts a domain entity to a database model
 func (r *{{.DomainName | title}}RepositoryGORM) entityToModel(entity *{{.DomainName}}.{{.DomainName | title}}) *{{.DomainName | title}}Model {
 	return &{{.DomainName | title}}Model{
-		ID:           entity.ID().String(),
-		Email:        entity.Email().String(),
-		FirstName:    entity.FirstName(),
-		LastName:     entity.LastName(),
-		PasswordHash: entity.PasswordHash(),
-		Status:       entity.Status().String(),
-		CreatedAt:    entity.CreatedAt(),
-		UpdatedAt:    entity.UpdatedAt(),
-		Version:      entity.Version(),
+		ID:          entity.ID().String(),
+		Name:        entity.Name(),
+		Description: entity.Description(),
+		Status:      entity.Status().String(),
+		CreatedAt:   entity.CreatedAt(),
+		UpdatedAt:   entity.UpdatedAt(),
+		Version:     entity.Version(),
 	}
 }
 
@@ -232,16 +228,6 @@ func (r *{{.DomainName | title}}RepositoryGORM) modelToEntity(model *{{.DomainNa
 		return nil, fmt.Errorf("invalid ID: %w", err)
 	}
 	
-	email, err := valueobjects.NewEmail(model.Email)
-	if err != nil {
-		return nil, fmt.Errorf("invalid email: %w", err)
-	}
-	
-	name, err := {{.DomainName}}.NewName(model.FirstName, model.LastName)
-	if err != nil {
-		return nil, fmt.Errorf("invalid name: %w", err)
-	}
-	
 	status, err := {{.DomainName}}.ParseStatus(model.Status)
 	if err != nil {
 		return nil, fmt.Errorf("invalid status: %w", err)
@@ -249,9 +235,8 @@ func (r *{{.DomainName | title}}RepositoryGORM) modelToEntity(model *{{.DomainNa
 	
 	return {{.DomainName}}.Reconstruct{{.DomainName | title}}(
 		id,
-		email,
-		name,
-		model.PasswordHash,
+		model.Name,
+		model.Description,
 		status,
 		model.CreatedAt,
 		model.UpdatedAt,
@@ -340,19 +325,19 @@ func (r *{{.DomainName | title}}RepositoryGORM) Exists(ctx context.Context, id v
 	return exists, nil
 }
 
-// ExistsByEmail checks if a {{.DomainName}} exists by email
-func (r *{{.DomainName | title}}RepositoryGORM) ExistsByEmail(ctx context.Context, email valueobjects.Email) (bool, error) {
-	r.logger.Info("Checking if {{.DomainName}} exists by email", "email", email.String())
+// ExistsByName checks if a {{.DomainName}} exists by name
+func (r *{{.DomainName | title}}RepositoryGORM) ExistsByName(ctx context.Context, name string) (bool, error) {
+	r.logger.Info("Checking if {{.DomainName}} exists by name", "name", name)
 	
 	var count int64
-	result := r.db.WithContext(ctx).Model(&{{.DomainName | title}}Model{}).Where("email = ?", email.String()).Count(&count)
+	result := r.db.WithContext(ctx).Model(&{{.DomainName | title}}Model{}).Where("name = ?", name).Count(&count)
 	
 	if result.Error != nil {
-		r.logger.Error("Failed to check if {{.DomainName}} exists by email", "error", result.Error, "email", email.String())
-		return false, fmt.Errorf("failed to check if {{.DomainName}} exists by email: %w", result.Error)
+		r.logger.Error("Failed to check if {{.DomainName}} exists by name", "error", result.Error, "name", name)
+		return false, fmt.Errorf("failed to check if {{.DomainName}} exists by name: %w", result.Error)
 	}
 	
 	exists := count > 0
-	r.logger.Info("{{.DomainName | title}} existence check by email completed", "email", email.String(), "exists", exists)
+	r.logger.Info("{{.DomainName | title}} existence check by name completed", "name", name, "exists", exists)
 	return exists, nil
 }

@@ -1,0 +1,162 @@
+{{- if ne .DatabaseDriver ""}}
+package handlers
+
+import (
+	"strconv"
+
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/application/{{.DomainName}}"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// FiberHandlers handles HTTP requests using Fiber framework
+type FiberHandlers struct {
+	commandHandlers *{{.DomainName}}.CommandHandlers
+	queryHandlers   *{{.DomainName}}.QueryHandlers
+	logger          logger.Logger
+}
+
+// NewFiberHandlers creates a new Fiber handlers instance
+func NewFiberHandlers(
+	commandHandlers *{{.DomainName}}.CommandHandlers,
+	queryHandlers *{{.DomainName}}.QueryHandlers,
+	log logger.Logger,
+) *FiberHandlers {
+	return &FiberHandlers{
+		commandHandlers: commandHandlers,
+		queryHandlers:   queryHandlers,
+		logger:          log,
+	}
+}
+
+// RegisterRoutes registers all routes for the {{.DomainName}} domain
+func (h *FiberHandlers) RegisterRoutes(app *fiber.App) {
+	api := app.Group("/api/v1")
+	{{.DomainName}}Group := api.Group("/{{.DomainName}}s")
+	
+	{{.DomainName}}Group.Post("", h.Create{{.DomainName | title}})
+	{{.DomainName}}Group.Get("/:id", h.Get{{.DomainName | title}}ByID)
+	{{.DomainName}}Group.Put("/:id", h.Update{{.DomainName | title}})
+	{{.DomainName}}Group.Delete("/:id", h.Delete{{.DomainName | title}})
+	{{.DomainName}}Group.Get("", h.List{{.DomainName | title}}s)
+	{{.DomainName}}Group.Get("/email/:email", h.Get{{.DomainName | title}}ByEmail)
+}
+
+// Create{{.DomainName | title}} handles creating a new {{.DomainName}}
+func (h *FiberHandlers) Create{{.DomainName | title}}(c *fiber.Ctx) error {
+	var req {{.DomainName}}.Create{{.DomainName | title}}Request
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Failed to parse request", "error", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request format"})
+	}
+
+	cmd := req.ToCommand()
+	{{.DomainName}}DTO, err := h.commandHandlers.HandleCreate{{.DomainName | title}}(c.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Failed to create {{.DomainName}}", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create {{.DomainName}}"})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON({{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByID handles getting a {{.DomainName}} by ID
+func (h *FiberHandlers) Get{{.DomainName | title}}ByID(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID is required"})
+	}
+
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByIDQuery{ID: id}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByID(c.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}}", "error", err, "id", id)
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "{{.DomainName | title}} not found"})
+	}
+
+	return c.JSON({{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByEmail handles getting a {{.DomainName}} by email
+func (h *FiberHandlers) Get{{.DomainName | title}}ByEmail(c *fiber.Ctx) error {
+	email := c.Params("email")
+	if email == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Email is required"})
+	}
+
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByEmailQuery{Email: email}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByEmail(c.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}} by email", "error", err, "email", email)
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "{{.DomainName | title}} not found"})
+	}
+
+	return c.JSON({{.DomainName}}DTO)
+}
+
+// Update{{.DomainName | title}} handles updating a {{.DomainName}}
+func (h *FiberHandlers) Update{{.DomainName | title}}(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID is required"})
+	}
+
+	var req {{.DomainName}}.Update{{.DomainName | title}}Request
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Failed to parse request", "error", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request format"})
+	}
+
+	cmd := req.ToCommand(id)
+	{{.DomainName}}DTO, err := h.commandHandlers.HandleUpdate{{.DomainName | title}}(c.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Failed to update {{.DomainName}}", "error", err, "id", id)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update {{.DomainName}}"})
+	}
+
+	return c.JSON({{.DomainName}}DTO)
+}
+
+// Delete{{.DomainName | title}} handles deleting a {{.DomainName}}
+func (h *FiberHandlers) Delete{{.DomainName | title}}(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID is required"})
+	}
+
+	cmd := {{.DomainName}}.Delete{{.DomainName | title}}Command{ID: id}
+	err := h.commandHandlers.HandleDelete{{.DomainName | title}}(c.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Failed to delete {{.DomainName}}", "error", err, "id", id)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to delete {{.DomainName}}"})
+	}
+
+	return c.SendStatus(fiber.StatusNoContent)
+}
+
+// List{{.DomainName | title}}s handles listing {{.DomainName}}s with pagination
+func (h *FiberHandlers) List{{.DomainName | title}}s(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	limit, _ := strconv.Atoi(c.Query("limit", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 10
+	}
+
+	query := {{.DomainName}}.List{{.DomainName | title}}sQuery{
+		Page:  page,
+		Limit: limit,
+	}
+
+	{{.DomainName}}List, err := h.queryHandlers.HandleList{{.DomainName | title}}s(c.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to list {{.DomainName}}s", "error", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to list {{.DomainName}}s"})
+	}
+
+	return c.JSON({{.DomainName}}List)
+}
+{{- end}}

@@ -8,29 +8,21 @@ import (
 
 // Event types
 const (
-	{{.DomainName | title}}CreatedEventType       = "{{.DomainName}}.created"
-	{{.DomainName | title}}EmailChangedEventType  = "{{.DomainName}}.email_changed"
-	{{.DomainName | title}}NameChangedEventType   = "{{.DomainName}}.name_changed"
-	{{.DomainName | title}}PasswordChangedEventType = "{{.DomainName}}.password_changed"
-	{{.DomainName | title}}ActivatedEventType     = "{{.DomainName}}.activated"
-	{{.DomainName | title}}DeactivatedEventType   = "{{.DomainName}}.deactivated"
-	{{.DomainName | title}}DeletedEventType       = "{{.DomainName}}.deleted"
+	{{.DomainName | title}}CreatedEventType      = "{{.DomainName}}.created"
+	{{.DomainName | title}}UpdatedEventType      = "{{.DomainName}}.updated"
+	{{.DomainName | title}}StatusChangedEventType = "{{.DomainName}}.status_changed"
 )
 
 // {{.DomainName | title}}CreatedEvent represents the event when a {{.DomainName}} is created
 type {{.DomainName | title}}CreatedEvent struct {
 	events.BaseDomainEvent
-	Email valueobjects.Email
-	Name  Name
+	Name string
 }
 
 // New{{.DomainName | title}}CreatedEvent creates a new {{.DomainName}} created event
-func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, email valueobjects.Email, name Name) {{.DomainName | title}}CreatedEvent {
+func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, name string) {{.DomainName | title}}CreatedEvent {
 	data := map[string]interface{}{
-		"email":     email.String(),
-		"firstName": name.FirstName(),
-		"lastName":  name.LastName(),
-		"fullName":  name.FullName(),
+		"name": name,
 	}
 	
 	return {{.DomainName | title}}CreatedEvent{
@@ -40,148 +32,62 @@ func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, e
 			"{{.DomainName}}",
 			data,
 		),
-		Email: email,
-		Name:  name,
+		Name: name,
 	}
 }
 
-// {{.DomainName | title}}EmailChangedEvent represents the event when a {{.DomainName}}'s email is changed
-type {{.DomainName | title}}EmailChangedEvent struct {
+// {{.DomainName | title}}UpdatedEvent represents the event when a {{.DomainName}} is updated
+type {{.DomainName | title}}UpdatedEvent struct {
 	events.BaseDomainEvent
-	OldEmail valueobjects.Email
-	NewEmail valueobjects.Email
+	Field    string
+	OldValue interface{}
+	NewValue interface{}
 }
 
-// New{{.DomainName | title}}EmailChangedEvent creates a new {{.DomainName}} email changed event
-func New{{.DomainName | title}}EmailChangedEvent({{.DomainName}}ID valueobjects.ID, oldEmail, newEmail valueobjects.Email) {{.DomainName | title}}EmailChangedEvent {
+// New{{.DomainName | title}}UpdatedEvent creates a new {{.DomainName}} updated event
+func New{{.DomainName | title}}UpdatedEvent({{.DomainName}}ID valueobjects.ID, field string, oldValue, newValue interface{}) {{.DomainName | title}}UpdatedEvent {
 	data := map[string]interface{}{
-		"oldEmail": oldEmail.String(),
-		"newEmail": newEmail.String(),
+		"field":     field,
+		"old_value": oldValue,
+		"new_value": newValue,
 	}
 	
-	return {{.DomainName | title}}EmailChangedEvent{
+	return {{.DomainName | title}}UpdatedEvent{
 		BaseDomainEvent: events.NewBaseDomainEvent(
-			{{.DomainName | title}}EmailChangedEventType,
+			{{.DomainName | title}}UpdatedEventType,
 			{{.DomainName}}ID,
 			"{{.DomainName}}",
 			data,
 		),
-		OldEmail: oldEmail,
-		NewEmail: newEmail,
+		Field:    field,
+		OldValue: oldValue,
+		NewValue: newValue,
 	}
 }
 
-// {{.DomainName | title}}NameChangedEvent represents the event when a {{.DomainName}}'s name is changed
-type {{.DomainName | title}}NameChangedEvent struct {
+// {{.DomainName | title}}StatusChangedEvent represents the event when a {{.DomainName}}'s status changes
+type {{.DomainName | title}}StatusChangedEvent struct {
 	events.BaseDomainEvent
-	OldName Name
-	NewName Name
+	OldStatus Status
+	NewStatus Status
 }
 
-// New{{.DomainName | title}}NameChangedEvent creates a new {{.DomainName}} name changed event
-func New{{.DomainName | title}}NameChangedEvent({{.DomainName}}ID valueobjects.ID, oldName, newName Name) {{.DomainName | title}}NameChangedEvent {
+// New{{.DomainName | title}}StatusChangedEvent creates a new {{.DomainName}} status changed event
+func New{{.DomainName | title}}StatusChangedEvent({{.DomainName}}ID valueobjects.ID, oldStatus, newStatus Status) {{.DomainName | title}}StatusChangedEvent {
 	data := map[string]interface{}{
-		"oldFirstName": oldName.FirstName(),
-		"oldLastName":  oldName.LastName(),
-		"oldFullName":  oldName.FullName(),
-		"newFirstName": newName.FirstName(),
-		"newLastName":  newName.LastName(),
-		"newFullName":  newName.FullName(),
+		"old_status": oldStatus.String(),
+		"new_status": newStatus.String(),
 	}
 	
-	return {{.DomainName | title}}NameChangedEvent{
+	return {{.DomainName | title}}StatusChangedEvent{
 		BaseDomainEvent: events.NewBaseDomainEvent(
-			{{.DomainName | title}}NameChangedEventType,
+			{{.DomainName | title}}StatusChangedEventType,
 			{{.DomainName}}ID,
 			"{{.DomainName}}",
 			data,
 		),
-		OldName: oldName,
-		NewName: newName,
-	}
-}
-
-// {{.DomainName | title}}ActivatedEvent represents the event when a {{.DomainName}} is activated
-type {{.DomainName | title}}ActivatedEvent struct {
-	events.BaseDomainEvent
-}
-
-// New{{.DomainName | title}}ActivatedEvent creates a new {{.DomainName}} activated event
-func New{{.DomainName | title}}ActivatedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}ActivatedEvent {
-	data := map[string]interface{}{
-		"status": StatusActive.String(),
-	}
-	
-	return {{.DomainName | title}}ActivatedEvent{
-		BaseDomainEvent: events.NewBaseDomainEvent(
-			{{.DomainName | title}}ActivatedEventType,
-			{{.DomainName}}ID,
-			"{{.DomainName}}",
-			data,
-		),
-	}
-}
-
-// {{.DomainName | title}}DeactivatedEvent represents the event when a {{.DomainName}} is deactivated
-type {{.DomainName | title}}DeactivatedEvent struct {
-	events.BaseDomainEvent
-}
-
-// New{{.DomainName | title}}DeactivatedEvent creates a new {{.DomainName}} deactivated event
-func New{{.DomainName | title}}DeactivatedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}DeactivatedEvent {
-	data := map[string]interface{}{
-		"status": StatusInactive.String(),
-	}
-	
-	return {{.DomainName | title}}DeactivatedEvent{
-		BaseDomainEvent: events.NewBaseDomainEvent(
-			{{.DomainName | title}}DeactivatedEventType,
-			{{.DomainName}}ID,
-			"{{.DomainName}}",
-			data,
-		),
-	}
-}
-
-// {{.DomainName | title}}PasswordChangedEvent represents the event when a {{.DomainName}}'s password is changed
-type {{.DomainName | title}}PasswordChangedEvent struct {
-	events.BaseDomainEvent
-}
-
-// New{{.DomainName | title}}PasswordChangedEvent creates a new {{.DomainName}} password changed event
-func New{{.DomainName | title}}PasswordChangedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}PasswordChangedEvent {
-	data := map[string]interface{}{
-		"changed": true,
-	}
-	
-	return {{.DomainName | title}}PasswordChangedEvent{
-		BaseDomainEvent: events.NewBaseDomainEvent(
-			{{.DomainName | title}}PasswordChangedEventType,
-			{{.DomainName}}ID,
-			"{{.DomainName}}",
-			data,
-		),
-	}
-}
-
-// {{.DomainName | title}}DeletedEvent represents the event when a {{.DomainName}} is deleted
-type {{.DomainName | title}}DeletedEvent struct {
-	events.BaseDomainEvent
-}
-
-// New{{.DomainName | title}}DeletedEvent creates a new {{.DomainName}} deleted event
-func New{{.DomainName | title}}DeletedEvent({{.DomainName}}ID valueobjects.ID) {{.DomainName | title}}DeletedEvent {
-	data := map[string]interface{}{
-		"status": StatusDeleted.String(),
-	}
-	
-	return {{.DomainName | title}}DeletedEvent{
-		BaseDomainEvent: events.NewBaseDomainEvent(
-			{{.DomainName | title}}DeletedEventType,
-			{{.DomainName}}ID,
-			"{{.DomainName}}",
-			data,
-		),
+		OldStatus: oldStatus,
+		NewStatus: newStatus,
 	}
 }
 {{- end}}

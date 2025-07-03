@@ -11,33 +11,26 @@ import (
 // {{.DomainName | title}} represents the {{.DomainName}} aggregate root
 type {{.DomainName | title}} struct {
 	id           valueobjects.ID
-	email        valueobjects.Email
-	name         Name
-	passwordHash string
-	status       Status
+	name         string          // Simple name field - customize as needed
+	description  string          // Optional description - customize as needed
+	status       Status          // Active, Inactive, etc.
 	createdAt    time.Time
 	updatedAt    time.Time
-	version      int
+	version      int             // For optimistic locking
 	domainEvents []events.DomainEvent
 }
 
 // New{{.DomainName | title}} creates a new {{.DomainName}} aggregate
-func New{{.DomainName | title}}(firstName, lastName string, email valueobjects.Email, passwordHash string) (*{{.DomainName | title}}, error) {
+func New{{.DomainName | title}}(name string, description string) (*{{.DomainName | title}}, error) {
 	// Validate inputs
-	if email.IsEmpty() {
-		return nil, errors.ErrInvalidValueObject.WithDetails("field", "email")
-	}
-	
-	name, err := NewName(firstName, lastName)
-	if err != nil {
-		return nil, err
+	if name == "" {
+		return nil, errors.ErrInvalidValueObject.WithDetails("field", "name", "reason", "name cannot be empty")
 	}
 	
 	{{.DomainName}} := &{{.DomainName | title}}{
 		id:           valueobjects.GenerateID(),
-		email:        email,
 		name:         name,
-		passwordHash: passwordHash,
+		description:  description,
 		status:       StatusActive,
 		createdAt:    time.Now().UTC(),
 		updatedAt:    time.Now().UTC(),
@@ -46,7 +39,7 @@ func New{{.DomainName | title}}(firstName, lastName string, email valueobjects.E
 	}
 	
 	// Raise domain event
-	event := New{{.DomainName | title}}CreatedEvent({{.DomainName}}.id, {{.DomainName}}.email, {{.DomainName}}.name)
+	event := New{{.DomainName | title}}CreatedEvent({{.DomainName}}.id, {{.DomainName}}.name)
 	{{.DomainName}}.addDomainEvent(event)
 	
 	return {{.DomainName}}, nil
@@ -55,18 +48,16 @@ func New{{.DomainName | title}}(firstName, lastName string, email valueobjects.E
 // Reconstruct{{.DomainName | title}} reconstructs a {{.DomainName}} from persistence
 func Reconstruct{{.DomainName | title}}(
 	id valueobjects.ID,
-	email valueobjects.Email,
-	name Name,
-	passwordHash string,
+	name string,
+	description string,
 	status Status,
 	createdAt, updatedAt time.Time,
 	version int,
 ) *{{.DomainName | title}} {
 	return &{{.DomainName | title}}{
 		id:           id,
-		email:        email,
 		name:         name,
-		passwordHash: passwordHash,
+		description:  description,
 		status:       status,
 		createdAt:    createdAt,
 		updatedAt:    updatedAt,
@@ -76,221 +67,175 @@ func Reconstruct{{.DomainName | title}}(
 }
 
 // ID returns the {{.DomainName}} ID
-func (u *{{.DomainName | title}}) ID() valueobjects.ID {
-	return u.id
-}
-
-// Email returns the {{.DomainName}} email
-func (u *{{.DomainName | title}}) Email() valueobjects.Email {
-	return u.email
+func (e *{{.DomainName | title}}) ID() valueobjects.ID {
+	return e.id
 }
 
 // Name returns the {{.DomainName}} name
-func (u *{{.DomainName | title}}) Name() Name {
-	return u.name
+func (e *{{.DomainName | title}}) Name() string {
+	return e.name
+}
+
+// Description returns the {{.DomainName}} description
+func (e *{{.DomainName | title}}) Description() string {
+	return e.description
 }
 
 // Status returns the {{.DomainName}} status
-func (u *{{.DomainName | title}}) Status() Status {
-	return u.status
+func (e *{{.DomainName | title}}) Status() Status {
+	return e.status
 }
 
 // CreatedAt returns when the {{.DomainName}} was created
-func (u *{{.DomainName | title}}) CreatedAt() time.Time {
-	return u.createdAt
+func (e *{{.DomainName | title}}) CreatedAt() time.Time {
+	return e.createdAt
 }
 
 // UpdatedAt returns when the {{.DomainName}} was last updated
-func (u *{{.DomainName | title}}) UpdatedAt() time.Time {
-	return u.updatedAt
+func (e *{{.DomainName | title}}) UpdatedAt() time.Time {
+	return e.updatedAt
 }
 
 // Version returns the {{.DomainName}} version for optimistic locking
-func (u *{{.DomainName | title}}) Version() int {
-	return u.version
+func (e *{{.DomainName | title}}) Version() int {
+	return e.version
 }
 
-// PasswordHash returns the {{.DomainName}} password hash
-func (u *{{.DomainName | title}}) PasswordHash() string {
-	return u.passwordHash
-}
-
-// FirstName returns the {{.DomainName}}'s first name
-func (u *{{.DomainName | title}}) FirstName() string {
-	return u.name.FirstName()
-}
-
-// LastName returns the {{.DomainName}}'s last name
-func (u *{{.DomainName | title}}) LastName() string {
-	return u.name.LastName()
-}
-
-// UpdateFirstName updates the {{.DomainName}}'s first name
-func (u *{{.DomainName | title}}) UpdateFirstName(firstName string) error {
-	return u.ChangeName(firstName, u.name.LastName())
-}
-
-// UpdateLastName updates the {{.DomainName}}'s last name
-func (u *{{.DomainName | title}}) UpdateLastName(lastName string) error {
-	return u.ChangeName(u.name.FirstName(), lastName)
-}
-
-// ChangePassword changes the {{.DomainName}}'s password hash
-func (u *{{.DomainName | title}}) ChangePassword(newPasswordHash string) error {
-	if newPasswordHash == "" {
-		return errors.ErrInvalidValueObject.WithDetails("field", "passwordHash")
+// UpdateName updates the {{.DomainName}}'s name
+func (e *{{.DomainName | title}}) UpdateName(name string) error {
+	if name == "" {
+		return errors.ErrInvalidValueObject.WithDetails("field", "name", "reason", "name cannot be empty")
 	}
 	
-	u.passwordHash = newPasswordHash
-	u.updatedAt = time.Now().UTC()
-	u.version++
+	if e.name == name {
+		return nil // No change needed
+	}
+	
+	oldName := e.name
+	e.name = name
+	e.updatedAt = time.Now().UTC()
+	e.version++
 	
 	// Raise domain event
-	event := New{{.DomainName | title}}PasswordChangedEvent(u.id)
-	u.addDomainEvent(event)
+	event := New{{.DomainName | title}}UpdatedEvent(e.id, "name", oldName, name)
+	e.addDomainEvent(event)
 	
 	return nil
 }
 
-// ChangeEmail changes the {{.DomainName}}'s email address
-func (u *{{.DomainName | title}}) ChangeEmail(newEmail valueobjects.Email) error {
-	if newEmail.IsEmpty() {
-		return errors.ErrInvalidValueObject.WithDetails("field", "email")
-	}
-	
-	if u.email.Equals(newEmail) {
+// UpdateDescription updates the {{.DomainName}}'s description
+func (e *{{.DomainName | title}}) UpdateDescription(description string) error {
+	if e.description == description {
 		return nil // No change needed
 	}
 	
-	oldEmail := u.email
-	u.email = newEmail
-	u.updatedAt = time.Now().UTC()
-	u.version++
+	oldDescription := e.description
+	e.description = description
+	e.updatedAt = time.Now().UTC()
+	e.version++
 	
 	// Raise domain event
-	event := New{{.DomainName | title}}EmailChangedEvent(u.id, oldEmail, newEmail)
-	u.addDomainEvent(event)
-	
-	return nil
-}
-
-// ChangeName changes the {{.DomainName}}'s name
-func (u *{{.DomainName | title}}) ChangeName(firstName, lastName string) error {
-	newName, err := NewName(firstName, lastName)
-	if err != nil {
-		return err
-	}
-	
-	if u.name.Equals(newName) {
-		return nil // No change needed
-	}
-	
-	oldName := u.name
-	u.name = newName
-	u.updatedAt = time.Now().UTC()
-	u.version++
-	
-	// Raise domain event
-	event := New{{.DomainName | title}}NameChangedEvent(u.id, oldName, newName)
-	u.addDomainEvent(event)
+	event := New{{.DomainName | title}}UpdatedEvent(e.id, "description", oldDescription, description)
+	e.addDomainEvent(event)
 	
 	return nil
 }
 
 // Activate activates the {{.DomainName}}
-func (u *{{.DomainName | title}}) Activate() error {
-	if u.status == StatusActive {
+func (e *{{.DomainName | title}}) Activate() error {
+	if e.status == StatusActive {
 		return nil // Already active
 	}
 	
-	if u.status == StatusDeleted {
+	if e.status == StatusDeleted {
 		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot activate deleted {{.DomainName}}")
 	}
 	
-	u.status = StatusActive
-	u.updatedAt = time.Now().UTC()
-	u.version++
+	e.status = StatusActive
+	e.updatedAt = time.Now().UTC()
+	e.version++
 	
 	// Raise domain event
-	event := New{{.DomainName | title}}ActivatedEvent(u.id)
-	u.addDomainEvent(event)
+	event := New{{.DomainName | title}}StatusChangedEvent(e.id, StatusInactive, StatusActive)
+	e.addDomainEvent(event)
 	
 	return nil
 }
 
 // Deactivate deactivates the {{.DomainName}}
-func (u *{{.DomainName | title}}) Deactivate() error {
-	if u.status == StatusInactive {
+func (e *{{.DomainName | title}}) Deactivate() error {
+	if e.status == StatusInactive {
 		return nil // Already inactive
 	}
 	
-	if u.status == StatusDeleted {
+	if e.status == StatusDeleted {
 		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot deactivate deleted {{.DomainName}}")
 	}
 	
-	u.status = StatusInactive
-	u.updatedAt = time.Now().UTC()
-	u.version++
+	e.status = StatusInactive
+	e.updatedAt = time.Now().UTC()
+	e.version++
 	
 	// Raise domain event
-	event := New{{.DomainName | title}}DeactivatedEvent(u.id)
-	u.addDomainEvent(event)
+	event := New{{.DomainName | title}}StatusChangedEvent(e.id, StatusActive, StatusInactive)
+	e.addDomainEvent(event)
 	
 	return nil
 }
 
-// Delete marks the {{.DomainName}} as deleted
-func (u *{{.DomainName | title}}) Delete() error {
-	if u.status == StatusDeleted {
+// Delete marks the {{.DomainName}} as deleted (soft delete)
+func (e *{{.DomainName | title}}) Delete() error {
+	if e.status == StatusDeleted {
 		return nil // Already deleted
 	}
 	
-	u.status = StatusDeleted
-	u.updatedAt = time.Now().UTC()
-	u.version++
+	oldStatus := e.status
+	e.status = StatusDeleted
+	e.updatedAt = time.Now().UTC()
+	e.version++
 	
 	// Raise domain event
-	event := New{{.DomainName | title}}DeletedEvent(u.id)
-	u.addDomainEvent(event)
+	event := New{{.DomainName | title}}StatusChangedEvent(e.id, oldStatus, StatusDeleted)
+	e.addDomainEvent(event)
 	
 	return nil
 }
 
 // IsActive checks if the {{.DomainName}} is active
-func (u *{{.DomainName | title}}) IsActive() bool {
-	return u.status == StatusActive
+func (e *{{.DomainName | title}}) IsActive() bool {
+	return e.status == StatusActive
 }
 
 // IsInactive checks if the {{.DomainName}} is inactive
-func (u *{{.DomainName | title}}) IsInactive() bool {
-	return u.status == StatusInactive
+func (e *{{.DomainName | title}}) IsInactive() bool {
+	return e.status == StatusInactive
 }
 
 // IsDeleted checks if the {{.DomainName}} is deleted
-func (u *{{.DomainName | title}}) IsDeleted() bool {
-	return u.status == StatusDeleted
+func (e *{{.DomainName | title}}) IsDeleted() bool {
+	return e.status == StatusDeleted
 }
 
 // DomainEvents returns the domain events
-func (u *{{.DomainName | title}}) DomainEvents() []events.DomainEvent {
-	return u.domainEvents
+func (e *{{.DomainName | title}}) DomainEvents() []events.DomainEvent {
+	return e.domainEvents
 }
 
 // ClearDomainEvents clears the domain events
-func (u *{{.DomainName | title}}) ClearDomainEvents() {
-	u.domainEvents = make([]events.DomainEvent, 0)
+func (e *{{.DomainName | title}}) ClearDomainEvents() {
+	e.domainEvents = make([]events.DomainEvent, 0)
 }
 
 // addDomainEvent adds a domain event
-func (u *{{.DomainName | title}}) addDomainEvent(event events.DomainEvent) {
-	u.domainEvents = append(u.domainEvents, event)
+func (e *{{.DomainName | title}}) addDomainEvent(event events.DomainEvent) {
+	e.domainEvents = append(e.domainEvents, event)
 }
 
 // Equals checks if two {{.DomainName}}s are equal
-func (u *{{.DomainName | title}}) Equals(other *{{.DomainName | title}}) bool {
+func (e *{{.DomainName | title}}) Equals(other *{{.DomainName | title}}) bool {
 	if other == nil {
 		return false
 	}
-	return u.id.Equals(other.id)
+	return e.id.Equals(other.id)
 }
 {{- end}}
