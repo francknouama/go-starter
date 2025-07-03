@@ -4,7 +4,6 @@ package {{.DomainName}}
 import (
 	"context"
 	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
-	"{{.ModulePath}}/internal/shared/valueobjects"
 	"{{.ModulePath}}/internal/shared/errors"
 	"{{.ModulePath}}/internal/shared/events"
 )
@@ -118,40 +117,15 @@ func (h *Update{{.DomainName | title}}Handler) Handle(ctx context.Context, comma
 		return nil, errors.ErrEntityNotFound.WithDetails("id", {{.DomainName}}ID.String())
 	}
 	
-	// Prepare updates
-	var newEmail *valueobjects.Email
-	var newName *{{.DomainName}}.Name
-	
-	if cmd.Email != nil {
-		email, err := valueobjects.NewEmail(*cmd.Email)
-		if err != nil {
-			return nil, errors.ErrValidation.WithDetails("field", "email")
-		}
-		newEmail = &email
-	}
-	
-	if cmd.FirstName != nil && cmd.LastName != nil {
-		name, err := {{.DomainName}}.NewName(*cmd.FirstName, *cmd.LastName)
-		if err != nil {
-			return nil, errors.ErrValidation.WithDetails("field", "name")
-		}
-		newName = &name
-	}
-	
-	// Validate business rules
-	if err := h.domainService.ValidateForUpdate({{.DomainName}}Entity, newEmail, newName); err != nil {
-		return nil, err
-	}
-	
 	// Apply changes
-	if newEmail != nil {
-		if err := {{.DomainName}}Entity.ChangeEmail(*newEmail); err != nil {
+	if cmd.Name != nil {
+		if err := {{.DomainName}}Entity.UpdateName(*cmd.Name); err != nil {
 			return nil, err
 		}
 	}
 	
-	if newName != nil {
-		if err := {{.DomainName}}Entity.ChangeName(newName.FirstName(), newName.LastName()); err != nil {
+	if cmd.Description != nil {
+		if err := {{.DomainName}}Entity.UpdateDescription(*cmd.Description); err != nil {
 			return nil, err
 		}
 	}

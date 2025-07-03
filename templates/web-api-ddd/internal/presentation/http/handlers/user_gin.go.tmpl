@@ -40,7 +40,7 @@ func (h *GinHandlers) RegisterRoutes(r *gin.Engine) {
 		{{.DomainName}}Group.PUT("/:id", h.Update{{.DomainName | title}})
 		{{.DomainName}}Group.DELETE("/:id", h.Delete{{.DomainName | title}})
 		{{.DomainName}}Group.GET("", h.List{{.DomainName | title}}s)
-		{{.DomainName}}Group.GET("/email/:email", h.Get{{.DomainName | title}}ByEmail)
+		{{.DomainName}}Group.GET("/name/:name", h.Get{{.DomainName | title}}ByName)
 	}
 }
 
@@ -83,18 +83,18 @@ func (h *GinHandlers) Get{{.DomainName | title}}ByID(c *gin.Context) {
 	c.JSON(http.StatusOK, {{.DomainName}}DTO)
 }
 
-// Get{{.DomainName | title}}ByEmail handles getting a {{.DomainName}} by email
-func (h *GinHandlers) Get{{.DomainName | title}}ByEmail(c *gin.Context) {
-	email := c.Param("email")
-	if email == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Email is required"})
+// Get{{.DomainName | title}}ByName handles getting a {{.DomainName}} by name
+func (h *GinHandlers) Get{{.DomainName | title}}ByName(c *gin.Context) {
+	name := c.Param("name")
+	if name == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Name is required"})
 		return
 	}
 
-	query := {{.DomainName}}.Get{{.DomainName | title}}ByEmailQuery{Email: email}
-	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByEmail(c.Request.Context(), query)
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByNameQuery{Name: name}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByName(c.Request.Context(), query)
 	if err != nil {
-		h.logger.Error("Failed to get {{.DomainName}} by email", "error", err, "email", email)
+		h.logger.Error("Failed to get {{.DomainName}} by name", "error", err, "name", name)
 		c.JSON(http.StatusNotFound, gin.H{"error": "{{.DomainName | title}} not found"})
 		return
 	}

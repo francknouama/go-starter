@@ -54,45 +54,45 @@ func (h *Get{{.DomainName | title}}ByIDHandler) CanHandle(queryType string) bool
 	return queryType == "get_{{.DomainName}}_by_id"
 }
 
-// Get{{.DomainName | title}}ByEmailHandler handles queries to get a {{.DomainName}} by email
-type Get{{.DomainName | title}}ByEmailHandler struct {
+// Get{{.DomainName | title}}ByNameHandler handles queries to get a {{.DomainName}} by name
+type Get{{.DomainName | title}}ByNameHandler struct {
 	repository {{.DomainName}}.Repository
 }
 
-// NewGet{{.DomainName | title}}ByEmailHandler creates a new Get{{.DomainName | title}}ByEmailHandler
-func NewGet{{.DomainName | title}}ByEmailHandler(repository {{.DomainName}}.Repository) *Get{{.DomainName | title}}ByEmailHandler {
-	return &Get{{.DomainName | title}}ByEmailHandler{
+// NewGet{{.DomainName | title}}ByNameHandler creates a new Get{{.DomainName | title}}ByNameHandler
+func NewGet{{.DomainName | title}}ByNameHandler(repository {{.DomainName}}.Repository) *Get{{.DomainName | title}}ByNameHandler {
+	return &Get{{.DomainName | title}}ByNameHandler{
 		repository: repository,
 	}
 }
 
-// Handle processes the Get{{.DomainName | title}}ByEmailQuery
-func (h *Get{{.DomainName | title}}ByEmailHandler) Handle(ctx context.Context, query Query) (interface{}, error) {
-	q, ok := query.(Get{{.DomainName | title}}ByEmailQuery)
+// Handle processes the Get{{.DomainName | title}}ByNameQuery
+func (h *Get{{.DomainName | title}}ByNameHandler) Handle(ctx context.Context, query Query) (interface{}, error) {
+	q, ok := query.(Get{{.DomainName | title}}ByNameQuery)
 	if !ok {
-		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "Get{{.DomainName | title}}ByEmailQuery")
+		return nil, errors.ErrInvalidQuery.WithDetails("expectedType", "Get{{.DomainName | title}}ByNameQuery")
 	}
 	
-	email, err := q.GetEmail()
-	if err != nil {
-		return nil, errors.ErrValidation.WithDetails("field", "email")
+	name := q.GetName()
+	if name == "" {
+		return nil, errors.ErrValidation.WithDetails("field", "name")
 	}
 	
-	{{.DomainName}}Entity, err := h.repository.FindByEmail(ctx, email)
+	{{.DomainName}}Entity, err := h.repository.FindByName(ctx, name)
 	if err != nil {
-		return nil, errors.ErrRepository.WithDetails("operation", "findByEmail")
+		return nil, errors.ErrRepository.WithDetails("operation", "findByName")
 	}
 	
 	if {{.DomainName}}Entity == nil {
-		return nil, errors.ErrEntityNotFound.WithDetails("email", email.String())
+		return nil, errors.ErrEntityNotFound.WithDetails("name", name)
 	}
 	
 	return From{{.DomainName | title}}({{.DomainName}}Entity), nil
 }
 
 // CanHandle returns true if this handler can handle the query type
-func (h *Get{{.DomainName | title}}ByEmailHandler) CanHandle(queryType string) bool {
-	return queryType == "get_{{.DomainName}}_by_email"
+func (h *Get{{.DomainName | title}}ByNameHandler) CanHandle(queryType string) bool {
+	return queryType == "get_{{.DomainName}}_by_name"
 }
 
 // List{{.DomainName | title}}sHandler handles queries to list {{.DomainName}}s
@@ -225,14 +225,14 @@ func (h *Exists{{.DomainName | title}}Handler) Handle(ctx context.Context, query
 	var err error
 	
 	{{.DomainName}}ID, idErr := q.GetID()
-	email, emailErr := q.GetEmail()
+	name := q.GetName()
 	
 	if idErr == nil && {{.DomainName}}ID != nil {
 		exists, err = h.repository.Exists(ctx, *{{.DomainName}}ID)
-	} else if emailErr == nil && email != nil {
-		exists, err = h.repository.ExistsByEmail(ctx, *email)
+	} else if name != nil && *name != "" {
+		exists, err = h.repository.ExistsByName(ctx, *name)
 	} else {
-		return nil, errors.ErrValidation.WithDetails("reason", "either id or email must be provided")
+		return nil, errors.ErrValidation.WithDetails("reason", "either id or name must be provided")
 	}
 	
 	if err != nil {
@@ -293,7 +293,7 @@ func NewQueryHandlers(
 	
 	// Register query handlers
 	handlers.bus.RegisterHandler(NewGet{{.DomainName | title}}ByIDHandler(repository))
-	handlers.bus.RegisterHandler(NewGet{{.DomainName | title}}ByEmailHandler(repository))
+	handlers.bus.RegisterHandler(NewGet{{.DomainName | title}}ByNameHandler(repository))
 	handlers.bus.RegisterHandler(NewList{{.DomainName | title}}sHandler(repository))
 	handlers.bus.RegisterHandler(NewCount{{.DomainName | title}}sHandler(repository))
 	handlers.bus.RegisterHandler(NewExists{{.DomainName | title}}Handler(repository))
@@ -310,8 +310,8 @@ func (h *QueryHandlers) HandleGet{{.DomainName | title}}ByID(ctx context.Context
 	return result.({{.DomainName | title}}DTO), nil
 }
 
-// HandleGet{{.DomainName | title}}ByEmail handles get {{.DomainName}} by email query
-func (h *QueryHandlers) HandleGet{{.DomainName | title}}ByEmail(ctx context.Context, query Get{{.DomainName | title}}ByEmailQuery) ({{.DomainName | title}}DTO, error) {
+// HandleGet{{.DomainName | title}}ByName handles get {{.DomainName}} by name query
+func (h *QueryHandlers) HandleGet{{.DomainName | title}}ByName(ctx context.Context, query Get{{.DomainName | title}}ByNameQuery) ({{.DomainName | title}}DTO, error) {
 	result, err := h.bus.Execute(ctx, query)
 	if err != nil {
 		return {{.DomainName | title}}DTO{}, err

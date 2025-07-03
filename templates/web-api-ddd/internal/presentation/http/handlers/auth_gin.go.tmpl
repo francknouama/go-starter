@@ -12,13 +12,13 @@ import (
 // AuthGinHandlers handles authentication HTTP requests using Gin framework
 type AuthGinHandlers struct {
 	authService *auth.Service
-	logger      logger.Logger
+	logger      *logger.Logger
 }
 
 // NewAuthGinHandlers creates a new auth Gin handlers instance
 func NewAuthGinHandlers(
 	authSvc *auth.Service,
-	log logger.Logger,
+	log *logger.Logger,
 ) *AuthGinHandlers {
 	return &AuthGinHandlers{
 		authService: authSvc,
@@ -50,7 +50,7 @@ func (h *AuthGinHandlers) Login(c *gin.Context) {
 	cmd := req.ToLoginCommand()
 	result, err := h.authService.HandleLogin(c.Request.Context(), cmd)
 	if err != nil {
-		h.logger.Error("Login failed", "error", err, "email", req.Email)
+		h.logger.Error("Login failed", "error", err, "name", req.Name)
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid credentials"})
 		return
 	}
@@ -70,7 +70,7 @@ func (h *AuthGinHandlers) Register(c *gin.Context) {
 	cmd := req.ToRegisterCommand()
 	result, err := h.authService.HandleRegister(c.Request.Context(), cmd)
 	if err != nil {
-		h.logger.Error("Registration failed", "error", err, "email", req.Email)
+		h.logger.Error("Registration failed", "error", err, "name", req.Name)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Registration failed"})
 		return
 	}
