@@ -93,8 +93,8 @@ jobs:
     - name: Configuration Security Check
       run: |
         echo "🔍 Checking for hardcoded secrets and dangerous configurations..."
-        # Check for potential secrets in config files
-        if find . -name "*.yaml" -o -name "*.yml" -o -name "*.json" | xargs grep -i -E "(password|secret|key|token).*[:=]\s*['\"][^'\"]{8,}['\"]"; then
+        # Check for potential secrets in config files (excluding template variables)
+        if find . -name "*.yaml" -o -name "*.yml" -o -name "*.json" | xargs grep -i -E "(password|secret|key|token).*[:=]\s*['\"][^'\"]{8,}['\"]" | grep -v -E "(\.Env\.|\.Token|{{ |}}|template|example)" || false; then
           echo "❌ Potential hardcoded secrets found"
           exit 1
         fi
