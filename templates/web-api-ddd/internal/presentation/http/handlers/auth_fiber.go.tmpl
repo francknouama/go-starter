@@ -1,0 +1,101 @@
+{{- if ne .AuthType ""}}
+package handlers
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/application/auth"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// AuthFiberHandlers handles authentication HTTP requests using Fiber framework
+type AuthFiberHandlers struct {
+	authService *auth.Service
+	logger      *logger.Logger
+}
+
+// NewAuthFiberHandlers creates a new auth Fiber handlers instance
+func NewAuthFiberHandlers(
+	authSvc *auth.Service,
+	log *logger.Logger,
+) *AuthFiberHandlers {
+	return &AuthFiberHandlers{
+		authService: authSvc,
+		logger:      log,
+	}
+}
+
+// RegisterRoutes registers all authentication routes
+func (h *AuthFiberHandlers) RegisterRoutes(app *fiber.App) {
+	api := app.Group("/api/v1")
+	authGroup := api.Group("/auth")
+	{
+		authGroup.Post("/login", h.Login)
+		authGroup.Post("/register", h.Register)
+		authGroup.Post("/refresh", h.RefreshToken)
+		authGroup.Post("/logout", h.Logout)
+	}
+}
+
+// Login handles user login
+func (h *AuthFiberHandlers) Login(c *fiber.Ctx) error {
+	var req auth.LoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Failed to bind login request", "error", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request format"})
+	}
+
+	cmd := req.ToLoginCommand()
+	result, err := h.authService.HandleLogin(c.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Login failed", "error", err, "name", req.Name)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid credentials"})
+	}
+
+	return c.JSON(result)
+}
+
+// Register handles user registration
+func (h *AuthFiberHandlers) Register(c *fiber.Ctx) error {
+	var req auth.RegisterRequest
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Failed to bind register request", "error", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request format"})
+	}
+
+	cmd := req.ToRegisterCommand()
+	result, err := h.authService.HandleRegister(c.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Registration failed", "error", err, "name", req.Name)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Registration failed"})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(result)
+}
+
+// RefreshToken handles token refresh
+func (h *AuthFiberHandlers) RefreshToken(c *fiber.Ctx) error {
+	var req auth.RefreshTokenRequest
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Failed to bind refresh token request", "error", err)
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request format"})
+	}
+
+	cmd := req.ToRefreshTokenCommand()
+	result, err := h.authService.HandleRefreshToken(c.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Token refresh failed", "error", err)
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Invalid refresh token"})
+	}
+
+	return c.JSON(result)
+}
+
+// Logout handles user logout
+func (h *AuthFiberHandlers) Logout(c *fiber.Ctx) error {
+	// In a real implementation, you would extract the user ID from the JWT token
+	// For now, we'll just return success as logout is handled client-side
+	// by removing the token
+	
+	return c.JSON(fiber.Map{"message": "Logged out successfully"})
+}
+{{- end}}

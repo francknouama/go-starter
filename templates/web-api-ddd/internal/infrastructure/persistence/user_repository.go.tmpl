@@ -84,31 +84,6 @@ func (r *{{.DomainName | title}}RepositoryGORM) FindByID(ctx context.Context, id
 	return entity, nil
 }
 
-// GetByID retrieves a {{.DomainName}} entity by ID (string version)
-func (r *{{.DomainName | title}}RepositoryGORM) GetByID(ctx context.Context, id string) (*{{.DomainName}}.{{.DomainName | title}}, error) {
-	r.logger.Info("Getting {{.DomainName}} by ID", "id", id)
-	
-	var model {{.DomainName | title}}Model
-	result := r.db.WithContext(ctx).Where("id = ?", id).First(&model)
-	
-	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			r.logger.Info("{{.DomainName | title}} not found", "id", id)
-			return nil, errors.ErrUserNotFound
-		}
-		r.logger.Error("Failed to get {{.DomainName}}", "error", result.Error, "id", id)
-		return nil, fmt.Errorf("failed to get {{.DomainName}}: %w", result.Error)
-	}
-	
-	entity, err := r.modelToEntity(&model)
-	if err != nil {
-		r.logger.Error("Failed to convert model to entity", "error", err, "id", id)
-		return nil, fmt.Errorf("failed to convert model to entity: %w", err)
-	}
-	
-	r.logger.Info("{{.DomainName | title}} found by ID successfully", "id", id)
-	return entity, nil
-}
 
 // FindByName retrieves a {{.DomainName}} entity by name
 func (r *{{.DomainName | title}}RepositoryGORM) FindByName(ctx context.Context, name string) (*{{.DomainName}}.{{.DomainName | title}}, error) {
@@ -136,31 +111,6 @@ func (r *{{.DomainName | title}}RepositoryGORM) FindByName(ctx context.Context, 
 	return entity, nil
 }
 
-// GetByName retrieves a {{.DomainName}} entity by name (string version)
-func (r *{{.DomainName | title}}RepositoryGORM) GetByName(ctx context.Context, name string) (*{{.DomainName}}.{{.DomainName | title}}, error) {
-	r.logger.Info("Getting {{.DomainName}} by name", "name", name)
-	
-	var model {{.DomainName | title}}Model
-	result := r.db.WithContext(ctx).Where("name = ?", name).First(&model)
-	
-	if result.Error != nil {
-		if result.Error == gorm.ErrRecordNotFound {
-			r.logger.Info("{{.DomainName | title}} not found", "name", name)
-			return nil, errors.ErrUserNotFound
-		}
-		r.logger.Error("Failed to get {{.DomainName}}", "error", result.Error, "name", name)
-		return nil, fmt.Errorf("failed to get {{.DomainName}}: %w", result.Error)
-	}
-	
-	entity, err := r.modelToEntity(&model)
-	if err != nil {
-		r.logger.Error("Failed to convert model to entity", "error", err, "name", name)
-		return nil, fmt.Errorf("failed to convert model to entity: %w", err)
-	}
-	
-	r.logger.Info("{{.DomainName | title}} found by name successfully", "name", name)
-	return entity, nil
-}
 
 // Delete removes a {{.DomainName}} entity from the database
 func (r *{{.DomainName | title}}RepositoryGORM) Delete(ctx context.Context, id valueobjects.ID) error {
@@ -278,7 +228,7 @@ func (r *{{.DomainName | title}}RepositoryGORM) CountByStatus(ctx context.Contex
 
 // FindAll retrieves all {{.DomainName}}s with pagination
 func (r *{{.DomainName | title}}RepositoryGORM) FindAll(ctx context.Context, offset, limit int) ([]*{{.DomainName}}.{{.DomainName | title}}, error) {
-	return r.List(ctx, offset, limit)
+	return r.List(ctx, limit, offset)
 }
 
 // FindByStatus retrieves {{.DomainName}}s by status

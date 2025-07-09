@@ -1,0 +1,122 @@
+{{- if ne .AuthType ""}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"{{.ModulePath}}/internal/application/auth"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// AuthChiHandlers handles authentication HTTP requests using Chi framework
+type AuthChiHandlers struct {
+	authService *auth.Service
+	logger      *logger.Logger
+}
+
+// NewAuthChiHandlers creates a new auth Chi handlers instance
+func NewAuthChiHandlers(
+	authSvc *auth.Service,
+	log *logger.Logger,
+) *AuthChiHandlers {
+	return &AuthChiHandlers{
+		authService: authSvc,
+		logger:      log,
+	}
+}
+
+// RegisterRoutes registers all authentication routes
+func (h *AuthChiHandlers) RegisterRoutes(r *chi.Mux) {
+	r.Route("/api/v1/auth", func(r chi.Router) {
+		r.Post("/login", h.Login)
+		r.Post("/register", h.Register)
+		r.Post("/refresh", h.RefreshToken)
+		r.Post("/logout", h.Logout)
+	})
+}
+
+// Login handles user login
+func (h *AuthChiHandlers) Login(w http.ResponseWriter, r *http.Request) {
+	var req auth.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Failed to bind login request", "error", err)
+		h.jsonError(w, "Invalid request format", http.StatusBadRequest)
+		return
+	}
+
+	cmd := req.ToLoginCommand()
+	result, err := h.authService.HandleLogin(r.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Login failed", "error", err, "name", req.Name)
+		h.jsonError(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	h.jsonResponse(w, result, http.StatusOK)
+}
+
+// Register handles user registration
+func (h *AuthChiHandlers) Register(w http.ResponseWriter, r *http.Request) {
+	var req auth.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Failed to bind register request", "error", err)
+		h.jsonError(w, "Invalid request format", http.StatusBadRequest)
+		return
+	}
+
+	cmd := req.ToRegisterCommand()
+	result, err := h.authService.HandleRegister(r.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Registration failed", "error", err, "name", req.Name)
+		h.jsonError(w, "Registration failed", http.StatusBadRequest)
+		return
+	}
+
+	h.jsonResponse(w, result, http.StatusCreated)
+}
+
+// RefreshToken handles token refresh
+func (h *AuthChiHandlers) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	var req auth.RefreshTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Failed to bind refresh token request", "error", err)
+		h.jsonError(w, "Invalid request format", http.StatusBadRequest)
+		return
+	}
+
+	cmd := req.ToRefreshTokenCommand()
+	result, err := h.authService.HandleRefreshToken(r.Context(), cmd)
+	if err != nil {
+		h.logger.Error("Token refresh failed", "error", err)
+		h.jsonError(w, "Invalid refresh token", http.StatusUnauthorized)
+		return
+	}
+
+	h.jsonResponse(w, result, http.StatusOK)
+}
+
+// Logout handles user logout
+func (h *AuthChiHandlers) Logout(w http.ResponseWriter, r *http.Request) {
+	// In a real implementation, you would extract the user ID from the JWT token
+	// For now, we'll just return success as logout is handled client-side
+	// by removing the token
+	
+	h.jsonResponse(w, map[string]string{"message": "Logged out successfully"}, http.StatusOK)
+}
+
+// jsonError writes an error response in JSON format
+func (h *AuthChiHandlers) jsonError(w http.ResponseWriter, message string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// jsonResponse writes a success response in JSON format
+func (h *AuthChiHandlers) jsonResponse(w http.ResponseWriter, data interface{}, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+{{- end}}

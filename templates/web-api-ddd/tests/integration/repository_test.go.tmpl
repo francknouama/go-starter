@@ -33,41 +33,40 @@ func TestIntegration_{{.DomainName | title}}Repository(t *testing.T) {
 	repo := persistence.New{{.DomainName | title}}Repository(db, appLogger)
 	ctx := context.Background()
 
-	// Test Save and GetByID
-	email, _ := valueobjects.NewEmail("test_repo@example.com")
-	{{.DomainName}}, err := {{.DomainName}}.New{{.DomainName | title}}("Repo", "Test", email, "password123")
+	// Test Save and FindByID
+	entity, err := {{.DomainName}}.New{{.DomainName | title}}("test-{{.DomainName}}", "Test {{.DomainName}} for repository")
 	assert.NoError(t, err)
 
-	err = repo.Save(ctx, {{.DomainName}})
+	err = repo.Save(ctx, entity)
 	assert.NoError(t, err)
-	assert.NotEmpty(t, {{.DomainName}}.ID.String())
+	assert.NotEmpty(t, entity.ID().String())
 
-	found{{.DomainName | title}}, err := repo.GetByID(ctx, {{.DomainName}}.ID.String())
+	found{{.DomainName | title}}, err := repo.FindByID(ctx, entity.ID())
 	assert.NoError(t, err)
 	assert.NotNil(t, found{{.DomainName | title}})
-	assert.Equal(t, {{.DomainName}}.ID, found{{.DomainName | title}}.ID)
-	assert.Equal(t, {{.DomainName}}.Email.String(), found{{.DomainName | title}}.Email.String())
+	assert.Equal(t, entity.ID(), found{{.DomainName | title}}.ID())
+	assert.Equal(t, entity.Name(), found{{.DomainName | title}}.Name())
 
-	// Test GetByEmail
-	found{{.DomainName | title}}, err = repo.GetByEmail(ctx, email.String())
+	// Test FindByName
+	found{{.DomainName | title}}, err = repo.FindByName(ctx, entity.Name())
 	assert.NoError(t, err)
 	assert.NotNil(t, found{{.DomainName | title}})
-	assert.Equal(t, {{.DomainName}}.ID, found{{.DomainName | title}}.ID)
+	assert.Equal(t, entity.ID(), found{{.DomainName | title}}.ID())
 
 	// Test Update
-	{{.DomainName}}.UpdateFirstName("UpdatedRepo")
-	err = repo.Save(ctx, {{.DomainName}})
+	entity.UpdateDescription("Updated description")
+	err = repo.Save(ctx, entity)
 	assert.NoError(t, err)
 
-	found{{.DomainName | title}}, err = repo.GetByID(ctx, {{.DomainName}}.ID.String())
+	found{{.DomainName | title}}, err = repo.FindByID(ctx, entity.ID())
 	assert.NoError(t, err)
-	assert.Equal(t, "UpdatedRepo", found{{.DomainName | title}}.FirstName)
+	assert.Equal(t, "Updated description", found{{.DomainName | title}}.Description())
 
 	// Test Delete
-	err = repo.Delete(ctx, {{.DomainName}}.ID.String())
+	err = repo.Delete(ctx, entity.ID())
 	assert.NoError(t, err)
 
-	found{{.DomainName | title}}, err = repo.GetByID(ctx, {{.DomainName}}.ID.String())
+	found{{.DomainName | title}}, err = repo.FindByID(ctx, entity.ID())
 	assert.Error(t, err)
 	assert.Nil(t, found{{.DomainName | title}})
 }
