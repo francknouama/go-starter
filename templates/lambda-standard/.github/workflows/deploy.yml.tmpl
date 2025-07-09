@@ -1,0 +1,51 @@
+name: Deploy to AWS Lambda
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: {{.GoVersion}}
+
+    - name: Build Lambda function
+      run: |
+        GOOS=linux GOARCH=amd64 go build -o bin/{{.ProjectName}} .
+        zip -j bin/{{.ProjectName}}.zip bin/{{.ProjectName}}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{`{{ secrets.AWS_ACCESS_KEY_ID }}`}}
+        aws-secret-access-key: ${{`{{ secrets.AWS_SECRET_ACCESS_KEY }}`}}
+        aws-region: ${{`{{ secrets.AWS_REGION }}`}}
+
+    - name: Deploy to Lambda
+      run: |
+        aws lambda update-function-code \
+          --function-name {{.ProjectName}} \
+          --zip-file fileb://bin/{{.ProjectName}}.zip
+
+    - name: Update Lambda configuration
+      run: |
+        aws lambda update-function-configuration \
+          --function-name {{.ProjectName}} \
+          --timeout 30 \
+          --memory-size 128
+
+    - name: Test Lambda function
+      run: |
+        aws lambda invoke \
+          --function-name {{.ProjectName}} \
+          --payload '{"key": "value"}' \
+          --cli-binary-format raw-in-base64-out \
+          response.json
+        cat response.json
