@@ -19,18 +19,18 @@ func setupTestTemplates(t *testing.T) {
 	// Get the project root for tests
 	_, file, _, _ := runtime.Caller(0)
 	projectRoot := filepath.Dir(filepath.Dir(file))
-	templatesDir := filepath.Join(projectRoot, "templates")
+	templatesDir := filepath.Join(projectRoot, "blueprints")
 
-	// Verify templates directory exists
+	// Verify blueprints directory exists
 	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
-		t.Fatalf("Templates directory not found at: %s", templatesDir)
+		t.Fatalf("Blueprints directory not found at: %s", templatesDir)
 	}
 
 	// Set up the filesystem for tests using os.DirFS
 	templates.SetTemplatesFS(os.DirFS(templatesDir))
 }
 
-func TestListTemplates(t *testing.T) {
+func TestListBlueprints(t *testing.T) {
 	setupTestTemplates(t)
 	
 	// Capture stdout
@@ -39,7 +39,7 @@ func TestListTemplates(t *testing.T) {
 	os.Stdout = w
 
 	// Run the function
-	listTemplates()
+	listBlueprints()
 
 	// Restore stdout
 	_ = w.Close()
@@ -50,44 +50,44 @@ func TestListTemplates(t *testing.T) {
 	_, _ = buf.ReadFrom(r)
 	output := buf.String()
 
-	// The output should contain template information or no templates message
-	// Since we don't know the exact state of templates, we check for expected patterns
+	// The output should contain blueprint information or no blueprints message
+	// Since we don't know the exact state of blueprints, we check for expected patterns
 	assert.True(t, 
-		strings.Contains(output, "No templates available") || 
-		strings.Contains(output, "Templates") ||
+		strings.Contains(output, "No blueprints available") || 
+		strings.Contains(output, "Blueprints") ||
 		len(output) > 0, 
 		"Should produce some output")
 }
 
-func TestRenderTemplate(t *testing.T) {
+func TestRenderBlueprint(t *testing.T) {
 	tests := []struct {
 		name       string
-		template   types.Template
+		blueprint   types.Template
 		isLast     bool
 	}{
 		{
-			name: "basic template",
-			template: types.Template{
+			name: "basic blueprint",
+			blueprint: types.Template{
 				ID:          "web-api",
 				Name:        "Web API",
-				Description: "A basic web API template",
+				Description: "A basic web API blueprint",
 				Type:        "web-api",
 			},
 			isLast: false,
 		},
 		{
-			name: "cli template",
-			template: types.Template{
+			name: "cli blueprint",
+			blueprint: types.Template{
 				ID:          "cli",
 				Name:        "CLI Application",
-				Description: "A command-line interface template",
+				Description: "A command-line interface blueprint",
 				Type:        "cli",
 			},
 			isLast: true,
 		},
 		{
-			name: "template with empty description",
-			template: types.Template{
+			name: "blueprint with empty description",
+			blueprint: types.Template{
 				ID:          "library",
 				Name:        "Library",
 				Description: "",
@@ -105,7 +105,7 @@ func TestRenderTemplate(t *testing.T) {
 			os.Stdout = w
 
 			// Run the function
-			renderTemplate(tt.template, tt.isLast)
+			renderBlueprint(tt.blueprint, tt.isLast)
 
 			// Restore stdout
 			_ = w.Close()
@@ -116,10 +116,10 @@ func TestRenderTemplate(t *testing.T) {
 			_, _ = buf.ReadFrom(r)
 			output := buf.String()
 
-			// Check that output contains the template information
-			assert.Contains(t, output, tt.template.ID)
-			assert.Contains(t, output, tt.template.Name)
-			assert.Contains(t, output, tt.template.Type)
+			// Check that output contains the blueprint information
+			assert.Contains(t, output, tt.blueprint.ID)
+			assert.Contains(t, output, tt.blueprint.Name)
+			assert.Contains(t, output, tt.blueprint.Type)
 			
 			// Output should not be empty
 			assert.NotEmpty(t, output)
@@ -234,7 +234,7 @@ func isSingleWord(s string) bool {
 func TestListCmd_Usage(t *testing.T) {
 	// Test that the list command is properly configured
 	assert.Equal(t, "list", listCmd.Use)
-	assert.Equal(t, "List available project templates", listCmd.Short)
+	assert.Equal(t, "List available project blueprints", listCmd.Short)
 	assert.NotEmpty(t, listCmd.Long)
 	assert.NotNil(t, listCmd.Run)
 }
@@ -259,7 +259,7 @@ func TestListCmd_Execution(t *testing.T) {
 		_, _ = buf.ReadFrom(r)
 		output := buf.String()
 		
-		// Should produce some output (either template list or no templates message)
+		// Should produce some output (either blueprint list or no blueprints message)
 		assert.True(t, len(output) >= 0) // At minimum, shouldn't crash
 	})
 }
