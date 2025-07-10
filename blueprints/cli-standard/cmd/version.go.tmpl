@@ -1,0 +1,41 @@
+package cmd
+
+import (
+	"runtime"
+
+	"github.com/spf13/cobra"
+	"{{.ModulePath}}/internal/logger"
+)
+
+var (
+	// These will be set by build flags
+	version   = "dev"
+	commit    = "none"
+	date      = "unknown"
+	goVersion = runtime.Version()
+)
+
+// versionCmd represents the version command
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version information",
+	Long:  `Print the version information for {{.ProjectName}}.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		appLogger.InfoWith("Version command executed", logger.Fields{
+			"version": version,
+			"commit":  commit,
+			"date":    date,
+		})
+		
+		cmd.Printf("{{.ProjectName}} version information:\n")
+		cmd.Printf("  Version:    %s\n", version)
+		cmd.Printf("  Commit:     %s\n", commit)
+		cmd.Printf("  Build Date: %s\n", date)
+		cmd.Printf("  Go Version: %s\n", goVersion)
+		cmd.Printf("  Logger:     {{.Logger}}\n")
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(versionCmd)
+}
