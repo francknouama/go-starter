@@ -1,0 +1,654 @@
+package integration
+
+import (
+	{{- if ne .DatabaseDriver ""}}
+	"bytes"
+	"database/sql"
+	{{- end}}
+	"encoding/json"
+	{{- if eq .Framework "fiber"}}
+	"io"
+	{{- end}}
+	"net/http"
+	{{- if ne .Framework "fiber"}}
+	"net/http/httptest"
+	{{- end}}
+	"testing"
+	{{- if ne .AuthType ""}}
+	"time"
+	{{- end}}
+
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	echoMiddleware "github.com/labstack/echo/v4/middleware"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	chiMiddleware "github.com/go-chi/chi/v5/middleware"
+	{{- else if eq .Framework "stdlib"}}
+	{{- end}}
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+	{{- if ne .DatabaseDriver ""}}
+	"gorm.io/gorm"
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	"github.com/golang-jwt/jwt/v5"
+	{{- end}}
+
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/database"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/services"
+	{{- end}}
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/logger"
+	{{- if eq .Framework "echo"}}
+	appMiddleware "{{.ModulePath}}/internal/middleware"
+	{{- else if eq .Framework "chi"}}
+	appMiddleware "{{.ModulePath}}/internal/middleware"
+	{{- else if eq .Framework "gin"}}
+	"{{.ModulePath}}/internal/middleware"
+	{{- else if eq .Framework "fiber"}}
+	"{{.ModulePath}}/internal/middleware"
+	{{- end}}
+)
+
+type APITestSuite struct {
+	suite.Suite
+	{{- if eq .Framework "gin"}}
+	router    *gin.Engine
+	{{- else if eq .Framework "echo"}}
+	router    *echo.Echo
+	{{- else if eq .Framework "fiber"}}
+	router    *fiber.App
+	{{- else if eq .Framework "chi"}}
+	router    chi.Router
+	{{- else if eq .Framework "stdlib"}}
+	router    *http.ServeMux
+	{{- end}}
+	logger    logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db          interface{} // Can be *gorm.DB or *sql.DB depending on ORM choice
+	userService services.UserService
+	{{- if ne .AuthType ""}}
+	authService services.AuthService
+	{{- end}}
+	{{- end}}
+}
+
+func (suite *APITestSuite) SetupSuite() {
+	{{- if eq .Framework "gin"}}
+	// Set Gin to test mode
+	gin.SetMode(gin.TestMode)
+	{{- end}}
+
+	// Initialize logger for tests
+	loggerFactory := logger.NewFactory()
+	var err error
+	suite.logger, err = loggerFactory.CreateFromProjectConfig("{{.Logger}}", "error", "text", false)
+	suite.Require().NoError(err)
+
+	{{- if ne .DatabaseDriver ""}}
+	// Setup test database (you might want to use SQLite for tests)
+	cfg := config.DatabaseConfig{
+		{{- if eq .DatabaseDriver "sqlite"}}
+		Name: ":memory:", // In-memory SQLite for tests
+		{{- else}}
+		Host:     "localhost",
+		Port:     {{if eq .DatabaseDriver "postgres"}}5432{{else}}3306{{end}},
+		User:     "test",
+		Password: "test",
+		Name:     "test_{{lower .ProjectName}}",
+		{{- end}}
+		LogLevel: "error",
+	}
+
+	suite.db, err = database.Connect(cfg, suite.logger)
+	suite.Require().NoError(err)
+
+	// Run migrations
+	{{- if eq .DatabaseORM "gorm"}}
+	err = database.Migrate(suite.db.(*gorm.DB), suite.logger)
+	{{- else}}
+	err = database.Migrate(suite.db.(*sql.DB), suite.logger)
+	{{- end}}
+	suite.Require().NoError(err)
+
+	// Setup services
+	{{- if eq .DatabaseORM "gorm"}}
+	userRepo := repository.NewUserRepository(suite.db.(*gorm.DB))
+	{{- else}}
+	userRepo := repository.NewUserRepository(suite.db.(*sql.DB))
+	{{- end}}
+	suite.userService = services.NewUserService(userRepo)
+
+	{{- if ne .AuthType ""}}
+	suite.authService = services.NewAuthService(suite.userService, "test-secret", time.Hour)
+	{{- end}}
+	{{- end}}
+
+	// Setup router
+	{{- if eq .Framework "gin"}}
+	suite.router = gin.New()
+	
+	// Add middleware
+	suite.router.Use(middleware.CORS())
+	suite.router.Use(middleware.Logger(suite.logger))
+	suite.router.Use(middleware.Recovery(suite.logger))
+	{{- else if eq .Framework "echo"}}
+	suite.router = echo.New()
+	suite.router.HideBanner = true
+	
+	// Add middleware
+	suite.router.Use(echoMiddleware.CORS())
+	suite.router.Use(appMiddleware.Logger(suite.logger))
+	suite.router.Use(appMiddleware.Recovery(suite.logger))
+	{{- else if eq .Framework "fiber"}}
+	suite.router = fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+	
+	// Add middleware
+	suite.router.Use(middleware.Logger(suite.logger))
+	suite.router.Use(middleware.Recovery(suite.logger))
+	{{- else if eq .Framework "chi"}}
+	suite.router = chi.NewRouter()
+	
+	// Add middleware
+	suite.router.Use(chiMiddleware.Logger)
+	suite.router.Use(appMiddleware.Logger(suite.logger))
+	suite.router.Use(appMiddleware.Recovery(suite.logger))
+	{{- else if eq .Framework "stdlib"}}
+	suite.router = http.NewServeMux()
+	{{- end}}
+
+	// Setup routes
+	suite.setupRoutes()
+}
+
+func (suite *APITestSuite) TearDownSuite() {
+	{{- if ne .DatabaseDriver ""}}
+	// Clean up database connection
+	if suite.db != nil {
+		database.Close()
+	}
+	{{- end}}
+}
+
+func (suite *APITestSuite) setupRoutes() {
+	// Health routes
+	{{- if eq .Framework "gin"}}
+	suite.router.GET("/health", handlers.HealthCheck)
+	suite.router.GET("/ready", handlers.ReadinessCheck)
+	{{- else if eq .Framework "echo"}}
+	suite.router.GET("/health", handlers.HealthCheck)
+	suite.router.GET("/ready", handlers.ReadinessCheck)
+	{{- else if eq .Framework "fiber"}}
+	suite.router.Get("/health", handlers.HealthCheck)
+	suite.router.Get("/ready", handlers.ReadinessCheck)
+	{{- else if eq .Framework "chi"}}
+	suite.router.Get("/health", handlers.HealthCheck)
+	suite.router.Get("/ready", handlers.ReadinessCheck)
+	{{- else if eq .Framework "stdlib"}}
+	suite.router.HandleFunc("/health", handlers.HealthCheck)
+	suite.router.HandleFunc("/ready", handlers.ReadinessCheck)
+	{{- end}}
+
+	{{- if ne .DatabaseDriver ""}}
+	// API routes
+	{{- if eq .Framework "gin"}}
+	api := suite.router.Group("/api/v1")
+	
+	{{- if ne .AuthType ""}}
+	// Auth routes
+	authHandler := handlers.NewAuthHandler(suite.authService)
+	auth := api.Group("/auth")
+	{
+		auth.POST("/login", authHandler.Login)
+		auth.POST("/register", authHandler.Register)
+		auth.POST("/refresh", authHandler.Refresh)
+		auth.POST("/logout", authHandler.Logout)
+	}
+
+	// Protected routes
+	authMiddleware := middleware.NewAuthMiddleware(suite.authService)
+	protected := api.Group("/")
+	protected.Use(authMiddleware.RequireAuth())
+	{{- end}}
+
+	// User routes
+	userHandler := handlers.NewUsersHandler(suite.userService)
+	{{- if ne .AuthType ""}}
+	users := protected.Group("/users")
+	{{- else}}
+	users := api.Group("/users")
+	{{- end}}
+	{
+		users.GET("", userHandler.GetUsers)
+		users.POST("", userHandler.CreateUser)
+		users.GET("/:id", userHandler.GetUser)
+		users.PUT("/:id", userHandler.UpdateUser)
+		users.DELETE("/:id", userHandler.DeleteUser)
+	}
+	{{- else if eq .Framework "echo"}}
+	// API routes
+	api := suite.router.Group("/api/v1")
+	
+	{{- if ne .AuthType ""}}
+	// Auth routes
+	authHandler := handlers.NewAuthHandler(suite.authService)
+	auth := api.Group("/auth")
+	auth.POST("/login", handlers.NewAuthHandler(suite.authService).Login)
+	auth.POST("/register", handlers.NewAuthHandler(suite.authService).Register)
+	auth.POST("/refresh", handlers.NewAuthHandler(suite.authService).Refresh)
+	auth.POST("/logout", handlers.NewAuthHandler(suite.authService).Logout)
+
+	// Protected routes
+	authMiddleware := middleware.NewAuthMiddleware(suite.authService)
+	protected := api.Group("")
+	protected.Use(authMiddleware.RequireAuth())
+	{{- end}}
+
+	// User routes
+	userHandler := handlers.NewUsersHandler(suite.userService)
+	{{- if ne .AuthType ""}}
+	users := protected.Group("/users")
+	{{- else}}
+	users := api.Group("/users")
+	{{- end}}
+	users.GET("", userHandler.GetUsers)
+	users.POST("", userHandler.CreateUser)
+	users.GET("/:id", userHandler.GetUser)
+	users.PUT("/:id", userHandler.UpdateUser)
+	users.DELETE("/:id", userHandler.DeleteUser)
+	{{- else if eq .Framework "chi"}}
+	// API routes
+	suite.router.Route("/api/v1", func(api chi.Router) {
+		{{- if ne .AuthType ""}}
+		// Auth routes
+		authHandler := handlers.NewAuthHandler(suite.authService)
+		api.Route("/auth", func(auth chi.Router) {
+			auth.Post("/login", authHandler.Login)
+			auth.Post("/register", authHandler.Register)
+			auth.Post("/refresh", authHandler.Refresh)
+			auth.Post("/logout", authHandler.Logout)
+		})
+
+		// Protected routes
+		authMiddleware := middleware.NewAuthMiddleware(suite.authService)
+		api.Group(func(protected chi.Router) {
+			protected.Use(authMiddleware.RequireAuth())
+			// User routes
+			userHandler := handlers.NewUsersHandler(suite.userService)
+			protected.Route("/users", func(users chi.Router) {
+				users.Get("/", userHandler.GetUsers)
+				users.Post("/", userHandler.CreateUser)
+				users.Get("/{id}", userHandler.GetUser)
+				users.Put("/{id}", userHandler.UpdateUser)
+				users.Delete("/{id}", userHandler.DeleteUser)
+			})
+		})
+		{{- else}}
+		// User routes
+		userHandler := handlers.NewUsersHandler(suite.userService)
+		api.Route("/users", func(users chi.Router) {
+			users.Get("/", userHandler.GetUsers)
+			users.Post("/", userHandler.CreateUser)
+			users.Get("/{id}", userHandler.GetUser)
+			users.Put("/{id}", userHandler.UpdateUser)
+			users.Delete("/{id}", userHandler.DeleteUser)
+		})
+		{{- end}}
+	})
+	{{- else if eq .Framework "fiber"}}
+	// API routes
+	api := suite.router.Group("/api/v1")
+	
+	{{- if ne .AuthType ""}}
+	// Auth routes
+	authHandler := handlers.NewAuthHandler(suite.authService)
+	auth := api.Group("/auth")
+	auth.Post("/login", authHandler.Login)
+	auth.Post("/register", authHandler.Register)
+	auth.Post("/refresh", authHandler.Refresh)
+	auth.Post("/logout", authHandler.Logout)
+
+	// Protected routes
+	authMiddleware := middleware.NewAuthMiddleware(suite.authService)
+	protected := api.Group("")
+	protected.Use(authMiddleware.RequireAuth())
+	{{- end}}
+
+	// User routes
+	userHandler := handlers.NewUsersHandler(suite.userService)
+	{{- if ne .AuthType ""}}
+	users := protected.Group("/users")
+	{{- else}}
+	users := api.Group("/users")
+	{{- end}}
+	users.Get("/", userHandler.GetUsers)
+	users.Post("/", userHandler.CreateUser)
+	users.Get("/:id", userHandler.GetUser)
+	users.Put("/:id", userHandler.UpdateUser)
+	users.Delete("/:id", userHandler.DeleteUser)
+	{{- else if eq .Framework "stdlib"}}
+	// User routes
+	userHandler := handlers.NewUsersHandler(suite.userService)
+	{{- if ne .AuthType ""}}
+	// Auth routes
+	authHandler := handlers.NewAuthHandler(suite.authService)
+	suite.router.HandleFunc("/api/v1/auth/login", authHandler.Login)
+	suite.router.HandleFunc("/api/v1/auth/register", authHandler.Register)
+	suite.router.HandleFunc("/api/v1/auth/refresh", authHandler.Refresh)
+	suite.router.HandleFunc("/api/v1/auth/logout", authHandler.Logout)
+	
+	// Protected user routes would need auth middleware wrapping
+	suite.router.HandleFunc("/api/v1/users", userHandler.GetUsers)
+	suite.router.HandleFunc("/api/v1/users", userHandler.CreateUser)
+	{{- else}}
+	suite.router.HandleFunc("/api/v1/users", userHandler.GetUsers)
+	suite.router.HandleFunc("/api/v1/users", userHandler.CreateUser)
+	{{- end}}
+	{{- end}}
+	{{- end}}
+}
+
+// Test health endpoints
+func (suite *APITestSuite) TestHealthEndpoints() {
+	tests := []struct {
+		name           string
+		endpoint       string
+		expectedStatus int
+		expectedValue  string
+	}{
+		{
+			name:           "Health check should return 200",
+			endpoint:       "/health",
+			expectedStatus: http.StatusOK,
+			expectedValue:  "healthy",
+		},
+		{
+			name:           "Ready check should return 200",
+			endpoint:       "/ready",
+			expectedStatus: http.StatusOK,
+			expectedValue:  "ready",
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			req, _ := http.NewRequest("GET", tt.endpoint, nil)
+			{{- if eq .Framework "fiber"}}
+			resp, err := suite.router.Test(req)
+			assert.NoError(suite.T(), err)
+			defer resp.Body.Close()
+
+			assert.Equal(suite.T(), tt.expectedStatus, resp.StatusCode)
+			{{- else}}
+			w := httptest.NewRecorder()
+			suite.router.ServeHTTP(w, req)
+
+			assert.Equal(suite.T(), tt.expectedStatus, w.Code)
+			{{- end}}
+			
+			var response map[string]interface{}
+			{{- if eq .Framework "fiber"}}
+			body, err := io.ReadAll(resp.Body)
+			assert.NoError(suite.T(), err)
+			err = json.Unmarshal(body, &response)
+			{{- else}}
+			err := json.Unmarshal(w.Body.Bytes(), &response)
+			{{- end}}
+			assert.NoError(suite.T(), err)
+			assert.Equal(suite.T(), tt.expectedValue, response["status"])
+		})
+	}
+}
+
+{{- if ne .DatabaseDriver ""}}
+{{- if ne .AuthType ""}}
+// Test authentication endpoints
+func (suite *APITestSuite) TestAuthEndpoints() {
+	// Test registration
+	suite.Run("Register new user", func() {
+		payload := models.RegisterRequest{
+			Name:     "Test User",
+			Email:    "test@example.com",
+			Password: "password123",
+		}
+		
+		jsonPayload, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/api/v1/auth/register", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+
+		assert.Equal(suite.T(), http.StatusCreated, resp.StatusCode)
+		
+		var response map[string]interface{}
+		body, err := io.ReadAll(resp.Body)
+		assert.NoError(suite.T(), err)
+		err = json.Unmarshal(body, &response)
+		{{- else}}
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+
+		assert.Equal(suite.T(), http.StatusCreated, w.Code)
+		
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		{{- end}}
+		assert.NoError(suite.T(), err)
+		assert.Contains(suite.T(), response, "data")
+	})
+
+	// Test login
+	suite.Run("Login with valid credentials", func() {
+		payload := models.LoginRequest{
+			Email:    "test@example.com",
+			Password: "password123",
+		}
+		
+		jsonPayload, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/api/v1/auth/login", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+
+		assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+		
+		var response map[string]interface{}
+		body, err := io.ReadAll(resp.Body)
+		assert.NoError(suite.T(), err)
+		err = json.Unmarshal(body, &response)
+		{{- else}}
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+
+		assert.Equal(suite.T(), http.StatusOK, w.Code)
+		
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		{{- end}}
+		assert.NoError(suite.T(), err)
+		assert.Contains(suite.T(), response, "token")
+		assert.Contains(suite.T(), response, "user")
+	})
+
+	// Test login with invalid credentials
+	suite.Run("Login with invalid credentials", func() {
+		payload := models.LoginRequest{
+			Email:    "test@example.com",
+			Password: "wrongpassword",
+		}
+		
+		jsonPayload, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/api/v1/auth/login", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+
+		assert.Equal(suite.T(), http.StatusUnauthorized, resp.StatusCode)
+		{{- else}}
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+
+		assert.Equal(suite.T(), http.StatusUnauthorized, w.Code)
+		{{- end}}
+	})
+}
+{{- end}}
+
+// Test user endpoints
+func (suite *APITestSuite) TestUserEndpoints() {
+	{{- if ne .AuthType ""}}
+	// First, register and login to get a token
+	var token string
+	suite.Run("Setup: Register and login user", func() {
+		// Register
+		payload := models.RegisterRequest{
+			Name:     "API Test User",
+			Email:    "apitest@example.com",
+			Password: "password123",
+		}
+		
+		jsonPayload, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/api/v1/auth/register", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+		assert.Equal(suite.T(), http.StatusCreated, resp.StatusCode)
+		{{- else}}
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		assert.Equal(suite.T(), http.StatusCreated, w.Code)
+		{{- end}}
+
+		// Login
+		loginPayload := models.LoginRequest{
+			Email:    "apitest@example.com",
+			Password: "password123",
+		}
+		
+		jsonPayload, _ = json.Marshal(loginPayload)
+		req, _ = http.NewRequest("POST", "/api/v1/auth/login", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+		assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+		
+		var response map[string]interface{}
+		body, err := io.ReadAll(resp.Body)
+		assert.NoError(suite.T(), err)
+		err = json.Unmarshal(body, &response)
+		assert.NoError(suite.T(), err)
+		{{- else}}
+		w = httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+		assert.Equal(suite.T(), http.StatusOK, w.Code)
+		
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		assert.NoError(suite.T(), err)
+		{{- end}}
+		token = response["token"].(string)
+	})
+	{{- end}}
+
+	// Test creating a user
+	suite.Run("Create user", func() {
+		payload := models.CreateUserRequest{
+			Name:  "New User",
+			Email: "newuser@example.com",
+		}
+		
+		jsonPayload, _ := json.Marshal(payload)
+		req, _ := http.NewRequest("POST", "/api/v1/users", bytes.NewBuffer(jsonPayload))
+		req.Header.Set("Content-Type", "application/json")
+		{{- if ne .AuthType ""}}
+		req.Header.Set("Authorization", "Bearer "+token)
+		{{- end}}
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+
+		assert.Equal(suite.T(), http.StatusCreated, resp.StatusCode)
+		
+		var response map[string]interface{}
+		body, err := io.ReadAll(resp.Body)
+		assert.NoError(suite.T(), err)
+		err = json.Unmarshal(body, &response)
+		{{- else}}
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+
+		assert.Equal(suite.T(), http.StatusCreated, w.Code)
+		
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		{{- end}}
+		assert.NoError(suite.T(), err)
+		assert.Contains(suite.T(), response, "data")
+	})
+
+	// Test getting users
+	suite.Run("Get users", func() {
+		req, _ := http.NewRequest("GET", "/api/v1/users", nil)
+		{{- if ne .AuthType ""}}
+		req.Header.Set("Authorization", "Bearer "+token)
+		{{- end}}
+		
+		{{- if eq .Framework "fiber"}}
+		resp, err := suite.router.Test(req)
+		assert.NoError(suite.T(), err)
+		defer resp.Body.Close()
+
+		assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+		
+		var response map[string]interface{}
+		body, err := io.ReadAll(resp.Body)
+		assert.NoError(suite.T(), err)
+		err = json.Unmarshal(body, &response)
+		{{- else}}
+		w := httptest.NewRecorder()
+		suite.router.ServeHTTP(w, req)
+
+		assert.Equal(suite.T(), http.StatusOK, w.Code)
+		
+		var response map[string]interface{}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		{{- end}}
+		assert.NoError(suite.T(), err)
+		assert.Contains(suite.T(), response, "data")
+		assert.Contains(suite.T(), response, "pagination")
+	})
+}
+{{- end}}
+
+// Run the test suite
+func TestAPITestSuite(t *testing.T) {
+	suite.Run(t, new(APITestSuite))
+}
