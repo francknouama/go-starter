@@ -40,9 +40,9 @@ func buildLongDescription() string {
 		yellow("📚 EXAMPLES:") + "\n" +
 		green("  go-starter new my-api                    ") + "# Interactive project creation\n" +
 		green("  go-starter new my-api --type=web-api     ") + "# Direct project creation\n" +
-		green("  go-starter list                          ") + "# List available templates\n" +
+		green("  go-starter list                          ") + "# List available blueprints\n" +
 		green("  go-starter version                       ") + "# Show version information\n\n" +
-		yellow("🏗️  SUPPORTED TEMPLATES:") + "\n" +
+		yellow("🏗️  SUPPORTED BLUEPRINTS:") + "\n" +
 		blue("  • web-api       ") + "- REST APIs with multiple architectures\n" +
 		blue("  • cli           ") + "- Command-line applications\n" +
 		blue("  • library       ") + "- Reusable Go packages\n" +

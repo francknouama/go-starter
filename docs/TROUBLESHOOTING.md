@@ -124,7 +124,7 @@ go install github.com/francknouama/go-starter@latest
 
 **Diagnostic Steps:**
 ```bash
-# Check template processing
+# Check blueprint processing
 go-starter new test-project --type=web-api --verbose
 
 # Examine generated files
@@ -133,9 +133,9 @@ grep -r "{{" test-project/
 
 **Solutions:**
 
-1. **Verify template syntax:**
+1. **Verify blueprint syntax:**
 ```go
-// Correct template usage
+// Correct blueprint usage
 package {{.PackageName}}
 
 // Incorrect (won't be processed)
@@ -147,7 +147,7 @@ package {{ .PackageName }}  // Extra spaces
 # Correct
 go-starter new myapp --module=github.com/user/myapp
 
-# Incorrect - will cause template issues
+# Incorrect - will cause blueprint issues
 go-starter new myapp --module="My App"
 ```
 
@@ -780,6 +780,6 @@ If these solutions don't resolve your issue:
    - [GitHub Issues](https://github.com/francknouama/go-starter/issues)
    - Include diagnostic.txt
    - Add reproduction steps
-   - Specify template and logger used
+   - Specify blueprint and logger used
 
 Remember: Most issues have been encountered before. Check closed issues and discussions for additional solutions.

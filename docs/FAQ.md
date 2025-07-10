@@ -8,7 +8,7 @@ Common issues, solutions, and frequently asked questions for go-starter.
 - [Project Generation Issues](#project-generation-issues)
 - [Compilation Issues](#compilation-issues)
 - [Logger Issues](#logger-issues)
-- [Template Issues](#template-issues)
+- [Blueprint Issues](#blueprint-issues)
 - [Performance Issues](#performance-issues)
 - [Frequently Asked Questions](#frequently-asked-questions)
 
@@ -106,22 +106,22 @@ Get "https://proxy.golang.org/...": dial tcp: lookup proxy.golang.org: no such h
 
 ## Project Generation Issues
 
-### Q: Generation fails with "template not found" 
+### Q: Generation fails with "blueprint not found" 
 
 **Problem**:
 ```bash
 go-starter new my-project --type=web-api
-# Error: template 'web-api' not found
+# Error: blueprint 'web-api' not found
 ```
 
 **Solutions**:
 
-1. **Check available templates**:
+1. **Check available blueprints**:
    ```bash
-   go-starter list  # Shows all available templates
+   go-starter list  # Shows all available blueprints
    ```
 
-2. **Use correct template name**:
+2. **Use correct blueprint name**:
    ```bash
    go-starter new my-project --type=web-api    # Correct
    go-starter new my-project --type=api        # Incorrect
@@ -357,15 +357,15 @@ go test ./...
 
 ---
 
-## Template Issues
+## Blueprint Issues
 
-### Q: Template customization not working
+### Q: Blueprint customization not working
 
-**Problem**: Changes to templates don't appear in generated projects.
+**Problem**: Changes to blueprints don't appear in generated projects.
 
 **Solutions**:
 
-1. **Templates are embedded**: go-starter uses embedded templates, so you can't modify them directly.
+1. **Blueprints are embedded**: go-starter uses embedded blueprints, so you can't modify them directly.
 
 2. **Generate fresh project**:
    ```bash
@@ -376,7 +376,7 @@ go test ./...
 3. **Fork and modify** (advanced):
    ```bash
    git clone https://github.com/francknouama/go-starter.git
-   # Modify templates/ directory
+   # Modify blueprints/ directory
    # Build your own version
    ```
 
@@ -386,7 +386,7 @@ go test ./...
 
 **Solutions**:
 
-1. **Check template completeness**:
+1. **Check blueprint completeness**:
    ```bash
    go-starter new test-project --type=web-api
    find test-project -type f  # List all generated files
@@ -394,7 +394,7 @@ go test ./...
 
 2. **Compare with documentation**:
    ```bash
-   # Check docs/TEMPLATES.md for expected structure
+   # Check docs/BLUEPRINTS.md for expected structure
    ```
 
 3. **Verify flags**:
@@ -461,7 +461,7 @@ go test ./...
 
 **A**: go-starter uniquely combines:
 - **Logger selector system**: Choose from 4 logging libraries with consistent interface
-- **Production-ready templates**: All templates are fully tested and production-ready
+- **Production-ready blueprints**: All blueprints are fully tested and production-ready
 - **Best practices built-in**: Following Go community standards and patterns
 - **Zero vendor lock-in**: Switch loggers without changing code
 
@@ -490,7 +490,7 @@ go test ./...
 
 #### Q: Is go-starter production-ready?
 
-**A**: Yes! All templates are:
+**A**: Yes! All blueprints are:
 - ✅ Fully tested with comprehensive test suites
 - ✅ Follow Go best practices and idioms
 - ✅ Include production configurations
@@ -514,16 +514,16 @@ go test ./...
 - Configurable for corporate proxies and air-gapped environments
 - Follows security best practices
 
-#### Q: How do I customize templates?
+#### Q: How do I customize blueprints?
 
-**A**: Templates are embedded in the binary. For customization:
+**A**: Blueprints are embedded in the binary. For customization:
 1. **Post-generation**: Modify the generated project
-2. **Fork approach**: Fork the repository and modify templates
+2. **Fork approach**: Fork the repository and modify blueprints
 3. **Configuration**: Use config files to customize behavior
 
 #### Q: Does go-starter support databases?
 
-**A**: Current templates include:
+**A**: Current blueprints include:
 - ✅ Database configuration structure
 - ✅ GORM integration examples
 - ✅ Migration setup
@@ -534,13 +534,13 @@ Future versions will include:
 - Multiple ORM options
 - Migration tools
 
-#### Q: Can I add more templates?
+#### Q: Can I add more blueprints?
 
-**A**: Currently, go-starter includes 4 core templates. Future versions will include:
+**A**: Currently, go-starter includes 4 core blueprints. Future versions will include:
 - Clean Architecture patterns
 - Domain-Driven Design (DDD)
 - Hexagonal Architecture
-- Microservice templates
+- Microservice blueprints
 - Event-driven architectures
 
 ### Troubleshooting Questions

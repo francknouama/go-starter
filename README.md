@@ -28,8 +28,8 @@ A comprehensive Go project generator that combines the simplicity of create-reac
 
 ### 🚀 v1.3.1 - Current Release
 
-- 📦 **4 Production Templates**: Web API, CLI, Library, AWS Lambda
-- 🎯 **16 Tested Combinations**: All template+logger combinations validated
+- 📦 **4 Production Blueprints**: Web API, CLI, Library, AWS Lambda
+- 🎯 **16 Tested Combinations**: All blueprint+logger combinations validated
 - 🔧 **Enhanced UI**: Beautiful terminal interface with Fang integration
 - 📝 **Comprehensive Docs**: Complete guides, FAQs, and troubleshooting
 - 🤝 **Community Ready**: GitHub issue/PR templates and contribution guidelines
@@ -40,14 +40,14 @@ A comprehensive Go project generator that combines the simplicity of create-reac
 ### 🛣️ Strategic Roadmap - Next Phase
 See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) and [SAAS_BACKLOG.md](SAAS_BACKLOG.md) for detailed plans:
 
-**Phase 2A: Enterprise Templates (High Priority)**
+**Phase 2A: Enterprise Blueprints (High Priority)**
 - 🏗️ **Advanced Architecture Patterns**: Clean Architecture, DDD, Hexagonal, Event-driven
-- 🔄 **Distributed Systems**: Microservice, Monolith, Go Workspace templates
-- 🎯 **8 Missing Templates**: Complete original 12-template vision (67% remaining)
+- 🔄 **Distributed Systems**: Microservice, Monolith, Go Workspace blueprints
+- 🎯 **8 Missing Blueprints**: Complete original 12-blueprint vision (67% remaining)
 
 **Phase 2B: SaaS Platform (Parallel Development)**
 - 🌐 **Web UI Interface**: React-based project generator with live preview
-- 💰 **Business Model**: Freemium SaaS ($9-29/month) with template marketplace
+- 💰 **Business Model**: Freemium SaaS ($9-29/month) with blueprint marketplace
 - 🚀 **6-8 Week Timeline**: MVP with core generation and user management
 - 🤝 **Revenue Diversification**: Open source CLI + SaaS platform + marketplace
 
@@ -252,23 +252,23 @@ logger.Debug("Processing request", "method", "GET", "path", "/api/users")
 ## 📊 Implementation Status
 
 ### ✅ Currently Available (v1.0.0)
-| Feature | Templates | Loggers | Status |
+| Feature | Blueprints | Loggers | Status |
 |---------|-----------|---------|--------|
 | **Project Types** | 4 (web-api, cli, library, lambda) | 4 (slog, zap, logrus, zerolog) | ✅ Production Ready |
-| **Template Combinations** | 16 total combinations | All tested | ✅ Fully Validated |
+| **Blueprint Combinations** | 16 total combinations | All tested | ✅ Fully Validated |
 | **Frameworks** | Gin (web), Cobra (cli) | - | ✅ Complete |
 | **Architecture Patterns** | Standard | - | ✅ Complete |
-| **Docker Support** | All templates | - | ✅ Complete |
+| **Docker Support** | All blueprints | - | ✅ Complete |
 | **CI/CD Integration** | GitHub Actions | - | ✅ Complete |
 
 ### 🔮 Planned for Future Releases
 | Feature | Target | Status |
 |---------|--------|--------|
-| Clean Architecture Templates | Phase 8 | ❌ Not Started |
+| Clean Architecture Blueprints | Phase 8 | ❌ Not Started |
 | Additional Web Frameworks | Phase 7 | ❌ Not Started |
 | Database Driver Selection | Phase 7 | ❌ Not Started |
 | Web UI Interface | Phase 9 | ❌ Not Started |
-| Microservice Templates | Phase 8 | ❌ Not Started |
+| Microservice Blueprints | Phase 8 | ❌ Not Started |
 
 *See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed development timeline*
 
@@ -381,17 +381,17 @@ make lint
 
 ## Roadmap
 
-- [x] **Phase 1-4: Core Templates + Logger Selector** ✅
-  - [x] Web API template with Gin framework
-  - [x] CLI application template with Cobra
-  - [x] Go library template for reusable packages
-  - [x] AWS Lambda template for serverless functions
+- [x] **Phase 1-4: Core Blueprints + Logger Selector** ✅
+  - [x] Web API blueprint with Gin framework
+  - [x] CLI application blueprint with Cobra
+  - [x] Go library blueprint for reusable packages
+  - [x] AWS Lambda blueprint for serverless functions
   - [x] Logger selector (slog, zap, logrus, zerolog)
   - [x] Conditional dependencies and consistent interfaces
 - [ ] **Phase 5: Enhancements** (Optional)
   - [ ] Additional frameworks and database drivers
   - [ ] Web UI with live preview
-  - [ ] Template marketplace and GitHub integration
+  - [ ] Blueprint marketplace and GitHub integration
 
 ## License
 
@@ -401,14 +401,14 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - Inspired by create-react-app and Spring Initializr
 - Built with [Cobra](https://github.com/spf13/cobra) and [Viper](https://github.com/spf13/viper)
-- Templates use Go's text/template with [Sprig](https://github.com/Masterminds/sprig) functions
+- Blueprint files use Go's text/template with [Sprig](https://github.com/Masterminds/sprig) functions
 
 ## 📚 Documentation
 
 ### Core Guides
-- 📋 **[Template Usage Guide](docs/TEMPLATES.md)** - Comprehensive guide for all project types
+- 📋 **[Blueprint Usage Guide](docs/BLUEPRINTS.md)** - Comprehensive guide for all project types
 - 🚀 **[Getting Started](docs/GETTING_STARTED.md)** - Quick start guide and tutorials
-- 🔍 **[Template Comparison](docs/TEMPLATE_COMPARISON.md)** - Detailed comparison to help you choose
+- 🔍 **[Blueprint Comparison](docs/BLUEPRINT_COMPARISON.md)** - Detailed comparison to help you choose
 - 📊 **[Logger Guide](docs/LOGGER_GUIDE.md)** - Deep dive into the logger selector system
 - 🗃️ **[ORM Selection Guide](docs/ORM_GUIDE.md)** - Choose between GORM and raw SQL
 

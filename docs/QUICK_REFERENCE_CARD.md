@@ -77,11 +77,11 @@ go-starter new processor --type=lambda --logger=zerolog
 --force       # Overwrite existing directory
 ```
 
-## Template & Logger Quick Decision
+## Blueprint & Logger Quick Decision
 
 ### By Use Case
 
-| Use Case | Template | Logger | Command |
+| Use Case | Blueprint | Logger | Command |
 |----------|----------|--------|---------|
 | REST API Service | web-api | zap | `go-starter new api --type=web-api --logger=zap` |
 | Developer Tool | cli | logrus | `go-starter new tool --type=cli --logger=logrus` |
@@ -100,7 +100,7 @@ go-starter new processor --type=lambda --logger=zerolog
 
 ## Generated Project Commands
 
-### All Templates Include Makefile
+### All Blueprints Include Makefile
 
 ```bash
 make help         # Show all available commands
@@ -407,8 +407,8 @@ sudo go install github.com/francknouama/go-starter@latest
 
 ### Generation Issues
 ```bash
-# Template not found
-go-starter list  # Check available templates
+# Blueprint not found
+go-starter list  # Check available blueprints
 
 # Invalid module path
 # Use proper format: github.com/username/project

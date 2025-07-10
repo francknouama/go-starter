@@ -9,8 +9,8 @@ Welcome to the comprehensive documentation for go-starter - the powerful Go proj
 - **[Quick Reference Card](QUICK_REFERENCE_CARD.md)** - All commands at a glance
 
 ### Choosing the Right Template
-- **[Template Comparison Guide](TEMPLATE_COMPARISON.md)** - Detailed comparison of all templates
-- **[Template Usage Guide](TEMPLATES.md)** - In-depth guide for each template type
+- **[Blueprint Comparison Guide](BLUEPRINT_COMPARISON.md)** - Detailed comparison of all blueprints
+- **[Blueprint Usage Guide](BLUEPRINTS.md)** - In-depth guide for each blueprint type
 
 ### Technical Guides
 - **[Logger Guide](LOGGER_GUIDE.md)** - Understanding the logger selector system
@@ -19,7 +19,7 @@ Welcome to the comprehensive documentation for go-starter - the powerful Go proj
 ### Strategic Planning & Roadmap
 - **[Project Roadmap](../PROJECT_ROADMAP.md)** - Overall project strategy and timeline
 - **[SaaS Platform Backlog](../SAAS_BACKLOG.md)** - Web UI and business platform development
-- **[Template Implementation Backlog](../TEMPLATE_BACKLOG.md)** - Enterprise template specifications
+- **[Blueprint Implementation Backlog](../BLUEPRINT_BACKLOG.md)** - Enterprise blueprint specifications
 
 ### Help & Support
 - **[FAQ](FAQ.md)** - Frequently asked questions
@@ -88,8 +88,8 @@ go-starter new function --type=lambda --logger=zerolog
 docs/
 ├── README.md                    # This file
 ├── GETTING_STARTED.md          # Installation and first steps
-├── TEMPLATE_COMPARISON.md      # Choosing the right template
-├── TEMPLATES.md                # Detailed template documentation
+├── BLUEPRINT_COMPARISON.md      # Choosing the right blueprint
+├── BLUEPRINTS.md                # Detailed blueprint documentation
 ├── LOGGER_GUIDE.md             # Logger selector deep dive
 ├── ORM_GUIDE.md                # Database interaction patterns
 ├── QUICK_REFERENCE_CARD.md     # Commands and patterns reference

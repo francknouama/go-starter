@@ -37,7 +37,7 @@ var (
 var newCmd = &cobra.Command{
 	Use:   "new [project-name]",
 	Short: "Create a new Go project",
-	Long: `Create a new Go project with the specified template and configuration.
+	Long: `Create a new Go project with the specified blueprint and configuration.
 
 Examples:
   go-starter new my-api                                          # Interactive mode

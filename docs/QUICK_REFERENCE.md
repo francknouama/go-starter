@@ -19,7 +19,7 @@ go-starter new my-project
 # Direct mode
 go-starter new my-project --type web-api --logger zap
 
-# List available templates
+# List available blueprints
 go-starter list
 
 # Show version

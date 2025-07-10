@@ -13,13 +13,13 @@ import (
 // listCmd represents the list command
 var listCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List available project templates",
-	Long: `Display all available project templates with their descriptions.
+	Short: "List available project blueprints",
+	Long: `Display all available project blueprints with their descriptions.
 
-This command shows all templates that can be used to generate new projects,
+This command shows all blueprints that can be used to generate new projects,
 including their type, architecture, and a brief description.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		listTemplates()
+		listBlueprints()
 	},
 }
 
@@ -27,18 +27,18 @@ func init() {
 	rootCmd.AddCommand(listCmd)
 }
 
-func listTemplates() {
+func listBlueprints() {
 	registry := templates.NewRegistry()
-	templateList := registry.List()
+	blueprintList := registry.List()
 
-	if len(templateList) == 0 {
+	if len(blueprintList) == 0 {
 		noTemplatesStyle := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("9")).
 			MarginLeft(2)
 
-		fmt.Println(noTemplatesStyle.Render("No templates available yet."))
-		fmt.Println(noTemplatesStyle.Render("Templates will be added in upcoming releases."))
+		fmt.Println(noTemplatesStyle.Render("No blueprints available yet."))
+		fmt.Println(noTemplatesStyle.Render("Blueprints will be added in upcoming releases."))
 		return
 	}
 
@@ -53,12 +53,12 @@ func listTemplates() {
 		PaddingLeft(1).
 		PaddingRight(1)
 
-	fmt.Println(headerStyle.Render("🚀 Available Go Project Templates"))
+	fmt.Println(headerStyle.Render("🚀 Available Go Project Blueprints"))
 	fmt.Println()
 
 	// Create table rows
-	for i, template := range templateList {
-		renderTemplate(template, i == len(templateList)-1)
+	for i, blueprint := range blueprintList {
+		renderBlueprint(blueprint, i == len(blueprintList)-1)
 	}
 
 	// Add total count
@@ -68,10 +68,10 @@ func listTemplates() {
 		MarginLeft(2).
 		MarginTop(2)
 
-	fmt.Println(totalStyle.Render(fmt.Sprintf("📊 Total: %d template(s) available", len(templateList))))
+	fmt.Println(totalStyle.Render(fmt.Sprintf("📊 Total: %d blueprint(s) available", len(blueprintList))))
 }
 
-func renderTemplate(template types.Template, isLast bool) {
+func renderBlueprint(blueprint types.Template, isLast bool) {
 	// Define styles
 	idStyle := lipgloss.NewStyle().
 		Bold(true).
@@ -93,16 +93,16 @@ func renderTemplate(template types.Template, isLast bool) {
 		Width(60)
 
 	// Print template information
-	fmt.Println(idStyle.Render("● " + template.ID))
-	fmt.Println(labelStyle.Render("Name:") + valueStyle.Render(template.Name))
-	fmt.Println(labelStyle.Render("Type:") + valueStyle.Render(template.Type))
+	fmt.Println(idStyle.Render("● " + blueprint.ID))
+	fmt.Println(labelStyle.Render("Name:") + valueStyle.Render(blueprint.Name))
+	fmt.Println(labelStyle.Render("Type:") + valueStyle.Render(blueprint.Type))
 
-	if template.Architecture != "" {
-		fmt.Println(labelStyle.Render("Architecture:") + valueStyle.Render(template.Architecture))
+	if blueprint.Architecture != "" {
+		fmt.Println(labelStyle.Render("Architecture:") + valueStyle.Render(blueprint.Architecture))
 	}
 
 	// Wrap description text
-	wrappedDesc := wrapText(template.Description, 60)
+	wrappedDesc := wrapText(blueprint.Description, 60)
 	fmt.Println(labelStyle.Render("Description:"))
 	for _, line := range strings.Split(wrappedDesc, "\n") {
 		if strings.TrimSpace(line) != "" {

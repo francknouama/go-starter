@@ -1,24 +1,24 @@
-# Template Usage Guide
+# Blueprint Usage Guide
 
-Complete guide to using go-starter templates for different project types.
+Complete guide to using go-starter blueprints for different project types.
 
 ## 📊 Implementation Status (v1.3.1)
 
-### ✅ Production Ready Templates (4/12)
+### ✅ Production Ready Blueprints (4/12)
 
-| Template | Status | Loggers | Architecture | Release |
+| Blueprint | Status | Loggers | Architecture | Release |
 |----------|--------|---------|--------------|---------|
 | **Web API** | ✅ Production Ready | slog, zap, logrus, zerolog | Standard | v1.0.0+ |
 | **CLI Application** | ✅ Production Ready | slog, zap, logrus, zerolog | Standard | v1.0.0+ |
 | **Go Library** | ✅ Production Ready | slog, zap, logrus, zerolog | Standard | v1.0.0+ |
 | **AWS Lambda** | ✅ Production Ready | slog, zap, logrus, zerolog | Standard | v1.0.0+ |
 
-**Current Coverage**: 4/12 templates (33% complete) - **8 templates remaining**  
-**Total Combinations Available**: 16 (4 templates × 4 loggers) - All tested and validated ✅
+**Current Coverage**: 4/12 blueprints (33% complete) - **8 blueprints remaining**  
+**Total Combinations Available**: 16 (4 blueprints × 4 loggers) - All tested and validated ✅
 
-### 🚧 Planned Templates (8/12) - See [TEMPLATE_BACKLOG.md](../TEMPLATE_BACKLOG.md)
+### 🚧 Planned Blueprints (8/12) - See [TEMPLATE_BACKLOG.md](../TEMPLATE_BACKLOG.md)
 
-| Template | Priority | Architecture | Timeline |
+| Blueprint | Priority | Architecture | Timeline |
 |----------|----------|--------------|----------|
 | **Clean Architecture Web API** | High | clean | Phase 2A (Weeks 1-2) |
 | **DDD Web API** | High | ddd | Phase 2A (Weeks 2-3) |
@@ -29,25 +29,25 @@ Complete guide to using go-starter templates for different project types.
 | **Monolith** | Lower | monolith | Phase 2C (Weeks 8-9) |
 | **Go Workspace** | Lower | workspace | Phase 2C (Weeks 9-10) |
 
-**Next Phase Goal**: 12/12 templates (100% complete) with enterprise architecture patterns
+**Next Phase Goal**: 12/12 blueprints (100% complete) with enterprise architecture patterns
 
 ## Table of Contents
 
-- [Web API Template](#web-api-template) ✅
-- [CLI Application Template](#cli-application-template) ✅  
-- [Go Library Template](#go-library-template) ✅
-- [AWS Lambda Template](#aws-lambda-template) ✅
+- [Web API Blueprint](#web-api-blueprint) ✅
+- [CLI Application Blueprint](#cli-application-blueprint) ✅  
+- [Go Library Blueprint](#go-library-blueprint) ✅
+- [AWS Lambda Blueprint](#aws-lambda-blueprint) ✅
 - [Logger Integration](#logger-integration) ✅
 - [Best Practices](#best-practices) ✅
 
 ---
 
-## Web API Template ✅
+## Web API Blueprint ✅
 
 **Status**: ✅ Production Ready | **Framework**: Gin | **Architectures**: Standard
 
 ### Overview
-The Web API template creates a production-ready REST API using the Gin framework with best practices for structure, middleware, and deployment. Currently implements the standard architecture pattern with plans for Clean Architecture, DDD, and Hexagonal patterns in future releases.
+The Web API blueprint creates a production-ready REST API using the Gin framework with best practices for structure, middleware, and deployment. Currently implements the standard architecture pattern with plans for Clean Architecture, DDD, and Hexagonal patterns in future releases.
 
 ### Quick Start
 ```bash
@@ -218,7 +218,7 @@ make build
 
 ---
 
-## CLI Application Template ✅
+## CLI Application Blueprint ✅
 
 **Status**: ✅ Production Ready | **Framework**: Cobra | **Architectures**: Standard
 
@@ -344,7 +344,7 @@ make release      # Build release binaries
 
 ---
 
-## Go Library Template ✅
+## Go Library Blueprint ✅
 
 **Status**: ✅ Production Ready | **Type**: Library Package | **Architectures**: Standard
 
@@ -473,7 +473,7 @@ make release      # Prepare for release
 
 ---
 
-## AWS Lambda Template ✅
+## AWS Lambda Blueprint ✅
 
 **Status**: ✅ Production Ready | **Runtime**: AWS Lambda Go | **Architectures**: Standard
 
@@ -629,7 +629,7 @@ make invoke EVENT=events/api-gateway.json
 ## Logger Integration
 
 ### Overview
-All templates include sophisticated logger integration with consistent interfaces across four popular Go logging libraries.
+All blueprints include sophisticated logger integration with consistent interfaces across four popular Go logging libraries.
 
 ### Supported Loggers
 
@@ -664,7 +664,7 @@ logger.Error().Err(err).Str("table", "users").Msg("Database error")
 ```
 
 ### Logger Factory Pattern
-Each template includes a logger factory that provides a consistent interface:
+Each blueprint includes a logger factory that provides a consistent interface:
 
 ```go
 // internal/logger/factory.go
@@ -865,4 +865,4 @@ db.SetMaxIdleConns(5)
 db.SetConnMaxLifetime(time.Hour)
 ```
 
-This completes the comprehensive template usage guide. Each template is designed with production-ready practices and can be customized for specific needs while maintaining consistency across all logger implementations.
+This completes the comprehensive blueprint usage guide. Each blueprint is designed with production-ready practices and can be customized for specific needs while maintaining consistency across all logger implementations.

@@ -130,7 +130,7 @@ The `tests/helpers/` directory contains utility functions to simplify writing te
 We use `github.com/stretchr/testify/mock` for creating mock implementations of interfaces, allowing us to isolate units under test from their dependencies.
 
 *   **`MockPrompter`**: Mocks the interactive CLI prompts.
-*   **`MockTemplateRegistry`**: Mocks the template registry for testing template loading and selection logic.
+*   **`MockBlueprintRegistry`**: Mocks the blueprint registry for testing blueprint loading and selection logic.
 *   **`MockFileSystem`**: Mocks file system operations for testing code that interacts with the file system without actual disk I/O.
 
 ## 🚀 CI/CD Integration

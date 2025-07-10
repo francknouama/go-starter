@@ -1,22 +1,22 @@
-# Template Comparison Guide
+# Blueprint Comparison Guide
 
-A comprehensive comparison of all go-starter templates to help you choose the right starting point for your project.
+A comprehensive comparison of all go-starter blueprints to help you choose the right starting point for your project.
 
 ## Quick Decision Matrix
 
-| Template | Best For | Not Ideal For | Key Features | Logger Recommendation |
+| Blueprint | Best For | Not Ideal For | Key Features | Logger Recommendation |
 |----------|----------|---------------|--------------|----------------------|
 | **Web API** | REST services, microservices, backend APIs | CLI tools, libraries, static sites | HTTP routing, middleware, database integration | `zap` for high-traffic, `slog` for standard |
 | **CLI** | Command-line tools, scripts, automation | Web services, libraries | Cobra commands, config management, completions | `logrus` for rich output, `slog` for simplicity |
 | **Library** | Reusable packages, SDKs, shared code | Standalone applications | Clean API, examples, minimal dependencies | `slog` for compatibility, minimal interface |
 | **Lambda** | Serverless functions, event processing | Long-running services, stateful apps | AWS integration, CloudWatch logging, SAM deploy | `zerolog` for JSON logs, `zap` for performance |
 
-## Detailed Template Comparison
+## Detailed Blueprint Comparison
 
-### 1. Web API Template
+### 1. Web API Blueprint
 
 #### Overview
-The Web API template creates a production-ready REST API server with comprehensive features for building scalable web services.
+The Web API blueprint creates a production-ready REST API server with comprehensive features for building scalable web services.
 
 #### Architecture
 ```
@@ -96,10 +96,10 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 ---
 
-### 2. CLI Application Template
+### 2. CLI Application Blueprint
 
 #### Overview
-The CLI template creates a feature-rich command-line application using the Cobra framework with professional CLI patterns.
+The CLI blueprint creates a feature-rich command-line application using the Cobra framework with professional CLI patterns.
 
 #### Architecture
 ```
@@ -174,10 +174,10 @@ Supports multiple file formats and concurrent processing.`,
 
 ---
 
-### 3. Go Library Template
+### 3. Go Library Blueprint
 
 #### Overview
-The Library template creates a well-structured Go package designed for reuse with clean APIs and comprehensive documentation.
+The Library blueprint creates a well-structured Go package designed for reuse with clean APIs and comprehensive documentation.
 
 #### Architecture
 ```
@@ -253,10 +253,10 @@ func WithLogger(logger Logger) Option {
 
 ---
 
-### 4. AWS Lambda Template
+### 4. AWS Lambda Blueprint
 
 #### Overview
-The Lambda template creates a serverless function optimized for AWS Lambda with API Gateway integration and CloudWatch logging.
+The Lambda blueprint creates a serverless function optimized for AWS Lambda with API Gateway integration and CloudWatch logging.
 
 #### Architecture
 ```
@@ -316,7 +316,7 @@ func HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (
 }
 ```
 
-## Logger Selection by Template
+## Logger Selection by Blueprint
 
 ### Web API Logger Recommendations
 
@@ -396,7 +396,7 @@ Start: What are you building?
 ## Migration Paths
 
 ### From Web API to Microservice
-1. Start with Web API template
+1. Start with Web API blueprint
 2. Add gRPC support when needed
 3. Implement service mesh integration
 4. Add distributed tracing
@@ -419,7 +419,7 @@ Start: What are you building?
 3. Implement persistent connections
 4. Add stateful components
 
-## Best Practices by Template Type
+## Best Practices by Blueprint Type
 
 ### Web API Best Practices
 - Use middleware for cross-cutting concerns
@@ -455,11 +455,11 @@ Start: What are you building?
 
 ## Conclusion
 
-Choose your template based on:
+Choose your blueprint based on:
 1. **Application type**: What you're building
 2. **Deployment target**: Where it will run
 3. **Performance needs**: Request volume and latency
 4. **Team experience**: Familiarity with patterns
 5. **Future growth**: Scalability requirements
 
-Remember: You can always generate multiple projects to experiment with different templates and find the best fit for your needs.
+Remember: You can always generate multiple projects to experiment with different blueprints and find the best fit for your needs.

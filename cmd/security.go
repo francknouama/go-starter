@@ -1,7 +1,7 @@
 /*
 Copyright © 2024 go-starter
 
-Security command for scanning templates and project configurations for security vulnerabilities.
+Security command for scanning blueprints and project configurations for security vulnerabilities.
 */
 package cmd
 
@@ -19,32 +19,32 @@ import (
 var securityCmd = &cobra.Command{
 	Use:   "security",
 	Short: "Security scanning and validation tools",
-	Long: `Security command provides tools for scanning templates, configurations, 
+	Long: `Security command provides tools for scanning blueprints, configurations, 
 and generated projects for potential security vulnerabilities.
 
 Available subcommands:
-  scan-templates  - Scan template files for security issues
+  scan-blueprints  - Scan blueprint files for security issues
   scan-config     - Validate project configuration for security issues
   scan-project    - Scan generated project for security vulnerabilities`,
 }
 
-// scanTemplatesCmd represents the scan-templates command
-var scanTemplatesCmd = &cobra.Command{
-	Use:   "scan-templates [path]",
-	Short: "Scan template files for security vulnerabilities",
-	Long: `Scan template files in the specified directory for security vulnerabilities
+// scanBlueprintsCmd represents the scan-blueprints command
+var scanBlueprintsCmd = &cobra.Command{
+	Use:   "scan-blueprints [path]",
+	Short: "Scan blueprint files for security vulnerabilities",
+	Long: `Scan blueprint files in the specified directory for security vulnerabilities
 such as template injection, path traversal, and unsafe function usage.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		templatePath := "templates"
+		blueprintPath := "blueprints"
 		if len(args) > 0 {
-			templatePath = args[0]
+			blueprintPath = args[0]
 		}
 
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		output, _ := cmd.Flags().GetString("output")
 
-		return scanTemplates(templatePath, verbose, output)
+		return scanBlueprints(blueprintPath, verbose, output)
 	},
 }
 
@@ -70,28 +70,28 @@ dangerous input values, path traversal attempts, and malicious module paths.`,
 
 func init() {
 	rootCmd.AddCommand(securityCmd)
-	securityCmd.AddCommand(scanTemplatesCmd)
+	securityCmd.AddCommand(scanBlueprintsCmd)
 	securityCmd.AddCommand(scanConfigCmd)
 
 	// Add flags for all scan commands
-	for _, cmd := range []*cobra.Command{scanTemplatesCmd, scanConfigCmd} {
+	for _, cmd := range []*cobra.Command{scanBlueprintsCmd, scanConfigCmd} {
 		cmd.Flags().BoolP("verbose", "v", false, "Verbose output")
 		cmd.Flags().StringP("output", "o", "console", "Output format (console, json)")
 	}
 }
 
-// scanTemplates scans template files for security issues
-func scanTemplates(templatePath string, verbose bool, outputFormat string) error {
+// scanBlueprints scans blueprint files for security issues
+func scanBlueprints(blueprintPath string, verbose bool, outputFormat string) error {
 	validator := security.NewTemplateSecurityValidator()
 	var allViolations []security.SecurityViolation
 
-	// Walk through all template files
-	err := filepath.Walk(templatePath, func(path string, info os.FileInfo, err error) error {
+	// Walk through all blueprint files
+	err := filepath.Walk(blueprintPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// Skip directories and non-template files
+		// Skip directories and non-blueprint files
 		if info.IsDir() || !strings.HasSuffix(path, ".tmpl") {
 			return nil
 		}
@@ -100,14 +100,14 @@ func scanTemplates(templatePath string, verbose bool, outputFormat string) error
 			fmt.Printf("Scanning: %s\n", path)
 		}
 
-		// Read template content
+		// Read blueprint content
 		content, err := os.ReadFile(path)
 		if err != nil {
 			fmt.Printf("Error reading %s: %v\n", path, err)
 			return nil
 		}
 
-		// Validate template file
+		// Validate blueprint file
 		if err := validator.ValidateTemplateFile(path, string(content)); err != nil {
 			fmt.Printf("Security issue in %s: %v\n", path, err)
 		}
@@ -123,7 +123,7 @@ func scanTemplates(templatePath string, verbose bool, outputFormat string) error
 	})
 
 	if err != nil {
-		return fmt.Errorf("error scanning templates: %w", err)
+		return fmt.Errorf("error scanning blueprints: %w", err)
 	}
 
 	// Output results

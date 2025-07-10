@@ -327,13 +327,13 @@ func TestNewFeature_WithInvalidInput_ReturnsError(t *testing.T) {
 
 ## 🎯 Project-Specific Guidelines
 
-### Template Testing
+### Blueprint Testing
 
-When working on templates:
+When working on blueprints:
 
 ```go
-func TestTemplate_Generation(t *testing.T) {
-    // Test template parsing
+func TestBlueprint_Generation(t *testing.T) {
+    // Test blueprint parsing
     // Test variable substitution
     // Test file generation
     // Test generated project compiles

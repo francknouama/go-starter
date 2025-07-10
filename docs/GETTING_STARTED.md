@@ -445,9 +445,9 @@ Your application code remains the same - only the logger implementation changes!
 
 Now that you've mastered the basics:
 
-1. **Explore Templates**: Try different project types to see what works best
+1. **Explore Blueprints**: Try different project types to see what works best
 2. **Experiment with Loggers**: Test different loggers to understand their strengths
-3. **Read Template Docs**: Check the template-specific documentation for deeper insights
+3. **Read Blueprint Docs**: Check the blueprint-specific documentation for deeper insights
 4. **Join the Community**: Star the [GitHub repo](https://github.com/francknouama/go-starter) and report issues
 
 ## Getting Help
