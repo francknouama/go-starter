@@ -13,25 +13,25 @@ import (
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
-func setupTestTemplates(t *testing.T) {
+func setupTestBlueprints(t *testing.T) {
 	t.Helper()
 
 	// Get the project root for tests
 	_, file, _, _ := runtime.Caller(0)
 	projectRoot := filepath.Dir(filepath.Dir(file))
-	templatesDir := filepath.Join(projectRoot, "blueprints")
+	blueprintsDir := filepath.Join(projectRoot, "blueprints")
 
 	// Verify blueprints directory exists
-	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
-		t.Fatalf("Blueprints directory not found at: %s", templatesDir)
+	if _, err := os.Stat(blueprintsDir); os.IsNotExist(err) {
+		t.Fatalf("Blueprints directory not found at: %s", blueprintsDir)
 	}
 
 	// Set up the filesystem for tests using os.DirFS
-	templates.SetTemplatesFS(os.DirFS(templatesDir))
+	templates.SetTemplatesFS(os.DirFS(blueprintsDir))
 }
 
 func TestListBlueprints(t *testing.T) {
-	setupTestTemplates(t)
+	setupTestBlueprints(t)
 	
 	// Capture stdout
 	oldStdout := os.Stdout
