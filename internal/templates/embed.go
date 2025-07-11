@@ -18,14 +18,14 @@ func GetTemplatesFS() fs.FS {
 		panic("templates filesystem not initialized - ensure SetTemplatesFS is called from main")
 	}
 
-	// Check if we need to strip the "templates" prefix
+	// Check if we need to strip the "blueprints" prefix
 	// For embedded FS from root, we need to strip it
-	// For test DirFS pointing directly to templates, we don't
-	if _, err := fs.Stat(templatesFS, "templates"); err == nil {
-		// This is likely the embedded FS with "templates" directory
-		subFS, err := fs.Sub(templatesFS, "templates")
+	// For test DirFS pointing directly to blueprints, we don't
+	if _, err := fs.Stat(templatesFS, "blueprints"); err == nil {
+		// This is likely the embedded FS with "blueprints" directory
+		subFS, err := fs.Sub(templatesFS, "blueprints")
 		if err != nil {
-			panic("failed to create sub-filesystem for templates: " + err.Error())
+			panic("failed to create sub-filesystem for blueprints: " + err.Error())
 		}
 		return subFS
 	}

@@ -18,7 +18,7 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"{{end}}
 {{if eq .Framework "chi"}}	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"{{end}}{{if and (eq .Framework "stdlib") (ne .DatabaseDriver "")}}	"strings"{{end}}
+	"github.com/go-chi/chi/v5/middleware"{{end}}{{if and (eq .Framework "stdlib") (ne .AuthType "") (ne .DatabaseDriver "")}}	"strings"{{end}}
 
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/handlers"
@@ -26,6 +26,8 @@ import (
 {{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/database"
 	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/services"
+{{- else if ne .AuthType ""}}
 	"{{.ModulePath}}/internal/services"
 {{- end}}
 )
@@ -76,6 +78,13 @@ func main() {
 	// Initialize services
 	userService := services.NewUserService(userRepo)
 {{- end}}
+{{- if eq .AuthType "jwt"}}
+	// Initialize auth service
+	authService := services.NewAuthService({{- if ne .DatabaseDriver ""}}userService{{- else}}nil{{- end}}, cfg.JWT.Secret, time.Duration(cfg.JWT.Expiration)*time.Hour)
+{{- else if ne .AuthType ""}}
+	// Initialize auth service
+	authService := services.NewAuthService({{- if ne .DatabaseDriver ""}}userService{{- else}}nil{{- end}}, "default-secret", 24*time.Hour)
+{{- end}}
 
 	// Initialize router and middleware
 {{if eq .Framework "gin"}}	if cfg.Environment == "production" {
@@ -98,8 +107,9 @@ func main() {
 		// Public routes
 		public := v1.Group("/")
 		{
-			public.POST("/auth/login", handlers.Login)
-			public.POST("/auth/register", handlers.Register)
+			authHandler := handlers.NewAuthHandler(authService)
+			public.POST("/auth/login", authHandler.Login)
+			public.POST("/auth/register", authHandler.Register)
 		}
 
 		// Protected routes  
@@ -112,6 +122,9 @@ func main() {
 			protected.GET("/users/:id", userHandler.GetUser)
 			protected.PUT("/users/:id", userHandler.UpdateUser)
 			protected.DELETE("/users/:id", userHandler.DeleteUser)
+{{- else}}
+			// Add your protected routes here
+			_ = protected // Placeholder to avoid unused variable error
 {{- end}}
 		}
 {{- else}}
@@ -358,7 +371,8 @@ func main() {
 		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
 	}{{end}}{{if eq .Framework "gin"}}	// Gin doesn't have graceful shutdown built-in, but we can implement it
 	_ = ctx // placeholder{{end}}{{if or (eq .Framework "chi") (eq .Framework "stdlib")}}	// Chi/stdlib uses standard http.Server, implement graceful shutdown if needed
-	_ = ctx // placeholder{{end}}{{else}}	// Fiber shutdown
+	_ = ctx // placeholder{{end}}
+{{else}}	// Fiber shutdown
 	if err := router.Shutdown(); err != nil {
 		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
 	}
