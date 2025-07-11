@@ -7,7 +7,7 @@ import (
 	"github.com/francknouama/go-starter/internal/templates"
 )
 
-//go:embed all:templates
+//go:embed all:blueprints
 var templatesFS embed.FS
 
 func main() {

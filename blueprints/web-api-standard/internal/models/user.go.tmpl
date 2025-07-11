@@ -1,0 +1,64 @@
+{{- if or (ne .DatabaseDriver "") (ne .AuthType "")}}
+package models
+
+import (
+	"time"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- end}}
+)
+
+// User represents a user in the system
+type User struct {
+	{{- if eq .DatabaseORM "gorm"}}
+	ID        uint           `json:"id" gorm:"primaryKey"`
+	Name      string         `json:"name" gorm:"not null"`
+	Email     string         `json:"email" gorm:"uniqueIndex;not null"`
+	Password  string         `json:"-" gorm:"not null"` // Password is excluded from JSON
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"-" gorm:"index"` // Soft delete
+	{{- else}}
+	ID        uint      `json:"id" db:"id"`
+	Name      string    `json:"name" db:"name"`
+	Email     string    `json:"email" db:"email"`
+	Password  string    `json:"-" db:"password"` // Password is excluded from JSON
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	{{- end}}
+}
+
+// CreateUserRequest represents the request payload for creating a user
+type CreateUserRequest struct {
+	Name  string `json:"name" binding:"required,min=2,max=100"`
+	Email string `json:"email" binding:"required,email"`
+}
+
+// UpdateUserRequest represents the request payload for updating a user
+type UpdateUserRequest struct {
+	Name  *string `json:"name,omitempty" binding:"omitempty,min=2,max=100"`
+	Email *string `json:"email,omitempty" binding:"omitempty,email"`
+}
+
+{{- if ne .AuthType ""}}
+// LoginRequest represents the request payload for user login
+type LoginRequest struct {
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6"`
+}
+
+// RegisterRequest represents the request payload for user registration
+type RegisterRequest struct {
+	Name     string `json:"name" binding:"required,min=2,max=100"`
+	Email    string `json:"email" binding:"required,email"`
+	Password string `json:"password" binding:"required,min=6,max=100"`
+}
+{{- end}}
+
+// TableName returns the table name for the User model
+{{- if eq .DatabaseORM "gorm"}}
+func (User) TableName() string {
+	return "users"
+}
+{{- end}}
+{{- end}}

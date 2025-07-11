@@ -16,11 +16,11 @@ func setupTestTemplates(t *testing.T) {
 	// Get the project root for tests
 	_, file, _, _ := runtime.Caller(0)
 	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(file)))
-	templatesDir := filepath.Join(projectRoot, "templates")
+	templatesDir := filepath.Join(projectRoot, "blueprints")
 
-	// Verify templates directory exists
+	// Verify blueprints directory exists
 	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
-		t.Fatalf("Templates directory not found at: %s", templatesDir)
+		t.Fatalf("Blueprints directory not found at: %s", templatesDir)
 	}
 
 	// Set up the filesystem for tests using os.DirFS

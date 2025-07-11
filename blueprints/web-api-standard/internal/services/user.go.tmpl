@@ -1,0 +1,157 @@
+{{- if or (ne .DatabaseDriver "") (ne .AuthType "")}}
+package services
+
+import (
+	"errors"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- else}}
+	"database/sql"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/repository"
+)
+
+var (
+	ErrUserNotFound = errors.New("user not found")
+	ErrUserExists   = errors.New("user already exists")
+)
+
+// UserService defines the interface for user business logic
+type UserService interface {
+	GetUsers(page, limit int) ([]models.User, int, error)
+	GetUserByID(id uint) (*models.User, error)
+	GetUserByEmail(email string) (*models.User, error)
+	CreateUser(req models.CreateUserRequest) (*models.User, error)
+	UpdateUser(id uint, req models.UpdateUserRequest) (*models.User, error)
+	DeleteUser(id uint) error
+}
+
+// userService implements UserService
+type userService struct {
+	userRepo repository.UserRepository
+}
+
+// NewUserService creates a new user service
+func NewUserService(userRepo repository.UserRepository) UserService {
+	return &userService{
+		userRepo: userRepo,
+	}
+}
+
+// GetUsers retrieves a paginated list of users
+func (s *userService) GetUsers(page, limit int) ([]models.User, int, error) {
+	offset := (page - 1) * limit
+	
+	users, err := s.userRepo.GetAll(limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	total, err := s.userRepo.Count()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}
+
+// GetUserByID retrieves a user by ID
+func (s *userService) GetUserByID(id uint) (*models.User, error) {
+	user, err := s.userRepo.GetByID(id)
+	if err != nil {
+		{{- if eq .DatabaseORM "gorm"}}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		{{- else}}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		{{- end}}
+		return nil, err
+	}
+	return user, nil
+}
+
+// GetUserByEmail retrieves a user by email
+func (s *userService) GetUserByEmail(email string) (*models.User, error) {
+	user, err := s.userRepo.GetByEmail(email)
+	if err != nil {
+		{{- if eq .DatabaseORM "gorm"}}
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		{{- else}}
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		{{- end}}
+		return nil, err
+	}
+	return user, nil
+}
+
+// CreateUser creates a new user
+func (s *userService) CreateUser(req models.CreateUserRequest) (*models.User, error) {
+	// Check if user already exists
+	_, err := s.GetUserByEmail(req.Email)
+	if err == nil {
+		return nil, ErrUserExists
+	}
+	if err != ErrUserNotFound {
+		return nil, err
+	}
+
+	user := &models.User{
+		Name:  req.Name,
+		Email: req.Email,
+		// Note: Password should be handled by authentication service
+		// This is a basic user service without password management
+	}
+
+	if err := s.userRepo.Create(user); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// UpdateUser updates an existing user
+func (s *userService) UpdateUser(id uint, req models.UpdateUserRequest) (*models.User, error) {
+	user, err := s.GetUserByID(id)
+	if err != nil {
+		return nil, err
+	}
+
+	// Update fields if provided
+	if req.Name != nil {
+		user.Name = *req.Name
+	}
+	if req.Email != nil {
+		// Check if email is already taken by another user
+		if existingUser, err := s.GetUserByEmail(*req.Email); err == nil && existingUser.ID != id {
+			return nil, ErrUserExists
+		}
+		user.Email = *req.Email
+	}
+
+	if err := s.userRepo.Update(user); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// DeleteUser deletes a user by ID
+func (s *userService) DeleteUser(id uint) error {
+	// Check if user exists
+	_, err := s.GetUserByID(id)
+	if err != nil {
+		return err
+	}
+
+	return s.userRepo.Delete(id)
+}
+{{- end}}

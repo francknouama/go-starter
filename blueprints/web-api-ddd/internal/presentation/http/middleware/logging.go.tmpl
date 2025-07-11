@@ -1,0 +1,168 @@
+package middleware
+
+import (
+{{- if eq .Framework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "fiber" }}
+	"time"
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "echo" }}
+	"time"
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "chi" }}
+	"net/http"
+	"time"
+	"github.com/go-chi/chi/v5/middleware"
+{{- end }}
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+{{- if eq .Framework "gin" }}
+// GinLogger creates a Gin middleware for structured logging
+func GinLogger(log *logger.Logger) gin.HandlerFunc {
+	return gin.LoggerWithConfig(gin.LoggerConfig{
+		Formatter: func(param gin.LogFormatterParams) string {
+			log.Info("HTTP Request",
+				"method", param.Method,
+				"path", param.Path,
+				"status", param.StatusCode,
+				"latency", param.Latency,
+				"client_ip", param.ClientIP,
+				"user_agent", param.Request.UserAgent(),
+			)
+			return ""
+		},
+		SkipPaths: []string{"/health"},
+	})
+}
+
+// LoggingMiddleware provides request logging (legacy function)
+func LoggingMiddleware() gin.HandlerFunc {
+	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		return ""
+	})
+}
+{{- else if eq .Framework "fiber" }}
+// FiberLogger creates a Fiber middleware for structured logging
+func FiberLogger(log *logger.Logger) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Start timer
+		start := time.Now()
+
+		// Process request
+		err := c.Next()
+
+		// Skip logging for health check
+		if c.Path() == "/health" {
+			return err
+		}
+
+		// Calculate latency
+		latency := time.Since(start)
+
+		// Log request details
+		log.Info("HTTP Request",
+			"method", c.Method(),
+			"path", c.Path(),
+			"status", c.Response().StatusCode(),
+			"latency", latency,
+			"client_ip", c.IP(),
+			"user_agent", c.Get("User-Agent"),
+		)
+
+		return err
+	}
+}
+
+// LoggingMiddleware provides request logging (legacy function)
+func LoggingMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		return c.Next()
+	}
+}
+{{- else if eq .Framework "echo" }}
+// EchoLogger creates an Echo middleware for structured logging
+func EchoLogger(log *logger.Logger) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Start timer
+			start := time.Now()
+
+			// Process request
+			err := next(c)
+
+			// Skip logging for health check
+			if c.Path() == "/health" {
+				return err
+			}
+
+			// Calculate latency
+			latency := time.Since(start)
+
+			// Log request details
+			log.Info("HTTP Request",
+				"method", c.Request().Method,
+				"path", c.Path(),
+				"status", c.Response().Status,
+				"latency", latency,
+				"client_ip", c.RealIP(),
+				"user_agent", c.Request().UserAgent(),
+			)
+
+			return err
+		}
+	}
+}
+
+// LoggingMiddleware provides request logging (legacy function)
+func LoggingMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			return next(c)
+		}
+	}
+}
+{{- else if eq .Framework "chi" }}
+// ChiLogger creates a Chi middleware for structured logging
+func ChiLogger(log *logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Start timer
+			start := time.Now()
+
+			// Wrap response writer
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+
+			// Process request
+			next.ServeHTTP(ww, r)
+
+			// Skip logging for health check
+			if r.URL.Path == "/health" {
+				return
+			}
+
+			// Calculate latency
+			latency := time.Since(start)
+
+			// Log request details
+			log.Info("HTTP Request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.Status(),
+				"latency", latency,
+				"client_ip", r.RemoteAddr,
+				"user_agent", r.UserAgent(),
+			)
+		})
+	}
+}
+
+// LoggingMiddleware provides request logging (legacy function)
+func LoggingMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- end }}

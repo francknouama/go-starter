@@ -230,7 +230,7 @@ func TestTemplateFileValidation(t *testing.T) {
 	}{
 		{
 			name:         "Valid template file",
-			templatePath: "templates/web-api/main.go.tmpl",
+			templatePath: "blueprints/web-api/main.go.tmpl",
 			content:      "package main\n\nfunc main() {\n\tprintln(\"{{.ProjectName}}\")\n}",
 			expectError:  false,
 		},
@@ -242,7 +242,7 @@ func TestTemplateFileValidation(t *testing.T) {
 		},
 		{
 			name:         "Dangerous content",
-			templatePath: "templates/safe.tmpl",
+			templatePath: "blueprints/safe.tmpl",
 			content:      "{{.OS.Exit 1}}",
 			expectError:  true,
 		},

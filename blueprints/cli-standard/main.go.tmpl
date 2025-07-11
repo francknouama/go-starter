@@ -1,0 +1,108 @@
+// main.go
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+)
+
+var (
+	cfgFile   string
+	verbose   bool
+	appLogger logger.Logger
+)
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "{{.ProjectName}}",
+	Short: "A CLI application built with Go",
+	Long: `{{.ProjectName}} is a command-line application built with Go and Cobra.
+	
+This application provides a foundation for building robust CLI tools with:
+- Structured logging ({{.Logger}})
+- Configuration management
+- Subcommand support
+- Environment variable integration`,
+	
+	Run: func(cmd *cobra.Command, args []string) {
+		appLogger.InfoWith("{{.ProjectName}} started", logger.Fields{
+			"args": args,
+			"logger": "{{.Logger}}",
+		})
+		
+		fmt.Printf("Welcome to %s!\n", "{{.ProjectName}}")
+		fmt.Println("Use --help to see available commands.")
+	},
+}
+
+func init() {
+	cobra.OnInitialize(initConfig)
+
+	// Global flags
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.{{.ProjectName}}.yaml)")
+	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "verbose output")
+	
+	// Bind flags to viper
+	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+}
+
+// initConfig reads in config file and ENV variables.
+func initConfig() {
+	if cfgFile != "" {
+		// Use config file from the flag.
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Find home directory.
+		home, err := os.UserHomeDir()
+		cobra.CheckErr(err)
+
+		// Search config in home directory with name ".{{.ProjectName}}" (without extension).
+		viper.AddConfigPath(home)
+		viper.AddConfigPath("./configs")
+		viper.AddConfigPath(".")
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".{{.ProjectName}}")
+	}
+
+	viper.AutomaticEnv() // read in environment variables that match
+
+	// If a config file is found, read it in.
+	if err := viper.ReadInConfig(); err == nil && verbose {
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	}
+}
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger factory
+	loggerFactory := logger.NewFactory()
+	
+	// Create logger from configuration
+	appLogger, err = loggerFactory.CreateFromProjectConfig(
+		"{{.Logger}}",
+		cfg.Logging.Level,
+		cfg.Logging.Format,
+		cfg.Logging.Structured,
+	)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Execute the root command
+	if err := rootCmd.Execute(); err != nil {
+		appLogger.ErrorWith("Command execution failed", logger.Fields{"error": err})
+		os.Exit(1)
+	}
+}

@@ -82,7 +82,7 @@ func (l *TemplateLoader) walkTemplatesFromRoot() ([]types.Template, error) {
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to walk templates directory: %w", err)
+		return nil, fmt.Errorf("failed to walk blueprints directory: %w", err)
 	}
 
 	return templates, nil

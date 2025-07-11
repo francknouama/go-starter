@@ -18,7 +18,7 @@ func NewRegistry() *Registry {
 	r := &Registry{
 		templates: make(map[string]types.Template),
 	}
-	// Load embedded templates when they're available
+	// Load embedded blueprints when they're available
 	r.loadEmbeddedTemplates()
 	return r
 }
@@ -123,13 +123,13 @@ func (r *Registry) exists(templateID string) bool {
 	return exists
 }
 
-// loadEmbeddedTemplates loads templates from embedded files
+// loadEmbeddedTemplates loads templates from embedded blueprint files
 func (r *Registry) loadEmbeddedTemplates() {
 	loader := NewTemplateLoader()
 
 	templates, err := loader.LoadAll()
 	if err != nil {
-		fmt.Printf("Warning: Failed to load templates: %v\n", err)
+		fmt.Printf("Warning: Failed to load blueprints: %v\n", err)
 		return
 	}
 
@@ -142,6 +142,6 @@ func (r *Registry) loadEmbeddedTemplates() {
 	if len(templates) > 0 {
 		fmt.Printf("Template registry initialized (%d templates loaded)\n", len(templates))
 	} else {
-		fmt.Println("Warning: No templates found in embedded filesystem")
+		fmt.Println("Warning: No blueprints found in embedded filesystem")
 	}
 }

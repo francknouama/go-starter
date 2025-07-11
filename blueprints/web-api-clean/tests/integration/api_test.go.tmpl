@@ -1,0 +1,185 @@
+package integration_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"{{.ModulePath}}/internal/adapters/controllers"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// MockHTTPContext implements ports.HTTPContext for testing
+type MockHTTPContext struct {
+	statusCode int
+	body       interface{}
+	headers    map[string]string
+	params     map[string]string
+	queries    map[string]string
+	request    *http.Request
+}
+
+func NewMockHTTPContext() *MockHTTPContext {
+	return &MockHTTPContext{
+		headers: make(map[string]string),
+		params:  make(map[string]string),
+		queries: make(map[string]string),
+		request: httptest.NewRequest("GET", "/", nil),
+	}
+}
+
+// Request data methods
+func (m *MockHTTPContext) GetParam(key string) string {
+	return m.params[key]
+}
+
+func (m *MockHTTPContext) GetQuery(key string) string {
+	return m.queries[key]
+}
+
+func (m *MockHTTPContext) GetHeader(key string) string {
+	return m.headers[key]
+}
+
+func (m *MockHTTPContext) BindJSON(obj interface{}) error {
+	return nil
+}
+
+func (m *MockHTTPContext) GetRequestContext() context.Context {
+	return context.Background()
+}
+
+func (m *MockHTTPContext) GetMethod() string {
+	return m.request.Method
+}
+
+func (m *MockHTTPContext) GetRequest() *http.Request {
+	return m.request
+}
+
+// Response methods
+func (m *MockHTTPContext) JSON(code int, obj interface{}) {
+	m.statusCode = code
+	m.body = obj
+}
+
+func (m *MockHTTPContext) String(code int, message string) {
+	m.statusCode = code
+	m.body = message
+}
+
+func (m *MockHTTPContext) NoContent(code int) {
+	m.statusCode = code
+	m.body = nil
+}
+
+func (m *MockHTTPContext) SetHeader(key, value string) {
+	m.headers[key] = value
+}
+
+func (m *MockHTTPContext) GetStatusCode() int {
+	return m.statusCode
+}
+
+// Client info methods
+func (m *MockHTTPContext) ClientIP() string {
+	return "127.0.0.1"
+}
+
+func (m *MockHTTPContext) GetClientIP() string {
+	return "127.0.0.1"
+}
+
+// Middleware support methods
+func (m *MockHTTPContext) Next() {
+	// No-op for testing
+}
+
+func (m *MockHTTPContext) GetErrors() []string {
+	return []string{}
+}
+
+func TestHealthController(t *testing.T) {
+	// Create health controller
+	healthController := controllers.NewHealthController()
+
+	// Create mock context
+	ctx := NewMockHTTPContext()
+
+	// Test health endpoint
+	healthController.Health(ctx)
+
+	// Verify response
+	assert.Equal(t, http.StatusOK, ctx.statusCode)
+	assert.NotNil(t, ctx.body)
+
+	// Check if response is the expected health response
+	healthResp, ok := ctx.body.(controllers.HealthResponse)
+	assert.True(t, ok, "Response should be HealthResponse type")
+	assert.Equal(t, "healthy", healthResp.Status)
+	assert.Equal(t, "1.0.0", healthResp.Version)
+	assert.NotEmpty(t, healthResp.Timestamp)
+	assert.NotEmpty(t, healthResp.Uptime)
+}
+
+func TestReadinessController(t *testing.T) {
+	// Create health controller
+	healthController := controllers.NewHealthController()
+
+	// Create mock context
+	ctx := NewMockHTTPContext()
+
+	// Test readiness endpoint
+	healthController.Readiness(ctx)
+
+	// Verify response
+	assert.Equal(t, http.StatusOK, ctx.statusCode)
+	assert.NotNil(t, ctx.body)
+
+	// Check if response contains status
+	response, ok := ctx.body.(map[string]string)
+	assert.True(t, ok, "Response should be map[string]string")
+	assert.Equal(t, "ready", response["status"])
+}
+
+func TestLivenessController(t *testing.T) {
+	// Create health controller
+	healthController := controllers.NewHealthController()
+
+	// Create mock context
+	ctx := NewMockHTTPContext()
+
+	// Test liveness endpoint
+	healthController.Liveness(ctx)
+
+	// Verify response
+	assert.Equal(t, http.StatusOK, ctx.statusCode)
+	assert.NotNil(t, ctx.body)
+
+	// Check if response contains status
+	response, ok := ctx.body.(map[string]string)
+	assert.True(t, ok, "Response should be map[string]string")
+	assert.Equal(t, "alive", response["status"])
+}
+
+func TestLoggerFactory(t *testing.T) {
+	// Test logger factory creation
+	logConfig := &config.LoggerConfig{
+		Level:  "info",
+		Format: "json",
+	}
+
+	factory := logger.NewFactory(logConfig)
+	assert.NotNil(t, factory)
+
+	// Test logger creation
+	log := factory.CreateLogger()
+	assert.NotNil(t, log)
+
+	// Test validation
+	err := factory.ValidateConfig()
+	assert.NoError(t, err)
+}

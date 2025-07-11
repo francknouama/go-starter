@@ -47,8 +47,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 🔧 Development Tools
 - **Comprehensive CLI**: Full command-line interface with help and validation
-- **Template Validation**: All templates compile and run successfully
-- **Integration Testing**: End-to-end testing of all template+logger combinations
+- **Blueprint Validation**: All blueprints compile and run successfully
+- **Integration Testing**: End-to-end testing of all blueprint+logger combinations
 - **Configuration Management**: Support for user profiles and defaults
 
 #### 📋 Project Generation Features
@@ -73,9 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Technical Details
 
 #### Template Architecture
-- **Embedded Templates**: All templates embedded in binary using Go embed
-- **Template Registry**: Centralized template management and loading
-- **Variable System**: Consistent variable system across all templates
+- **Embedded Blueprints**: All blueprints embedded in binary using Go embed
+- **Blueprint Registry**: Centralized blueprint management and loading
+- **Variable System**: Consistent variable system across all blueprints
 - **Conditional Logic**: Smart file generation based on user selections
 
 #### Logger Architecture

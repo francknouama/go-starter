@@ -12,11 +12,11 @@
 Go-starter is a comprehensive Go project generator that combines the simplicity of create-react-app with the flexibility of Spring Initializr. The project has successfully completed its core implementation with a **Logger Selector System** that provides consistent logging capabilities across all major Go project types.
 
 ### ✅ Current Achievement
-- **4 core templates** implemented: Web API, CLI, Library, AWS Lambda
+- **4 core blueprints** implemented: Web API, CLI, Library, AWS Lambda
 - **4 logger types** supported: slog, zap, logrus, zerolog  
 - **16 total combinations** tested and production-ready
 - **Complete in 6-7 weeks** (vs. original 45-63 week plan)
-- **33% template coverage** - 8 advanced templates remain unimplemented
+- **33% blueprint coverage** - 8 advanced blueprints remain unimplemented
 
 ---
 
@@ -29,8 +29,8 @@ Go-starter is a comprehensive Go project generator that combines the simplicity 
 #### Key Deliverables ✅
 - [x] **Project structure** with clean separation of concerns
 - [x] **CLI framework** using Cobra with extensible command structure
-- [x] **Template engine** foundation with Go text/template + Sprig
-- [x] **Testing infrastructure** (unit, integration, template validation)
+- [x] **Blueprint engine** foundation with Go text/template + Sprig
+- [x] **Testing infrastructure** (unit, integration, blueprint validation)
 - [x] **CI/CD pipeline** with automated testing and releases
 - [x] **Development tooling** (Makefile, linting, formatting standards)
 
@@ -43,7 +43,7 @@ go-starter/
 │   ├── generator/          # Project generation engine
 │   ├── logger/             # Logger factory and interfaces
 │   ├── prompts/            # Interactive CLI prompts
-│   ├── templates/          # Template registry and loading
+│   ├── blueprints/          # Blueprint registry and loading
 │   └── utils/              # Shared utilities
 ├── pkg/types/              # Public API types
 ├── templates/              # Template definitions (4 core templates)

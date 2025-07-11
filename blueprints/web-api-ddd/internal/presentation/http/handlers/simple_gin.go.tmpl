@@ -1,0 +1,52 @@
+{{- if eq .DatabaseDriver ""}}
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// GinHandlers handles HTTP requests using Gin framework without database dependencies
+type GinHandlers struct {
+	logger *logger.Logger
+}
+
+// NewGinHandlers creates a new Gin handlers instance without database dependencies
+func NewGinHandlers(log *logger.Logger) *GinHandlers {
+	return &GinHandlers{
+		logger: log,
+	}
+}
+
+// RegisterRoutes registers all routes for the application
+func (h *GinHandlers) RegisterRoutes(r *gin.Engine) {
+	api := r.Group("/api/v1")
+	{
+		api.GET("/hello", h.Hello)
+		api.GET("/status", h.Status)
+	}
+}
+
+// Hello handles hello world requests
+func (h *GinHandlers) Hello(c *gin.Context) {
+	h.logger.Info("Hello endpoint called")
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Hello from {{.ProjectName}}!",
+		"version": "1.0.0",
+	})
+}
+
+// Status handles status requests
+func (h *GinHandlers) Status(c *gin.Context) {
+	h.logger.Info("Status endpoint called")
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ok",
+		"service": "{{.ProjectName}}",
+		"architecture": "ddd",
+		"framework": "gin",
+		"logger": "{{.Logger}}",
+	})
+}
+{{- end}}

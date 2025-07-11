@@ -15,10 +15,10 @@ import (
 // setupTestTemplates initializes the template registry for testing
 func setupTestTemplates(t *testing.T) {
 	t.Helper()
-	// Initialize templates filesystem from the templates directory
-	templatesDir := "../../templates"
+	// Initialize templates filesystem from the blueprints directory
+	templatesDir := "../../blueprints"
 	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
-		t.Fatalf("Templates directory not found: %s", templatesDir)
+		t.Fatalf("Blueprints directory not found: %s", templatesDir)
 	}
 	templates.SetTemplatesFS(os.DirFS(templatesDir))
 }

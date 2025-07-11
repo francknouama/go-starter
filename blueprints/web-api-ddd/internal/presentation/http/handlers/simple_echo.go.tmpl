@@ -1,0 +1,52 @@
+{{- if eq .DatabaseDriver ""}}
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// EchoHandlers handles HTTP requests using Echo framework without database dependencies
+type EchoHandlers struct {
+	logger *logger.Logger
+}
+
+// NewEchoHandlers creates a new Echo handlers instance without database dependencies
+func NewEchoHandlers(log *logger.Logger) *EchoHandlers {
+	return &EchoHandlers{
+		logger: log,
+	}
+}
+
+// RegisterRoutes registers all routes for the application
+func (h *EchoHandlers) RegisterRoutes(e *echo.Echo) {
+	api := e.Group("/api/v1")
+	{
+		api.GET("/hello", h.Hello)
+		api.GET("/status", h.Status)
+	}
+}
+
+// Hello handles hello world requests
+func (h *EchoHandlers) Hello(c echo.Context) error {
+	h.logger.Info("Hello endpoint called")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"message": "Hello from {{.ProjectName}}!",
+		"version": "1.0.0",
+	})
+}
+
+// Status handles status requests
+func (h *EchoHandlers) Status(c echo.Context) error {
+	h.logger.Info("Status endpoint called")
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"status": "ok",
+		"service": "{{.ProjectName}}",
+		"architecture": "ddd",
+		"framework": "echo",
+		"logger": "{{.Logger}}",
+	})
+}
+{{- end}}

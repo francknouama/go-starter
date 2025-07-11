@@ -3,7 +3,7 @@
 **Platform Name:** Go-Starter Web (Tentative)  
 **Vision:** Web-based SaaS equivalent of the CLI tool with project generation, management, and marketplace  
 **Target Launch:** 6-8 weeks after CLI v1.0.0 release  
-**Business Model:** Freemium SaaS with template marketplace
+**Business Model:** Freemium SaaS with blueprint marketplace
 
 ---
 
@@ -13,7 +13,7 @@
 
 #### **Free Web Version (CLI Parity)**
 1. **Browser-based project generation** - No CLI installation required
-2. **All templates available** - Same as CLI, no restrictions
+2. **All blueprints available** - Same as CLI, no restrictions
 3. **Live preview** - See project structure before generation
 4. **Instant download** - Zip file with generated project
 5. **No registration required** - Fully anonymous usage
@@ -22,10 +22,10 @@
 #### **Premium SaaS Features (Revenue Model)**
 1. **Project management dashboard** - Save and manage generated projects
 2. **Cloud storage** - Projects stored for 30+ days
-3. **Template marketplace** - Discover and share community templates
-4. **Team collaboration** - Share projects and templates within organizations
+3. **Blueprint marketplace** - Discover and share community blueprints
+4. **Team collaboration** - Share projects and blueprints within organizations
 5. **Direct deployment integration** - Deploy to Vercel, Railway, AWS from browser
-6. **Custom templates** - Create and save private templates
+6. **Custom blueprints** - Create and save private blueprints
 7. **API access** - Programmatic project generation
 8. **Analytics & insights** - Track template usage and team metrics
 

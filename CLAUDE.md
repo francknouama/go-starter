@@ -20,14 +20,14 @@ This is a comprehensive Go project generator called "go-starter" that generates 
 - `go test -v ./...` - Run all tests
 - `make test` - Run tests via Makefile
 - **Critical**: Integration tests must validate that all generated projects compile successfully
-- Test template generation with various configurations
+- Test blueprint generation with various configurations
 - Test conditional file generation logic
 
 ### Code Quality
 - `golangci-lint run` - Run linting (essential before commits)
 - `make lint` - Run linting via Makefile
-- `go generate ./...` - Generate embedded templates
-- `make generate` - Generate embedded templates via Makefile
+- `go generate ./...` - Generate embedded blueprints
+- `make generate` - Generate embedded blueprints via Makefile
 
 ### Web Development (Phase 3)
 - `npm run dev` - Start React development server (Vite)
@@ -39,16 +39,16 @@ This is a comprehensive Go project generator called "go-starter" that generates 
 ### Four-Phase Implementation Strategy
 
 #### Phase 1: Core CLI Tool
-- **Goal**: Functional CLI with 4 basic templates (Web API, CLI, Library, Lambda)
-- **Key Components**: Cobra framework, interactive prompts, template engine, basic generation
-- **Templates**: Standard Web API, CLI Application, Library, AWS Lambda
+- **Goal**: Functional CLI with 4 basic blueprints (Web API, CLI, Library, Lambda)
+- **Key Components**: Cobra framework, interactive prompts, blueprint engine, basic generation
+- **Blueprints**: Standard Web API, CLI Application, Library, AWS Lambda
 - **Architecture Patterns**: Standard only
 
-#### Phase 2: Complete Template System  
+#### Phase 2: Complete Blueprint System  
 - **Goal**: All 12 project types with multiple architecture patterns
-- **Templates**: web-api (4 architectures), cli, library, lambda, lambda-proxy, event-driven, microservice, monolith, workspace
+- **Blueprints**: web-api (4 architectures), cli, library, lambda, lambda-proxy, event-driven, microservice, monolith, workspace
 - **Architecture Patterns**: Standard, Clean Architecture, DDD, Hexagonal, Event-driven
-- **Features**: Conditional generation, template validation, enhanced prompts
+- **Features**: Conditional generation, blueprint validation, enhanced prompts
 
 #### Phase 3: Web UI
 - **Goal**: React-based web interface with live preview
@@ -57,8 +57,8 @@ This is a comprehensive Go project generator called "go-starter" that generates 
 - **API**: RESTful endpoints + WebSocket for real-time features
 
 #### Phase 4: Advanced Features
-- **Goal**: GitHub integration, template marketplace, deployment platforms
-- **Features**: OAuth authentication, community templates, Vercel/Railway/Netlify deployment
+- **Goal**: GitHub integration, blueprint marketplace, deployment platforms
+- **Features**: OAuth authentication, community blueprints, Vercel/Railway/Netlify deployment
 - **Enterprise**: Template marketplace, analytics, monitoring
 
 ### Core Components Architecture
@@ -70,9 +70,9 @@ This is a comprehensive Go project generator called "go-starter" that generates 
 - **Progressive Disclosure**: Basic mode (essential options) vs Advanced mode (all features)
 
 #### Template Engine (`internal/templates/`)
-- **Storage**: Embedded templates using `embed.FS`
+- **Storage**: Embedded blueprints using `embed.FS`
 - **Processing**: Go `text/template` with Sprig functions
-- **Registry**: Template loading and management system
+- **Registry**: Blueprint loading and management system
 - **Validation**: Template syntax and variable validation
 
 #### Generator Service (`internal/generator/`)
@@ -87,17 +87,17 @@ This is a comprehensive Go project generator called "go-starter" that generates 
 - **Real-time**: WebSocket for live preview updates
 - **API**: RESTful backend with Gin framework
 
-## Template System Deep Dive
+## Blueprint System Deep Dive
 
-### Template Structure
-Each template consists of:
+### Blueprint Structure
+Each blueprint consists of:
 1. **template.yaml** - Metadata, variables, file definitions, dependencies
 2. **Template files** - `.tmpl` files with Go template syntax
 3. **Conditional logic** - Files generated based on configuration
 
-### 12 Core Templates
+### 12 Core Blueprints
 
-| Template | Use Case | Key Features |
+| Blueprint | Use Case | Key Features |
 |----------|----------|-------------|
 | **Standard Web API** | Basic REST APIs | Simple structure, fast setup |
 | **Clean Architecture** | Enterprise apps | Layered architecture, separation of concerns |
@@ -112,8 +112,8 @@ Each template consists of:
 | **Monolith** | Traditional web apps | Modular structure, all-in-one deployment |
 | **Go Workspace** | Multi-module projects | Monorepo, shared dependencies |
 
-### Template Variables
-Standard variables available in all templates:
+### Blueprint Variables
+Standard variables available in all blueprints:
 - `{{.ProjectName}}` - Project name
 - `{{.ModulePath}}` - Go module path (e.g., github.com/user/project)
 - `{{.GoVersion}}` - Go version (default: 1.21)
@@ -141,7 +141,7 @@ The go-starter generator includes a sophisticated logger selector that allows de
 - **Conditional Dependencies**: Only the selected logger's dependencies are included
 - **Performance Optimization**: Choose the logger that best fits your performance requirements
 - **Configuration Driven**: Logger behavior controlled through configuration files
-- **Template Integration**: All generated templates use the logger interface consistently
+- **Blueprint Integration**: All generated blueprints use the logger interface consistently
 
 #### Usage Examples
 
@@ -166,7 +166,7 @@ logger.Info().Int("port", 8080).Str("env", "production").Msg("Server starting")
 ```
 
 ### Conditional Generation
-Templates use Go template conditions for optional files:
+Blueprints use Go template conditions for optional files:
 ```yaml
 files:
   - source: database.go.tmpl
@@ -227,26 +227,26 @@ features:
 
 ## Development Workflow
 
-### Adding New Templates
-1. Create directory in `templates/` (e.g., `templates/new-type/`)
+### Adding New Blueprints
+1. Create directory in `blueprints/` (e.g., `blueprints/new-type/`)
 2. Add `template.yaml` with metadata and file definitions
 3. Create template files with `.tmpl` extension using Go template syntax
-4. Update template registry in `internal/templates/registry.go`
-5. Add prompts for new template in `internal/prompts/interactive.go`
-6. Add tests to validate template generation
+4. Update blueprint registry in `internal/templates/registry.go`
+5. Add prompts for new blueprint in `internal/prompts/interactive.go`
+6. Add tests to validate blueprint generation
 
-### Template Development Best Practices
+### Blueprint Development Best Practices
 - Use descriptive variable names in templates
 - Include conditional logic for optional features
 - Provide sensible defaults for all variables
-- Test templates with various configuration combinations
+- Test blueprints with various configuration combinations
 - Include proper error handling in generated code
 - Follow Go best practices in generated project structure
 
 ## Testing Strategy
 
 ### Critical Testing Requirements
-- **Template Validation**: All templates must parse without errors
+- **Blueprint Validation**: All blueprints must parse without errors
 - **Generation Testing**: Generated projects must compile successfully with `go build`
 - **Logger Testing**: All logger types must generate working implementations and compile
 - **Integration Testing**: End-to-end CLI workflow testing
@@ -256,7 +256,7 @@ features:
 ### Test Categories
 1. **Unit Tests**: Individual component testing
 2. **Integration Tests**: Full project generation workflow
-3. **Template Tests**: Validate all templates generate working code
+3. **Blueprint Tests**: Validate all blueprints generate working code
 4. **Logger Tests**: Test each logger implementation with various configurations
 5. **API Tests**: Web interface endpoint testing
 6. **CLI Tests**: Command-line interface testing
@@ -266,24 +266,24 @@ features:
 ### Core Tables
 - `users` - Authentication and user profiles
 - `projects` - Generated project metadata and sharing
-- `marketplace_templates` - Community-contributed templates
-- `template_ratings` - Template reviews and ratings
+- `marketplace_blueprints` - Community-contributed blueprints
+- `blueprint_ratings` - Blueprint reviews and ratings
 - `analytics_events` - Usage analytics and metrics
 - `api_keys` - API access management
 
 ### Key Relationships
 - Users can create multiple projects
-- Projects reference templates used for generation
-- Templates can be rated and reviewed by users
-- Analytics track template usage patterns
+- Projects reference blueprints used for generation
+- Blueprints can be rated and reviewed by users
+- Analytics track blueprint usage patterns
 
 ## Security Considerations
 
 ### Input Validation
 - **Sanitize all inputs**: Project names, module paths, template variables
 - **Validate module paths**: Ensure proper Go module syntax
-- **Template security**: Scan community templates for malicious code
-- **Path traversal protection**: Prevent template files from accessing unauthorized paths
+- **Blueprint security**: Scan community blueprints for malicious code
+- **Path traversal protection**: Prevent blueprint files from accessing unauthorized paths
 
 ### Web Interface Security
 - **Authentication**: JWT-based authentication for user sessions
@@ -293,14 +293,14 @@ features:
 
 ## Performance Considerations
 
-### Template Engine Optimization
-- **Template caching**: Cache parsed templates in memory
+### Blueprint Engine Optimization
+- **Blueprint caching**: Cache parsed blueprints in memory
 - **Parallel generation**: Generate multiple files concurrently
 - **Memory management**: Efficient handling of large projects
 - **File I/O optimization**: Batch file operations when possible
 
 ### Web Interface Performance
-- **Lazy loading**: Load templates and previews on demand
+- **Lazy loading**: Load blueprints and previews on demand
 - **WebSocket efficiency**: Debounce real-time preview updates
 - **Caching**: Cache generated previews and project structures
 - **Bundle optimization**: Minimize JavaScript bundle size
@@ -321,8 +321,8 @@ features:
 
 ## Common Issues and Solutions
 
-### Template Generation Failures
-- **Template syntax errors**: Use `go generate ./...` to validate
+### Blueprint Generation Failures
+- **Blueprint syntax errors**: Use `go generate ./...` to validate
 - **Missing variables**: Ensure all template variables are defined
 - **File conflicts**: Check for overlapping file destinations
 - **Rollback mechanism**: Use recovery system for partial failures
@@ -331,7 +331,7 @@ features:
 - **Large projects**: Use streaming for file downloads
 - **Memory usage**: Implement garbage collection for long-running sessions
 - **Database queries**: Use connection pooling and query optimization
-- **Template loading**: Cache templates to avoid repeated parsing
+- **Blueprint loading**: Cache blueprints to avoid repeated parsing
 
 ### Cross-platform Compatibility
 - **File paths**: Use `filepath.Join()` for cross-platform paths
@@ -343,13 +343,13 @@ features:
 
 ### Plugin System (Phase 4+)
 - **HashiCorp go-plugin**: Process isolation for custom generators
-- **Template marketplace**: Community template sharing and discovery
-- **Organization templates**: Private template repositories for enterprises
+- **Blueprint marketplace**: Community blueprint sharing and discovery
+- **Organization blueprints**: Private blueprint repositories for enterprises
 - **Custom hooks**: Pre/post generation custom scripts
 
 ### Integration Opportunities
 - **IDE Extensions**: VS Code, GoLand plugins
-- **CI/CD Integration**: GitHub Actions, GitLab CI templates
+- **CI/CD Integration**: GitHub Actions, GitLab CI blueprints
 - **Cloud Platforms**: AWS, GCP, Azure integration
 - **Monitoring Tools**: Observability and metrics integration
 
