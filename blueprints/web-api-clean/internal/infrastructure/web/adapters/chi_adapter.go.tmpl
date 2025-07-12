@@ -128,6 +128,18 @@ func (c *ChiContext) GetErrors() []string {
 	return []string{}
 }
 
+// Set implements ports.HTTPContext.Set
+func (c *ChiContext) Set(key string, value interface{}) {
+	// Chi doesn't have built-in context values, so we use request context
+	c.request = c.request.WithContext(context.WithValue(c.request.Context(), key, value))
+}
+
+// Get implements ports.HTTPContext.Get
+func (c *ChiContext) Get(key string) (interface{}, bool) {
+	value := c.request.Context().Value(key)
+	return value, value != nil
+}
+
 // ChiRouter adapts chi.Router to implement ports.Router
 type ChiRouter struct {
 	mux *chi.Mux

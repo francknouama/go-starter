@@ -136,8 +136,8 @@ func (c *Container) initUseCases() error {
 	)
 	{{end}}
 
-	{{if ne .AuthType ""}}
-	// Initialize auth use case
+	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	// Initialize auth use case (requires database for session storage)
 	c.AuthUseCase = usecases.NewAuthUseCase(
 		c.Repository.UserRepository(),
 		c.Repository.AuthSessionRepository(),
@@ -194,6 +194,11 @@ func (c *Container) initWeb() error {
 		return err
 	}
 	c.Router = router
+
+	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	// Set auth use case for middleware
+	c.Router.SetAuthUseCase(c.AuthUseCase)
+	{{end}}
 
 	// Register routes
 	c.registerRoutes()

@@ -3,7 +3,6 @@ package controllers
 import (
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 	"{{.ModulePath}}/internal/adapters/presenters"
 	"{{.ModulePath}}/internal/domain/entities"
 	"{{.ModulePath}}/internal/domain/usecases"
@@ -53,36 +52,38 @@ func NewAuthController(
 // @Failure 401 {object} presenters.ErrorResponse
 // @Failure 500 {object} presenters.ErrorResponse
 // @Router /auth/login [post]
-func (ac *AuthController) Login(c *gin.Context) {
-	var req LoginRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ac.logger.Warn("Invalid login request", "error", err)
-		c.JSON(http.StatusBadRequest, ac.authPresenter.PresentError(err))
-		return
+func (ac *AuthController) Login() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		var req LoginRequest
+		if err := ctx.BindJSON(&req); err != nil {
+			ac.logger.Warn("Invalid login request", "error", err)
+			ctx.JSON(http.StatusBadRequest, ac.authPresenter.PresentError(err))
+			return
+		}
+
+		// Get client information
+		ipAddress := ctx.GetClientIP()
+		userAgent := ctx.GetHeader("User-Agent")
+
+		// Convert request to use case input
+		input := usecases.LoginInput{
+			Identifier: req.Identifier,
+			Password:   req.Password,
+			IPAddress:  ipAddress,
+			UserAgent:  userAgent,
+		}
+
+		// Execute use case
+		output, err := ac.authUseCase.Login(ctx.GetRequestContext(), input)
+		if err != nil {
+			ac.handleAuthError(ctx, err)
+			return
+		}
+
+		// Present response
+		response := ac.authPresenter.PresentLogin(output)
+		ctx.JSON(http.StatusOK, response)
 	}
-
-	// Get client information
-	ipAddress := ac.getClientIP(c)
-	userAgent := c.GetHeader("User-Agent")
-
-	// Convert request to use case input
-	input := usecases.LoginInput{
-		Identifier: req.Identifier,
-		Password:   req.Password,
-		IPAddress:  ipAddress,
-		UserAgent:  userAgent,
-	}
-
-	// Execute use case
-	output, err := ac.authUseCase.Login(c.Request.Context(), input)
-	if err != nil {
-		ac.handleAuthError(c, err)
-		return
-	}
-
-	// Present response
-	response := ac.authPresenter.PresentLogin(output)
-	c.JSON(http.StatusOK, response)
 }
 
 // RefreshToken generates new tokens from a refresh token
@@ -97,35 +98,37 @@ func (ac *AuthController) Login(c *gin.Context) {
 // @Failure 401 {object} presenters.ErrorResponse
 // @Failure 500 {object} presenters.ErrorResponse
 // @Router /auth/refresh [post]
-func (ac *AuthController) RefreshToken(c *gin.Context) {
-	var req RefreshTokenRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		ac.logger.Warn("Invalid refresh token request", "error", err)
-		c.JSON(http.StatusBadRequest, ac.authPresenter.PresentError(err))
-		return
+func (ac *AuthController) RefreshToken() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		var req RefreshTokenRequest
+		if err := ctx.BindJSON(&req); err != nil {
+			ac.logger.Warn("Invalid refresh token request", "error", err)
+			ctx.JSON(http.StatusBadRequest, ac.authPresenter.PresentError(err))
+			return
+		}
+
+		// Get client information
+		ipAddress := ctx.GetClientIP()
+		userAgent := ctx.GetHeader("User-Agent")
+
+		// Convert request to use case input
+		input := usecases.RefreshTokenInput{
+			RefreshToken: req.RefreshToken,
+			IPAddress:    ipAddress,
+			UserAgent:    userAgent,
+		}
+
+		// Execute use case
+		output, err := ac.authUseCase.RefreshToken(ctx.GetRequestContext(), input)
+		if err != nil {
+			ac.handleAuthError(ctx, err)
+			return
+		}
+
+		// Present response
+		response := ac.authPresenter.PresentLogin(output)
+		ctx.JSON(http.StatusOK, response)
 	}
-
-	// Get client information
-	ipAddress := ac.getClientIP(c)
-	userAgent := c.GetHeader("User-Agent")
-
-	// Convert request to use case input
-	input := usecases.RefreshTokenInput{
-		RefreshToken: req.RefreshToken,
-		IPAddress:    ipAddress,
-		UserAgent:    userAgent,
-	}
-
-	// Execute use case
-	output, err := ac.authUseCase.RefreshToken(c.Request.Context(), input)
-	if err != nil {
-		ac.handleAuthError(c, err)
-		return
-	}
-
-	// Present response
-	response := ac.authPresenter.PresentLogin(output)
-	c.JSON(http.StatusOK, response)
 }
 
 // Logout invalidates the current session
@@ -139,21 +142,23 @@ func (ac *AuthController) RefreshToken(c *gin.Context) {
 // @Failure 500 {object} presenters.ErrorResponse
 // @Security ApiKeyAuth
 // @Router /auth/logout [post]
-func (ac *AuthController) Logout(c *gin.Context) {
-	// Get access token from Authorization header
-	token := ac.extractTokenFromHeader(c)
-	if token == "" {
-		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
-		return
-	}
+func (ac *AuthController) Logout() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		// Get access token from Authorization header
+		token := ac.extractTokenFromHeader(ctx)
+		if token == "" {
+			ctx.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+			return
+		}
 
-	// Execute use case
-	if err := ac.authUseCase.Logout(c.Request.Context(), token); err != nil {
-		ac.handleAuthError(c, err)
-		return
-	}
+		// Execute use case
+		if err := ac.authUseCase.Logout(ctx.GetRequestContext(), token); err != nil {
+			ac.handleAuthError(ctx, err)
+			return
+		}
 
-	c.Status(http.StatusNoContent)
+		ctx.NoContent(http.StatusNoContent)
+	}
 }
 
 // LogoutAll invalidates all sessions for the current user
@@ -167,28 +172,30 @@ func (ac *AuthController) Logout(c *gin.Context) {
 // @Failure 500 {object} presenters.ErrorResponse
 // @Security ApiKeyAuth
 // @Router /auth/logout-all [post]
-func (ac *AuthController) LogoutAll(c *gin.Context) {
-	// Get user from context (set by auth middleware)
-	user, exists := c.Get("user")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
-		return
-	}
+func (ac *AuthController) LogoutAll() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		// Get user from context (set by auth middleware)
+		user, exists := ctx.Get("user")
+		if !exists {
+			ctx.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+			return
+		}
 
-	userEntity, ok := user.(*entities.User)
-	if !ok {
-		ac.logger.Error("Invalid user type in context")
-		c.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(entities.ErrInvalidToken))
-		return
-	}
+		userEntity, ok := user.(*entities.User)
+		if !ok {
+			ac.logger.Error("Invalid user type in context")
+			ctx.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+			return
+		}
 
-	// Execute use case
-	if err := ac.authUseCase.LogoutAll(c.Request.Context(), userEntity.ID); err != nil {
-		ac.handleAuthError(c, err)
-		return
-	}
+		// Execute use case
+		if err := ac.authUseCase.LogoutAll(ctx.GetRequestContext(), userEntity.ID); err != nil {
+			ac.handleAuthError(ctx, err)
+			return
+		}
 
-	c.Status(http.StatusNoContent)
+		ctx.NoContent(http.StatusNoContent)
+	}
 }
 
 // Me returns the current authenticated user information
@@ -201,49 +208,33 @@ func (ac *AuthController) LogoutAll(c *gin.Context) {
 // @Failure 401 {object} presenters.ErrorResponse
 // @Security ApiKeyAuth
 // @Router /auth/me [get]
-func (ac *AuthController) Me(c *gin.Context) {
-	// Get user from context (set by auth middleware)
-	user, exists := c.Get("user")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
-		return
-	}
-
-	userEntity, ok := user.(*entities.User)
-	if !ok {
-		ac.logger.Error("Invalid user type in context")
-		c.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(entities.ErrInvalidToken))
-		return
-	}
-
-	// Present user response (reuse user presenter)
-	userPresenter := presenters.NewUserPresenter()
-	response := userPresenter.PresentUser(userEntity)
-	c.JSON(http.StatusOK, response)
-}
-
-// getClientIP extracts the client IP address from the request
-func (ac *AuthController) getClientIP(c *gin.Context) string {
-	// Check X-Forwarded-For header first (for load balancers/proxies)
-	if xff := c.GetHeader("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the comma-separated list
-		if len(xff) > 0 {
-			return xff
+func (ac *AuthController) Me() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		// Get user from context (set by auth middleware)
+		user, exists := ctx.Get("user")
+		if !exists {
+			ctx.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+			return
 		}
-	}
 
-	// Check X-Real-IP header
-	if xri := c.GetHeader("X-Real-IP"); xri != "" {
-		return xri
-	}
+		userEntity, ok := user.(*entities.User)
+		if !ok {
+			ac.logger.Error("Invalid user type in context")
+			ctx.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(entities.ErrInvalidToken))
+			return
+		}
 
-	// Fall back to remote address
-	return c.ClientIP()
+		// Present user response (reuse user presenter)
+		userPresenter := presenters.NewUserPresenter()
+		response := userPresenter.PresentUser(userEntity)
+		ctx.JSON(http.StatusOK, response)
+	}
 }
+
 
 // extractTokenFromHeader extracts the access token from Authorization header
-func (ac *AuthController) extractTokenFromHeader(c *gin.Context) string {
-	authHeader := c.GetHeader("Authorization")
+func (ac *AuthController) extractTokenFromHeader(ctx ports.HTTPContext) string {
+	authHeader := ctx.GetHeader("Authorization")
 	if authHeader == "" {
 		return ""
 	}
@@ -262,14 +253,14 @@ func (ac *AuthController) extractTokenFromHeader(c *gin.Context) string {
 }
 
 // handleAuthError handles authentication-related errors and returns appropriate HTTP responses
-func (ac *AuthController) handleAuthError(c *gin.Context, err error) {
+func (ac *AuthController) handleAuthError(ctx ports.HTTPContext, err error) {
 	switch err {
 	case entities.ErrInvalidCredentials, entities.ErrInvalidToken:
-		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(err))
+		ctx.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(err))
 	case entities.ErrTokenExpired, entities.ErrSessionExpired, entities.ErrSessionNotFound:
-		c.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(err))
+		ctx.JSON(http.StatusUnauthorized, ac.authPresenter.PresentError(err))
 	default:
 		ac.logger.Error("Unexpected error in auth controller", "error", err)
-		c.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(err))
+		ctx.JSON(http.StatusInternalServerError, ac.authPresenter.PresentError(err))
 	}
 }

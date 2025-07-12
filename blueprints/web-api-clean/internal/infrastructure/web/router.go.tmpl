@@ -3,6 +3,9 @@ package web
 import (
 	"{{.ModulePath}}/internal/adapters/controllers"
 	"{{.ModulePath}}/internal/domain/ports"
+	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	"{{.ModulePath}}/internal/domain/usecases"
+	{{end}}
 	"{{.ModulePath}}/internal/infrastructure/config"
 	"{{.ModulePath}}/internal/infrastructure/web/middleware"
 )
@@ -12,6 +15,9 @@ type RouterService struct {
 	router ports.Router
 	config *config.ServerConfig
 	logger ports.Logger
+	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	authUseCase *usecases.AuthUseCase
+	{{end}}
 }
 
 // NewRouterService creates a new RouterService instance
@@ -33,6 +39,13 @@ func NewRouterService(config *config.ServerConfig, logger ports.Logger) (*Router
 
 	return service, nil
 }
+
+{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+// SetAuthUseCase sets the auth use case for authentication middleware
+func (r *RouterService) SetAuthUseCase(authUseCase *usecases.AuthUseCase) {
+	r.authUseCase = authUseCase
+}
+{{end}}
 
 // setupMiddleware configures global middleware
 func (r *RouterService) setupMiddleware() {
@@ -71,8 +84,8 @@ func (r *RouterService) RegisterUserRoutes(controller *controllers.UserControlle
 	
 	// Protected routes
 	protected := users.Group("")
-	{{if ne .AuthType ""}}
-	protected.Use(middleware.Auth(r.logger))
+	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	protected.Use(middleware.Auth(r.authUseCase, r.logger))
 	{{end}}
 	protected.GET("", controller.ListUsers)
 	protected.GET("/:id", controller.GetUser)
@@ -88,15 +101,17 @@ func (r *RouterService) RegisterAuthRoutes(controller *controllers.AuthControlle
 	
 	auth := v1.Group("/auth")
 	// Public auth routes
-	auth.POST("/login", controller.Login)
-	auth.POST("/refresh", controller.RefreshToken)
+	auth.POST("/login", controller.Login())
+	auth.POST("/refresh", controller.RefreshToken())
 	
 	// Protected auth routes
 	protected := auth.Group("")
-	protected.Use(middleware.Auth(r.logger))
-	protected.POST("/logout", controller.Logout)
-	protected.POST("/logout-all", controller.LogoutAll)
-	protected.GET("/me", controller.Me)
+	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	protected.Use(middleware.Auth(r.authUseCase, r.logger))
+	{{end}}
+	protected.POST("/logout", controller.Logout())
+	protected.POST("/logout-all", controller.LogoutAll())
+	protected.GET("/me", controller.Me())
 }
 {{end}}
 
