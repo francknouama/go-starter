@@ -1,14 +1,58 @@
 package handler
 
+import (
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
 // ServiceHandler defines the interface for our service logic
-type ServiceHandler struct{}
+type ServiceHandler struct {
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+}
 
 // NewServiceHandler creates a new ServiceHandler instance
 func NewServiceHandler() *ServiceHandler {
+{{if eq .Logger "zap"}}
+	logger, _ := zap.NewProduction()
+	return &ServiceHandler{logger: logger}
+{{else if eq .Logger "logrus"}}
+	logger := logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	return &ServiceHandler{logger: logger}
+{{else if eq .Logger "zerolog"}}
 	return &ServiceHandler{}
+{{else}}
+	logger := slog.Default()
+	return &ServiceHandler{logger: logger}
+{{end}}
 }
 
 // SayHello returns a greeting message
 func (h *ServiceHandler) SayHello(name string) string {
-	return "Hello " + name
+	message := "Hello " + name
+{{if eq .Logger "zap"}}
+	h.logger.Info("SayHello called", zap.String("name", name), zap.String("message", message))
+{{else if eq .Logger "logrus"}}
+	h.logger.WithFields(logrus.Fields{"name": name, "message": message}).Info("SayHello called")
+{{else if eq .Logger "zerolog"}}
+	log.Info().Str("name", name).Str("message", message).Msg("SayHello called")
+{{else}}
+	h.logger.Info("SayHello called", "name", name, "message", message)
+{{end}}
+	return message
 }

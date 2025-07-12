@@ -9,12 +9,12 @@ import (
 	"syscall"
 
 	"{{.ModulePath}}/internal/handler"
-	// "{{.ModulePath}}/internal/server" // TODO: Uncomment when server implementation is ready
+	"{{.ModulePath}}/internal/server"
 
 	{{if eq .CommunicationProtocol "grpc"}}
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
-	// pb "{{.ModulePath}}/proto" // TODO: Import after generating proto files
+	pb "{{.ModulePath}}/proto"
 	{{end}}
 
 	{{if eq .CommunicationProtocol "rest"}}
@@ -78,8 +78,10 @@ func startGrpcServer(cfg *Config, svcHandler *handler.ServiceHandler) {
 
 	s := grpc.NewServer()
 	{{- $serviceName := .ProjectName | replace "-" "" | replace "_" "" | title }}
-	// TODO: Uncomment after generating proto files
-	// pb.Register{{$serviceName}}Server(s, svcHandler)
+	
+	// Create gRPC server implementation
+	grpcServer := server.NewGrpcServer(svcHandler)
+	pb.Register{{$serviceName}}Server(s, grpcServer)
 	reflection.Register(s) // Enable reflection for gRPCurl
 
 	log.Printf("gRPC server listening on port %d", cfg.Port)

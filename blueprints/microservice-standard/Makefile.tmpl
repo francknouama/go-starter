@@ -1,16 +1,22 @@
+{{if eq .CommunicationProtocol "grpc"}}
+proto:
+	protoc --go_out=. --go-grpc_out=. proto/service.proto
+
+build: proto
+	go build -o {{.ProjectName}} main.go
+{{else}}
 build:
 	go build -o {{.ProjectName}} main.go
+{{end}}
 
 run:
 	./{{.ProjectName}}
 
 clean:
 	rm -f {{.ProjectName}}
+{{if eq .CommunicationProtocol "grpc"}}	rm -f proto/*.pb.go{{end}}
 
-{{if eq .CommunicationProtocol "grpc"}}
-proto:
-	mkdir -p proto
-	protoc --go_out=. --go-grpc_out=. proto/service.proto
-{{end}}
+test:
+	go test ./...
 
-.PHONY: build run clean {{if eq .CommunicationProtocol "grpc"}}proto{{end}}
+.PHONY: build run clean test{{if eq .CommunicationProtocol "grpc"}} proto{{end}}
