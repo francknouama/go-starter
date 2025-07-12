@@ -866,3 +866,21 @@ db.SetConnMaxLifetime(time.Hour)
 ```
 
 This completes the comprehensive blueprint usage guide. Each blueprint is designed with production-ready practices and can be customized for specific needs while maintaining consistency across all logger implementations.
+
+## Architecture-Specific Limitations
+
+### Clean Architecture Web API
+
+**Important**: When using the Clean Architecture pattern, authentication features require a database to be configured. This is because:
+
+- Authentication use cases depend on user entities and repositories
+- User entities are only generated when a database driver is selected
+- The authentication system needs persistent storage for users and sessions
+
+**Valid Configurations**:
+- ✅ Clean Architecture + Database + Authentication
+- ✅ Clean Architecture + Database (no auth)
+- ✅ Clean Architecture (no database, no auth)
+- ❌ Clean Architecture + Authentication (no database) - Will not compile
+
+This design ensures proper separation of concerns and follows Clean Architecture principles where business logic depends on data persistence abstractions.
