@@ -14,14 +14,14 @@ import (
 type EchoHandlers struct {
 	commandHandlers *{{.DomainName}}.CommandHandlers
 	queryHandlers   *{{.DomainName}}.QueryHandlers
-	logger          logger.Logger
+	logger          *logger.Logger
 }
 
 // NewEchoHandlers creates a new Echo handlers instance
 func NewEchoHandlers(
 	commandHandlers *{{.DomainName}}.CommandHandlers,
 	queryHandlers *{{.DomainName}}.QueryHandlers,
-	log logger.Logger,
+	log *logger.Logger,
 ) *EchoHandlers {
 	return &EchoHandlers{
 		commandHandlers: commandHandlers,
@@ -40,6 +40,7 @@ func (h *EchoHandlers) RegisterRoutes(e *echo.Echo) {
 	{{.DomainName}}Group.PUT("/:id", h.Update{{.DomainName | title}})
 	{{.DomainName}}Group.DELETE("/:id", h.Delete{{.DomainName | title}})
 	{{.DomainName}}Group.GET("", h.List{{.DomainName | title}}s)
+	{{.DomainName}}Group.GET("/name/:name", h.Get{{.DomainName | title}}ByName)
 	{{.DomainName}}Group.GET("/email/:email", h.Get{{.DomainName | title}}ByEmail)
 }
 
@@ -72,6 +73,23 @@ func (h *EchoHandlers) Get{{.DomainName | title}}ByID(c echo.Context) error {
 	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByID(c.Request().Context(), query)
 	if err != nil {
 		h.logger.Error("Failed to get {{.DomainName}}", "error", err, "id", id)
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "{{.DomainName | title}} not found"})
+	}
+
+	return c.JSON(http.StatusOK, {{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByName handles getting a {{.DomainName}} by name
+func (h *EchoHandlers) Get{{.DomainName | title}}ByName(c echo.Context) error {
+	name := c.Param("name")
+	if name == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Name is required"})
+	}
+
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByNameQuery{Name: name}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByName(c.Request().Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}} by name", "error", err, "name", name)
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "{{.DomainName | title}} not found"})
 	}
 

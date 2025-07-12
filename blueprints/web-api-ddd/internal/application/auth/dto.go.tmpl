@@ -7,13 +7,14 @@ import (
 
 // LoginRequest represents a login request DTO
 type LoginRequest struct {
-	Name     string `json:"name" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
 }
 
 // RegisterRequest represents a registration request DTO
 type RegisterRequest struct {
 	Name        string `json:"name" binding:"required,min=2"`
+	Email       string `json:"email" binding:"required,email"`
 	Description string `json:"description" binding:"max=500"`
 	Password    string `json:"password" binding:"required,min=6"`
 }
@@ -36,7 +37,7 @@ type ChangePasswordRequest struct {
 
 // ForgotPasswordRequest represents a forgot password request DTO
 type ForgotPasswordRequest struct {
-	Name string `json:"name" binding:"required"`
+	Email string `json:"email" binding:"required,email"`
 }
 
 // ResetPasswordRequest represents a password reset request DTO
@@ -59,6 +60,7 @@ type AuthResponse struct {
 type UserInfo struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
+	Email       string `json:"email"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
 }
@@ -78,7 +80,7 @@ type ErrorResponse struct {
 // ToLoginCommand converts LoginRequest to LoginCommand
 func (r *LoginRequest) ToLoginCommand() LoginCommand {
 	return LoginCommand{
-		Name:     r.Name,
+		Email:    r.Email,
 		Password: r.Password,
 	}
 }
@@ -87,6 +89,7 @@ func (r *LoginRequest) ToLoginCommand() LoginCommand {
 func (r *RegisterRequest) ToRegisterCommand() RegisterCommand {
 	return RegisterCommand{
 		Name:        r.Name,
+		Email:       r.Email,
 		Description: r.Description,
 		Password:    r.Password,
 	}
@@ -119,7 +122,7 @@ func (r *ChangePasswordRequest) ToChangePasswordCommand(userID valueobjects.ID) 
 // ToForgotPasswordCommand converts ForgotPasswordRequest to ForgotPasswordCommand
 func (r *ForgotPasswordRequest) ToForgotPasswordCommand() ForgotPasswordCommand {
 	return ForgotPasswordCommand{
-		Name: r.Name,
+		Email: r.Email,
 	}
 }
 
@@ -132,7 +135,7 @@ func (r *ResetPasswordRequest) ToResetPasswordCommand() ResetPasswordCommand {
 }
 
 // FromAuthResult converts AuthResult to AuthResponse
-func FromAuthResult(result *AuthResult, userName, userDescription, userStatus string) *AuthResponse {
+func FromAuthResult(result *AuthResult, userName, userEmail, userDescription, userStatus string) *AuthResponse {
 	return &AuthResponse{
 		UserID:       result.UserID.String(),
 		AccessToken:  result.AccessToken,
@@ -142,6 +145,7 @@ func FromAuthResult(result *AuthResult, userName, userDescription, userStatus st
 		User: UserInfo{
 			ID:          result.UserID.String(),
 			Name:        userName,
+			Email:       userEmail,
 			Description: userDescription,
 			Status:      userStatus,
 		},

@@ -12,6 +12,7 @@ import (
 type {{.DomainName | title}} struct {
 	id           valueobjects.ID
 	name         string          // Simple name field - customize as needed
+	email        string          // Email field for user domain
 	description  string          // Optional description - customize as needed
 	status       Status          // Active, Inactive, etc.
 	createdAt    time.Time
@@ -21,15 +22,19 @@ type {{.DomainName | title}} struct {
 }
 
 // New{{.DomainName | title}} creates a new {{.DomainName}} aggregate
-func New{{.DomainName | title}}(name string, description string) (*{{.DomainName | title}}, error) {
+func New{{.DomainName | title}}(name string, email string, description string) (*{{.DomainName | title}}, error) {
 	// Validate inputs
 	if name == "" {
 		return nil, errors.ErrInvalidValueObject.WithDetails("reason", "name cannot be empty")
+	}
+	if email == "" {
+		return nil, errors.ErrInvalidValueObject.WithDetails("reason", "email cannot be empty")
 	}
 	
 	{{.DomainName}} := &{{.DomainName | title}}{
 		id:           valueobjects.GenerateID(),
 		name:         name,
+		email:        email,
 		description:  description,
 		status:       StatusActive,
 		createdAt:    time.Now().UTC(),
@@ -49,6 +54,7 @@ func New{{.DomainName | title}}(name string, description string) (*{{.DomainName
 func Reconstruct{{.DomainName | title}}(
 	id valueobjects.ID,
 	name string,
+	email string,
 	description string,
 	status Status,
 	createdAt, updatedAt time.Time,
@@ -57,6 +63,7 @@ func Reconstruct{{.DomainName | title}}(
 	return &{{.DomainName | title}}{
 		id:           id,
 		name:         name,
+		email:        email,
 		description:  description,
 		status:       status,
 		createdAt:    createdAt,
@@ -74,6 +81,11 @@ func (e *{{.DomainName | title}}) ID() valueobjects.ID {
 // Name returns the {{.DomainName}} name
 func (e *{{.DomainName | title}}) Name() string {
 	return e.name
+}
+
+// Email returns the {{.DomainName}} email
+func (e *{{.DomainName | title}}) Email() string {
+	return e.email
 }
 
 // Description returns the {{.DomainName}} description
@@ -118,6 +130,28 @@ func (e *{{.DomainName | title}}) UpdateName(name string) error {
 	
 	// Raise domain event
 	event := New{{.DomainName | title}}UpdatedEvent(e.id, "name", oldName, name)
+	e.addDomainEvent(event)
+	
+	return nil
+}
+
+// UpdateEmail updates the {{.DomainName}}'s email
+func (e *{{.DomainName | title}}) UpdateEmail(email string) error {
+	if email == "" {
+		return errors.ErrInvalidValueObject.WithDetails("reason", "email cannot be empty")
+	}
+	
+	if e.email == email {
+		return nil // No change needed
+	}
+	
+	oldEmail := e.email
+	e.email = email
+	e.updatedAt = time.Now().UTC()
+	e.version++
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}UpdatedEvent(e.id, "email", oldEmail, email)
 	e.addDomainEvent(event)
 	
 	return nil

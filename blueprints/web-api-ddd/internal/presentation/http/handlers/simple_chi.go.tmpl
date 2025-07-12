@@ -1,0 +1,66 @@
+{{- if eq .DatabaseDriver ""}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+)
+
+// ChiHandlers handles HTTP requests using Chi framework
+type ChiHandlers struct {
+	logger logger.Logger
+}
+
+// NewChiHandlers creates a new Chi handlers instance
+func NewChiHandlers(log logger.Logger) *ChiHandlers {
+	return &ChiHandlers{
+		logger: log,
+	}
+}
+
+// SetupRoutes configures the Chi routes for the application
+func (h *ChiHandlers) SetupRoutes() *chi.Mux {
+	r := chi.NewRouter()
+
+	// Health check endpoint
+	r.Get("/health", h.HealthCheck)
+
+	// API routes
+	r.Route("/api/v1", func(r chi.Router) {
+		// Simple endpoints without database
+		r.Get("/status", h.GetStatus)
+	})
+
+	return r
+}
+
+// HealthCheck handles health check requests
+func (h *ChiHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	response := map[string]interface{}{
+		"status": "healthy",
+		"framework": "chi",
+		"architecture": "ddd",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetStatus handles status requests
+func (h *ChiHandlers) GetStatus(w http.ResponseWriter, r *http.Request) {
+	response := map[string]interface{}{
+		"service": "{{.ProjectName}}",
+		"version": "1.0.0",
+		"architecture": "ddd",
+		"framework": "chi",
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+{{- end}}

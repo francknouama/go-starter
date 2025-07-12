@@ -15,14 +15,14 @@ import (
 type StdlibHandlers struct {
 	commandHandlers *{{.DomainName}}.CommandHandlers
 	queryHandlers   *{{.DomainName}}.QueryHandlers
-	logger          logger.Logger
+	logger          *logger.Logger
 }
 
 // NewStdlibHandlers creates a new standard library handlers instance
 func NewStdlibHandlers(
 	commandHandlers *{{.DomainName}}.CommandHandlers,
 	queryHandlers *{{.DomainName}}.QueryHandlers,
-	log logger.Logger,
+	log *logger.Logger,
 ) *StdlibHandlers {
 	return &StdlibHandlers{
 		commandHandlers: commandHandlers,
@@ -70,6 +70,16 @@ func (h *StdlibHandlers) handle{{.DomainName | title}}ByID(w http.ResponseWriter
 		return
 	}
 
+	// Check if it's a name lookup
+	if len(parts) > 1 && parts[0] == "name" {
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.Get{{.DomainName | title}}ByName(w, r, parts[1])
+		return
+	}
+
 	// Otherwise it's an ID lookup
 	id := parts[0]
 	
@@ -111,6 +121,19 @@ func (h *StdlibHandlers) Get{{.DomainName | title}}ByID(w http.ResponseWriter, r
 	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByID(r.Context(), query)
 	if err != nil {
 		h.logger.Error("Failed to get {{.DomainName}}", "error", err, "id", id)
+		h.respondWithError(w, http.StatusNotFound, "{{.DomainName | title}} not found")
+		return
+	}
+
+	h.respondWithJSON(w, http.StatusOK, {{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByName handles getting a {{.DomainName}} by name
+func (h *StdlibHandlers) Get{{.DomainName | title}}ByName(w http.ResponseWriter, r *http.Request, name string) {
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByNameQuery{Name: name}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByName(r.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}} by name", "error", err, "name", name)
 		h.respondWithError(w, http.StatusNotFound, "{{.DomainName | title}} not found")
 		return
 	}

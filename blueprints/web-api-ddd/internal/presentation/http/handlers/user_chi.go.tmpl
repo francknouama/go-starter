@@ -15,14 +15,14 @@ import (
 type ChiHandlers struct {
 	commandHandlers *{{.DomainName}}.CommandHandlers
 	queryHandlers   *{{.DomainName}}.QueryHandlers
-	logger          logger.Logger
+	logger          *logger.Logger
 }
 
 // NewChiHandlers creates a new Chi handlers instance
 func NewChiHandlers(
 	commandHandlers *{{.DomainName}}.CommandHandlers,
 	queryHandlers *{{.DomainName}}.QueryHandlers,
-	log logger.Logger,
+	log *logger.Logger,
 ) *ChiHandlers {
 	return &ChiHandlers{
 		commandHandlers: commandHandlers,
@@ -39,6 +39,7 @@ func (h *ChiHandlers) RegisterRoutes(r chi.Router) {
 		r.Put("/{id}", h.Update{{.DomainName | title}})
 		r.Delete("/{id}", h.Delete{{.DomainName | title}})
 		r.Get("/", h.List{{.DomainName | title}}s)
+		r.Get("/name/{name}", h.Get{{.DomainName | title}}ByName)
 		r.Get("/email/{email}", h.Get{{.DomainName | title}}ByEmail)
 	})
 }
@@ -75,6 +76,25 @@ func (h *ChiHandlers) Get{{.DomainName | title}}ByID(w http.ResponseWriter, r *h
 	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByID(r.Context(), query)
 	if err != nil {
 		h.logger.Error("Failed to get {{.DomainName}}", "error", err, "id", id)
+		respondWithError(w, http.StatusNotFound, "{{.DomainName | title}} not found")
+		return
+	}
+
+	respondWithJSON(w, http.StatusOK, {{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByName handles getting a {{.DomainName}} by name
+func (h *ChiHandlers) Get{{.DomainName | title}}ByName(w http.ResponseWriter, r *http.Request) {
+	name := chi.URLParam(r, "name")
+	if name == "" {
+		respondWithError(w, http.StatusBadRequest, "Name is required")
+		return
+	}
+
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByNameQuery{Name: name}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByName(r.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}} by name", "error", err, "name", name)
 		respondWithError(w, http.StatusNotFound, "{{.DomainName | title}} not found")
 		return
 	}

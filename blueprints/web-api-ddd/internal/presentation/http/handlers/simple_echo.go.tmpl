@@ -8,45 +8,50 @@ import (
 	"{{.ModulePath}}/internal/infrastructure/logger"
 )
 
-// EchoHandlers handles HTTP requests using Echo framework without database dependencies
+// EchoHandlers handles HTTP requests using Echo framework
 type EchoHandlers struct {
-	logger *logger.Logger
+	logger logger.Logger
 }
 
-// NewEchoHandlers creates a new Echo handlers instance without database dependencies
-func NewEchoHandlers(log *logger.Logger) *EchoHandlers {
+// NewEchoHandlers creates a new Echo handlers instance
+func NewEchoHandlers(log logger.Logger) *EchoHandlers {
 	return &EchoHandlers{
 		logger: log,
 	}
 }
 
-// RegisterRoutes registers all routes for the application
-func (h *EchoHandlers) RegisterRoutes(e *echo.Echo) {
+// SetupRoutes configures the Echo routes for the application
+func (h *EchoHandlers) SetupRoutes() *echo.Echo {
+	e := echo.New()
+
+	// Health check endpoint
+	e.GET("/health", h.HealthCheck)
+
+	// API routes
 	api := e.Group("/api/v1")
-	{
-		api.GET("/hello", h.Hello)
-		api.GET("/status", h.Status)
+	api.GET("/status", h.GetStatus)
+
+	return e
+}
+
+// HealthCheck handles health check requests
+func (h *EchoHandlers) HealthCheck(c echo.Context) error {
+	response := map[string]interface{}{
+		"status": "healthy",
+		"framework": "echo",
+		"architecture": "ddd",
 	}
+	return c.JSON(http.StatusOK, response)
 }
 
-// Hello handles hello world requests
-func (h *EchoHandlers) Hello(c echo.Context) error {
-	h.logger.Info("Hello endpoint called")
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"message": "Hello from {{.ProjectName}}!",
-		"version": "1.0.0",
-	})
-}
-
-// Status handles status requests
-func (h *EchoHandlers) Status(c echo.Context) error {
-	h.logger.Info("Status endpoint called")
-	return c.JSON(http.StatusOK, map[string]interface{}{
-		"status": "ok",
+// GetStatus handles status requests
+func (h *EchoHandlers) GetStatus(c echo.Context) error {
+	response := map[string]interface{}{
 		"service": "{{.ProjectName}}",
+		"version": "1.0.0",
 		"architecture": "ddd",
 		"framework": "echo",
-		"logger": "{{.Logger}}",
-	})
+	}
+	return c.JSON(http.StatusOK, response)
 }
 {{- end}}

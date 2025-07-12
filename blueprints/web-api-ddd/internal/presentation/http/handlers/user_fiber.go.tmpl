@@ -13,14 +13,14 @@ import (
 type FiberHandlers struct {
 	commandHandlers *{{.DomainName}}.CommandHandlers
 	queryHandlers   *{{.DomainName}}.QueryHandlers
-	logger          logger.Logger
+	logger          *logger.Logger
 }
 
 // NewFiberHandlers creates a new Fiber handlers instance
 func NewFiberHandlers(
 	commandHandlers *{{.DomainName}}.CommandHandlers,
 	queryHandlers *{{.DomainName}}.QueryHandlers,
-	log logger.Logger,
+	log *logger.Logger,
 ) *FiberHandlers {
 	return &FiberHandlers{
 		commandHandlers: commandHandlers,
@@ -39,6 +39,7 @@ func (h *FiberHandlers) RegisterRoutes(app *fiber.App) {
 	{{.DomainName}}Group.Put("/:id", h.Update{{.DomainName | title}})
 	{{.DomainName}}Group.Delete("/:id", h.Delete{{.DomainName | title}})
 	{{.DomainName}}Group.Get("", h.List{{.DomainName | title}}s)
+	{{.DomainName}}Group.Get("/name/:name", h.Get{{.DomainName | title}}ByName)
 	{{.DomainName}}Group.Get("/email/:email", h.Get{{.DomainName | title}}ByEmail)
 }
 
@@ -71,6 +72,23 @@ func (h *FiberHandlers) Get{{.DomainName | title}}ByID(c *fiber.Ctx) error {
 	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByID(c.Context(), query)
 	if err != nil {
 		h.logger.Error("Failed to get {{.DomainName}}", "error", err, "id", id)
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "{{.DomainName | title}} not found"})
+	}
+
+	return c.JSON({{.DomainName}}DTO)
+}
+
+// Get{{.DomainName | title}}ByName handles getting a {{.DomainName}} by name
+func (h *FiberHandlers) Get{{.DomainName | title}}ByName(c *fiber.Ctx) error {
+	name := c.Params("name")
+	if name == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Name is required"})
+	}
+
+	query := {{.DomainName}}.Get{{.DomainName | title}}ByNameQuery{Name: name}
+	{{.DomainName}}DTO, err := h.queryHandlers.HandleGet{{.DomainName | title}}ByName(c.Context(), query)
+	if err != nil {
+		h.logger.Error("Failed to get {{.DomainName}} by name", "error", err, "name", name)
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "{{.DomainName | title}} not found"})
 	}
 

@@ -13,6 +13,7 @@ type Command interface {
 // Create{{.DomainName | title}}Command represents a command to create a new {{.DomainName}}
 type Create{{.DomainName | title}}Command struct {
 	Name        string `json:"name" validate:"required,min=1,max=100"`
+	Email       string `json:"email" validate:"required,email"`
 	Description string `json:"description" validate:"max=500"`
 }
 
@@ -25,6 +26,7 @@ func (c Create{{.DomainName | title}}Command) CommandType() string {
 type Update{{.DomainName | title}}Command struct {
 	ID          string  `json:"id" validate:"required,uuid"`
 	Name        *string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	Email       *string `json:"email,omitempty" validate:"omitempty,email"`
 	Description *string `json:"description,omitempty" validate:"omitempty,max=500"`
 }
 
@@ -86,6 +88,7 @@ func (c Deactivate{{.DomainName | title}}Command) GetID() (valueobjects.ID, erro
 // Create{{.DomainName | title}}Request represents an HTTP request to create a {{.DomainName}}
 type Create{{.DomainName | title}}Request struct {
 	Name        string `json:"name" binding:"required"`
+	Email       string `json:"email" binding:"required,email"`
 	Description string `json:"description"`
 }
 
@@ -93,6 +96,7 @@ type Create{{.DomainName | title}}Request struct {
 func (r Create{{.DomainName | title}}Request) ToCommand() Create{{.DomainName | title}}Command {
 	return Create{{.DomainName | title}}Command{
 		Name:        r.Name,
+		Email:       r.Email,
 		Description: r.Description,
 	}
 }
@@ -100,6 +104,7 @@ func (r Create{{.DomainName | title}}Request) ToCommand() Create{{.DomainName | 
 // Update{{.DomainName | title}}Request represents an HTTP request to update a {{.DomainName}}
 type Update{{.DomainName | title}}Request struct {
 	Name        *string `json:"name,omitempty"`
+	Email       *string `json:"email,omitempty" binding:"omitempty,email"`
 	Description *string `json:"description,omitempty"`
 }
 
@@ -108,6 +113,7 @@ func (r Update{{.DomainName | title}}Request) ToCommand(id string) Update{{.Doma
 	return Update{{.DomainName | title}}Command{
 		ID:          id,
 		Name:        r.Name,
+		Email:       r.Email,
 		Description: r.Description,
 	}
 }
