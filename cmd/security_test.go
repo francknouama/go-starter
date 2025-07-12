@@ -81,9 +81,11 @@ func TestScanBlueprints_WithValidBlueprints(t *testing.T) {
 	err := scanBlueprints(blueprintsDir, false, "console")
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error with valid blueprints
@@ -113,9 +115,11 @@ func TestScanBlueprints_WithNonExistentPath(t *testing.T) {
 	err := scanBlueprints(nonExistentPath, false, "console")
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 
 	// Should return an error for non-existent path
 	assert.Error(t, err)
@@ -139,9 +143,11 @@ func TestScanBlueprints_VerboseMode(t *testing.T) {
 	err = scanBlueprints(tmpDir, true, "console")
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error
@@ -168,9 +174,11 @@ func TestScanBlueprints_JSONOutput(t *testing.T) {
 	err = scanBlueprints(tmpDir, false, "json")
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error
@@ -199,9 +207,11 @@ type: web-api
 	err := scanConfig(configFile, false, "console")
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error with valid config
@@ -236,9 +246,11 @@ func TestScanConfig_VerboseMode(t *testing.T) {
 	err := scanConfig(configFile, true, "console")
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error
@@ -259,9 +271,11 @@ func TestOutputSecurityResults_NoViolations(t *testing.T) {
 	err := outputSecurityResults([]security.SecurityViolation{}, "console", false)
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error
@@ -293,9 +307,11 @@ func TestOutputSecurityResults_WithViolations(t *testing.T) {
 	err := outputSecurityResults(violations, "console", false)
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error
@@ -317,9 +333,11 @@ func TestOutputSecurityResults_JSONFormat(t *testing.T) {
 	err := outputSecurityResults([]security.SecurityViolation{}, "json", false)
 
 	// Restore stdout and capture output
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error
@@ -341,12 +359,14 @@ func TestScanBlueprintsCmd_Execution(t *testing.T) {
 		err := scanBlueprintsCmd.RunE(scanBlueprintsCmd, []string{})
 
 		// Restore stdout
-		w.Close()
+		closeErr := w.Close()
+		require.NoError(t, closeErr)
 		os.Stdout = oldStdout
 
 		// Read output
 		var buf bytes.Buffer
-		buf.ReadFrom(r)
+		_, readErr := buf.ReadFrom(r)
+		require.NoError(t, readErr)
 
 		// Should handle the execution (may error due to missing blueprints in test env)
 		// but shouldn't panic
@@ -369,12 +389,14 @@ func TestScanConfigCmd_Execution(t *testing.T) {
 		err := scanConfigCmd.RunE(scanConfigCmd, []string{configFile})
 
 		// Restore stdout
-		w.Close()
+		closeErr := w.Close()
+		require.NoError(t, closeErr)
 		os.Stdout = oldStdout
 
 		// Read output
 		var buf bytes.Buffer
-		buf.ReadFrom(r)
+		_, readErr := buf.ReadFrom(r)
+		require.NoError(t, readErr)
 
 		// Should not error with valid config file
 		assert.NoError(t, err)
@@ -430,9 +452,11 @@ func TestScanBlueprints_EdgeCases(t *testing.T) {
 
 	err := scanBlueprints(emptyDir, false, "console")
 
-	w.Close()
+	closeErr := w.Close()
+	require.NoError(t, closeErr)
 	os.Stdout = oldStdout
-	buf.ReadFrom(r)
+	_, readErr := buf.ReadFrom(r)
+	require.NoError(t, readErr)
 	output := buf.String()
 
 	// Should not error with empty directory
