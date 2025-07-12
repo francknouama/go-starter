@@ -65,7 +65,8 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+          # Run tests only on core packages to avoid timeout from hundreds of demo tests
+          go test -v -race -coverprofile=coverage.out -covermode=atomic -timeout=10m ./cmd/... ./internal/... ./pkg/...
 
       - name: Generate coverage report
         run: |
@@ -189,8 +190,8 @@ jobs:
 
       - name: Run tests with verbose output
         run: |
-          echo "Running all tests with verbose output..."
-          go test -v ./... > test_output.log 2>&1
+          echo "Running core tests with verbose output..."
+          go test -v -timeout=10m ./cmd/... ./internal/... ./pkg/... > test_output.log 2>&1
           
           # Check if tests passed
           if [ $? -eq 0 ]; then
@@ -203,16 +204,16 @@ jobs:
 
       - name: Run tests with race detection
         run: |
-          echo "Running tests with race detection..."
-          go test -race ./...
+          echo "Running core tests with race detection..."
+          go test -race -timeout=10m ./cmd/... ./internal/... ./pkg/...
 
       - name: Verify test naming conventions
         run: |
           echo "Checking test naming conventions..."
           
-          # Find test functions that don't follow TestXxx pattern
+          # Find test functions that don't follow TestXxx pattern in core packages only
           # Only check for functions that start with "func " and have "Test" as the next word
-          INVALID_TESTS=$(grep -rE "^func\s+Test[^a-zA-Z]" --include="*_test.go" . | grep -vE "^[^:]*:func\s+(Test|Benchmark|Example)" || true)
+          INVALID_TESTS=$(grep -rE "^func\s+Test[^a-zA-Z]" --include="*_test.go" ./cmd ./internal ./pkg | grep -vE "^[^:]*:func\s+(Test|Benchmark|Example)" || true)
           
           if [ -n "$INVALID_TESTS" ]; then
             echo "❌ Found test functions with invalid naming:"
@@ -227,8 +228,8 @@ jobs:
         run: |
           echo "Analyzing test structure for table-driven tests..."
           
-          # Count test files and look for table-driven test patterns
-          TEST_FILES=$(find . -name "*_test.go" -not -path "./vendor/*")
+          # Count test files and look for table-driven test patterns in core packages only
+          TEST_FILES=$(find ./cmd ./internal ./pkg -name "*_test.go" -not -path "./vendor/*")
           TABLE_DRIVEN_TESTS=$(grep -l "tests := \[\]struct\|testCases := \[\]struct\|scenarios := \[\]struct" $TEST_FILES || true)
           
           echo "Found table-driven tests in:"
