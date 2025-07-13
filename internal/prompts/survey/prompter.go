@@ -276,7 +276,7 @@ func (p *SurveyPrompter) promptORM(config *types.ProjectConfig) error {
 			"ent - Simple, yet feature-complete entity framework 🔄 Coming Soon",
 			"xorm - Alternative full-featured ORM 🔄 Coming Soon",
 		},
-		Default: "gorm - Feature-rich ORM with associations and migrations (recommended) ✅",
+		Default: "raw - Raw database/sql package with manual queries ✅",
 		Help:    "✅ = Currently supported | 🔄 = Coming soon in future releases. GORM provides rich ORM features, while raw gives full control over SQL.",
 	}
 
@@ -288,7 +288,7 @@ func (p *SurveyPrompter) promptORM(config *types.ProjectConfig) error {
 	// Map selection to ORM
 	ormMap := map[string]string{
 		"gorm - Feature-rich ORM with associations and migrations (recommended) ✅": "gorm",
-		"raw - Raw database/sql package with manual queries ✅":                     "raw",
+		"raw - Raw database/sql package with manual queries ✅":                     "",
 		"sqlx - Lightweight extensions on database/sql 🔄 Coming Soon":              "sqlx",
 		"sqlc - Generate type-safe code from SQL 🔄 Coming Soon":                    "sqlc",
 		"ent - Simple, yet feature-complete entity framework 🔄 Coming Soon":        "ent",
@@ -298,8 +298,8 @@ func (p *SurveyPrompter) promptORM(config *types.ProjectConfig) error {
 	selectedORM := ormMap[selection]
 
 	// Check if the selected ORM is implemented
-	if selectedORM != "gorm" && selectedORM != "raw" {
-		message := fmt.Sprintf("ORM '%s' is not yet implemented. Currently supported: gorm, raw", selectedORM)
+	if selectedORM != "gorm" && selectedORM != "" {
+		message := fmt.Sprintf("ORM '%s' is not yet implemented. Currently supported: gorm, raw (empty)", selectedORM)
 		return types.NewValidationError(message, nil)
 	}
 

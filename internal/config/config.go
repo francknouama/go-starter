@@ -87,7 +87,7 @@ var (
 					Logger:       "slog",
 					Database: DatabaseDefaults{
 						Driver: "",
-						ORM:    "gorm",
+						ORM:    "",
 					},
 					Auth: AuthDefaults{
 						Type: "",

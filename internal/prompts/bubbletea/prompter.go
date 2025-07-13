@@ -447,7 +447,7 @@ func (p *BubbleTeaPrompter) promptDatabaseSupport(config *types.ProjectConfig) e
 
 	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
 		config.Features.Database.Drivers = []string{"postgres"}
-		config.Features.Database.ORM = "gorm"
+		config.Features.Database.ORM = ""
 		fmt.Println(selectedStyle.Render("✓ Database support enabled with PostgreSQL"))
 	}
 
