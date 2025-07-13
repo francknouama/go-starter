@@ -1,0 +1,186 @@
+name: "grpc-gateway-standard"
+description: "gRPC Gateway service with REST + gRPC bridge pattern"
+type: "grpc-gateway"
+architecture: "standard"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the project"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "Author"
+    description: "Project author"
+    type: "string"
+    required: false
+    default: ""
+
+  - name: "Email"
+    description: "Author email"
+    type: "string"
+    required: false
+    default: ""
+
+  - name: "License"
+    description: "Project license"
+    type: "string"
+    required: false
+    default: "MIT"
+    choices:
+      - "MIT"
+      - "Apache-2.0"
+      - "GPL-3.0"
+      - "BSD-3-Clause"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+  - name: "Framework"
+    description: "CLI framework"
+    type: "string"
+    required: false
+    default: "cobra"
+
+  - name: "Logger"
+    description: "Logging library"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+files:
+  # Core application files
+  - source: "README-no-vars.md.tmpl"
+    destination: "README.md"
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+
+  # GitHub Configuration
+  - source: ".github/workflows/ci.yml.tmpl"
+    destination: ".github/workflows/ci.yml"
+
+  - source: ".github/workflows/release.yml.tmpl"
+    destination: ".github/workflows/release.yml"
+  # Commands
+  - source: "cmd/root.go.tmpl"
+    destination: "cmd/root.go"
+    
+  - source: "cmd/version.go.tmpl"
+    destination: "cmd/version.go"
+
+  # Configuration
+  - source: "internal/config/config.go.tmpl"
+    destination: "internal/config/config.go"
+
+  # Logger
+  - source: "internal/logger/interface.go.tmpl"
+    destination: "internal/logger/interface.go"
+
+  - source: "internal/logger/factory.go.tmpl"
+    destination: "internal/logger/factory.go"
+
+  - source: "internal/logger/slog.go.tmpl"
+    destination: "internal/logger/slog.go"
+    condition: "{{eq .Logger \"slog\"}}"
+
+  - source: "internal/logger/zap.go.tmpl"
+    destination: "internal/logger/zap.go"
+    condition: "{{eq .Logger \"zap\"}}"
+
+  - source: "internal/logger/logrus.go.tmpl"
+    destination: "internal/logger/logrus.go"
+    condition: "{{eq .Logger \"logrus\"}}"
+
+  - source: "internal/logger/zerolog.go.tmpl"
+    destination: "internal/logger/zerolog.go"
+    condition: "{{eq .Logger \"zerolog\"}}"
+
+  # Build and deployment
+  - source: "Dockerfile.tmpl"
+    destination: "Dockerfile"
+
+  # Configuration files
+  - source: "configs/config.yaml.tmpl"
+    destination: "configs/config.yaml"
+
+  # Environment and Git
+  - source: ".env.example.tmpl"
+    destination: ".env.example"
+
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+  # Tests
+  - source: "cmd/root_test.go.tmpl"
+    destination: "cmd/root_test.go"
+
+  - source: "internal/config/config_test.go.tmpl"
+    destination: "internal/config/config_test.go"
+
+dependencies:
+  - module: "github.com/spf13/cobra"
+    version: "v1.8.0"
+  - module: "github.com/spf13/viper"
+    version: "v1.16.0"
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .Logger \"zap\"}}"
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .Logger \"logrus\"}}"
+  - module: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .Logger \"zerolog\"}}"
+  - module: "github.com/stretchr/testify"
+    version: "v1.8.4"
+
+post_hooks:
+  - name: "clean_dependencies"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+    
+  - name: "format_code"
+    command: "go fmt ./..."
+    work_dir: "{{.OutputPath}}"
+
+features:
+  - name: "logging"
+    description: "Structured logging with configurable logger"
+    enabled_when: "true"
+    
+  - name: "configuration"
+    description: "YAML-based configuration with environment variables"
+    enabled_when: "true"
+    
+  - name: "docker"
+    description: "Docker containerization"
+    enabled_when: "true"
+
+validation:
+  - name: "go_version_compatibility"
+    description: "Ensure Go version is compatible"
+    value: "1.18"
+    
+  - name: "module_path_format"
+    description: "Validate module path format"
+    
+  - name: "project_name_format"
+    description: "Validate project name format"

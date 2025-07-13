@@ -1,0 +1,457 @@
+# TLS Configuration Guide for {{.ProjectName}}
+
+This guide explains how to configure TLS encryption for secure gRPC and HTTP communications in your {{.ProjectName}} service.
+
+## Overview
+
+The {{.ProjectName}} service implements TLS 1.3 encryption for all communications between:
+- gRPC Gateway ↔ gRPC Server (internal communication)
+- External clients ↔ HTTP Gateway
+- External clients ↔ gRPC Server (direct gRPC calls)
+
+**🔒 Security Note**: TLS is enabled by default and should remain enabled in production environments.
+
+## Quick Start (Development)
+
+### 1. Generate Development Certificates
+
+```bash
+# Generate self-signed certificates for development
+./scripts/generate-certs.sh
+```
+
+This creates the following certificates in the `./certs/` directory:
+- `ca.crt` - Certificate Authority certificate
+- `server.crt` - Server certificate
+- `server.key` - Server private key
+- `client.crt` - Client certificate (for mutual TLS)
+- `client.key` - Client private key
+
+### 2. Start the Service
+
+```bash
+# With default TLS configuration
+go run cmd/server/main.go
+
+# Or with environment variables
+TLS_CERT_FILE=./certs/server.crt \
+TLS_KEY_FILE=./certs/server.key \
+go run cmd/server/main.go
+```
+
+### 3. Test TLS Connection
+
+```bash
+# Test gRPC with TLS
+grpcurl -cacert ./certs/ca.crt \
+  -servername localhost \
+  localhost:{{.GrpcPort | default 50051}} \
+  health.v1.HealthService/Check
+
+# Test HTTP Gateway (will show certificate warning in browser)
+curl -k https://localhost:{{.HttpPort | default 8080}}/health
+```
+
+## Configuration
+
+### Environment Variables
+
+| Variable | Description | Default | Required |
+|----------|-------------|---------|----------|
+| `TLS_ENABLED` | Enable/disable TLS | `true` | No |
+| `TLS_CERT_FILE` | Path to server certificate | `./certs/server.crt` | Yes* |
+| `TLS_KEY_FILE` | Path to server private key | `./certs/server.key` | Yes* |
+| `TLS_CA_FILE` | Path to CA certificate | `./certs/ca.crt` | No |
+| `TLS_MIN_VERSION` | Minimum TLS version | `1.3` | No |
+| `TLS_SERVER_NAME` | Server name for TLS | `localhost` | No |
+
+*Required when TLS is enabled
+
+### Configuration File
+
+Add TLS configuration to your `config.yaml`:
+
+```yaml
+server:
+  http_port: {{.HttpPort | default 8080}}
+  grpc_port: {{.GrpcPort | default 50051}}
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    ca_file: ./certs/ca.crt
+    min_version: "1.3"
+    server_name: localhost
+```
+
+### Environment-Specific Configurations
+
+#### Development (`config.dev.yaml`)
+```yaml
+server:
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    ca_file: ./certs/ca.crt
+    min_version: "1.3"
+    server_name: localhost
+```
+
+#### Production (`config.prod.yaml`)
+```yaml
+server:
+  tls:
+    enabled: true
+    cert_file: ${TLS_CERT_FILE:./certs/server.crt}
+    key_file: ${TLS_KEY_FILE:./certs/server.key}
+    ca_file: ${TLS_CA_FILE:./certs/ca.crt}
+    min_version: ${TLS_MIN_VERSION:1.3}
+    server_name: ${TLS_SERVER_NAME:{{.ProjectName}}.local}
+```
+
+## Production Setup
+
+### Option 1: Let's Encrypt (Recommended for Internet-facing services)
+
+```bash
+# Install certbot
+sudo apt-get install certbot  # Ubuntu/Debian
+brew install certbot          # macOS
+
+# Generate certificates
+sudo certbot certonly --standalone \
+  -d your-domain.com \
+  -d api.your-domain.com
+
+# Set environment variables
+export TLS_CERT_FILE=/etc/letsencrypt/live/your-domain.com/fullchain.pem
+export TLS_KEY_FILE=/etc/letsencrypt/live/your-domain.com/privkey.pem
+export TLS_SERVER_NAME=your-domain.com
+
+# Auto-renewal (add to crontab)
+0 12 * * * /usr/bin/certbot renew --quiet && systemctl reload {{.ProjectName}}
+```
+
+### Option 2: Corporate Certificate Authority
+
+```bash
+# Generate private key
+openssl genrsa -out server.key 4096
+
+# Create certificate signing request
+openssl req -new -key server.key -out server.csr \
+  -subj "/C=US/ST=State/L=City/O=YourOrg/CN=your-service.internal"
+
+# Submit CSR to your CA for signing
+# They will provide you with the signed certificate
+
+# Set environment variables
+export TLS_CERT_FILE=/path/to/your/server.crt
+export TLS_KEY_FILE=/path/to/your/server.key
+export TLS_CA_FILE=/path/to/your/ca.crt
+export TLS_SERVER_NAME=your-service.internal
+```
+
+### Option 3: Self-Signed Certificates (Internal services only)
+
+```bash
+# Use the production certificate generation guide
+./scripts/generate-prod-certs.sh
+```
+
+## Docker Deployment
+
+### Using Let's Encrypt
+
+```yaml
+version: '3.8'
+services:
+  {{.ProjectName}}:
+    image: {{.ProjectName}}:latest
+    volumes:
+      - /etc/letsencrypt/live/your-domain.com:/etc/certs:ro
+    environment:
+      - TLS_CERT_FILE=/etc/certs/fullchain.pem
+      - TLS_KEY_FILE=/etc/certs/privkey.pem
+      - TLS_SERVER_NAME=your-domain.com
+    ports:
+      - "{{.HttpPort | default 8080}}:{{.HttpPort | default 8080}}"
+      - "{{.GrpcPort | default 50051}}:{{.GrpcPort | default 50051}}"
+```
+
+### Using Docker Secrets
+
+```bash
+# Create secrets
+docker secret create {{.ProjectName}}_tls_cert /path/to/server.crt
+docker secret create {{.ProjectName}}_tls_key /path/to/server.key
+
+# Use in docker-compose.yml
+services:
+  {{.ProjectName}}:
+    secrets:
+      - {{.ProjectName}}_tls_cert
+      - {{.ProjectName}}_tls_key
+    environment:
+      - TLS_CERT_FILE=/run/secrets/{{.ProjectName}}_tls_cert
+      - TLS_KEY_FILE=/run/secrets/{{.ProjectName}}_tls_key
+```
+
+## Kubernetes Deployment
+
+### Using cert-manager
+
+```yaml
+# Install cert-manager
+kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.0/cert-manager.yaml
+
+# Create ClusterIssuer
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: your-email@domain.com
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+
+---
+# Create Certificate
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{.ProjectName}}-tls
+spec:
+  secretName: {{.ProjectName}}-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - api.your-domain.com
+```
+
+### Mount certificates in deployment
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.ProjectName}}
+spec:
+  template:
+    spec:
+      containers:
+      - name: {{.ProjectName}}
+        image: {{.ProjectName}}:latest
+        env:
+        - name: TLS_CERT_FILE
+          value: /etc/certs/tls.crt
+        - name: TLS_KEY_FILE
+          value: /etc/certs/tls.key
+        - name: TLS_SERVER_NAME
+          value: api.your-domain.com
+        volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/certs
+          readOnly: true
+      volumes:
+      - name: tls-certs
+        secret:
+          secretName: {{.ProjectName}}-tls-secret
+```
+
+## Client Configuration
+
+### gRPC Clients
+
+```go
+// With custom CA
+creds, err := credentials.NewClientTLSFromFile("./certs/ca.crt", "localhost")
+if err != nil {
+    log.Fatal(err)
+}
+
+conn, err := grpc.Dial("localhost:{{.GrpcPort | default 50051}}", grpc.WithTransportCredentials(creds))
+if err != nil {
+    log.Fatal(err)
+}
+defer conn.Close()
+
+// With system CA (production)
+creds := credentials.NewTLS(&tls.Config{ServerName: "your-domain.com"})
+conn, err := grpc.Dial("your-domain.com:{{.GrpcPort | default 50051}}", grpc.WithTransportCredentials(creds))
+```
+
+### HTTP Clients
+
+```bash
+# With custom CA
+curl --cacert ./certs/ca.crt https://localhost:{{.HttpPort | default 8080}}/health
+
+# With system CA (production)
+curl https://your-domain.com:{{.HttpPort | default 8080}}/health
+
+# Skip verification (development only)
+curl -k https://localhost:{{.HttpPort | default 8080}}/health
+```
+
+## Security Best Practices
+
+### 🔒 Certificate Management
+
+✅ **DO:**
+- Use TLS 1.3 minimum version
+- Use strong key sizes (RSA 4096 or ECDSA P-384)
+- Set proper file permissions (600 for private keys)
+- Implement certificate rotation/renewal
+- Monitor certificate expiration
+- Use proper Subject Alternative Names (SAN)
+
+❌ **DON'T:**
+- Use self-signed certificates in production
+- Store private keys in version control
+- Use weak cipher suites
+- Disable certificate verification
+- Use TLS versions below 1.2
+
+### 🔧 Configuration Security
+
+```bash
+# Set proper file permissions
+chmod 600 /path/to/private.key
+chmod 644 /path/to/certificate.crt
+
+# Use environment variables for sensitive data
+export TLS_KEY_FILE=/secure/path/to/private.key
+
+# Enable OS-level security
+# Use SELinux/AppArmor for additional protection
+```
+
+### 📊 Monitoring
+
+```bash
+# Check certificate expiration
+openssl x509 -in /path/to/cert.crt -noout -enddate
+
+# Test TLS configuration
+openssl s_client -connect your-domain.com:{{.GrpcPort | default 50051}} -tls1_3
+
+# Monitor certificate expiration (30 days warning)
+if openssl x509 -checkend 2592000 -noout -in /path/to/cert.crt; then
+  echo "Certificate is valid for at least 30 more days"
+else
+  echo "Certificate expires within 30 days - renewal required!"
+fi
+```
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. Certificate Not Found
+```
+ERROR: TLS configuration validation failed: certificate file does not exist
+```
+**Solution:** Ensure certificate files exist and paths are correct
+```bash
+ls -la ./certs/
+./scripts/generate-certs.sh  # Regenerate if needed
+```
+
+#### 2. Permission Denied
+```
+ERROR: failed to load server certificate: permission denied
+```
+**Solution:** Check file permissions
+```bash
+chmod 600 ./certs/*.key
+chmod 644 ./certs/*.crt
+```
+
+#### 3. Certificate Verification Failed
+```
+ERROR: x509: certificate signed by unknown authority
+```
+**Solution:** Use correct CA certificate or disable verification for development
+```bash
+# For development
+export TLS_CA_FILE=./certs/ca.crt
+
+# Or add CA to system trust store
+sudo cp ./certs/ca.crt /usr/local/share/ca-certificates/
+sudo update-ca-certificates  # Linux
+```
+
+#### 4. TLS Version Mismatch
+```
+ERROR: protocol version not supported
+```
+**Solution:** Ensure client and server support the same TLS version
+```bash
+# Check server TLS version
+openssl s_client -connect localhost:{{.GrpcPort | default 50051}} -tls1_3
+
+# Update configuration
+export TLS_MIN_VERSION=1.2  # If TLS 1.3 not supported
+```
+
+#### 5. Hostname Verification Failed
+```
+ERROR: x509: certificate is valid for localhost, not your-domain.com
+```
+**Solution:** Use correct server name or update certificate SAN
+```bash
+export TLS_SERVER_NAME=localhost  # Match certificate
+# Or regenerate certificate with correct domain names
+```
+
+### Debug Commands
+
+```bash
+# Check certificate details
+openssl x509 -in ./certs/server.crt -text -noout
+
+# Verify certificate chain
+openssl verify -CAfile ./certs/ca.crt ./certs/server.crt
+
+# Test TLS connection
+openssl s_client -connect localhost:{{.GrpcPort | default 50051}} -servername localhost
+
+# Check which TLS versions are supported
+nmap --script ssl-enum-ciphers -p {{.GrpcPort | default 50051}} localhost
+```
+
+## Development vs Production
+
+### Development Environment
+- ✅ Self-signed certificates OK
+- ✅ localhost/127.0.0.1 in SAN
+- ✅ Longer certificate validity (1 year)
+- ✅ Can disable TLS for debugging (NOT recommended)
+
+### Production Environment
+- ✅ Valid CA-signed certificates required
+- ✅ Proper domain names in SAN
+- ✅ Regular certificate renewal
+- ✅ TLS MUST be enabled
+- ✅ Monitor certificate expiration
+- ✅ Use strong ciphers only
+
+## Support
+
+For additional help:
+1. Check the logs for specific TLS errors
+2. Verify certificate validity and permissions
+3. Ensure network connectivity on TLS ports
+4. Test with openssl commands above
+5. Review the security documentation
+
+Remember: **Security is not optional in production environments.**

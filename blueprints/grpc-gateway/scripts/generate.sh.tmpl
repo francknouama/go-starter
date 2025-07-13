@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Generate protobuf and gRPC Gateway code for {{.ProjectName}}
+set -e
+
+echo "🔄 Generating protobuf and gRPC Gateway code..."
+
+# Create directories if they don't exist
+mkdir -p gen
+mkdir -p api
+
+# Check if buf is available and use it, otherwise fallback to protoc
+if command -v buf >/dev/null 2>&1; then
+    echo "📦 Using buf for code generation..."
+    buf generate
+else
+    echo "⚠️  buf not found, using protoc fallback..."
+    # Generate protobuf code
+    protoc \
+        --proto_path=proto \
+        --go_out=gen \
+        --go_opt=paths=source_relative \
+        --go-grpc_out=gen \
+        --go-grpc_opt=paths=source_relative \
+        --grpc-gateway_out=gen \
+        --grpc-gateway_opt=paths=source_relative \
+        --openapiv2_out=api \
+        --openapiv2_opt=logtostderr=true \
+        $(find proto -name "*.proto")
+fi
+
+echo "✅ Code generation completed successfully!"

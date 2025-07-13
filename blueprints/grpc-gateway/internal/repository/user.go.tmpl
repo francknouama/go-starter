@@ -1,0 +1,732 @@
+package repository
+
+import (
+	"context"
+	"errors"
+	"time"
+	{{- if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}
+	"gorm.io/gorm"
+	{{- else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}
+	"github.com/jmoiron/sqlx"
+	{{- else if ne .DatabaseDriver ""}}
+	"database/sql"
+	"fmt"
+	"strings"
+	{{- else}}
+	"sync"
+	"github.com/google/uuid"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+var (
+	ErrUserNotFound = errors.New("user not found")
+	ErrUserExists   = errors.New("user already exists")
+)
+
+// User represents a user entity in the repository layer
+type User struct {
+	ID        string    `{{if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}gorm:"primaryKey"{{else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}db:"id"{{end}} json:"id"`
+	Name      string    `{{if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}gorm:"not null"{{else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}db:"name"{{end}} json:"name"`
+	Email     string    `{{if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}gorm:"uniqueIndex;not null"{{else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}db:"email"{{end}} json:"email"`
+	{{- if ne .AuthType ""}}
+	Password  string    `{{if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}gorm:"not null"{{else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}db:"password"{{end}} json:"-"` // Always hashed, never exposed
+	{{- end}}
+	CreatedAt time.Time `{{if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}gorm:"autoCreateTime"{{else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}db:"created_at"{{end}} json:"created_at"`
+	UpdatedAt time.Time `{{if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}gorm:"autoUpdateTime"{{else if and (ne .DatabaseDriver "") (eq .DatabaseORM "sqlx")}}db:"updated_at"{{end}} json:"updated_at"`
+}
+
+// UserRepository defines the interface for user data access
+type UserRepository interface {
+	Create(ctx context.Context, user *User) (*User, error)
+	GetByID(ctx context.Context, id string) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	Update(ctx context.Context, user *User) (*User, error)
+	Delete(ctx context.Context, id string) error
+	List(ctx context.Context, pageSize int, pageToken string) ([]*User, string, int, error)
+}
+
+{{- if ne .DatabaseDriver ""}}
+
+{{- if eq .DatabaseORM "gorm"}}
+// GormUserRepository implements UserRepository using GORM
+type GormUserRepository struct {
+	db     *gorm.DB
+	logger logger.Logger
+}
+
+// NewUserRepository creates a new GORM-based user repository
+func NewUserRepository(db interface{}, logger logger.Logger) UserRepository {
+	gormDB := db.(*gorm.DB)
+	return &GormUserRepository{
+		db:     gormDB,
+		logger: logger,
+	}
+}
+
+// Create creates a new user
+func (r *GormUserRepository) Create(ctx context.Context, user *User) (*User, error) {
+	user.ID = generateID()
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	if err := r.db.WithContext(ctx).Create(user).Error; err != nil {
+		r.logger.Error("Failed to create user", "error", err)
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// GetByID retrieves a user by ID
+func (r *GormUserRepository) GetByID(ctx context.Context, id string) (*User, error) {
+	var user User
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by ID", "id", id, "error", err)
+		return nil, err
+	}
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *GormUserRepository) GetByEmail(ctx context.Context, email string) (*User, error) {
+	var user User
+	if err := r.db.WithContext(ctx).Where("email = ?", email).First(&user).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by email", "email", email, "error", err)
+		return nil, err
+	}
+	return &user, nil
+}
+
+// Update updates an existing user
+func (r *GormUserRepository) Update(ctx context.Context, user *User) (*User, error) {
+	user.UpdatedAt = time.Now()
+	
+	if err := r.db.WithContext(ctx).Save(user).Error; err != nil {
+		r.logger.Error("Failed to update user", "id", user.ID, "error", err)
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// Delete deletes a user by ID
+func (r *GormUserRepository) Delete(ctx context.Context, id string) error {
+	result := r.db.WithContext(ctx).Delete(&User{}, "id = ?", id)
+	if result.Error != nil {
+		r.logger.Error("Failed to delete user", "id", id, "error", result.Error)
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+// List retrieves a list of users with pagination
+func (r *GormUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*User, string, int, error) {
+	var users []*User
+	var total int64
+
+	// Count total users
+	if err := r.db.WithContext(ctx).Model(&User{}).Count(&total).Error; err != nil {
+		r.logger.Error("Failed to count users", "error", err)
+		return nil, "", 0, err
+	}
+
+	query := r.db.WithContext(ctx)
+	
+	// Apply pagination
+	if pageToken != "" {
+		query = query.Where("id > ?", pageToken)
+	}
+	
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	if err := query.Order("id").Limit(pageSize + 1).Find(&users).Error; err != nil {
+		r.logger.Error("Failed to list users", "error", err)
+		return nil, "", 0, err
+	}
+
+	var nextToken string
+	if len(users) > pageSize {
+		nextToken = users[pageSize-1].ID
+		users = users[:pageSize]
+	}
+
+	return users, nextToken, int(total), nil
+}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+// SqlxUserRepository implements UserRepository using sqlx
+type SqlxUserRepository struct {
+	db     *sqlx.DB
+	logger logger.Logger
+}
+
+// NewUserRepository creates a new sqlx-based user repository
+func NewUserRepository(db interface{}, logger logger.Logger) UserRepository {
+	sqlxDB := db.(*sqlx.DB)
+	return &SqlxUserRepository{
+		db:     sqlxDB,
+		logger: logger,
+	}
+}
+
+// Create creates a new user
+func (r *SqlxUserRepository) Create(ctx context.Context, user *User) (*User, error) {
+	user.ID = generateID()
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	query := `INSERT INTO users (id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at) 
+			  VALUES (:id, :name, :email{{if ne .AuthType ""}}, :password{{end}}, :created_at, :updated_at)`
+	
+	_, err := r.db.NamedExecContext(ctx, query, user)
+	if err != nil {
+		r.logger.Error("Failed to create user", "error", err)
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// GetByID retrieves a user by ID
+func (r *SqlxUserRepository) GetByID(ctx context.Context, id string) (*User, error) {
+	var user User
+	query := `SELECT id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at FROM users WHERE id = $1`
+	
+	err := r.db.GetContext(ctx, &user, query, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by ID", "id", id, "error", err)
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *SqlxUserRepository) GetByEmail(ctx context.Context, email string) (*User, error) {
+	var user User
+	query := `SELECT id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at FROM users WHERE email = $1`
+	
+	err := r.db.GetContext(ctx, &user, query, email)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by email", "email", email, "error", err)
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// Update updates an existing user
+func (r *SqlxUserRepository) Update(ctx context.Context, user *User) (*User, error) {
+	user.UpdatedAt = time.Now()
+	
+	var setParts []string
+	var args []interface{}
+	argIndex := 1
+
+	if user.Name != "" {
+		setParts = append(setParts, fmt.Sprintf("name = $%d", argIndex))
+		args = append(args, user.Name)
+		argIndex++
+	}
+	if user.Email != "" {
+		setParts = append(setParts, fmt.Sprintf("email = $%d", argIndex))
+		args = append(args, user.Email)
+		argIndex++
+	}
+	
+	setParts = append(setParts, fmt.Sprintf("updated_at = $%d", argIndex))
+	args = append(args, user.UpdatedAt)
+	argIndex++
+	
+	args = append(args, user.ID)
+
+	query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d", strings.Join(setParts, ", "), argIndex)
+	
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("Failed to update user", "id", user.ID, "error", err)
+		return nil, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rowsAffected == 0 {
+		return nil, ErrUserNotFound
+	}
+
+	return r.GetByID(ctx, user.ID)
+}
+
+// Delete deletes a user by ID
+func (r *SqlxUserRepository) Delete(ctx context.Context, id string) error {
+	query := `DELETE FROM users WHERE id = $1`
+	
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		r.logger.Error("Failed to delete user", "id", id, "error", err)
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+// List retrieves a list of users with pagination
+func (r *SqlxUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*User, string, int, error) {
+	// Count total users
+	var total int
+	countQuery := `SELECT COUNT(*) FROM users`
+	if err := r.db.GetContext(ctx, &total, countQuery); err != nil {
+		r.logger.Error("Failed to count users", "error", err)
+		return nil, "", 0, err
+	}
+
+	// Build query with pagination
+	query := `SELECT id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at FROM users`
+	var args []interface{}
+	argIndex := 1
+
+	if pageToken != "" {
+		query += fmt.Sprintf(" WHERE id > $%d", argIndex)
+		args = append(args, pageToken)
+		argIndex++
+	}
+
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	query += fmt.Sprintf(" ORDER BY id LIMIT $%d", argIndex)
+	args = append(args, pageSize+1)
+
+	var users []*User
+	if err := r.db.SelectContext(ctx, &users, query, args...); err != nil {
+		r.logger.Error("Failed to list users", "error", err)
+		return nil, "", 0, err
+	}
+
+	var nextToken string
+	if len(users) > pageSize {
+		nextToken = users[pageSize-1].ID
+		users = users[:pageSize]
+	}
+
+	return users, nextToken, total, nil
+}
+
+{{- else}}
+// SqlUserRepository implements UserRepository using database/sql
+type SqlUserRepository struct {
+	db     *sql.DB
+	logger logger.Logger
+}
+
+// NewUserRepository creates a new sql-based user repository
+func NewUserRepository(db interface{}, logger logger.Logger) UserRepository {
+	sqlDB := db.(*sql.DB)
+	return &SqlUserRepository{
+		db:     sqlDB,
+		logger: logger,
+	}
+}
+
+// Create creates a new user
+func (r *SqlUserRepository) Create(ctx context.Context, user *User) (*User, error) {
+	user.ID = generateID()
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	query := `INSERT INTO users (id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at) 
+			  VALUES ($1, $2, $3{{if ne .AuthType ""}}, $4{{end}}, ${{if ne .AuthType ""}}5{{else}}4{{end}}, ${{if ne .AuthType ""}}6{{else}}5{{end}})`
+	
+	args := []interface{}{user.ID, user.Name, user.Email}
+	{{- if ne .AuthType ""}}
+	args = append(args, user.Password)
+	{{- end}}
+	args = append(args, user.CreatedAt, user.UpdatedAt)
+	
+	_, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("Failed to create user", "error", err)
+		return nil, err
+	}
+
+	return user, nil
+}
+
+// GetByID retrieves a user by ID
+func (r *SqlUserRepository) GetByID(ctx context.Context, id string) (*User, error) {
+	var user User
+	query := `SELECT id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at FROM users WHERE id = $1`
+	
+	{{- if ne .AuthType ""}}
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&user.ID, &user.Name, &user.Email, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	{{- else}}
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt, &user.UpdatedAt)
+	{{- end}}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by ID", "id", id, "error", err)
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *SqlUserRepository) GetByEmail(ctx context.Context, email string) (*User, error) {
+	var user User
+	query := `SELECT id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at FROM users WHERE email = $1`
+	
+	{{- if ne .AuthType ""}}
+	err := r.db.QueryRowContext(ctx, query, email).Scan(&user.ID, &user.Name, &user.Email, &user.Password, &user.CreatedAt, &user.UpdatedAt)
+	{{- else}}
+	err := r.db.QueryRowContext(ctx, query, email).Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt, &user.UpdatedAt)
+	{{- end}}
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrUserNotFound
+		}
+		r.logger.Error("Failed to get user by email", "email", email, "error", err)
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+// Update updates an existing user
+func (r *SqlUserRepository) Update(ctx context.Context, user *User) (*User, error) {
+	user.UpdatedAt = time.Now()
+	
+	// Build dynamic update query
+	var setParts []string
+	var args []interface{}
+	argIndex := 1
+
+	if user.Name != "" {
+		setParts = append(setParts, fmt.Sprintf("name = $%d", argIndex))
+		args = append(args, user.Name)
+		argIndex++
+	}
+	if user.Email != "" {
+		setParts = append(setParts, fmt.Sprintf("email = $%d", argIndex))
+		args = append(args, user.Email)
+		argIndex++
+	}
+	
+	setParts = append(setParts, fmt.Sprintf("updated_at = $%d", argIndex))
+	args = append(args, user.UpdatedAt)
+	argIndex++
+	
+	args = append(args, user.ID)
+
+	query := fmt.Sprintf("UPDATE users SET %s WHERE id = $%d", strings.Join(setParts, ", "), argIndex)
+	
+	result, err := r.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("Failed to update user", "id", user.ID, "error", err)
+		return nil, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rowsAffected == 0 {
+		return nil, ErrUserNotFound
+	}
+
+	return r.GetByID(ctx, user.ID)
+}
+
+// Delete deletes a user by ID
+func (r *SqlUserRepository) Delete(ctx context.Context, id string) error {
+	query := `DELETE FROM users WHERE id = $1`
+	
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		r.logger.Error("Failed to delete user", "id", id, "error", err)
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrUserNotFound
+	}
+
+	return nil
+}
+
+// List retrieves a list of users with pagination
+func (r *SqlUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*User, string, int, error) {
+	// Count total users
+	var total int
+	countQuery := `SELECT COUNT(*) FROM users`
+	if err := r.db.QueryRowContext(ctx, countQuery).Scan(&total); err != nil {
+		r.logger.Error("Failed to count users", "error", err)
+		return nil, "", 0, err
+	}
+
+	// Build query with pagination
+	query := `SELECT id, name, email{{if ne .AuthType ""}}, password{{end}}, created_at, updated_at FROM users`
+	var args []interface{}
+	argIndex := 1
+
+	if pageToken != "" {
+		query += fmt.Sprintf(" WHERE id > $%d", argIndex)
+		args = append(args, pageToken)
+		argIndex++
+	}
+
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	query += fmt.Sprintf(" ORDER BY id LIMIT $%d", argIndex)
+	args = append(args, pageSize+1)
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		r.logger.Error("Failed to list users", "error", err)
+		return nil, "", 0, err
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		var user User
+		{{- if ne .AuthType ""}}
+		if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.Password, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		{{- else}}
+		if err := rows.Scan(&user.ID, &user.Name, &user.Email, &user.CreatedAt, &user.UpdatedAt); err != nil {
+		{{- end}}
+			r.logger.Error("Failed to scan user", "error", err)
+			return nil, "", 0, err
+		}
+		users = append(users, &user)
+	}
+
+	if err := rows.Err(); err != nil {
+		r.logger.Error("Failed to iterate users", "error", err)
+		return nil, "", 0, err
+	}
+
+	var nextToken string
+	if len(users) > pageSize {
+		nextToken = users[pageSize-1].ID
+		users = users[:pageSize]
+	}
+
+	return users, nextToken, total, nil
+}
+{{- end}}
+
+{{- else}}
+// InMemoryUserRepository implements UserRepository using in-memory storage
+type InMemoryUserRepository struct {
+	users  map[string]*User
+	emails map[string]string // email -> id mapping
+	mu     sync.RWMutex
+	logger logger.Logger
+}
+
+// NewInMemoryUserRepository creates a new in-memory user repository
+func NewInMemoryUserRepository(logger logger.Logger) UserRepository {
+	return &InMemoryUserRepository{
+		users:  make(map[string]*User),
+		emails: make(map[string]string),
+		logger: logger,
+	}
+}
+
+// Create creates a new user
+func (r *InMemoryUserRepository) Create(ctx context.Context, user *User) (*User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Check if email already exists
+	if _, exists := r.emails[user.Email]; exists {
+		return nil, ErrUserExists
+	}
+
+	user.ID = generateID()
+	user.CreatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	r.users[user.ID] = user
+	r.emails[user.Email] = user.ID
+
+	return user, nil
+}
+
+// GetByID retrieves a user by ID
+func (r *InMemoryUserRepository) GetByID(ctx context.Context, id string) (*User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	user, exists := r.users[id]
+	if !exists {
+		return nil, ErrUserNotFound
+	}
+
+	// Return a copy to prevent external modification
+	userCopy := *user
+	return &userCopy, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *InMemoryUserRepository) GetByEmail(ctx context.Context, email string) (*User, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	userID, exists := r.emails[email]
+	if !exists {
+		return nil, ErrUserNotFound
+	}
+
+	user := r.users[userID]
+	userCopy := *user
+	return &userCopy, nil
+}
+
+// Update updates an existing user
+func (r *InMemoryUserRepository) Update(ctx context.Context, user *User) (*User, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	existingUser, exists := r.users[user.ID]
+	if !exists {
+		return nil, ErrUserNotFound
+	}
+
+	// Check if email is being changed and if it conflicts
+	if user.Email != "" && user.Email != existingUser.Email {
+		if _, emailExists := r.emails[user.Email]; emailExists {
+			return nil, ErrUserExists
+		}
+		// Remove old email mapping and add new one
+		delete(r.emails, existingUser.Email)
+		r.emails[user.Email] = user.ID
+	}
+
+	// Update fields
+	if user.Name != "" {
+		existingUser.Name = user.Name
+	}
+	if user.Email != "" {
+		existingUser.Email = user.Email
+	}
+	existingUser.UpdatedAt = time.Now()
+
+	userCopy := *existingUser
+	return &userCopy, nil
+}
+
+// Delete deletes a user by ID
+func (r *InMemoryUserRepository) Delete(ctx context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	user, exists := r.users[id]
+	if !exists {
+		return ErrUserNotFound
+	}
+
+	delete(r.users, id)
+	delete(r.emails, user.Email)
+
+	return nil
+}
+
+// List retrieves a list of users with pagination
+func (r *InMemoryUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*User, string, int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	var users []*User
+	startFound := pageToken == ""
+
+	for _, user := range r.users {
+		if !startFound {
+			if user.ID == pageToken {
+				startFound = true
+			}
+			continue
+		}
+
+		if len(users) >= pageSize+1 {
+			break
+		}
+
+		userCopy := *user
+		users = append(users, &userCopy)
+	}
+
+	var nextToken string
+	if len(users) > pageSize {
+		nextToken = users[pageSize-1].ID
+		users = users[:pageSize]
+	}
+
+	return users, nextToken, len(r.users), nil
+}
+{{- end}}
+
+// generateID generates a unique ID for users
+func generateID() string {
+	{{- if ne .DatabaseDriver ""}}
+	// Use a proper UUID generation for database storage
+	return fmt.Sprintf("user_%d", time.Now().UnixNano())
+	{{- else}}
+	return uuid.New().String()
+	{{- end}}
+}

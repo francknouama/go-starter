@@ -1,0 +1,94 @@
+{{- if eq .Logger "slog"}}
+package logger
+
+import (
+	"io"
+	"log/slog"
+	"os"
+)
+
+// SlogLogger implements Logger using Go's standard slog
+type SlogLogger struct {
+	logger *slog.Logger
+}
+
+// NewSlogLogger creates a new slog-based logger
+func NewSlogLogger(level, format string, output io.Writer) (Logger, error) {
+	var handler slog.Handler
+
+	opts := &slog.HandlerOptions{
+		Level: parseSlogLevel(level),
+	}
+
+	switch format {
+	case "json":
+		handler = slog.NewJSONHandler(output, opts)
+	case "text", "console":
+		handler = slog.NewTextHandler(output, opts)
+	default:
+		handler = slog.NewJSONHandler(output, opts)
+	}
+
+	logger := slog.New(handler)
+	
+	return &SlogLogger{
+		logger: logger,
+	}, nil
+}
+
+// Debug logs a debug message
+func (l *SlogLogger) Debug(msg string, keysAndValues ...interface{}) {
+	l.logger.Debug(msg, keysAndValues...)
+}
+
+// Info logs an info message
+func (l *SlogLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.logger.Info(msg, keysAndValues...)
+}
+
+// Warn logs a warning message
+func (l *SlogLogger) Warn(msg string, keysAndValues ...interface{}) {
+	l.logger.Warn(msg, keysAndValues...)
+}
+
+// Error logs an error message
+func (l *SlogLogger) Error(msg string, keysAndValues ...interface{}) {
+	l.logger.Error(msg, keysAndValues...)
+}
+
+// Fatal logs a fatal message and exits
+func (l *SlogLogger) Fatal(msg string, keysAndValues ...interface{}) {
+	l.logger.Error(msg, keysAndValues...)
+	os.Exit(1)
+}
+
+// With creates a new logger with additional context
+func (l *SlogLogger) With(keysAndValues ...interface{}) Logger {
+	return &SlogLogger{
+		logger: l.logger.With(keysAndValues...),
+	}
+}
+
+// WithError creates a new logger with an error context
+func (l *SlogLogger) WithError(err error) Logger {
+	return &SlogLogger{
+		logger: l.logger.With("error", err),
+	}
+}
+
+// parseSlogLevel converts string level to slog.Level
+func parseSlogLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+{{- end}}

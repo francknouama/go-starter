@@ -1,0 +1,221 @@
+package integration
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+)
+
+func TestGatewayHealthEndpoint(t *testing.T) {
+	// Start test servers
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:        50051,
+			HTTPPort:        8080,
+			ShutdownTimeout: 5 * time.Second,
+		},
+	}
+
+	log := logger.NewFactory(cfg).CreateLogger()
+
+	// Start gRPC server
+	grpcServer := server.NewGRPCServer(cfg, log)
+	go func() {
+		if err := grpcServer.Start(ctx); err != nil {
+			t.Logf("gRPC server stopped: %v", err)
+		}
+	}()
+
+	// Wait for gRPC server to start
+	time.Sleep(2 * time.Second)
+
+	// Start gateway server
+	gatewayServer := server.NewGatewayServer(cfg, log)
+	go func() {
+		if err := gatewayServer.Start(ctx); err != nil {
+			t.Logf("Gateway server stopped: %v", err)
+		}
+	}()
+
+	// Wait for gateway to start
+	time.Sleep(2 * time.Second)
+
+	// Test health endpoint via HTTP
+	resp, err := http.Get("http://localhost:8080/v1/health")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var result map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	require.NoError(t, err)
+
+	assert.Equal(t, "SERVING", result["status"])
+}
+
+func TestGatewayUserEndpoints(t *testing.T) {
+	// Start test servers
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:        50052,
+			HTTPPort:        8081,
+			ShutdownTimeout: 5 * time.Second,
+		},
+	}
+
+	log := logger.NewFactory(cfg).CreateLogger()
+
+	// Start servers
+	grpcServer := server.NewGRPCServer(cfg, log)
+	go func() {
+		if err := grpcServer.Start(ctx); err != nil {
+			t.Logf("gRPC server stopped: %v", err)
+		}
+	}()
+	time.Sleep(2 * time.Second)
+
+	gatewayServer := server.NewGatewayServer(cfg, log)
+	go func() {
+		if err := gatewayServer.Start(ctx); err != nil {
+			t.Logf("Gateway server stopped: %v", err)
+		}
+	}()
+	time.Sleep(2 * time.Second)
+
+	baseURL := "http://localhost:8081"
+
+	t.Run("CreateUser", func(t *testing.T) {
+		payload := map[string]string{
+			"email": "test@example.com",
+			"name":  "Test User",
+		}
+		body, _ := json.Marshal(payload)
+
+		resp, err := http.Post(fmt.Sprintf("%s/v1/users", baseURL), "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var user map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&user)
+		require.NoError(t, err)
+
+		assert.NotEmpty(t, user["id"])
+		assert.Equal(t, "test@example.com", user["email"])
+		assert.Equal(t, "Test User", user["name"])
+	})
+
+	t.Run("GetUser", func(t *testing.T) {
+		// First create a user
+		payload := map[string]string{
+			"email": "get@example.com",
+			"name":  "Get User",
+		}
+		body, _ := json.Marshal(payload)
+
+		createResp, err := http.Post(fmt.Sprintf("%s/v1/users", baseURL), "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+		defer createResp.Body.Close()
+
+		var createdUser map[string]interface{}
+		err = json.NewDecoder(createResp.Body).Decode(&createdUser)
+		require.NoError(t, err)
+
+		userID := createdUser["id"].(string)
+
+		// Get the user
+		getResp, err := http.Get(fmt.Sprintf("%s/v1/users/%s", baseURL, userID))
+		require.NoError(t, err)
+		defer getResp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, getResp.StatusCode)
+
+		var user map[string]interface{}
+		err = json.NewDecoder(getResp.Body).Decode(&user)
+		require.NoError(t, err)
+
+		assert.Equal(t, userID, user["id"])
+		assert.Equal(t, "get@example.com", user["email"])
+	})
+
+	t.Run("ListUsers", func(t *testing.T) {
+		resp, err := http.Get(fmt.Sprintf("%s/v1/users?limit=10", baseURL))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var result map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		require.NoError(t, err)
+
+		assert.Contains(t, result, "users")
+		assert.Contains(t, result, "totalCount")
+	})
+}
+
+func TestGatewayCORS(t *testing.T) {
+	// Start test servers
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:        50053,
+			HTTPPort:        8082,
+			ShutdownTimeout: 5 * time.Second,
+		},
+	}
+
+	log := logger.NewFactory(cfg).CreateLogger()
+
+	// Start servers
+	grpcServer := server.NewGRPCServer(cfg, log)
+	go func() {
+		if err := grpcServer.Start(ctx); err != nil {
+			t.Logf("gRPC server stopped: %v", err)
+		}
+	}()
+	time.Sleep(2 * time.Second)
+
+	gatewayServer := server.NewGatewayServer(cfg, log)
+	go func() {
+		if err := gatewayServer.Start(ctx); err != nil {
+			t.Logf("Gateway server stopped: %v", err)
+		}
+	}()
+	time.Sleep(2 * time.Second)
+
+	// Test CORS preflight
+	req, err := http.NewRequest("OPTIONS", "http://localhost:8082/v1/health", nil)
+	require.NoError(t, err)
+	req.Header.Set("Origin", "http://example.com")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "*", resp.Header.Get("Access-Control-Allow-Origin"))
+	assert.Contains(t, resp.Header.Get("Access-Control-Allow-Methods"), "GET")
+	assert.Contains(t, resp.Header.Get("Access-Control-Allow-Methods"), "POST")
+}

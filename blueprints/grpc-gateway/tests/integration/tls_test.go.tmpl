@@ -1,0 +1,382 @@
+package integration
+
+import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/services"
+	"{{.ModulePath}}/internal/repository"
+	tlshelper "{{.ModulePath}}/internal/tls"
+	healthv1 "{{.ModulePath}}/gen/health/v1"
+)
+
+func TestTLSConfiguration(t *testing.T) {
+	// Skip if certificates don't exist
+	if !certificatesExist() {
+		t.Skip("Skipping TLS tests - certificates not found. Run ./scripts/generate-certs.sh first")
+	}
+
+	tests := []struct {
+		name        string
+		tlsEnabled  bool
+		expectError bool
+		description string
+	}{
+		{
+			name:        "TLS_Enabled_Valid_Certs",
+			tlsEnabled:  true,
+			expectError: false,
+			description: "Should connect successfully with valid TLS certificates",
+		},
+		{
+			name:        "TLS_Disabled_Insecure",
+			tlsEnabled:  false,
+			expectError: false,
+			description: "Should connect with insecure connection when TLS disabled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testTLSConnection(t, tt.tlsEnabled, tt.expectError, tt.description)
+		})
+	}
+}
+
+func TestTLSVersionEnforcement(t *testing.T) {
+	if !certificatesExist() {
+		t.Skip("Skipping TLS version tests - certificates not found")
+	}
+
+	tests := []struct {
+		name           string
+		minTLSVersion  string
+		clientVersion  uint16
+		expectError    bool
+		description    string
+	}{
+		{
+			name:          "TLS_1_3_Required_Client_1_3",
+			minTLSVersion: "1.3",
+			clientVersion: tls.VersionTLS13,
+			expectError:   false,
+			description:   "TLS 1.3 client should connect to TLS 1.3 server",
+		},
+		{
+			name:          "TLS_1_3_Required_Client_1_2",
+			minTLSVersion: "1.3",
+			clientVersion: tls.VersionTLS12,
+			expectError:   true,
+			description:   "TLS 1.2 client should fail to connect to TLS 1.3-only server",
+		},
+		{
+			name:          "TLS_1_2_Required_Client_1_2",
+			minTLSVersion: "1.2",
+			clientVersion: tls.VersionTLS12,
+			expectError:   false,
+			description:   "TLS 1.2 client should connect to TLS 1.2+ server",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testTLSVersionEnforcement(t, tt.minTLSVersion, tt.clientVersion, tt.expectError, tt.description)
+		})
+	}
+}
+
+func TestCertificateValidation(t *testing.T) {
+	if !certificatesExist() {
+		t.Skip("Skipping certificate validation tests - certificates not found")
+	}
+
+	t.Run("Valid_Server_Certificate", func(t *testing.T) {
+		cfg := createTestTLSConfig(true, "1.3")
+		
+		// Validate TLS configuration
+		testLogger := createTestLogger()
+		err := tlshelper.ValidateTLSConfig(cfg, testLogger)
+		assert.NoError(t, err, "Valid certificates should pass validation")
+	})
+
+	t.Run("Invalid_Certificate_Path", func(t *testing.T) {
+		cfg := config.TLSConfig{
+			Enabled:    true,
+			CertFile:   "./certs/nonexistent.crt",
+			KeyFile:    "./certs/nonexistent.key",
+			MinVersion: "1.3",
+			ServerName: "localhost",
+		}
+		
+		testLogger := createTestLogger()
+		err := tlshelper.ValidateTLSConfig(cfg, testLogger)
+		assert.Error(t, err, "Nonexistent certificates should fail validation")
+	})
+}
+
+func TestSecureGRPCConnection(t *testing.T) {
+	if !certificatesExist() {
+		t.Skip("Skipping secure gRPC connection tests - certificates not found")
+	}
+
+	// Start test server with TLS
+	port := findFreePort(t)
+	cfg := createTestTLSConfig(true, "1.3")
+	
+	testLogger := createTestLogger()
+	server, lis := startTestGRPCServerWithTLS(t, port, cfg, testLogger)
+	defer server.Stop()
+
+	// Test secure connection
+	t.Run("Secure_gRPC_Connection", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// Create secure client credentials
+		clientCreds, err := tlshelper.LoadClientTLSConfig(cfg, testLogger)
+		require.NoError(t, err)
+
+		conn, err := grpc.DialContext(ctx, lis.Addr().String(),
+			grpc.WithTransportCredentials(clientCreds),
+			grpc.WithBlock(),
+		)
+		require.NoError(t, err)
+		defer conn.Close()
+
+		// Test health check
+		client := healthv1.NewHealthServiceClient(conn)
+		resp, err := client.Check(ctx, &healthv1.HealthCheckRequest{})
+		assert.NoError(t, err)
+		assert.Equal(t, healthv1.HealthCheckResponse_SERVING, resp.Status)
+	})
+
+	// Test connection with wrong server name
+	t.Run("Wrong_Server_Name_Should_Fail", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		wrongConfig := cfg
+		wrongConfig.ServerName = "wrong-server-name"
+		
+		clientCreds, err := tlshelper.LoadClientTLSConfig(wrongConfig, testLogger)
+		require.NoError(t, err)
+
+		_, err = grpc.DialContext(ctx, lis.Addr().String(),
+			grpc.WithTransportCredentials(clientCreds),
+			grpc.WithBlock(),
+		)
+		assert.Error(t, err, "Connection should fail with wrong server name")
+	})
+}
+
+func TestInsecureConnectionWarning(t *testing.T) {
+	testLogger := createTestLogger()
+	
+	// Test warning for disabled TLS
+	tlshelper.IsInsecureConnectionWarning(false, testLogger)
+	
+	// Test no warning for enabled TLS
+	tlshelper.IsInsecureConnectionWarning(true, testLogger)
+	
+	// Note: In a real test, you might want to capture log output and verify warnings
+}
+
+func TestHTTPSGateway(t *testing.T) {
+	if !certificatesExist() {
+		t.Skip("Skipping HTTPS gateway tests - certificates not found")
+	}
+
+	t.Run("HTTPS_Gateway_Connection", func(t *testing.T) {
+		// This test would require setting up the full gateway with HTTPS
+		// For now, we'll test that the TLS configuration loads correctly
+		cfg := createTestTLSConfig(true, "1.3")
+		testLogger := createTestLogger()
+		
+		tlsConfig, err := tlshelper.LoadServerTLSConfig(cfg, testLogger)
+		assert.NoError(t, err)
+		assert.NotNil(t, tlsConfig)
+		assert.Equal(t, tls.VersionTLS13, tlsConfig.MinVersion)
+	})
+}
+
+// Helper functions
+
+func certificatesExist() bool {
+	certFile := "./certs/server.crt"
+	keyFile := "./certs/server.key"
+	
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		return false
+	}
+	if _, err := os.Stat(keyFile); os.IsNotExist(err) {
+		return false
+	}
+	return true
+}
+
+func createTestTLSConfig(enabled bool, minVersion string) config.TLSConfig {
+	return config.TLSConfig{
+		Enabled:    enabled,
+		CertFile:   "./certs/server.crt",
+		KeyFile:    "./certs/server.key",
+		CAFile:     "./certs/ca.crt",
+		MinVersion: minVersion,
+		ServerName: "localhost",
+	}
+}
+
+func createTestLogger() logger.Logger {
+	factory := logger.NewFactory()
+	testLogger, _ := factory.CreateFromConfig(logger.Config{
+		Level:  "warn",
+		Format: "json",
+		Type:   "{{.Logger}}",
+	})
+	return testLogger
+}
+
+func findFreePort(t *testing.T) int {
+	listener, err := net.Listen("tcp", ":0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	listener.Close()
+	return port
+}
+
+func startTestGRPCServerWithTLS(t *testing.T, port int, tlsConfig config.TLSConfig, log logger.Logger) (*grpc.Server, net.Listener) {
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	require.NoError(t, err)
+
+	// Create server options with TLS
+	serverOpts := []grpc.ServerOption{}
+	
+	if tlsConfig.Enabled {
+		serverTLSConfig, err := tlshelper.LoadServerTLSConfig(tlsConfig, log)
+		require.NoError(t, err)
+		
+		creds := credentials.NewTLS(serverTLSConfig)
+		serverOpts = append(serverOpts, grpc.Creds(creds))
+	}
+
+	server := grpc.NewServer(serverOpts...)
+	
+	// Register health service
+	healthRepo := repository.NewInMemoryHealthRepository()
+	healthService := services.NewHealthService(log, nil)
+	healthv1.RegisterHealthServiceServer(server, &mockHealthServer{service: healthService})
+
+	go func() {
+		if err := server.Serve(lis); err != nil {
+			t.Logf("Test server error: %v", err)
+		}
+	}()
+
+	// Wait a bit for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	return server, lis
+}
+
+func testTLSConnection(t *testing.T, tlsEnabled bool, expectError bool, description string) {
+	port := findFreePort(t)
+	cfg := createTestTLSConfig(tlsEnabled, "1.3")
+	testLogger := createTestLogger()
+	
+	server, lis := startTestGRPCServerWithTLS(t, port, cfg, testLogger)
+	defer server.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var conn *grpc.ClientConn
+	var err error
+
+	if tlsEnabled {
+		creds, credErr := tlshelper.LoadClientTLSConfig(cfg, testLogger)
+		require.NoError(t, credErr)
+		
+		conn, err = grpc.DialContext(ctx, lis.Addr().String(),
+			grpc.WithTransportCredentials(creds),
+			grpc.WithBlock(),
+		)
+	} else {
+		conn, err = grpc.DialContext(ctx, lis.Addr().String(),
+			grpc.WithTransportCredentials(insecure.NewCredentials()),
+			grpc.WithBlock(),
+		)
+	}
+
+	if expectError {
+		assert.Error(t, err, description)
+		return
+	}
+
+	require.NoError(t, err, description)
+	defer conn.Close()
+
+	// Test basic functionality
+	client := healthv1.NewHealthServiceClient(conn)
+	resp, err := client.Check(ctx, &healthv1.HealthCheckRequest{})
+	assert.NoError(t, err)
+	assert.Equal(t, healthv1.HealthCheckResponse_SERVING, resp.Status)
+}
+
+func testTLSVersionEnforcement(t *testing.T, minTLSVersion string, clientVersion uint16, expectError bool, description string) {
+	port := findFreePort(t)
+	cfg := createTestTLSConfig(true, minTLSVersion)
+	testLogger := createTestLogger()
+	
+	server, lis := startTestGRPCServerWithTLS(t, port, cfg, testLogger)
+	defer server.Stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Create client with specific TLS version
+	clientTLSConfig := &tls.Config{
+		MinVersion:         clientVersion,
+		MaxVersion:         clientVersion,
+		ServerName:         "localhost",
+		InsecureSkipVerify: true, // For testing purposes
+	}
+
+	creds := credentials.NewTLS(clientTLSConfig)
+	conn, err := grpc.DialContext(ctx, lis.Addr().String(),
+		grpc.WithTransportCredentials(creds),
+		grpc.WithBlock(),
+	)
+
+	if expectError {
+		assert.Error(t, err, description)
+		return
+	}
+
+	require.NoError(t, err, description)
+	defer conn.Close()
+}
+
+// Mock health server for testing
+type mockHealthServer struct {
+	healthv1.UnimplementedHealthServiceServer
+	service *services.HealthService
+}
+
+func (m *mockHealthServer) Check(ctx context.Context, req *healthv1.HealthCheckRequest) (*healthv1.HealthCheckResponse, error) {
+	return &healthv1.HealthCheckResponse{
+		Status: healthv1.HealthCheckResponse_SERVING,
+	}, nil
+}

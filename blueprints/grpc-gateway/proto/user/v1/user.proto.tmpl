@@ -1,0 +1,112 @@
+syntax = "proto3";
+
+package user.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "{{.ModulePath}}/gen/user/v1;userv1";
+
+// UserService provides user management functionality
+service UserService {
+  // CreateUser creates a new user
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse) {
+    option (google.api.http) = {
+      post: "/api/v1/users"
+      body: "*"
+    };
+  }
+
+  // GetUser retrieves a user by ID
+  rpc GetUser(GetUserRequest) returns (GetUserResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users/{user_id}"
+    };
+  }
+
+  // UpdateUser updates an existing user
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse) {
+    option (google.api.http) = {
+      put: "/api/v1/users/{user_id}"
+      body: "*"
+    };
+  }
+
+  // DeleteUser deletes a user by ID
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/api/v1/users/{user_id}"
+    };
+  }
+
+  // ListUsers retrieves a list of users with pagination
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse) {
+    option (google.api.http) = {
+      get: "/api/v1/users"
+    };
+  }
+}
+
+// User represents a user entity
+message User {
+  string id = 1;
+  string name = 2;
+  string email = 3;
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp updated_at = 5;
+}
+
+// CreateUserRequest contains the data needed to create a user
+message CreateUserRequest {
+  string name = 1;
+  string email = 2;
+  {{- if ne .AuthType ""}}
+  string password = 3;
+  {{- end}}
+}
+
+// CreateUserResponse contains the created user
+message CreateUserResponse {
+  User user = 1;
+}
+
+// GetUserRequest contains the user ID to retrieve
+message GetUserRequest {
+  string user_id = 1;
+}
+
+// GetUserResponse contains the requested user
+message GetUserResponse {
+  User user = 1;
+}
+
+// UpdateUserRequest contains the user ID and updated data
+message UpdateUserRequest {
+  string user_id = 1;
+  string name = 2;
+  string email = 3;
+}
+
+// UpdateUserResponse contains the updated user
+message UpdateUserResponse {
+  User user = 1;
+}
+
+// DeleteUserRequest contains the user ID to delete
+message DeleteUserRequest {
+  string user_id = 1;
+}
+
+// ListUsersRequest contains pagination parameters
+message ListUsersRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+// ListUsersResponse contains the list of users and pagination info
+message ListUsersResponse {
+  repeated User users = 1;
+  string next_page_token = 2;
+  int32 total_count = 3;
+}

@@ -1,0 +1,71 @@
+package models
+
+import (
+	"time"
+)
+
+// User represents a user in the system
+type User struct {
+	ID        string    `json:"id" db:"id"`
+	Email     string    `json:"email" db:"email"`
+	Name      string    `json:"name" db:"name"`
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	{{if eq .DatabaseORM "gorm"}}
+	DeletedAt *time.Time `json:"deleted_at,omitempty" gorm:"index"`
+	{{end}}
+}
+
+{{if eq .DatabaseORM "gorm"}}
+// TableName specifies the table name for GORM
+func (User) TableName() string {
+	return "users"
+}
+{{end}}
+
+// CreateUserRequest represents a request to create a new user
+type CreateUserRequest struct {
+	Email string `json:"email" validate:"required,email"`
+	Name  string `json:"name" validate:"required,min=2,max=100"`
+}
+
+// UpdateUserRequest represents a request to update a user
+type UpdateUserRequest struct {
+	Email *string `json:"email,omitempty" validate:"omitempty,email"`
+	Name  *string `json:"name,omitempty" validate:"omitempty,min=2,max=100"`
+}
+
+// UserResponse represents the API response for a user
+type UserResponse struct {
+	ID        string    `json:"id"`
+	Email     string    `json:"email"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ToResponse converts a User model to UserResponse
+func (u *User) ToResponse() *UserResponse {
+	return &UserResponse{
+		ID:        u.ID,
+		Email:     u.Email,
+		Name:      u.Name,
+		CreatedAt: u.CreatedAt,
+		UpdatedAt: u.UpdatedAt,
+	}
+}
+
+// ListUsersRequest represents pagination parameters
+type ListUsersRequest struct {
+	Limit  int32  `json:"limit,omitempty"`
+	Offset int32  `json:"offset,omitempty"`
+	Query  string `json:"query,omitempty"`
+}
+
+// ListUsersResponse represents a paginated list of users
+type ListUsersResponse struct {
+	Users      []*UserResponse `json:"users"`
+	TotalCount int64          `json:"total_count"`
+	Limit      int32          `json:"limit"`
+	Offset     int32          `json:"offset"`
+}

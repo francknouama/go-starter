@@ -1,0 +1,100 @@
+{{- if eq .Logger "zap"}}
+package logger
+
+import (
+	"io"
+	"os"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+)
+
+// ZapLogger implements Logger using Uber's zap
+type ZapLogger struct {
+	logger *zap.SugaredLogger
+}
+
+// NewZapLogger creates a new zap-based logger
+func NewZapLogger(level, format string, output io.Writer) (Logger, error) {
+	config := zap.NewProductionConfig()
+	
+	// Set log level
+	config.Level = zap.NewAtomicLevelAt(parseZapLevel(level))
+	
+	// Set encoding format
+	if format == "console" || format == "text" {
+		config.Encoding = "console"
+		config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		config.Encoding = "json"
+		config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+		config.EncoderConfig.EncodeLevel = zapcore.LowercaseLevelEncoder
+	}
+
+	// Build logger
+	logger, err := config.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	return &ZapLogger{
+		logger: logger.Sugar(),
+	}, nil
+}
+
+// Debug logs a debug message
+func (l *ZapLogger) Debug(msg string, keysAndValues ...interface{}) {
+	l.logger.Debugw(msg, keysAndValues...)
+}
+
+// Info logs an info message
+func (l *ZapLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.logger.Infow(msg, keysAndValues...)
+}
+
+// Warn logs a warning message
+func (l *ZapLogger) Warn(msg string, keysAndValues ...interface{}) {
+	l.logger.Warnw(msg, keysAndValues...)
+}
+
+// Error logs an error message
+func (l *ZapLogger) Error(msg string, keysAndValues ...interface{}) {
+	l.logger.Errorw(msg, keysAndValues...)
+}
+
+// Fatal logs a fatal message and exits
+func (l *ZapLogger) Fatal(msg string, keysAndValues ...interface{}) {
+	l.logger.Fatalw(msg, keysAndValues...)
+}
+
+// With creates a new logger with additional context
+func (l *ZapLogger) With(keysAndValues ...interface{}) Logger {
+	return &ZapLogger{
+		logger: l.logger.With(keysAndValues...),
+	}
+}
+
+// WithError creates a new logger with an error context
+func (l *ZapLogger) WithError(err error) Logger {
+	return &ZapLogger{
+		logger: l.logger.With("error", err),
+	}
+}
+
+// parseZapLevel converts string level to zapcore.Level
+func parseZapLevel(level string) zapcore.Level {
+	switch level {
+	case "debug":
+		return zapcore.DebugLevel
+	case "info":
+		return zapcore.InfoLevel
+	case "warn":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}
+{{- end}}

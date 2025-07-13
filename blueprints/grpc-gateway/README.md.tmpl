@@ -1,0 +1,273 @@
+# {{.ProjectName}}
+
+A gRPC Gateway service that provides both gRPC and REST API interfaces for modern microservices architecture.
+
+## Overview
+
+This service implements the gRPC Gateway pattern, which allows you to:
+
+- **Dual Protocol Support**: Serve both gRPC and REST APIs from a single service
+- **Protocol Buffer Definitions**: Type-safe API contracts using protobuf
+- **Automatic REST Mapping**: REST endpoints automatically generated from gRPC service definitions
+- **Modern Architecture**: Clean separation of concerns with dependency injection
+
+## Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   gRPC Client   │───▶│   gRPC Server   │───▶│   Business      │
+└─────────────────┘    │   (Port {{.GrpcPort}})    │    │   Logic         │
+                       └─────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐           ▲
+│   REST Client   │───▶│  Gateway Server │───────────┘
+└─────────────────┘    │   (Port {{.HttpPort}})    │
+                       └─────────────────┘
+```
+
+## Features
+
+- ✅ **gRPC Server** on port {{.GrpcPort}}
+- ✅ **REST Gateway** on port {{.HttpPort}}
+- ✅ **Health Checks** (liveness, readiness)
+- ✅ **User Management** (CRUD operations)
+{{- if ne .DatabaseDriver ""}}
+- ✅ **Database Integration** ({{.DatabaseDriver}}{{- if ne .DatabaseORM ""}}/{{.DatabaseORM}}{{- end}})
+{{- end}}
+{{- if ne .AuthType ""}}
+- ✅ **Authentication** ({{.AuthType}})
+{{- end}}
+- ✅ **Structured Logging** ({{.Logger}})
+- ✅ **TLS 1.3 Encryption** (secure gRPC and HTTP communications)
+- ✅ **Configuration Management**
+- ✅ **Docker Support**
+- ✅ **Graceful Shutdown**
+
+## Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}}+
+- Protocol Buffers compiler (`protoc`)
+- gRPC Gateway tools
+
+### Install Tools
+
+```bash
+make install-tools
+```
+
+### Generate Code
+
+```bash
+make generate
+```
+
+### Generate TLS Certificates (Development)
+
+```bash
+# Generate self-signed certificates for development
+./scripts/generate-certs.sh
+```
+
+### Run the Service
+
+```bash
+# Development mode
+make dev
+
+# Or build and run
+make build
+make run
+```
+
+The service will start:
+- gRPC server on `localhost:{{.GrpcPort}}`
+- REST gateway on `localhost:{{.HttpPort}}`
+
+## API Endpoints
+
+### Health Checks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Basic health check |
+| GET | `/ready` | Readiness check |
+| GET | `/live` | Liveness check |
+
+### User Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/users` | Create user |
+| GET | `/api/v1/users/{user_id}` | Get user |
+| PUT | `/api/v1/users/{user_id}` | Update user |
+| DELETE | `/api/v1/users/{user_id}` | Delete user |
+| GET | `/api/v1/users` | List users |
+
+### gRPC Services
+
+The same functionality is available via gRPC:
+
+- `user.v1.UserService`
+- `health.v1.HealthService`
+
+## Testing
+
+### REST API Testing
+
+```bash
+# Health check
+curl http://localhost:{{.HttpPort}}/health
+
+# Create user
+curl -X POST http://localhost:{{.HttpPort}}/api/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "John Doe", "email": "john@example.com"}'
+
+# List users
+curl http://localhost:{{.HttpPort}}/api/v1/users
+```
+
+### gRPC Testing
+
+Using [grpcurl](https://github.com/fullstorydev/grpcurl):
+
+```bash
+# Health check
+grpcurl -plaintext localhost:{{.GrpcPort}} health.v1.HealthService/Check
+
+# List users
+grpcurl -plaintext localhost:{{.GrpcPort}} user.v1.UserService/ListUsers
+```
+
+## Development
+
+### Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/server/           # Application entry point
+├── proto/               # Protocol buffer definitions
+│   ├── user/v1/         # User service protobuf
+│   └── health/v1/       # Health service protobuf
+├── gen/                 # Generated protobuf code
+├── internal/            # Internal packages
+│   ├── server/          # gRPC server implementations
+│   ├── services/        # Business logic
+│   ├── config/          # Configuration
+│   └── logger/          # Logging
+{{- if ne .DatabaseDriver ""}}
+├── migrations/          # Database migrations
+{{- end}}
+├── tests/               # Tests
+└── scripts/             # Build and utility scripts
+```
+
+### Adding New Services
+
+1. Define your service in a `.proto` file
+2. Add HTTP annotations for REST mapping
+3. Generate code: `make generate`
+4. Implement service logic in `internal/services/`
+5. Create gRPC server in `internal/server/`
+6. Register service in `cmd/server/main.go`
+
+### Configuration
+
+Configuration is managed through YAML files and environment variables:
+
+- `configs/config.dev.yaml` - Development config
+- `configs/config.prod.yaml` - Production config
+- `configs/config.test.yaml` - Test config
+
+Environment variables override config file values.
+
+## Security & TLS
+
+This service implements **TLS 1.3 encryption** for all communications to ensure security.
+
+### 🔒 TLS Configuration
+
+**Development:**
+```bash
+# Generate development certificates
+./scripts/generate-certs.sh
+
+# Start with TLS enabled (default)
+make dev
+```
+
+**Production:**
+```bash
+# See production certificate setup guide
+./scripts/generate-prod-certs.sh
+
+# Set environment variables
+export TLS_CERT_FILE=/path/to/certificate.crt
+export TLS_KEY_FILE=/path/to/private.key
+export TLS_SERVER_NAME=your-domain.com
+```
+
+### 🔧 TLS Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `TLS_ENABLED` | Enable/disable TLS | `true` |
+| `TLS_CERT_FILE` | Server certificate path | `./certs/server.crt` |
+| `TLS_KEY_FILE` | Private key path | `./certs/server.key` |
+| `TLS_CA_FILE` | CA certificate path | `./certs/ca.crt` |
+| `TLS_MIN_VERSION` | Minimum TLS version | `1.3` |
+
+### 📚 Detailed Documentation
+
+For comprehensive TLS setup instructions, see:
+- [TLS Setup Guide](./docs/TLS_SETUP.md) - Complete TLS configuration guide
+- [Security Migration](./docs/SECURITY_MIGRATION.md) - Migration from insecure setup
+
+### ⚠️ Security Notes
+
+- **TLS is enabled by default** - this is intentional for security
+- **Never disable TLS in production** - all traffic should be encrypted
+- **Self-signed certificates are OK for development** - use proper CA certificates in production
+- **Monitor certificate expiration** - implement automated renewal
+
+## Deployment
+
+### Docker
+
+```bash
+# Build image
+make docker-build
+
+# Run container
+make docker-run
+
+# Or use docker-compose
+make docker-compose-up
+```
+
+### Production
+
+```bash
+# Build release binaries
+make release
+
+# This creates optimized binaries for different platforms
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make changes
+4. Add tests
+5. Run checks: `make check`
+6. Submit a pull request
+
+## License
+
+{{.License}}
+
+## Support
+
+For questions and support, please open an issue on the project repository.

@@ -1,0 +1,236 @@
+package integration
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const baseURL = "http://localhost:{{.HttpPort | default 8080}}"
+
+type User struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type CreateUserRequest struct {
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	{{- if ne .AuthType ""}}
+	Password string `json:"password"`
+	{{- end}}
+}
+
+type CreateUserResponse struct {
+	User *User `json:"user"`
+}
+
+type GetUserResponse struct {
+	User *User `json:"user"`
+}
+
+type UpdateUserRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+type UpdateUserResponse struct {
+	User *User `json:"user"`
+}
+
+type ListUsersResponse struct {
+	Users         []*User `json:"users"`
+	NextPageToken string  `json:"next_page_token"`
+	TotalCount    int32   `json:"total_count"`
+}
+
+func TestRESTHealthEndpoints(t *testing.T) {
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	t.Run("Health Check", func(t *testing.T) {
+		resp, err := client.Get(baseURL + "/health")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("Readiness Check", func(t *testing.T) {
+		resp, err := client.Get(baseURL + "/ready")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("Liveness Check", func(t *testing.T) {
+		resp, err := client.Get(baseURL + "/live")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+	})
+
+	t.Run("Version Endpoint", func(t *testing.T) {
+		resp, err := client.Get(baseURL + "/version")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var version map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&version)
+		require.NoError(t, err)
+		assert.Contains(t, version, "version")
+		assert.Contains(t, version, "service")
+	})
+}
+
+func TestRESTUserEndpoints(t *testing.T) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	var createdUserID string
+
+	t.Run("Create User", func(t *testing.T) {
+		createReq := CreateUserRequest{
+			Name:  "Jane Doe",
+			Email: "jane.doe@example.com",
+			{{- if ne .AuthType ""}}
+			Password: "securepassword123",
+			{{- end}}
+		}
+
+		reqBody, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		resp, err := client.Post(baseURL+"/api/v1/users", "application/json", bytes.NewBuffer(reqBody))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var createResp CreateUserResponse
+		err = json.NewDecoder(resp.Body).Decode(&createResp)
+		require.NoError(t, err)
+		assert.NotNil(t, createResp.User)
+		assert.NotEmpty(t, createResp.User.ID)
+		assert.Equal(t, createReq.Name, createResp.User.Name)
+		assert.Equal(t, createReq.Email, createResp.User.Email)
+
+		createdUserID = createResp.User.ID
+	})
+
+	t.Run("Get User", func(t *testing.T) {
+		require.NotEmpty(t, createdUserID, "User must be created first")
+
+		resp, err := client.Get(fmt.Sprintf("%s/api/v1/users/%s", baseURL, createdUserID))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var getUserResp GetUserResponse
+		err = json.NewDecoder(resp.Body).Decode(&getUserResp)
+		require.NoError(t, err)
+		assert.NotNil(t, getUserResp.User)
+		assert.Equal(t, createdUserID, getUserResp.User.ID)
+		assert.Equal(t, "Jane Doe", getUserResp.User.Name)
+		assert.Equal(t, "jane.doe@example.com", getUserResp.User.Email)
+	})
+
+	t.Run("Update User", func(t *testing.T) {
+		require.NotEmpty(t, createdUserID, "User must be created first")
+
+		updateReq := UpdateUserRequest{
+			Name:  "Jane Smith",
+			Email: "jane.smith@example.com",
+		}
+
+		reqBody, err := json.Marshal(updateReq)
+		require.NoError(t, err)
+
+		req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/users/%s", baseURL, createdUserID), bytes.NewBuffer(reqBody))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var updateResp UpdateUserResponse
+		err = json.NewDecoder(resp.Body).Decode(&updateResp)
+		require.NoError(t, err)
+		assert.NotNil(t, updateResp.User)
+		assert.Equal(t, createdUserID, updateResp.User.ID)
+		assert.Equal(t, updateReq.Name, updateResp.User.Name)
+		assert.Equal(t, updateReq.Email, updateResp.User.Email)
+	})
+
+	t.Run("List Users", func(t *testing.T) {
+		resp, err := client.Get(baseURL + "/api/v1/users")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		var listResp ListUsersResponse
+		err = json.NewDecoder(resp.Body).Decode(&listResp)
+		require.NoError(t, err)
+		assert.NotEmpty(t, listResp.Users)
+		assert.True(t, len(listResp.Users) >= 1)
+		assert.True(t, listResp.TotalCount >= 1)
+	})
+
+	t.Run("Delete User", func(t *testing.T) {
+		require.NotEmpty(t, createdUserID, "User must be created first")
+
+		req, err := http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/v1/users/%s", baseURL, createdUserID), nil)
+		require.NoError(t, err)
+
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+		// Verify user is deleted
+		getResp, err := client.Get(fmt.Sprintf("%s/api/v1/users/%s", baseURL, createdUserID))
+		require.NoError(t, err)
+		defer getResp.Body.Close()
+		assert.Equal(t, http.StatusNotFound, getResp.StatusCode)
+	})
+
+	t.Run("Get Non-existent User", func(t *testing.T) {
+		resp, err := client.Get(baseURL + "/api/v1/users/non-existent-id")
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+
+	t.Run("Create User with Invalid Data", func(t *testing.T) {
+		createReq := CreateUserRequest{
+			Name:  "", // Invalid: empty name
+			Email: "invalid-email", // Invalid: not a valid email
+		}
+
+		reqBody, err := json.Marshal(createReq)
+		require.NoError(t, err)
+
+		resp, err := client.Post(baseURL+"/api/v1/users", "application/json", bytes.NewBuffer(reqBody))
+		require.NoError(t, err)
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	})
+}

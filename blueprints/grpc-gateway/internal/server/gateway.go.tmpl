@@ -1,0 +1,190 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/reflection"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	healthv1 "{{.ModulePath}}/gen/health/v1"
+	userv1 "{{.ModulePath}}/gen/user/v1"
+)
+
+// GatewayServer represents the HTTP/REST gateway server
+type GatewayServer struct {
+	config *config.Config
+	logger logger.Logger
+	mux    *runtime.ServeMux
+}
+
+// NewGatewayServer creates a new gateway server instance
+func NewGatewayServer(cfg *config.Config, log logger.Logger) *GatewayServer {
+	// Create a new ServeMux with custom marshalers
+	mux := runtime.NewServeMux(
+		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.HTTPBodyMarshaler{
+			Marshaler: &runtime.JSONPb{
+				MarshalOptions: {
+					UseProtoNames:   true,
+					EmitUnpopulated: true,
+				},
+				UnmarshalOptions: {
+					DiscardUnknown: true,
+				},
+			},
+		}),
+	)
+
+	return &GatewayServer{
+		config: cfg,
+		logger: log,
+		mux:    mux,
+	}
+}
+
+// Start starts the HTTP gateway server
+func (s *GatewayServer) Start(ctx context.Context) error {
+	// Create gRPC connection to the gRPC server
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+
+	grpcEndpoint := fmt.Sprintf("localhost:%d", s.config.Server.GRPCPort)
+	
+	// Register service handlers
+	err := s.registerServices(ctx, grpcEndpoint, opts)
+	if err != nil {
+		return fmt.Errorf("failed to register services: %w", err)
+	}
+
+	// Start HTTP server
+	httpAddr := fmt.Sprintf(":%d", s.config.Server.HTTPPort)
+	s.logger.Info("Starting HTTP gateway server", "address", httpAddr)
+
+	server := &http.Server{
+		Addr:    httpAddr,
+		Handler: s.addMiddleware(s.mux),
+	}
+
+	// Start server in a goroutine
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			s.logger.Error("Failed to start HTTP gateway server", "error", err)
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+	// Graceful shutdown
+	s.logger.Info("Shutting down HTTP gateway server")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), s.config.Server.ShutdownTimeout)
+	defer cancel()
+
+	return server.Shutdown(shutdownCtx)
+}
+
+// registerServices registers all gRPC services with the gateway
+func (s *GatewayServer) registerServices(ctx context.Context, endpoint string, opts []grpc.DialOption) error {
+	// Register health service
+	if err := healthv1.RegisterHealthServiceHandlerFromEndpoint(ctx, s.mux, endpoint, opts); err != nil {
+		return fmt.Errorf("failed to register health service: %w", err)
+	}
+
+	// Register user service
+	if err := userv1.RegisterUserServiceHandlerFromEndpoint(ctx, s.mux, endpoint, opts); err != nil {
+		return fmt.Errorf("failed to register user service: %w", err)
+	}
+
+	s.logger.Info("Registered all gRPC services with gateway")
+	return nil
+}
+
+// addMiddleware wraps the handler with middleware
+func (s *GatewayServer) addMiddleware(handler http.Handler) http.Handler {
+	// Add CORS middleware
+	handler = s.corsMiddleware(handler)
+	
+	// Add logging middleware
+	handler = s.loggingMiddleware(handler)
+	
+	// Add recovery middleware
+	handler = s.recoveryMiddleware(handler)
+
+	{{if ne .AuthType ""}}
+	// Add authentication middleware if configured
+	handler = s.authMiddleware(handler)
+	{{end}}
+
+	return handler
+}
+
+// corsMiddleware adds CORS headers
+func (s *GatewayServer) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+		
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+// loggingMiddleware logs HTTP requests
+func (s *GatewayServer) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.logger.Info("HTTP request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"remote_addr", r.RemoteAddr,
+		)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// recoveryMiddleware recovers from panics
+func (s *GatewayServer) recoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				s.logger.Error("Panic recovered", "error", err)
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+{{if ne .AuthType ""}}
+// authMiddleware handles authentication
+func (s *GatewayServer) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Skip auth for health check endpoint
+		if r.URL.Path == "/v1/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Extract and validate auth token
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		// TODO: Implement actual auth validation based on AuthType
+		// For now, just pass through
+		next.ServeHTTP(w, r)
+	})
+}
+{{end}}

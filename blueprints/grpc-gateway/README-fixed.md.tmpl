@@ -1,0 +1,216 @@
+# {{.ProjectName}}
+
+A gRPC Gateway service that provides both gRPC and REST API interfaces for modern microservices architecture.
+
+## Overview
+
+This service implements the gRPC Gateway pattern, which allows you to:
+
+- **Dual Protocol Support**: Serve both gRPC and REST APIs from a single service
+- **Protocol Buffer Definitions**: Type-safe API contracts using protobuf
+- **Automatic REST Mapping**: REST endpoints automatically generated from gRPC service definitions
+- **Modern Architecture**: Clean separation of concerns with dependency injection
+
+## Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   gRPC Client   │───▶│   gRPC Server   │───▶│   Business      │
+└─────────────────┘    │   (Port {{.GrpcPort}})    │    │   Logic         │
+                       └─────────────────┘    └─────────────────┘
+┌─────────────────┐    ┌─────────────────┐           ▲
+│   REST Client   │───▶│  Gateway Server │───────────┘
+└─────────────────┘    │   (Port {{.HttpPort}})    │
+                       └─────────────────┘
+```
+
+## Features
+
+- ✅ **gRPC Server** on port {{.GrpcPort}}
+- ✅ **REST Gateway** on port {{.HttpPort}}
+- ✅ **Health Checks** (liveness, readiness)
+- ✅ **User Management** (CRUD operations)
+{{- if ne .DatabaseDriver ""}}
+- ✅ **Database Integration** ({{.DatabaseDriver}})
+{{- if ne .DatabaseORM ""}}
+- ✅ **ORM Support** ({{.DatabaseORM}})
+{{- end}}
+{{- end}}
+{{- if ne .AuthType ""}}
+- ✅ **Authentication** ({{.AuthType}})
+{{- end}}
+- ✅ **Structured Logging** ({{.Logger}})
+- ✅ **Configuration Management**
+- ✅ **Docker Support**
+- ✅ **Graceful Shutdown**
+
+## Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}}+
+- Protocol Buffers compiler (`protoc`)
+- gRPC Gateway tools
+
+### Install Tools
+
+```bash
+make install-tools
+```
+
+### Generate Code
+
+```bash
+make generate
+```
+
+### Run the Service
+
+```bash
+# Development mode
+make dev
+
+# Or build and run
+make build
+make run
+```
+
+The service will start:
+- gRPC server on `localhost:{{.GrpcPort}}`
+- REST gateway on `localhost:{{.HttpPort}}`
+
+## API Endpoints
+
+### Health Checks
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Basic health check |
+| GET | `/ready` | Readiness check |
+| GET | `/live` | Liveness check |
+
+### User Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/users` | Create user |
+| GET | `/api/v1/users/{user_id}` | Get user |
+| PUT | `/api/v1/users/{user_id}` | Update user |
+| DELETE | `/api/v1/users/{user_id}` | Delete user |
+| GET | `/api/v1/users` | List users |
+
+### gRPC Services
+
+The same functionality is available via gRPC:
+
+- `user.v1.UserService`
+- `health.v1.HealthService`
+
+## Testing
+
+### REST API Testing
+
+```bash
+# Health check
+curl http://localhost:{{.HttpPort}}/health
+
+# Create user
+curl -X POST http://localhost:{{.HttpPort}}/api/v1/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "John Doe", "email": "john@example.com"}'
+
+# List users
+curl http://localhost:{{.HttpPort}}/api/v1/users
+```
+
+### gRPC Testing
+
+Using [grpcurl](https://github.com/fullstorydev/grpcurl):
+
+```bash
+# Health check
+grpcurl -plaintext localhost:{{.GrpcPort}} health.v1.HealthService/Check
+
+# List users
+grpcurl -plaintext localhost:{{.GrpcPort}} user.v1.UserService/ListUsers
+```
+
+## Development
+
+### Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/server/           # Application entry point
+├── proto/               # Protocol buffer definitions
+│   ├── user/v1/         # User service protobuf
+│   └── health/v1/       # Health service protobuf
+├── gen/                 # Generated protobuf code
+├── internal/            # Internal packages
+│   ├── server/          # gRPC server implementations
+│   ├── services/        # Business logic
+│   ├── config/          # Configuration
+│   └── logger/          # Logging
+├── tests/               # Tests
+└── scripts/             # Build and utility scripts
+```
+
+### Adding New Services
+
+1. Define your service in a `.proto` file
+2. Add HTTP annotations for REST mapping
+3. Generate code: `make generate`
+4. Implement service logic in `internal/services/`
+5. Create gRPC server in `internal/server/`
+6. Register service in `cmd/server/main.go`
+
+### Configuration
+
+Configuration is managed through YAML files and environment variables:
+
+- `configs/config.dev.yaml` - Development config
+- `configs/config.prod.yaml` - Production config
+- `configs/config.test.yaml` - Test config
+
+Environment variables override config file values.
+
+## Deployment
+
+### Docker
+
+```bash
+# Build image
+make docker-build
+
+# Run container
+make docker-run
+
+# Or use docker-compose
+make docker-compose-up
+```
+
+### Production
+
+```bash
+# Build release binaries
+make release
+
+# This creates optimized binaries for different platforms
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make changes
+4. Add tests
+5. Run checks: `make check`
+6. Submit a pull request
+
+## License
+
+MIT
+
+## Support
+
+For questions and support, please open an issue on the project repository.

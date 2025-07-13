@@ -1,0 +1,35 @@
+-- Create users table
+CREATE TABLE IF NOT EXISTS users (
+    id {{if eq .DatabaseDriver "postgres"}}UUID PRIMARY KEY DEFAULT gen_random_uuid(){{else if eq .DatabaseDriver "mysql"}}VARCHAR(36) PRIMARY KEY DEFAULT (UUID()){{else}}TEXT PRIMARY KEY{{end}},
+    email VARCHAR(255) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    created_at TIMESTAMP{{if eq .DatabaseDriver "postgres"}} WITH TIME ZONE{{end}} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP{{if eq .DatabaseDriver "postgres"}} WITH TIME ZONE{{end}} NOT NULL DEFAULT CURRENT_TIMESTAMP{{if eq .DatabaseDriver "mysql"}} ON UPDATE CURRENT_TIMESTAMP{{end}}
+);
+
+-- Create indexes
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_created_at ON users(created_at);
+
+{{if eq .DatabaseDriver "postgres"}}
+-- Create updated_at trigger for PostgreSQL
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE
+    ON users FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+{{else if eq .DatabaseDriver "sqlite"}}
+-- Create updated_at trigger for SQLite
+CREATE TRIGGER update_users_updated_at
+    AFTER UPDATE ON users
+    FOR EACH ROW
+    WHEN NEW.updated_at = OLD.updated_at
+BEGIN
+    UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+{{end}}

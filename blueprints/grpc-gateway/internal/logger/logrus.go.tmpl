@@ -1,0 +1,110 @@
+{{- if eq .Logger "logrus"}}
+package logger
+
+import (
+	"io"
+	"os"
+
+	"github.com/sirupsen/logrus"
+)
+
+// LogrusLogger implements Logger using Sirupsen's logrus
+type LogrusLogger struct {
+	logger *logrus.Logger
+}
+
+// NewLogrusLogger creates a new logrus-based logger
+func NewLogrusLogger(level, format string, output io.Writer) (Logger, error) {
+	logger := logrus.New()
+	logger.SetOutput(output)
+
+	// Set log level
+	logLevel, err := logrus.ParseLevel(level)
+	if err != nil {
+		logLevel = logrus.InfoLevel
+	}
+	logger.SetLevel(logLevel)
+
+	// Set formatter
+	switch format {
+	case "json":
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z",
+		})
+	case "text", "console":
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02T15:04:05.000Z",
+			ForceColors:     true,
+		})
+	default:
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z",
+		})
+	}
+
+	return &LogrusLogger{
+		logger: logger,
+	}, nil
+}
+
+// Debug logs a debug message
+func (l *LogrusLogger) Debug(msg string, keysAndValues ...interface{}) {
+	fields := l.buildFields(keysAndValues...)
+	l.logger.WithFields(fields).Debug(msg)
+}
+
+// Info logs an info message
+func (l *LogrusLogger) Info(msg string, keysAndValues ...interface{}) {
+	fields := l.buildFields(keysAndValues...)
+	l.logger.WithFields(fields).Info(msg)
+}
+
+// Warn logs a warning message
+func (l *LogrusLogger) Warn(msg string, keysAndValues ...interface{}) {
+	fields := l.buildFields(keysAndValues...)
+	l.logger.WithFields(fields).Warn(msg)
+}
+
+// Error logs an error message
+func (l *LogrusLogger) Error(msg string, keysAndValues ...interface{}) {
+	fields := l.buildFields(keysAndValues...)
+	l.logger.WithFields(fields).Error(msg)
+}
+
+// Fatal logs a fatal message and exits
+func (l *LogrusLogger) Fatal(msg string, keysAndValues ...interface{}) {
+	fields := l.buildFields(keysAndValues...)
+	l.logger.WithFields(fields).Fatal(msg)
+}
+
+// With creates a new logger with additional context
+func (l *LogrusLogger) With(keysAndValues ...interface{}) Logger {
+	fields := l.buildFields(keysAndValues...)
+	return &LogrusLogger{
+		logger: l.logger.WithFields(fields).Logger,
+	}
+}
+
+// WithError creates a new logger with an error context
+func (l *LogrusLogger) WithError(err error) Logger {
+	return &LogrusLogger{
+		logger: l.logger.WithError(err).Logger,
+	}
+}
+
+// buildFields converts key-value pairs to logrus.Fields
+func (l *LogrusLogger) buildFields(keysAndValues ...interface{}) logrus.Fields {
+	fields := make(logrus.Fields)
+	
+	for i := 0; i < len(keysAndValues)-1; i += 2 {
+		key, ok := keysAndValues[i].(string)
+		if !ok {
+			continue
+		}
+		fields[key] = keysAndValues[i+1]
+	}
+	
+	return fields
+}
+{{- end}}

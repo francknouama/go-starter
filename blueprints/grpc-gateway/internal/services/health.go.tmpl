@@ -1,0 +1,190 @@
+package services
+
+import (
+	"context"
+	"time"
+	{{- if ne .DatabaseDriver ""}}
+	"database/sql"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// HealthStatus represents the health status of a service
+type HealthStatus string
+
+const (
+	HealthStatusServing    HealthStatus = "SERVING"
+	HealthStatusNotServing HealthStatus = "NOT_SERVING"
+	HealthStatusUnknown    HealthStatus = "UNKNOWN"
+)
+
+// HealthCheckResult represents the result of a health check
+type HealthCheckResult struct {
+	Status    HealthStatus      `json:"status"`
+	Message   string            `json:"message"`
+	Timestamp time.Time         `json:"timestamp"`
+	Details   map[string]string `json:"details,omitempty"`
+}
+
+// ServiceStatus represents the status of an individual service component
+type ServiceStatus struct {
+	Name      string       `json:"name"`
+	Status    HealthStatus `json:"status"`
+	Message   string       `json:"message"`
+	LastCheck time.Time    `json:"last_check"`
+}
+
+// ReadinessCheckResult represents the result of a readiness check
+type ReadinessCheckResult struct {
+	Status    HealthStatus     `json:"status"`
+	Message   string           `json:"message"`
+	Timestamp time.Time        `json:"timestamp"`
+	Services  []*ServiceStatus `json:"services"`
+}
+
+// LivenessCheckResult represents the result of a liveness check
+type LivenessCheckResult struct {
+	Status    HealthStatus `json:"status"`
+	Message   string       `json:"message"`
+	Timestamp time.Time    `json:"timestamp"`
+}
+
+// HealthService provides health check operations
+type HealthService struct {
+	logger logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db     *sql.DB
+	{{- end}}
+}
+
+// NewHealthService creates a new HealthService
+func NewHealthService(logger logger.Logger{{- if ne .DatabaseDriver ""}}, db *sql.DB{{- end}}) *HealthService {
+	return &HealthService{
+		logger: logger,
+		{{- if ne .DatabaseDriver ""}}
+		db:     db,
+		{{- end}}
+	}
+}
+
+// Check performs a basic health check
+func (s *HealthService) Check(ctx context.Context) *HealthCheckResult {
+	timestamp := time.Now()
+	
+	result := &HealthCheckResult{
+		Status:    HealthStatusServing,
+		Message:   "Service is healthy",
+		Timestamp: timestamp,
+		Details:   make(map[string]string),
+	}
+
+	// Basic service health - always healthy unless there's a critical issue
+	result.Details["service"] = "healthy"
+	result.Details["version"] = "1.0.0"
+	result.Details["uptime"] = timestamp.Format(time.RFC3339)
+
+	s.logger.Debug("Health check performed", "status", result.Status)
+	
+	return result
+}
+
+// ReadinessCheck performs a readiness check
+func (s *HealthService) ReadinessCheck(ctx context.Context) *ReadinessCheckResult {
+	timestamp := time.Now()
+	
+	result := &ReadinessCheckResult{
+		Status:    HealthStatusServing,
+		Message:   "Service is ready",
+		Timestamp: timestamp,
+		Services:  []*ServiceStatus{},
+	}
+
+	overallHealthy := true
+
+	{{- if ne .DatabaseDriver ""}}
+	// Check database connectivity
+	dbStatus := s.checkDatabase(ctx)
+	result.Services = append(result.Services, dbStatus)
+	if dbStatus.Status != HealthStatusServing {
+		overallHealthy = false
+	}
+	{{- end}}
+
+	// Check other dependencies here
+	// Example: external APIs, message queues, etc.
+
+	if !overallHealthy {
+		result.Status = HealthStatusNotServing
+		result.Message = "One or more dependencies are not ready"
+	}
+
+	s.logger.Debug("Readiness check performed", 
+		"status", result.Status, 
+		"services_count", len(result.Services))
+	
+	return result
+}
+
+// LivenessCheck performs a liveness check
+func (s *HealthService) LivenessCheck(ctx context.Context) *LivenessCheckResult {
+	timestamp := time.Now()
+	
+	// Liveness checks should be lightweight and only check if the service is alive
+	// They should not check external dependencies
+	result := &LivenessCheckResult{
+		Status:    HealthStatusServing,
+		Message:   "Service is alive",
+		Timestamp: timestamp,
+	}
+
+	// Add any critical liveness checks here
+	// For example: check if critical goroutines are running, 
+	// memory usage is not excessive, etc.
+
+	s.logger.Debug("Liveness check performed", "status", result.Status)
+	
+	return result
+}
+
+{{- if ne .DatabaseDriver ""}}
+// checkDatabase checks database connectivity
+func (s *HealthService) checkDatabase(ctx context.Context) *ServiceStatus {
+	status := &ServiceStatus{
+		Name:      "database",
+		Status:    HealthStatusServing,
+		Message:   "Database is accessible",
+		LastCheck: time.Now(),
+	}
+
+	if s.db == nil {
+		status.Status = HealthStatusNotServing
+		status.Message = "Database connection is nil"
+		return status
+	}
+
+	// Create a context with timeout for the database check
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	// Ping the database
+	if err := s.db.PingContext(checkCtx); err != nil {
+		status.Status = HealthStatusNotServing
+		status.Message = "Database ping failed: " + err.Error()
+		s.logger.Warn("Database health check failed", "error", err)
+		return status
+	}
+
+	// Optionally, perform a simple query to verify database functionality
+	var result int
+	err := s.db.QueryRowContext(checkCtx, "SELECT 1").Scan(&result)
+	if err != nil {
+		status.Status = HealthStatusNotServing
+		status.Message = "Database query failed: " + err.Error()
+		s.logger.Warn("Database query health check failed", "error", err)
+		return status
+	}
+
+	return status
+}
+{{- end}}

@@ -1,0 +1,60 @@
+environment: development
+
+server:
+  http_port: {{.HttpPort | default 8080}}
+  grpc_port: {{.GrpcPort | default 50051}}
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    ca_file: ./certs/ca.crt
+    min_version: "1.3"
+    server_name: localhost
+
+logger:
+  level: debug
+  format: console
+  type: {{.Logger}}
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: {{.DatabaseDriver}}
+  {{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5432
+  username: {{.ProjectName}}
+  password: password
+  database: {{.ProjectName}}_dev
+  ssl_mode: disable
+  {{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3306
+  username: {{.ProjectName}}
+  password: password
+  database: {{.ProjectName}}_dev
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  database: ./{{.ProjectName}}_dev.db
+  {{- end}}
+  {{- if eq .DatabaseORM "gorm"}}
+  max_open_conns: 25
+  max_idle_conns: 5
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  type: {{.AuthType}}
+  {{- if eq .AuthType "jwt"}}
+  secret: dev-secret-key-change-in-production
+  issuer: {{.ProjectName}}-dev
+  ttl: 60  # 1 hour
+  {{- else if eq .AuthType "oauth2"}}
+  client_id: your-oauth2-client-id
+  client_secret: your-oauth2-client-secret
+  redirect_url: http://localhost:{{.HttpPort | default 8080}}/auth/callback
+  scopes:
+    - openid
+    - profile
+    - email
+  {{- end}}
+{{- end}}

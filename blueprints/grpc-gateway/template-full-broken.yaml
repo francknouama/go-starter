@@ -1,0 +1,334 @@
+name: "grpc-gateway-standard"
+description: "gRPC Gateway service with REST + gRPC bridge pattern for modern microservices"
+type: "grpc-gateway"
+architecture: "standard"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the gRPC Gateway service"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path (e.g., github.com/user/grpc-gateway-service)"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+  - name: "Logger"
+    description: "Logging library"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+  - name: "GrpcPort"
+    description: "Port for the gRPC server"
+    type: "int"
+    required: false
+    default: 50051
+
+  - name: "HttpPort"
+    description: "Port for the HTTP/REST gateway"
+    type: "int"
+    required: false
+    default: 8080
+
+  - name: "DatabaseDriver"
+    description: "Database driver (optional)"
+    type: "string"
+    required: false
+    default: ""
+    choices:
+      - ""
+      - "postgres"
+      - "mysql"
+      - "sqlite"
+
+  - name: "DatabaseORM"
+    description: "Database ORM/query builder (empty for standard library database/sql)"
+    type: "string"
+    required: false
+    default: ""
+    choices:
+      - ""
+      - "gorm"
+      - "sqlx"
+
+  - name: "AuthType"
+    description: "Authentication type"
+    type: "string"
+    required: false
+    default: ""
+    choices:
+      - ""
+      - "jwt"
+      - "oauth2"
+
+dependencies:
+  # Core gRPC dependencies
+  - module: "google.golang.org/grpc"
+    version: "v1.58.3"
+    
+  - module: "google.golang.org/protobuf"
+    version: "v1.31.0"
+    
+  # gRPC Gateway dependencies
+  - module: "github.com/grpc-ecosystem/grpc-gateway/v2"
+    version: "v2.18.1"
+    
+  - module: "google.golang.org/genproto/googleapis/api"
+    version: "v0.0.0-20231030173426-d783a09b4405"
+    
+  # HTTP framework for additional REST endpoints
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+    
+  # Configuration
+  - module: "github.com/spf13/viper"
+    version: "v1.17.0"
+    
+  # Validation
+  - module: "github.com/go-playground/validator/v10"
+    version: "v10.15.5"
+    
+  # Database dependencies (conditional)
+  - module: "gorm.io/gorm"
+    version: "v1.25.4"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "gorm.io/driver/postgres"
+    version: "v1.5.2"
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "gorm.io/driver/mysql"
+    version: "v1.5.2"
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "gorm.io/driver/sqlite"
+    version: "v1.5.4"
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "github.com/jmoiron/sqlx"
+    version: "v1.3.5"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .DatabaseORM \"sqlx\")}}"
+    
+  - module: "github.com/lib/pq"
+    version: "v1.10.9"
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (ne .DatabaseORM \"gorm\")}}"
+    
+  - module: "github.com/go-sql-driver/mysql"
+    version: "v1.7.1"
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (ne .DatabaseORM \"gorm\")}}"
+    
+  - module: "github.com/mattn/go-sqlite3"
+    version: "v1.14.17"
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (ne .DatabaseORM \"gorm\")}}"
+    
+  # JWT authentication
+  - module: "github.com/golang-jwt/jwt/v5"
+    version: "v5.0.0"
+    condition: "{{eq .AuthType \"jwt\"}}"
+    
+  # OAuth2
+  - module: "golang.org/x/oauth2"
+    version: "v0.13.0"
+    condition: "{{eq .AuthType \"oauth2\"}}"
+
+  # Logger dependencies
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .Logger \"zap\"}}"
+    
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .Logger \"logrus\"}}"
+    
+  - module: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .Logger \"zerolog\"}}"
+
+  # Testing dependencies
+  - module: "github.com/stretchr/testify"
+    version: "v1.8.4"
+
+files:
+  # Main application
+  - source: "cmd/server/main.go.tmpl"
+    destination: "cmd/server/main.go"
+    
+  # Go module and build files
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+    
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+    
+  - source: "README.md.tmpl"
+    destination: "README.md"
+    
+  # Docker files
+  - source: "Dockerfile.tmpl"
+    destination: "Dockerfile"
+    
+  - source: "docker-compose.yml.tmpl"
+    destination: "docker-compose.yml"
+    
+  # Protocol buffer definitions
+  - source: "proto/user/v1/user.proto.tmpl"
+    destination: "proto/user/v1/user.proto"
+    
+  - source: "proto/health/v1/health.proto.tmpl"
+    destination: "proto/health/v1/health.proto"
+    
+  # Generated code build script
+  - source: "scripts/generate.sh.tmpl"
+    destination: "scripts/generate.sh"
+    
+  - source: "scripts/dev.sh.tmpl"
+    destination: "scripts/dev.sh"
+    
+  # Configuration
+  - source: "configs/config.dev.yaml.tmpl"
+    destination: "configs/config.dev.yaml"
+    
+  - source: "configs/config.prod.yaml.tmpl"
+    destination: "configs/config.prod.yaml"
+    
+  - source: "configs/config.test.yaml.tmpl"
+    destination: "configs/config.test.yaml"
+    
+  # Internal packages
+  - source: "internal/config/config.go.tmpl"
+    destination: "internal/config/config.go"
+    
+  # Logger factory
+  - source: "internal/logger/factory.go.tmpl"
+    destination: "internal/logger/factory.go"
+    
+  - source: "internal/logger/interface.go.tmpl"
+    destination: "internal/logger/interface.go"
+    
+  - source: "internal/logger/slog.go.tmpl"
+    destination: "internal/logger/slog.go"
+    condition: "{{eq .Logger \"slog\"}}"
+    
+  - source: "internal/logger/zap.go.tmpl"
+    destination: "internal/logger/zap.go"
+    condition: "{{eq .Logger \"zap\"}}"
+    
+  - source: "internal/logger/logrus.go.tmpl"
+    destination: "internal/logger/logrus.go"
+    condition: "{{eq .Logger \"logrus\"}}"
+    
+  - source: "internal/logger/zerolog.go.tmpl"
+    destination: "internal/logger/zerolog.go"
+    condition: "{{eq .Logger \"zerolog\"}}"
+    
+  # gRPC server implementation
+  - source: "internal/server/grpc.go.tmpl"
+    destination: "internal/server/grpc.go"
+    
+  # gRPC Gateway server
+  - source: "internal/server/gateway.go.tmpl"
+    destination: "internal/server/gateway.go"
+    
+  # Service implementations
+  - source: "internal/services/user.go.tmpl"
+    destination: "internal/services/user.go"
+    
+  - source: "internal/services/health.go.tmpl"
+    destination: "internal/services/health.go"
+    
+  # Database (conditional)
+  - source: "internal/database/connection.go.tmpl"
+    destination: "internal/database/connection.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "internal/database/migrations.go.tmpl"
+    destination: "internal/database/migrations.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Models (conditional)
+  - source: "internal/models/user.go.tmpl"
+    destination: "internal/models/user.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Repository (conditional)
+  - source: "internal/repository/user.go.tmpl"
+    destination: "internal/repository/user.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Middleware
+  - source: "internal/middleware/auth.go.tmpl"
+    destination: "internal/middleware/auth.go"
+    condition: "{{ne .AuthType \"\"}}"
+    
+  - source: "internal/middleware/logging.go.tmpl"
+    destination: "internal/middleware/logging.go"
+    
+  - source: "internal/middleware/recovery.go.tmpl"
+    destination: "internal/middleware/recovery.go"
+    
+  # Database migrations (conditional)
+  - source: "migrations/001_create_users.up.sql.tmpl"
+    destination: "migrations/001_create_users.up.sql"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "migrations/001_create_users.down.sql.tmpl"
+    destination: "migrations/001_create_users.down.sql"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "migrations/embed.go.tmpl"
+    destination: "migrations/embed.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Tests
+  - source: "tests/integration/grpc_test.go.tmpl"
+    destination: "tests/integration/grpc_test.go"
+    
+  - source: "tests/integration/gateway_test.go.tmpl"
+    destination: "tests/integration/gateway_test.go"
+    
+  - source: "tests/unit/services_test.go.tmpl"
+    destination: "tests/unit/services_test.go"
+    
+  # Environment files
+  - source: ".env.example.tmpl"
+    destination: ".env.example"
+    
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+  # CI/CD
+  - source: ".github/workflows/ci.yml.tmpl"
+    destination: ".github/workflows/ci.yml"
+
+hooks:
+  post_generation:
+    - name: "make_scripts_executable"
+      command: "chmod +x scripts/*.sh"
+      description: "Make shell scripts executable"
+    - name: "generate_protobuf"
+      command: "make generate"
+      description: "Generate protobuf and gRPC Gateway code"
+    - name: "format_code"
+      command: "go fmt ./..."
+      description: "Format generated Go code"
+    - name: "clean_dependencies" 
+      command: "go mod tidy"
+      description: "Clean up go.mod dependencies"

@@ -1,0 +1,222 @@
+package tls
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"fmt"
+	"os"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// LoadServerTLSConfig loads server TLS configuration from config
+func LoadServerTLSConfig(cfg config.TLSConfig, log logger.Logger) (*tls.Config, error) {
+	if !cfg.Enabled {
+		log.Warn("TLS is disabled - this should only be used in development")
+		return nil, nil
+	}
+
+	// Load server certificate and key
+	cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load server certificate: %w", err)
+	}
+
+	// Create TLS config
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   getTLSVersion(cfg.MinVersion),
+		CipherSuites: getSecureCipherSuites(),
+		ServerName:   cfg.ServerName,
+	}
+
+	// Load CA certificate if provided
+	if cfg.CAFile != "" {
+		caCert, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+
+		// Enable client certificate verification
+		tlsConfig.ClientCAs = caCertPool
+		tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		
+		log.Info("Client certificate verification enabled")
+	}
+
+	log.Info("Server TLS configuration loaded successfully",
+		"cert_file", cfg.CertFile,
+		"min_version", cfg.MinVersion,
+		"server_name", cfg.ServerName,
+		"client_auth", tlsConfig.ClientAuth != tls.NoClientCert,
+	)
+
+	return tlsConfig, nil
+}
+
+// LoadClientTLSConfig loads client TLS configuration for gRPC connections
+func LoadClientTLSConfig(cfg config.TLSConfig, log logger.Logger) (credentials.TransportCredentials, error) {
+	if !cfg.Enabled {
+		log.Warn("TLS is disabled - using insecure connection")
+		return insecure.NewCredentials(), nil
+	}
+
+	// Base TLS config
+	tlsConfig := &tls.Config{
+		MinVersion:   getTLSVersion(cfg.MinVersion),
+		CipherSuites: getSecureCipherSuites(),
+		ServerName:   cfg.ServerName,
+	}
+
+	// Load CA certificate if provided
+	if cfg.CAFile != "" {
+		caCert, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+
+		tlsConfig.RootCAs = caCertPool
+		log.Info("Custom CA certificate loaded for client")
+	}
+
+	// Load client certificate if both cert and key files are provided
+	if cfg.CertFile != "" && cfg.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+
+		tlsConfig.Certificates = []tls.Certificate{cert}
+		log.Info("Client certificate loaded for mutual TLS")
+	}
+
+	log.Info("Client TLS configuration loaded successfully",
+		"server_name", cfg.ServerName,
+		"min_version", cfg.MinVersion,
+		"has_client_cert", len(tlsConfig.Certificates) > 0,
+		"has_custom_ca", tlsConfig.RootCAs != nil,
+	)
+
+	return credentials.NewTLS(tlsConfig), nil
+}
+
+// GetGRPCDialOptions returns gRPC dial options with proper TLS configuration
+func GetGRPCDialOptions(cfg config.TLSConfig, log logger.Logger) ([]grpc.DialOption, error) {
+	creds, err := LoadClientTLSConfig(cfg, log)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load TLS credentials: %w", err)
+	}
+
+	opts := []grpc.DialOption{
+		grpc.WithTransportCredentials(creds),
+	}
+
+	if !cfg.Enabled {
+		log.Warn("Using insecure gRPC connection - this should only be used in development")
+	}
+
+	return opts, nil
+}
+
+// ValidateTLSConfig validates the TLS configuration
+func ValidateTLSConfig(cfg config.TLSConfig, log logger.Logger) error {
+	if !cfg.Enabled {
+		log.Warn("TLS validation skipped - TLS is disabled")
+		return nil
+	}
+
+	// Check if certificate files exist
+	if cfg.CertFile != "" {
+		if _, err := os.Stat(cfg.CertFile); os.IsNotExist(err) {
+			return fmt.Errorf("certificate file does not exist: %s", cfg.CertFile)
+		}
+	}
+
+	if cfg.KeyFile != "" {
+		if _, err := os.Stat(cfg.KeyFile); os.IsNotExist(err) {
+			return fmt.Errorf("key file does not exist: %s", cfg.KeyFile)
+		}
+	}
+
+	if cfg.CAFile != "" {
+		if _, err := os.Stat(cfg.CAFile); os.IsNotExist(err) {
+			return fmt.Errorf("CA file does not exist: %s", cfg.CAFile)
+		}
+	}
+
+	// Validate TLS version
+	validVersions := []string{"1.2", "1.3"}
+	isValid := false
+	for _, version := range validVersions {
+		if cfg.MinVersion == version {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		return fmt.Errorf("invalid TLS minimum version: %s (must be 1.2 or 1.3)", cfg.MinVersion)
+	}
+
+	// Try to load and validate certificates
+	if cfg.CertFile != "" && cfg.KeyFile != "" {
+		_, err := tls.LoadX509KeyPair(cfg.CertFile, cfg.KeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to validate certificate pair: %w", err)
+		}
+	}
+
+	log.Info("TLS configuration validation passed")
+	return nil
+}
+
+// getTLSVersion converts string version to tls constant
+func getTLSVersion(version string) uint16 {
+	switch version {
+	case "1.2":
+		return tls.VersionTLS12
+	case "1.3":
+		return tls.VersionTLS13
+	default:
+		// Default to TLS 1.3 for security
+		return tls.VersionTLS13
+	}
+}
+
+// getSecureCipherSuites returns a list of secure cipher suites
+func getSecureCipherSuites() []uint16 {
+	return []uint16{
+		// TLS 1.3 cipher suites (automatically supported)
+		// TLS 1.2 secure cipher suites
+		tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+		tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+	}
+}
+
+// IsInsecureConnectionWarning logs a warning for insecure connections
+func IsInsecureConnectionWarning(enabled bool, log logger.Logger) {
+	if !enabled {
+		log.Warn("⚠️  SECURITY WARNING: TLS is disabled!")
+		log.Warn("⚠️  This should ONLY be used in development environments")
+		log.Warn("⚠️  All network traffic is unencrypted and vulnerable to interception")
+		log.Warn("⚠️  Enable TLS in production by setting server.tls.enabled=true")
+	}
+}

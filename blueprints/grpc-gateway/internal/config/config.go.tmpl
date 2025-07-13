@@ -1,0 +1,274 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+// Config represents the application configuration
+type Config struct {
+	Environment string        `mapstructure:"environment"`
+	Server      ServerConfig  `mapstructure:"server"`
+	Logger      LoggerConfig  `mapstructure:"logger"`
+	{{- if ne .DatabaseDriver ""}}
+	Database    DatabaseConfig `mapstructure:"database"`
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	Auth        AuthConfig     `mapstructure:"auth"`
+	{{- end}}
+}
+
+// ServerConfig contains server-related configuration
+type ServerConfig struct {
+	HTTPPort int       `mapstructure:"http_port"`
+	GRPCPort int       `mapstructure:"grpc_port"`
+	TLS      TLSConfig `mapstructure:"tls"`
+}
+
+// TLSConfig contains TLS-related configuration
+type TLSConfig struct {
+	Enabled    bool   `mapstructure:"enabled"`
+	CertFile   string `mapstructure:"cert_file"`
+	KeyFile    string `mapstructure:"key_file"`
+	CAFile     string `mapstructure:"ca_file"`
+	MinVersion string `mapstructure:"min_version"`
+	ServerName string `mapstructure:"server_name"`
+}
+
+// LoggerConfig contains logger-related configuration
+type LoggerConfig struct {
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
+	Type   string `mapstructure:"type"`
+}
+
+{{- if ne .DatabaseDriver ""}}
+// DatabaseConfig contains database-related configuration
+type DatabaseConfig struct {
+	Driver   string `mapstructure:"driver"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+	Database string `mapstructure:"database"`
+	SSLMode  string `mapstructure:"ssl_mode"`
+	{{- if eq .DatabaseORM "gorm"}}
+	MaxOpenConns int `mapstructure:"max_open_conns"`
+	MaxIdleConns int `mapstructure:"max_idle_conns"`
+	{{- end}}
+}
+
+// GetDSN returns the database connection string
+func (d DatabaseConfig) GetDSN() string {
+	switch d.Driver {
+	case "postgres":
+		return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			d.Host, d.Port, d.Username, d.Password, d.Database, d.SSLMode)
+	case "mysql":
+		return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
+			d.Username, d.Password, d.Host, d.Port, d.Database)
+	case "sqlite":
+		return d.Database
+	default:
+		return ""
+	}
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+// AuthConfig contains authentication-related configuration
+type AuthConfig struct {
+	Type   string `mapstructure:"type"`
+	{{- if eq .AuthType "jwt"}}
+	Secret string `mapstructure:"secret"`
+	Issuer string `mapstructure:"issuer"`
+	TTL    int    `mapstructure:"ttl"` // in minutes
+	{{- else if eq .AuthType "oauth2"}}
+	ClientID     string   `mapstructure:"client_id"`
+	ClientSecret string   `mapstructure:"client_secret"`
+	RedirectURL  string   `mapstructure:"redirect_url"`
+	Scopes       []string `mapstructure:"scopes"`
+	{{- end}}
+}
+{{- end}}
+
+// Load loads the configuration from files and environment variables
+func Load() (*Config, error) {
+	// Set default values
+	setDefaults()
+
+	// Configure viper
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	
+	// Add config paths
+	viper.AddConfigPath("./configs")
+	viper.AddConfigPath("./config")
+	viper.AddConfigPath(".")
+	
+	// Handle environment-specific configs
+	env := os.Getenv("ENVIRONMENT")
+	if env == "" {
+		env = "development"
+	}
+	
+	// Try to read environment-specific config first
+	viper.SetConfigName(fmt.Sprintf("config.%s", env))
+	if err := viper.ReadInConfig(); err != nil {
+		// Fall back to generic config
+		viper.SetConfigName("config")
+		if err := viper.ReadInConfig(); err != nil {
+			// If no config file is found, use defaults and environment variables
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("error reading config file: %w", err)
+			}
+		}
+	}
+
+	// Enable environment variable support
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	var config Config
+	if err := viper.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	}
+
+	// Set the environment from env var if not set in config
+	if config.Environment == "" {
+		config.Environment = env
+	}
+
+	// Validate configuration
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults() {
+	// Server defaults
+	viper.SetDefault("server.http_port", {{.HttpPort | default 8080}})
+	viper.SetDefault("server.grpc_port", {{.GrpcPort | default 50051}})
+	
+	// TLS defaults
+	viper.SetDefault("server.tls.enabled", true)
+	viper.SetDefault("server.tls.cert_file", "./certs/server.crt")
+	viper.SetDefault("server.tls.key_file", "./certs/server.key")
+	viper.SetDefault("server.tls.ca_file", "./certs/ca.crt")
+	viper.SetDefault("server.tls.min_version", "1.3")
+	viper.SetDefault("server.tls.server_name", "localhost")
+
+	// Logger defaults
+	viper.SetDefault("logger.level", "info")
+	viper.SetDefault("logger.format", "json")
+	viper.SetDefault("logger.type", "{{.Logger}}")
+
+	{{- if ne .DatabaseDriver ""}}
+	// Database defaults
+	viper.SetDefault("database.driver", "{{.DatabaseDriver}}")
+	viper.SetDefault("database.host", "localhost")
+	{{- if eq .DatabaseDriver "postgres"}}
+	viper.SetDefault("database.port", 5432)
+	viper.SetDefault("database.ssl_mode", "disable")
+	{{- else if eq .DatabaseDriver "mysql"}}
+	viper.SetDefault("database.port", 3306)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	viper.SetDefault("database.database", "./{{.ProjectName}}.db")
+	{{- end}}
+	viper.SetDefault("database.username", "{{.ProjectName}}")
+	viper.SetDefault("database.password", "password")
+	viper.SetDefault("database.database", "{{.ProjectName}}")
+	{{- if eq .DatabaseORM "gorm"}}
+	viper.SetDefault("database.max_open_conns", 25)
+	viper.SetDefault("database.max_idle_conns", 5)
+	{{- end}}
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Auth defaults
+	viper.SetDefault("auth.type", "{{.AuthType}}")
+	{{- if eq .AuthType "jwt"}}
+	viper.SetDefault("auth.secret", "your-secret-key")
+	viper.SetDefault("auth.issuer", "{{.ProjectName}}")
+	viper.SetDefault("auth.ttl", 60) // 1 hour
+	{{- end}}
+	{{- end}}
+
+	// Environment default
+	viper.SetDefault("environment", "development")
+}
+
+// validateConfig validates the loaded configuration
+func validateConfig(config *Config) error {
+	if config.Server.HTTPPort <= 0 || config.Server.HTTPPort > 65535 {
+		return fmt.Errorf("invalid HTTP port: %d", config.Server.HTTPPort)
+	}
+
+	if config.Server.GRPCPort <= 0 || config.Server.GRPCPort > 65535 {
+		return fmt.Errorf("invalid gRPC port: %d", config.Server.GRPCPort)
+	}
+
+	if config.Server.HTTPPort == config.Server.GRPCPort {
+		return fmt.Errorf("HTTP and gRPC ports cannot be the same")
+	}
+
+	// Validate TLS configuration
+	if config.Server.TLS.Enabled {
+		if config.Server.TLS.CertFile == "" {
+			return fmt.Errorf("TLS cert file is required when TLS is enabled")
+		}
+		if config.Server.TLS.KeyFile == "" {
+			return fmt.Errorf("TLS key file is required when TLS is enabled")
+		}
+		validTLSVersions := []string{"1.2", "1.3"}
+		if !contains(validTLSVersions, config.Server.TLS.MinVersion) {
+			return fmt.Errorf("invalid TLS min version: %s, must be 1.2 or 1.3", config.Server.TLS.MinVersion)
+		}
+	}
+
+	validLogLevels := []string{"debug", "info", "warn", "error"}
+	if !contains(validLogLevels, config.Logger.Level) {
+		return fmt.Errorf("invalid log level: %s", config.Logger.Level)
+	}
+
+	validLogFormats := []string{"json", "text", "console"}
+	if !contains(validLogFormats, config.Logger.Format) {
+		return fmt.Errorf("invalid log format: %s", config.Logger.Format)
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	if config.Database.Driver != "" {
+		validDrivers := []string{"postgres", "mysql", "sqlite"}
+		if !contains(validDrivers, config.Database.Driver) {
+			return fmt.Errorf("invalid database driver: %s", config.Database.Driver)
+		}
+	}
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	if config.Auth.Type != "" {
+		validAuthTypes := []string{"jwt", "oauth2", "api-key"}
+		if !contains(validAuthTypes, config.Auth.Type) {
+			return fmt.Errorf("invalid auth type: %s", config.Auth.Type)
+		}
+	}
+	{{- end}}
+
+	return nil
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}

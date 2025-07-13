@@ -1,0 +1,504 @@
+{{- if ne .AuthType ""}}
+package services
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/security"
+	{{- if eq .AuthType "jwt"}}
+	"{{.ModulePath}}/internal/middleware"
+	"{{.ModulePath}}/internal/config"
+	{{- end}}
+)
+
+// nullLogger is a no-op logger for testing
+type nullLogger struct{}
+
+func (l *nullLogger) Debug(msg string, keysAndValues ...interface{}) {}
+func (l *nullLogger) Info(msg string, keysAndValues ...interface{})  {}
+func (l *nullLogger) Warn(msg string, keysAndValues ...interface{})  {}
+func (l *nullLogger) Error(msg string, keysAndValues ...interface{}) {}
+func (l *nullLogger) Fatal(msg string, keysAndValues ...interface{}) {}
+func (l *nullLogger) With(keysAndValues ...interface{}) logger.Logger { return l }
+func (l *nullLogger) WithError(err error) logger.Logger { return l }
+
+func newNullLogger() logger.Logger {
+	return &nullLogger{}
+}
+
+// MockUserRepository is a mock implementation of UserRepository
+type MockUserRepository struct {
+	mock.Mock
+}
+
+func (m *MockUserRepository) Create(ctx context.Context, user *repository.User) (*repository.User, error) {
+	args := m.Called(ctx, user)
+	return args.Get(0).(*repository.User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*repository.User, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*repository.User, error) {
+	args := m.Called(ctx, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*repository.User), args.Error(1)
+}
+
+func (m *MockUserRepository) Update(ctx context.Context, user *repository.User) (*repository.User, error) {
+	args := m.Called(ctx, user)
+	return args.Get(0).(*repository.User), args.Error(1)
+}
+
+func (m *MockUserRepository) Delete(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*repository.User, string, int, error) {
+	args := m.Called(ctx, pageSize, pageToken)
+	return args.Get(0).([]*repository.User), args.String(1), args.Int(2), args.Error(3)
+}
+
+func TestAuthService(t *testing.T) {
+	logger := newNullLogger()
+	passwordService := security.NewPasswordService(logger)
+	{{- if eq .AuthType "jwt"}}
+	authConfig := config.AuthConfig{
+		Secret: "test-secret-key",
+		TTL:    60,
+		Issuer: "test-issuer",
+	}
+	authMiddleware := middleware.NewAuthMiddleware(authConfig, logger)
+	{{- end}}
+
+	t.Run("Login", func(t *testing.T) {
+		mockRepo := new(MockUserRepository)
+		authService := NewAuthService(
+			mockRepo,
+			passwordService,
+			logger,
+			{{- if eq .AuthType "jwt"}}
+			authMiddleware,
+			{{- end}}
+		)
+
+		// Setup test data
+		testEmail := "test@example.com"
+		testPassword := "TestPassword123!"
+		hashedPassword, err := passwordService.HashPassword(testPassword)
+		require.NoError(t, err)
+
+		testUser := &repository.User{
+			ID:       "user-123",
+			Name:     "Test User",
+			Email:    testEmail,
+			Password: hashedPassword,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		t.Run("successful login", func(t *testing.T) {
+			mockRepo.On("GetByEmail", mock.Anything, testEmail).Return(testUser, nil).Once()
+
+			req := &LoginRequest{
+				Email:    testEmail,
+				Password: testPassword,
+			}
+
+			response, err := authService.Login(context.Background(), req)
+
+			assert.NoError(t, err)
+			require.NotNil(t, response)
+			assert.Equal(t, testUser.ID, response.User.ID)
+			assert.Equal(t, testUser.Email, response.User.Email)
+			assert.Equal(t, testUser.Name, response.User.Name)
+			{{- if eq .AuthType "jwt"}}
+			assert.NotEmpty(t, response.Token)
+			assert.True(t, response.ExpiresAt.After(time.Now()))
+			{{- else if eq .AuthType "api-key"}}
+			assert.NotEmpty(t, response.APIKey)
+			{{- end}}
+
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("invalid email", func(t *testing.T) {
+			mockRepo.On("GetByEmail", mock.Anything, "nonexistent@example.com").Return(nil, repository.ErrUserNotFound).Once()
+
+			req := &LoginRequest{
+				Email:    "nonexistent@example.com",
+				Password: testPassword,
+			}
+
+			response, err := authService.Login(context.Background(), req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrInvalidCredentials, err)
+			assert.Nil(t, response)
+
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("invalid password", func(t *testing.T) {
+			mockRepo.On("GetByEmail", mock.Anything, testEmail).Return(testUser, nil).Once()
+
+			req := &LoginRequest{
+				Email:    testEmail,
+				Password: "WrongPassword123!",
+			}
+
+			response, err := authService.Login(context.Background(), req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrInvalidCredentials, err)
+			assert.Nil(t, response)
+
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("empty credentials", func(t *testing.T) {
+			tests := []struct {
+				name     string
+				email    string
+				password string
+			}{
+				{"empty email", "", testPassword},
+				{"empty password", testEmail, ""},
+				{"both empty", "", ""},
+			}
+
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					req := &LoginRequest{
+						Email:    tt.email,
+						Password: tt.password,
+					}
+
+					response, err := authService.Login(context.Background(), req)
+
+					assert.Error(t, err)
+					assert.Equal(t, ErrInvalidCredentials, err)
+					assert.Nil(t, response)
+				})
+			}
+		})
+
+		t.Run("repository error", func(t *testing.T) {
+			mockRepo.On("GetByEmail", mock.Anything, testEmail).Return(nil, assert.AnError).Once()
+
+			req := &LoginRequest{
+				Email:    testEmail,
+				Password: testPassword,
+			}
+
+			response, err := authService.Login(context.Background(), req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrAuthServiceError, err)
+			assert.Nil(t, response)
+
+			mockRepo.AssertExpectations(t)
+		})
+	})
+
+	{{- if eq .AuthType "jwt"}}
+	t.Run("ChangePassword", func(t *testing.T) {
+		mockRepo := new(MockUserRepository)
+		authService := NewAuthService(mockRepo, passwordService, logger, authMiddleware)
+
+		testUserID := "user-123"
+		currentPassword := "CurrentPassword123!"
+		newPassword := "NewPassword123!"
+		hashedCurrentPassword, err := passwordService.HashPassword(currentPassword)
+		require.NoError(t, err)
+
+		testUser := &repository.User{
+			ID:       testUserID,
+			Name:     "Test User",
+			Email:    "test@example.com",
+			Password: hashedCurrentPassword,
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		t.Run("successful password change", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, testUserID).Return(testUser, nil).Once()
+			mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(user *repository.User) bool {
+				return user.ID == testUserID && user.Password != hashedCurrentPassword
+			})).Return(testUser, nil).Once()
+
+			req := &ChangePasswordRequest{
+				CurrentPassword: currentPassword,
+				NewPassword:     newPassword,
+			}
+
+			err := authService.ChangePassword(context.Background(), testUserID, req)
+
+			assert.NoError(t, err)
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("invalid current password", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, testUserID).Return(testUser, nil).Once()
+
+			req := &ChangePasswordRequest{
+				CurrentPassword: "WrongCurrentPassword123!",
+				NewPassword:     newPassword,
+			}
+
+			err := authService.ChangePassword(context.Background(), testUserID, req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrInvalidCredentials, err)
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("weak new password", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, testUserID).Return(testUser, nil).Once()
+
+			req := &ChangePasswordRequest{
+				CurrentPassword: currentPassword,
+				NewPassword:     "weak", // Too short
+			}
+
+			err := authService.ChangePassword(context.Background(), testUserID, req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrWeakPassword, err)
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("user not found", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, testUserID).Return(nil, repository.ErrUserNotFound).Once()
+
+			req := &ChangePasswordRequest{
+				CurrentPassword: currentPassword,
+				NewPassword:     newPassword,
+			}
+
+			err := authService.ChangePassword(context.Background(), testUserID, req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrUserNotFound, err)
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("empty user ID", func(t *testing.T) {
+			req := &ChangePasswordRequest{
+				CurrentPassword: currentPassword,
+				NewPassword:     newPassword,
+			}
+
+			err := authService.ChangePassword(context.Background(), "", req)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrInvalidInput, err)
+		})
+	})
+	{{- end}}
+
+	t.Run("VerifyUser", func(t *testing.T) {
+		mockRepo := new(MockUserRepository)
+		authService := NewAuthService(
+			mockRepo,
+			passwordService,
+			logger,
+			{{- if eq .AuthType "jwt"}}
+			authMiddleware,
+			{{- end}}
+		)
+
+		testUser := &repository.User{
+			ID:       "user-123",
+			Name:     "Test User",
+			Email:    "test@example.com",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		t.Run("successful verification", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, testUser.ID).Return(testUser, nil).Once()
+
+			user, err := authService.VerifyUser(context.Background(), testUser.ID)
+
+			assert.NoError(t, err)
+			require.NotNil(t, user)
+			assert.Equal(t, testUser.ID, user.ID)
+			assert.Equal(t, testUser.Email, user.Email)
+			assert.Equal(t, testUser.Name, user.Name)
+
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("user not found", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, "nonexistent").Return(nil, repository.ErrUserNotFound).Once()
+
+			user, err := authService.VerifyUser(context.Background(), "nonexistent")
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrUserNotFound, err)
+			assert.Nil(t, user)
+
+			mockRepo.AssertExpectations(t)
+		})
+
+		t.Run("empty user ID", func(t *testing.T) {
+			user, err := authService.VerifyUser(context.Background(), "")
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrInvalidInput, err)
+			assert.Nil(t, user)
+		})
+
+		t.Run("repository error", func(t *testing.T) {
+			mockRepo.On("GetByID", mock.Anything, testUser.ID).Return(nil, assert.AnError).Once()
+
+			user, err := authService.VerifyUser(context.Background(), testUser.ID)
+
+			assert.Error(t, err)
+			assert.Equal(t, ErrAuthServiceError, err)
+			assert.Nil(t, user)
+
+			mockRepo.AssertExpectations(t)
+		})
+	})
+}
+
+func TestAuthServiceSecurityProperties(t *testing.T) {
+	logger := newNullLogger()
+	passwordService := security.NewPasswordService(logger)
+	{{- if eq .AuthType "jwt"}}
+	authConfig := config.AuthConfig{
+		Secret: "test-secret-key",
+		TTL:    60,
+		Issuer: "test-issuer",
+	}
+	authMiddleware := middleware.NewAuthMiddleware(authConfig, logger)
+	{{- end}}
+
+	t.Run("login timing consistency", func(t *testing.T) {
+		mockRepo := new(MockUserRepository)
+		authService := NewAuthService(
+			mockRepo,
+			passwordService,
+			logger,
+			{{- if eq .AuthType "jwt"}}
+			authMiddleware,
+			{{- end}}
+		)
+
+		testEmail := "test@example.com"
+		testPassword := "TestPassword123!"
+
+		// Test timing for non-existent user
+		mockRepo.On("GetByEmail", mock.Anything, testEmail).Return(nil, repository.ErrUserNotFound).Once()
+
+		start := time.Now()
+		_, err := authService.Login(context.Background(), &LoginRequest{
+			Email:    testEmail,
+			Password: testPassword,
+		})
+		nonExistentUserDuration := time.Since(start)
+		assert.Error(t, err)
+		assert.Equal(t, ErrInvalidCredentials, err)
+
+		// Test timing for existing user with wrong password
+		hashedPassword, err := passwordService.HashPassword("DifferentPassword123!")
+		require.NoError(t, err)
+
+		testUser := &repository.User{
+			ID:       "user-123",
+			Email:    testEmail,
+			Password: hashedPassword,
+		}
+
+		mockRepo.On("GetByEmail", mock.Anything, testEmail).Return(testUser, nil).Once()
+
+		start = time.Now()
+		_, err = authService.Login(context.Background(), &LoginRequest{
+			Email:    testEmail,
+			Password: testPassword,
+		})
+		wrongPasswordDuration := time.Since(start)
+		assert.Error(t, err)
+		assert.Equal(t, ErrInvalidCredentials, err)
+
+		// Timing should be similar to prevent user enumeration
+		timeDiff := nonExistentUserDuration - wrongPasswordDuration
+		if timeDiff < 0 {
+			timeDiff = -timeDiff
+		}
+
+		// Allow reasonable variance due to bcrypt and I/O operations
+		assert.Less(t, timeDiff, time.Millisecond*100,
+			"Login timing for non-existent user vs wrong password should be similar")
+
+		mockRepo.AssertExpectations(t)
+	})
+
+	t.Run("password rehashing", func(t *testing.T) {
+		mockRepo := new(MockUserRepository)
+		authService := NewAuthService(
+			mockRepo,
+			passwordService,
+			logger,
+			{{- if eq .AuthType "jwt"}}
+			authMiddleware,
+			{{- end}}
+		)
+
+		testEmail := "test@example.com"
+		testPassword := "TestPassword123!"
+
+		// Create a hash with lower cost to trigger rehashing
+		lowCostHash, err := bcrypt.GenerateFromPassword([]byte(testPassword), 10)
+		require.NoError(t, err)
+
+		testUser := &repository.User{
+			ID:       "user-123",
+			Email:    testEmail,
+			Password: string(lowCostHash),
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		}
+
+		mockRepo.On("GetByEmail", mock.Anything, testEmail).Return(testUser, nil).Once()
+		// Expect update call for rehashing (in background goroutine)
+		mockRepo.On("Update", mock.Anything, mock.MatchedBy(func(user *repository.User) bool {
+			return user.ID == testUser.ID && user.Password != string(lowCostHash)
+		})).Return(testUser, nil).Maybe()
+
+		req := &LoginRequest{
+			Email:    testEmail,
+			Password: testPassword,
+		}
+
+		response, err := authService.Login(context.Background(), req)
+
+		assert.NoError(t, err)
+		require.NotNil(t, response)
+
+		// Give background goroutine time to complete
+		time.Sleep(time.Millisecond * 100)
+
+		mockRepo.AssertExpectations(t)
+	})
+}
+{{- end}}

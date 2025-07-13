@@ -1,0 +1,154 @@
+package integration
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	userv1 "{{.ModulePath}}/gen/user/v1"
+	healthv1 "{{.ModulePath}}/gen/health/v1"
+)
+
+func TestGRPCHealthService(t *testing.T) {
+	// Connect to gRPC server
+	conn, err := grpc.Dial("localhost:{{.GrpcPort | default 50051}}", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := healthv1.NewHealthServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	t.Run("Health Check", func(t *testing.T) {
+		resp, err := client.Check(ctx, &healthv1.HealthCheckRequest{})
+		require.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.Equal(t, healthv1.HealthStatus_SERVING, resp.Status)
+		assert.NotEmpty(t, resp.Message)
+	})
+
+	t.Run("Readiness Check", func(t *testing.T) {
+		resp, err := client.ReadinessCheck(ctx, &healthv1.ReadinessCheckRequest{})
+		require.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.Equal(t, healthv1.HealthStatus_SERVING, resp.Status)
+	})
+
+	t.Run("Liveness Check", func(t *testing.T) {
+		resp, err := client.LivenessCheck(ctx, &healthv1.LivenessCheckRequest{})
+		require.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.Equal(t, healthv1.HealthStatus_SERVING, resp.Status)
+	})
+}
+
+func TestGRPCUserService(t *testing.T) {
+	// Connect to gRPC server
+	conn, err := grpc.Dial("localhost:{{.GrpcPort | default 50051}}", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	require.NoError(t, err)
+	defer conn.Close()
+
+	client := userv1.NewUserServiceClient(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var createdUserID string
+
+	t.Run("Create User", func(t *testing.T) {
+		req := &userv1.CreateUserRequest{
+			Name:  "John Doe",
+			Email: "john.doe@example.com",
+			{{- if ne .AuthType ""}}
+			Password: "securepassword123",
+			{{- end}}
+		}
+
+		resp, err := client.CreateUser(ctx, req)
+		require.NoError(t, err)
+		assert.NotNil(t, resp.User)
+		assert.NotEmpty(t, resp.User.Id)
+		assert.Equal(t, req.Name, resp.User.Name)
+		assert.Equal(t, req.Email, resp.User.Email)
+		assert.NotNil(t, resp.User.CreatedAt)
+		assert.NotNil(t, resp.User.UpdatedAt)
+
+		createdUserID = resp.User.Id
+	})
+
+	t.Run("Get User", func(t *testing.T) {
+		require.NotEmpty(t, createdUserID, "User must be created first")
+
+		req := &userv1.GetUserRequest{
+			UserId: createdUserID,
+		}
+
+		resp, err := client.GetUser(ctx, req)
+		require.NoError(t, err)
+		assert.NotNil(t, resp.User)
+		assert.Equal(t, createdUserID, resp.User.Id)
+		assert.Equal(t, "John Doe", resp.User.Name)
+		assert.Equal(t, "john.doe@example.com", resp.User.Email)
+	})
+
+	t.Run("Update User", func(t *testing.T) {
+		require.NotEmpty(t, createdUserID, "User must be created first")
+
+		req := &userv1.UpdateUserRequest{
+			UserId: createdUserID,
+			Name:   "John Smith",
+			Email:  "john.smith@example.com",
+		}
+
+		resp, err := client.UpdateUser(ctx, req)
+		require.NoError(t, err)
+		assert.NotNil(t, resp.User)
+		assert.Equal(t, createdUserID, resp.User.Id)
+		assert.Equal(t, req.Name, resp.User.Name)
+		assert.Equal(t, req.Email, resp.User.Email)
+	})
+
+	t.Run("List Users", func(t *testing.T) {
+		req := &userv1.ListUsersRequest{
+			PageSize: 10,
+		}
+
+		resp, err := client.ListUsers(ctx, req)
+		require.NoError(t, err)
+		assert.NotNil(t, resp)
+		assert.NotEmpty(t, resp.Users)
+		assert.True(t, len(resp.Users) >= 1)
+		assert.True(t, resp.TotalCount >= 1)
+	})
+
+	t.Run("Delete User", func(t *testing.T) {
+		require.NotEmpty(t, createdUserID, "User must be created first")
+
+		req := &userv1.DeleteUserRequest{
+			UserId: createdUserID,
+		}
+
+		_, err := client.DeleteUser(ctx, req)
+		require.NoError(t, err)
+
+		// Verify user is deleted
+		getReq := &userv1.GetUserRequest{
+			UserId: createdUserID,
+		}
+		_, err = client.GetUser(ctx, getReq)
+		require.Error(t, err)
+	})
+
+	t.Run("Get Non-existent User", func(t *testing.T) {
+		req := &userv1.GetUserRequest{
+			UserId: "non-existent-id",
+		}
+
+		_, err := client.GetUser(ctx, req)
+		require.Error(t, err)
+	})
+}

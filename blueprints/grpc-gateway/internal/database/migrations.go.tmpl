@@ -1,0 +1,138 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/migrations"
+
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database"
+	{{if eq .DatabaseDriver "postgres"}}
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	{{else if eq .DatabaseDriver "mysql"}}
+	"github.com/golang-migrate/migrate/v4/database/mysql"
+	{{else if eq .DatabaseDriver "sqlite"}}
+	"github.com/golang-migrate/migrate/v4/database/sqlite3"
+	{{end}}
+	"github.com/golang-migrate/migrate/v4/source/iofs"
+)
+
+
+// Migrator handles database migrations
+type Migrator struct {
+	db       *DB
+	logger   logger.Logger
+	migrate  *migrate.Migrate
+}
+
+// NewMigrator creates a new database migrator
+func NewMigrator(db *DB, log logger.Logger) (*Migrator, error) {
+	{{if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+	{{else if eq .DatabaseORM "sqlx"}}
+	sqlDB := db.DB.DB
+	{{else}}
+	sqlDB := db.DB
+	{{end}}
+
+	// Create database driver for migrations
+	var driver database.Driver
+	var err error
+
+	{{if eq .DatabaseDriver "postgres"}}
+	driver, err = postgres.WithInstance(sqlDB, &postgres.Config{})
+	{{else if eq .DatabaseDriver "mysql"}}
+	driver, err = mysql.WithInstance(sqlDB, &mysql.Config{})
+	{{else if eq .DatabaseDriver "sqlite"}}
+	driver, err = sqlite3.WithInstance(sqlDB, &sqlite3.Config{})
+	{{end}}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migration driver: %w", err)
+	}
+
+	// Create source driver from embedded migrations
+	sourceDriver, err := iofs.New(migrations.MigrationsFS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migration source: %w", err)
+	}
+
+	// Create migrate instance
+	m, err := migrate.NewWithInstance("iofs", sourceDriver, "{{.DatabaseDriver}}", driver)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create migrator: %w", err)
+	}
+
+	return &Migrator{
+		db:      db,
+		logger:  log,
+		migrate: m,
+	}, nil
+}
+
+// Up runs all available migrations
+func (m *Migrator) Up(ctx context.Context) error {
+	m.logger.Info("Running database migrations")
+
+	if err := m.migrate.Up(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	version, _, err := m.migrate.Version()
+	if err != nil {
+		return fmt.Errorf("failed to get migration version: %w", err)
+	}
+
+	m.logger.Info("Database migrations completed", "version", version)
+	return nil
+}
+
+// Down rolls back all migrations
+func (m *Migrator) Down(ctx context.Context) error {
+	m.logger.Info("Rolling back database migrations")
+
+	if err := m.migrate.Down(); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to rollback migrations: %w", err)
+	}
+
+	m.logger.Info("Database migrations rolled back")
+	return nil
+}
+
+// Version returns the current migration version
+func (m *Migrator) Version() (uint, bool, error) {
+	return m.migrate.Version()
+}
+
+// Steps runs n migration steps
+func (m *Migrator) Steps(n int) error {
+	if n > 0 {
+		m.logger.Info("Running migration steps", "steps", n)
+	} else {
+		m.logger.Info("Rolling back migration steps", "steps", -n)
+	}
+
+	if err := m.migrate.Steps(n); err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("failed to run migration steps: %w", err)
+	}
+
+	return nil
+}
+
+// Close closes the migrator
+func (m *Migrator) Close() error {
+	sourceErr, dbErr := m.migrate.Close()
+	if sourceErr != nil {
+		return fmt.Errorf("failed to close source: %w", sourceErr)
+	}
+	if dbErr != nil {
+		return fmt.Errorf("failed to close database: %w", dbErr)
+	}
+	return nil
+}

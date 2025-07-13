@@ -1,0 +1,80 @@
+syntax = "proto3";
+
+package health.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "{{.ModulePath}}/gen/health/v1;healthv1";
+
+// HealthService provides health check functionality
+service HealthService {
+  // Check performs a health check
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse) {
+    option (google.api.http) = {
+      get: "/health"
+    };
+  }
+
+  // ReadinessCheck performs a readiness check
+  rpc ReadinessCheck(ReadinessCheckRequest) returns (ReadinessCheckResponse) {
+    option (google.api.http) = {
+      get: "/ready"
+    };
+  }
+
+  // LivenessCheck performs a liveness check
+  rpc LivenessCheck(LivenessCheckRequest) returns (LivenessCheckResponse) {
+    option (google.api.http) = {
+      get: "/live"
+    };
+  }
+}
+
+// HealthCheckRequest is the request for health check
+message HealthCheckRequest {}
+
+// HealthCheckResponse contains the health status
+message HealthCheckResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  map<string, string> details = 4;
+}
+
+// ReadinessCheckRequest is the request for readiness check
+message ReadinessCheckRequest {}
+
+// ReadinessCheckResponse contains the readiness status
+message ReadinessCheckResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  repeated ServiceStatus services = 4;
+}
+
+// LivenessCheckRequest is the request for liveness check
+message LivenessCheckRequest {}
+
+// LivenessCheckResponse contains the liveness status
+message LivenessCheckResponse {
+  HealthStatus status = 1;
+  string message = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// HealthStatus represents the health status
+enum HealthStatus {
+  UNKNOWN = 0;
+  SERVING = 1;
+  NOT_SERVING = 2;
+  SERVICE_UNKNOWN = 3;
+}
+
+// ServiceStatus represents the status of a dependent service
+message ServiceStatus {
+  string name = 1;
+  HealthStatus status = 2;
+  string message = 3;
+  google.protobuf.Timestamp last_check = 4;
+}

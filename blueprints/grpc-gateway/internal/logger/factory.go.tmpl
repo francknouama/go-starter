@@ -1,0 +1,81 @@
+package logger
+
+import (
+	"io"
+	"os"
+	"strings"
+)
+
+// Config represents logger configuration
+type Config struct {
+	Type   string `mapstructure:"type"`
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
+}
+
+// Factory creates loggers based on configuration
+type Factory struct{}
+
+// NewFactory creates a new logger factory
+func NewFactory() *Factory {
+	return &Factory{}
+}
+
+// CreateFromConfig creates a logger from configuration
+func (f *Factory) CreateFromConfig(config Config) (Logger, error) {
+	var output io.Writer = os.Stdout
+
+	switch strings.ToLower(config.Type) {
+	{{- if eq .Logger "slog"}}
+	case "slog", "":
+		return NewSlogLogger(config.Level, config.Format, output)
+	{{- end}}
+	{{- if eq .Logger "zap"}}
+	case "zap":
+		return NewZapLogger(config.Level, config.Format, output)
+	{{- end}}
+	{{- if eq .Logger "logrus"}}
+	case "logrus":
+		return NewLogrusLogger(config.Level, config.Format, output)
+	{{- end}}
+	{{- if eq .Logger "zerolog"}}
+	case "zerolog":
+		return NewZerologLogger(config.Level, config.Format, output)
+	{{- end}}
+	default:
+		// Default to slog if specified logger is not available
+		{{- if eq .Logger "slog"}}
+		return NewSlogLogger(config.Level, config.Format, output)
+		{{- else}}
+		return NewSlogLogger(config.Level, config.Format, output)
+		{{- end}}
+	}
+}
+
+// Create creates a logger with the specified type and level
+func (f *Factory) Create(loggerType, level, format string) (Logger, error) {
+	config := Config{
+		Type:   loggerType,
+		Level:  level,
+		Format: format,
+	}
+	return f.CreateFromConfig(config)
+}
+
+// parseLevel converts string level to appropriate type for each logger
+func parseLevel(level string) string {
+	switch strings.ToLower(level) {
+	case "debug":
+		return "debug"
+	case "info", "":
+		return "info"
+	case "warn", "warning":
+		return "warn"
+	case "error":
+		return "error"
+	case "fatal", "panic":
+		return "error" // Most loggers don't have fatal, map to error
+	default:
+		return "info"
+	}
+}

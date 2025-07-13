@@ -1,0 +1,196 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  GO_VERSION: '{{.GoVersion}}'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    {{- if ne .DatabaseDriver ""}}
+    services:
+      {{- if eq .DatabaseDriver "postgres"}}
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: {{.ProjectName}}_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      {{- else if eq .DatabaseDriver "mysql"}}
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: {{.ProjectName}}_test
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+        ports:
+          - 3306:3306
+      {{- end}}
+    {{- end}}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{`{{ env.GO_VERSION }}`}}
+
+    - name: Install protoc
+      uses: arduino/setup-protoc@v2
+      with:
+        version: '23.x'
+        repo-token: ${{`{{ secrets.GITHUB_TOKEN }}`}}
+
+    - name: Install Go tools
+      run: |
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
+        go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@latest
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{`{{ runner.os }}`}}-go-${{`{{ hashFiles('**/go.sum') }}`}}
+        restore-keys: |
+          ${{`{{ runner.os }}`}}-go-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Generate protobuf code
+      run: make generate
+
+    - name: Verify no uncommitted changes
+      run: |
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "Generated code is not up to date. Please run 'make generate' and commit the changes."
+          git status --porcelain
+          exit 1
+        fi
+
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.out ./...
+      env:
+        {{- if eq .DatabaseDriver "postgres"}}
+        DATABASE_DRIVER: postgres
+        DATABASE_HOST: localhost
+        DATABASE_PORT: 5432
+        DATABASE_USER: postgres
+        DATABASE_PASSWORD: postgres
+        DATABASE_NAME: {{.ProjectName}}_test
+        DATABASE_SSL_MODE: disable
+        {{- else if eq .DatabaseDriver "mysql"}}
+        DATABASE_DRIVER: mysql
+        DATABASE_HOST: localhost
+        DATABASE_PORT: 3306
+        DATABASE_USER: root
+        DATABASE_PASSWORD: root
+        DATABASE_NAME: {{.ProjectName}}_test
+        {{- else if eq .DatabaseDriver "sqlite"}}
+        DATABASE_DRIVER: sqlite3
+        DATABASE_NAME: ":memory:"
+        {{- end}}
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.out
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{`{{ env.GO_VERSION }}`}}
+
+    - name: Install protoc
+      uses: arduino/setup-protoc@v2
+      with:
+        version: '23.x'
+        repo-token: ${{`{{ secrets.GITHUB_TOKEN }}`}}
+
+    - name: Install Go tools
+      run: |
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
+        go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@latest
+
+    - name: Generate protobuf code
+      run: make generate
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{`{{ env.GO_VERSION }}`}}
+
+    - name: Install protoc
+      uses: arduino/setup-protoc@v2
+      with:
+        version: '23.x'
+        repo-token: ${{`{{ secrets.GITHUB_TOKEN }}`}}
+
+    - name: Install Go tools
+      run: |
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
+        go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@latest
+
+    - name: Generate protobuf code
+      run: make generate
+
+    - name: Build
+      run: go build -v ./...
+
+    - name: Build binary
+      run: make build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        push: false
+        tags: {{.ProjectName}}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # Main application service
+  {{.ProjectName}}:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "{{.HttpPort | default 8080}}:{{.HttpPort | default 8080}}"
+      - "{{.GrpcPort | default 50051}}:{{.GrpcPort | default 50051}}"
+    environment:
+      - ENVIRONMENT=production
+      {{- if ne .DatabaseDriver ""}}
+      {{- if eq .DatabaseDriver "postgres"}}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_USERNAME={{.ProjectName}}
+      - DB_PASSWORD=password
+      - DB_NAME={{.ProjectName}}
+      - DB_SSL_MODE=disable
+      {{- else if eq .DatabaseDriver "mysql"}}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USERNAME={{.ProjectName}}
+      - DB_PASSWORD=password
+      - DB_NAME={{.ProjectName}}
+      {{- end}}
+      {{- end}}
+      {{- if eq .AuthType "jwt"}}
+      - JWT_SECRET=your-production-secret-key
+      - JWT_ISSUER={{.ProjectName}}
+      - JWT_TTL=60
+      {{- end}}
+    depends_on:
+      {{- if eq .DatabaseDriver "postgres"}}
+      - postgres
+      {{- else if eq .DatabaseDriver "mysql"}}
+      - mysql
+      {{- end}}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:{{.HttpPort | default 8080}}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - {{.ProjectName}}-network
+
+  {{- if eq .DatabaseDriver "postgres"}}
+  # PostgreSQL database
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB={{.ProjectName}}
+      - POSTGRES_USER={{.ProjectName}}
+      - POSTGRES_PASSWORD=password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/postgres-init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U {{.ProjectName}}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - {{.ProjectName}}-network
+
+  {{- else if eq .DatabaseDriver "mysql"}}
+  # MySQL database
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE={{.ProjectName}}
+      - MYSQL_USER={{.ProjectName}}
+      - MYSQL_PASSWORD=password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/mysql-init.sql:/docker-entrypoint-initdb.d/init.sql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - {{.ProjectName}}-network
+
+  {{- else if eq .DatabaseDriver "redis"}}
+  # Redis cache
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - {{.ProjectName}}-network
+  {{- end}}
+
+  # Optional: gRPC reflection and testing tools
+  grpcui:
+    image: fullstorydev/grpcui:latest
+    ports:
+      - "8081:8080"
+    command: 
+      - "-plaintext"
+      - "{{.ProjectName}}:{{.GrpcPort | default 50051}}"
+    depends_on:
+      - {{.ProjectName}}
+    networks:
+      - {{.ProjectName}}-network
+
+  # Optional: API documentation
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    ports:
+      - "8082:8080"
+    environment:
+      - SWAGGER_JSON=/api/swagger.json
+    volumes:
+      - ./api:/api
+    networks:
+      - {{.ProjectName}}-network
+
+networks:
+  {{.ProjectName}}-network:
+    driver: bridge
+
+volumes:
+  {{- if eq .DatabaseDriver "postgres"}}
+  postgres_data:
+  {{- else if eq .DatabaseDriver "mysql"}}
+  mysql_data:
+  {{- else if eq .DatabaseDriver "redis"}}
+  redis_data:
+  {{- end}}

@@ -1,0 +1,266 @@
+{{- if ne .AuthType ""}}
+package services
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/security"
+	{{- if eq .AuthType "jwt"}}
+	"{{.ModulePath}}/internal/middleware"
+	{{- end}}
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid email or password")
+	ErrAccountLocked      = errors.New("account is locked")
+	ErrAuthServiceError   = errors.New("authentication service error")
+)
+
+// LoginRequest represents a login request
+type LoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+// LoginResponse represents a successful login response
+type LoginResponse struct {
+	{{- if eq .AuthType "jwt"}}
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	{{- else if eq .AuthType "api-key"}}
+	APIKey    string    `json:"api_key"`
+	{{- end}}
+	User      *User     `json:"user"`
+}
+
+{{- if eq .AuthType "jwt"}}
+// ChangePasswordRequest represents a change password request
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
+	NewPassword     string `json:"new_password" validate:"required,min=8"`
+}
+{{- end}}
+
+// AuthService provides authentication operations
+type AuthService struct {
+	userRepo        repository.UserRepository
+	passwordService *security.PasswordService
+	logger          logger.Logger
+	{{- if eq .AuthType "jwt"}}
+	authMiddleware  *middleware.AuthMiddleware
+	{{- end}}
+}
+
+// NewAuthService creates a new authentication service
+func NewAuthService(
+	userRepo repository.UserRepository,
+	passwordService *security.PasswordService,
+	logger logger.Logger,
+	{{- if eq .AuthType "jwt"}}
+	authMiddleware *middleware.AuthMiddleware,
+	{{- end}}
+) *AuthService {
+	return &AuthService{
+		userRepo:        userRepo,
+		passwordService: passwordService,
+		logger:          logger,
+		{{- if eq .AuthType "jwt"}}
+		authMiddleware:  authMiddleware,
+		{{- end}}
+	}
+}
+
+// Login authenticates a user with email and password
+func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*LoginResponse, error) {
+	// Input validation
+	if req.Email == "" || req.Password == "" {
+		s.logger.Warn("Login attempt with empty credentials")
+		return nil, ErrInvalidCredentials
+	}
+
+	// Get user by email
+	user, err := s.userRepo.GetByEmail(ctx, req.Email)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			s.logger.Warn("Login attempt with non-existent email", "email", req.Email)
+			// Don't reveal that the email doesn't exist
+			return nil, ErrInvalidCredentials
+		}
+		s.logger.Error("Failed to get user by email during login", "email", req.Email, "error", err)
+		return nil, ErrAuthServiceError
+	}
+
+	// Verify password using constant-time comparison
+	err = s.passwordService.VerifyPassword(user.Password, req.Password)
+	if err != nil {
+		s.logger.Warn("Failed login attempt", "email", req.Email, "error", err)
+		// Always return the same error to prevent user enumeration
+		return nil, ErrInvalidCredentials
+	}
+
+	// Check if password needs rehashing due to cost factor changes
+	if s.passwordService.NeedsRehash(user.Password) {
+		s.logger.Info("Password hash needs update for user", "user_id", user.ID)
+		// Rehash password in background or schedule for next update
+		go s.rehashUserPassword(context.Background(), user.ID, req.Password)
+	}
+
+	s.logger.Info("Successful login", "user_id", user.ID, "email", req.Email)
+
+	{{- if eq .AuthType "jwt"}}
+	// Generate JWT token
+	token, err := s.authMiddleware.GenerateJWT(user.ID, user.Email)
+	if err != nil {
+		s.logger.Error("Failed to generate JWT token", "user_id", user.ID, "error", err)
+		return nil, ErrAuthServiceError
+	}
+
+	// Calculate expiration time
+	expiresAt := time.Now().Add(time.Hour * 24) // 24 hours
+
+	return &LoginResponse{
+		Token:     token,
+		ExpiresAt: expiresAt,
+		User: &User{
+			ID:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		},
+	}, nil
+
+	{{- else if eq .AuthType "api-key"}}
+	// For API key auth, return a generated API key
+	// In production, you'd want to store this in the database
+	apiKey := fmt.Sprintf("ak_%s_%d", user.ID, time.Now().Unix())
+
+	return &LoginResponse{
+		APIKey: apiKey,
+		User: &User{
+			ID:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		},
+	}, nil
+
+	{{- else}}
+	// For other auth types, return basic user info
+	return &LoginResponse{
+		User: &User{
+			ID:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		},
+	}, nil
+	{{- end}}
+}
+
+{{- if eq .AuthType "jwt"}}
+// ChangePassword changes a user's password
+func (s *AuthService) ChangePassword(ctx context.Context, userID string, req *ChangePasswordRequest) error {
+	if userID == "" {
+		return ErrInvalidInput
+	}
+
+	// Get current user
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			return ErrUserNotFound
+		}
+		s.logger.Error("Failed to get user for password change", "user_id", userID, "error", err)
+		return ErrAuthServiceError
+	}
+
+	// Verify current password
+	err = s.passwordService.VerifyPassword(user.Password, req.CurrentPassword)
+	if err != nil {
+		s.logger.Warn("Password change failed - invalid current password", "user_id", userID)
+		return ErrInvalidCredentials
+	}
+
+	// Validate new password
+	if err := s.passwordService.ValidatePassword(req.NewPassword); err != nil {
+		s.logger.Debug("New password validation failed", "user_id", userID, "error", err)
+		return ErrWeakPassword
+	}
+
+	// Hash new password
+	hashedPassword, err := s.passwordService.HashPassword(req.NewPassword)
+	if err != nil {
+		s.logger.Error("Failed to hash new password", "user_id", userID, "error", err)
+		return ErrPasswordHashing
+	}
+
+	// Update password in database
+	updateUser := &repository.User{
+		ID:       userID,
+		Password: hashedPassword,
+	}
+
+	_, err = s.userRepo.Update(ctx, updateUser)
+	if err != nil {
+		s.logger.Error("Failed to update password in database", "user_id", userID, "error", err)
+		return ErrAuthServiceError
+	}
+
+	s.logger.Info("Password changed successfully", "user_id", userID)
+	return nil
+}
+{{- end}}
+
+// VerifyUser verifies a user exists and returns basic user info
+func (s *AuthService) VerifyUser(ctx context.Context, userID string) (*User, error) {
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	user, err := s.userRepo.GetByID(ctx, userID)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			return nil, ErrUserNotFound
+		}
+		s.logger.Error("Failed to verify user", "user_id", userID, "error", err)
+		return nil, ErrAuthServiceError
+	}
+
+	return &User{
+		ID:        user.ID,
+		Name:      user.Name,
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}, nil
+}
+
+// rehashUserPassword rehashes a user's password with updated cost factor
+func (s *AuthService) rehashUserPassword(ctx context.Context, userID, password string) {
+	// This runs in background to update password hash if cost factor changed
+	hashedPassword, err := s.passwordService.HashPassword(password)
+	if err != nil {
+		s.logger.Error("Failed to rehash password", "user_id", userID, "error", err)
+		return
+	}
+
+	updateUser := &repository.User{
+		ID:       userID,
+		Password: hashedPassword,
+	}
+
+	_, err = s.userRepo.Update(ctx, updateUser)
+	if err != nil {
+		s.logger.Error("Failed to update rehashed password", "user_id", userID, "error", err)
+	} else {
+		s.logger.Info("Password rehashed successfully", "user_id", userID)
+	}
+}
+{{- end}}

@@ -1,0 +1,163 @@
+{{- if eq .Logger "zerolog"}}
+package logger
+
+import (
+	"io"
+	"os"
+
+	"github.com/rs/zerolog"
+)
+
+// ZerologLogger implements Logger using rs/zerolog
+type ZerologLogger struct {
+	logger zerolog.Logger
+}
+
+// NewZerologLogger creates a new zerolog-based logger
+func NewZerologLogger(level, format string, output io.Writer) (Logger, error) {
+	// Set global log level
+	logLevel := parseZerologLevel(level)
+	zerolog.SetGlobalLevel(logLevel)
+
+	var logger zerolog.Logger
+
+	switch format {
+	case "console", "text":
+		logger = zerolog.New(zerolog.ConsoleWriter{
+			Out:        output,
+			TimeFormat: "2006-01-02T15:04:05.000Z",
+		}).With().Timestamp().Logger()
+	case "json":
+		logger = zerolog.New(output).With().Timestamp().Logger()
+	default:
+		logger = zerolog.New(output).With().Timestamp().Logger()
+	}
+
+	return &ZerologLogger{
+		logger: logger,
+	}, nil
+}
+
+// Debug logs a debug message
+func (l *ZerologLogger) Debug(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Debug()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+// Info logs an info message
+func (l *ZerologLogger) Info(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Info()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+// Warn logs a warning message
+func (l *ZerologLogger) Warn(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Warn()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+// Error logs an error message
+func (l *ZerologLogger) Error(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Error()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+// Fatal logs a fatal message and exits
+func (l *ZerologLogger) Fatal(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Fatal()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+// With creates a new logger with additional context
+func (l *ZerologLogger) With(keysAndValues ...interface{}) Logger {
+	ctx := l.logger.With()
+	l.addFieldsToContext(ctx, keysAndValues...)
+	return &ZerologLogger{
+		logger: ctx.Logger(),
+	}
+}
+
+// WithError creates a new logger with an error context
+func (l *ZerologLogger) WithError(err error) Logger {
+	return &ZerologLogger{
+		logger: l.logger.With().Err(err).Logger(),
+	}
+}
+
+// addFields adds key-value pairs to a log event
+func (l *ZerologLogger) addFields(event *zerolog.Event, keysAndValues ...interface{}) {
+	for i := 0; i < len(keysAndValues)-1; i += 2 {
+		key, ok := keysAndValues[i].(string)
+		if !ok {
+			continue
+		}
+		value := keysAndValues[i+1]
+		
+		switch v := value.(type) {
+		case string:
+			event.Str(key, v)
+		case int:
+			event.Int(key, v)
+		case int64:
+			event.Int64(key, v)
+		case float64:
+			event.Float64(key, v)
+		case bool:
+			event.Bool(key, v)
+		case error:
+			event.Err(v)
+		default:
+			event.Interface(key, v)
+		}
+	}
+}
+
+// addFieldsToContext adds key-value pairs to a logger context
+func (l *ZerologLogger) addFieldsToContext(ctx zerolog.Context, keysAndValues ...interface{}) {
+	for i := 0; i < len(keysAndValues)-1; i += 2 {
+		key, ok := keysAndValues[i].(string)
+		if !ok {
+			continue
+		}
+		value := keysAndValues[i+1]
+		
+		switch v := value.(type) {
+		case string:
+			ctx = ctx.Str(key, v)
+		case int:
+			ctx = ctx.Int(key, v)
+		case int64:
+			ctx = ctx.Int64(key, v)
+		case float64:
+			ctx = ctx.Float64(key, v)
+		case bool:
+			ctx = ctx.Bool(key, v)
+		case error:
+			ctx = ctx.Err(v)
+		default:
+			ctx = ctx.Interface(key, v)
+		}
+	}
+}
+
+// parseZerologLevel converts string level to zerolog.Level
+func parseZerologLevel(level string) zerolog.Level {
+	switch level {
+	case "debug":
+		return zerolog.DebugLevel
+	case "info":
+		return zerolog.InfoLevel
+	case "warn":
+		return zerolog.WarnLevel
+	case "error":
+		return zerolog.ErrorLevel
+	default:
+		return zerolog.InfoLevel
+	}
+}
+{{- end}}

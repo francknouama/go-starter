@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# Development script for {{.ProjectName}}
+set -e
+
+echo "🚀 Starting {{.ProjectName}} in development mode..."
+
+# Generate protobuf code if needed
+if [ ! -d "gen" ] || [ "proto" -nt "gen" ]; then
+    echo "📦 Generating protobuf code..."
+    ./scripts/generate.sh
+fi
+
+# Install dependencies
+echo "📦 Installing dependencies..."
+go mod download
+
+# Run the application with hot reload
+echo "🔥 Starting server with hot reload..."
+if command -v air &> /dev/null; then
+    air
+else
+    echo "Air not found. Installing..."
+    go install github.com/cosmtrek/air@latest
+    air
+fi

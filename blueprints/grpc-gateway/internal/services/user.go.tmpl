@@ -1,0 +1,290 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/repository"
+	{{- if ne .AuthType ""}}
+	"{{.ModulePath}}/internal/security"
+	{{- end}}
+)
+
+var (
+	ErrUserNotFound    = errors.New("user not found")
+	ErrUserExists      = errors.New("user already exists")
+	ErrInvalidInput    = errors.New("invalid input")
+	{{- if ne .AuthType ""}}
+	ErrWeakPassword    = errors.New("password does not meet security requirements")
+	ErrPasswordHashing = errors.New("failed to hash password")
+	{{- end}}
+)
+
+// User represents a user entity
+type User struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	{{- if ne .AuthType ""}}
+	Password  string    `json:"-"` // Hidden in JSON serialization for security
+	{{- end}}
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CreateUserRequest represents the request to create a user
+type CreateUserRequest struct {
+	Name     string `json:"name" validate:"required,min=2,max=100"`
+	Email    string `json:"email" validate:"required,email"`
+	{{- if ne .AuthType ""}}
+	Password string `json:"password" validate:"required,min=8"` // Never logged, only used for hashing
+	{{- end}}
+}
+
+// UpdateUserRequest represents the request to update a user
+type UpdateUserRequest struct {
+	Name  string `json:"name,omitempty" validate:"omitempty,min=2,max=100"`
+	Email string `json:"email,omitempty" validate:"omitempty,email"`
+}
+
+// ListUsersRequest represents the request to list users
+type ListUsersRequest struct {
+	PageSize  int    `json:"page_size"`
+	PageToken string `json:"page_token"`
+}
+
+// ListUsersResponse represents the response for listing users
+type ListUsersResponse struct {
+	Users         []*User `json:"users"`
+	NextPageToken string  `json:"next_page_token"`
+	TotalCount    int     `json:"total_count"`
+}
+
+// UserService provides user management operations
+type UserService struct {
+	repo   repository.UserRepository
+	logger logger.Logger
+	{{- if ne .AuthType ""}}
+	passwordService *security.PasswordService
+	{{- end}}
+}
+
+// NewUserService creates a new UserService
+func NewUserService(repo repository.UserRepository, logger logger.Logger{{if ne .AuthType ""}}, passwordService *security.PasswordService{{end}}) *UserService {
+	return &UserService{
+		repo:   repo,
+		logger: logger,
+		{{- if ne .AuthType ""}}
+		passwordService: passwordService,
+		{{- end}}
+	}
+}
+
+// CreateUser creates a new user
+func (s *UserService) CreateUser(ctx context.Context, req *CreateUserRequest) (*User, error) {
+	if err := s.validateCreateUserRequest(req); err != nil {
+		return nil, err
+	}
+
+	// Check if user already exists
+	existingUser, err := s.repo.GetByEmail(ctx, req.Email)
+	if err != nil && err != repository.ErrUserNotFound {
+		s.logger.Error("Failed to check if user exists", "email", req.Email, "error", err)
+		return nil, err
+	}
+	if existingUser != nil {
+		return nil, ErrUserExists
+	}
+
+	{{- if ne .AuthType ""}}
+	// Hash the password securely using bcrypt
+	hashedPassword, err := s.passwordService.HashPassword(req.Password)
+	if err != nil {
+		s.logger.Error("Failed to hash password during user creation", "error", err)
+		// Return a generic error to avoid leaking information
+		return nil, ErrPasswordHashing
+	}
+	{{- end}}
+
+	user := &repository.User{
+		Name:  req.Name,
+		Email: req.Email,
+		{{- if ne .AuthType ""}}
+		Password: hashedPassword,
+		{{- end}}
+	}
+
+	createdUser, err := s.repo.Create(ctx, user)
+	if err != nil {
+		s.logger.Error("Failed to create user", "error", err)
+		return nil, err
+	}
+
+	s.logger.Info("User created successfully", "user_id", createdUser.ID, "email", createdUser.Email)
+
+	return &User{
+		ID:        createdUser.ID,
+		Name:      createdUser.Name,
+		Email:     createdUser.Email,
+		CreatedAt: createdUser.CreatedAt,
+		UpdatedAt: createdUser.UpdatedAt,
+	}, nil
+}
+
+// GetUser retrieves a user by ID
+func (s *UserService) GetUser(ctx context.Context, userID string) (*User, error) {
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	user, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			return nil, ErrUserNotFound
+		}
+		s.logger.Error("Failed to get user", "user_id", userID, "error", err)
+		return nil, err
+	}
+
+	return &User{
+		ID:        user.ID,
+		Name:      user.Name,
+		Email:     user.Email,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}, nil
+}
+
+// UpdateUser updates an existing user
+func (s *UserService) UpdateUser(ctx context.Context, userID string, req *UpdateUserRequest) (*User, error) {
+	if userID == "" {
+		return nil, ErrInvalidInput
+	}
+
+	if err := s.validateUpdateUserRequest(req); err != nil {
+		return nil, err
+	}
+
+	// Check if user exists
+	existingUser, err := s.repo.GetByID(ctx, userID)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			return nil, ErrUserNotFound
+		}
+		s.logger.Error("Failed to get user for update", "user_id", userID, "error", err)
+		return nil, err
+	}
+
+	// Check if email is already taken by another user
+	if req.Email != "" && req.Email != existingUser.Email {
+		emailUser, err := s.repo.GetByEmail(ctx, req.Email)
+		if err != nil && err != repository.ErrUserNotFound {
+			s.logger.Error("Failed to check email availability", "email", req.Email, "error", err)
+			return nil, err
+		}
+		if emailUser != nil && emailUser.ID != userID {
+			return nil, ErrUserExists
+		}
+	}
+
+	// Prepare update data
+	updateUser := &repository.User{
+		ID: userID,
+	}
+
+	if req.Name != "" {
+		updateUser.Name = req.Name
+	}
+	if req.Email != "" {
+		updateUser.Email = req.Email
+	}
+
+	updatedUser, err := s.repo.Update(ctx, updateUser)
+	if err != nil {
+		s.logger.Error("Failed to update user", "user_id", userID, "error", err)
+		return nil, err
+	}
+
+	s.logger.Info("User updated successfully", "user_id", userID)
+
+	return &User{
+		ID:        updatedUser.ID,
+		Name:      updatedUser.Name,
+		Email:     updatedUser.Email,
+		CreatedAt: updatedUser.CreatedAt,
+		UpdatedAt: updatedUser.UpdatedAt,
+	}, nil
+}
+
+// DeleteUser deletes a user by ID
+func (s *UserService) DeleteUser(ctx context.Context, userID string) error {
+	if userID == "" {
+		return ErrInvalidInput
+	}
+
+	err := s.repo.Delete(ctx, userID)
+	if err != nil {
+		if err == repository.ErrUserNotFound {
+			return ErrUserNotFound
+		}
+		s.logger.Error("Failed to delete user", "user_id", userID, "error", err)
+		return err
+	}
+
+	s.logger.Info("User deleted successfully", "user_id", userID)
+	return nil
+}
+
+// ListUsers retrieves a list of users with pagination
+func (s *UserService) ListUsers(ctx context.Context, req *ListUsersRequest) (*ListUsersResponse, error) {
+	users, nextToken, totalCount, err := s.repo.List(ctx, req.PageSize, req.PageToken)
+	if err != nil {
+		s.logger.Error("Failed to list users", "error", err)
+		return nil, err
+	}
+
+	serviceUsers := make([]*User, len(users))
+	for i, user := range users {
+		serviceUsers[i] = &User{
+			ID:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: user.CreatedAt,
+			UpdatedAt: user.UpdatedAt,
+		}
+	}
+
+	return &ListUsersResponse{
+		Users:         serviceUsers,
+		NextPageToken: nextToken,
+		TotalCount:    totalCount,
+	}, nil
+}
+
+func (s *UserService) validateCreateUserRequest(req *CreateUserRequest) error {
+	if req.Name == "" {
+		return ErrInvalidInput
+	}
+	if req.Email == "" {
+		return ErrInvalidInput
+	}
+	{{- if ne .AuthType ""}}
+	// Validate password using secure password service
+	if err := s.passwordService.ValidatePassword(req.Password); err != nil {
+		s.logger.Debug("Password validation failed", "error", err)
+		return ErrWeakPassword
+	}
+	{{- end}}
+	// Add more validation as needed
+	return nil
+}
+
+func (s *UserService) validateUpdateUserRequest(req *UpdateUserRequest) error {
+	if req.Name == "" && req.Email == "" {
+		return ErrInvalidInput
+	}
+	// Add more validation as needed
+	return nil
+}

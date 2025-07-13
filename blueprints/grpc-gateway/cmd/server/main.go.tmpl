@@ -1,0 +1,282 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/reflection"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
+	"github.com/gin-gonic/gin"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+	"{{.ModulePath}}/internal/services"
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/tls"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	"{{.ModulePath}}/internal/middleware"
+	"{{.ModulePath}}/internal/security"
+	{{- end}}
+
+	// Generated protobuf packages
+	userv1 "{{.ModulePath}}/gen/user/v1"
+	healthv1 "{{.ModulePath}}/gen/health/v1"
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Initialize logger
+	loggerFactory := logger.NewFactory()
+	appLogger, err := loggerFactory.CreateFromConfig(cfg.Logger)
+	if err != nil {
+		log.Fatalf("Failed to create logger: %v", err)
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database
+	db, err := database.Connect(cfg.Database, appLogger)
+	if err != nil {
+		appLogger.Fatal("Failed to connect to database", "error", err)
+	}
+	defer database.Close()
+
+	// Run migrations
+	if err := database.Migrate(db, appLogger); err != nil {
+		appLogger.Fatal("Failed to run migrations", "error", err)
+	}
+
+	// Initialize repositories
+	userRepo := repository.NewUserRepository(db, appLogger)
+	{{- else}}
+	userRepo := repository.NewInMemoryUserRepository(appLogger)
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Initialize security services
+	passwordService := security.NewPasswordService(appLogger)
+	{{- end}}
+
+	// Initialize services
+	userService := services.NewUserService(userRepo, appLogger{{- if ne .AuthType ""}}, passwordService{{- end}})
+	healthService := services.NewHealthService(appLogger{{- if ne .DatabaseDriver ""}}, db{{- end}})
+
+	{{- if ne .AuthType ""}}
+	// Initialize middleware
+	authMiddleware := middleware.NewAuthMiddleware(cfg.Auth, appLogger)
+	
+	// Initialize authentication service
+	authService := services.NewAuthService(userRepo, passwordService, appLogger{{- if eq .AuthType "jwt"}}, authMiddleware{{- end}})
+	{{- end}}
+
+	// Create context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start servers
+	var wg sync.WaitGroup
+
+	// Start gRPC server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := startGRPCServer(ctx, cfg, userService, healthService, appLogger); err != nil {
+			appLogger.Error("gRPC server error", "error", err)
+			cancel()
+		}
+	}()
+
+	// Start gRPC Gateway server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := startGatewayServer(ctx, cfg, appLogger{{- if ne .AuthType ""}}, authMiddleware{{- end}}); err != nil {
+			appLogger.Error("Gateway server error", "error", err)
+			cancel()
+		}
+	}()
+
+	appLogger.Info("{{.ProjectName}} started",
+		"grpc_port", cfg.Server.GRPCPort,
+		"http_port", cfg.Server.HTTPPort,
+	)
+
+	// Wait for interrupt signal
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+
+	select {
+	case <-c:
+		appLogger.Info("Received interrupt signal, shutting down...")
+	case <-ctx.Done():
+		appLogger.Info("Context cancelled, shutting down...")
+	}
+
+	cancel()
+	wg.Wait()
+	appLogger.Info("{{.ProjectName}} stopped")
+}
+
+func startGRPCServer(ctx context.Context, cfg *config.Config, userService *services.UserService, healthService *services.HealthService, appLogger logger.Logger) error {
+	// Validate TLS configuration
+	if err := tls.ValidateTLSConfig(cfg.Server.TLS, appLogger); err != nil {
+		return fmt.Errorf("TLS configuration validation failed: %w", err)
+	}
+
+	// Show security warning if TLS is disabled
+	tls.IsInsecureConnectionWarning(cfg.Server.TLS.Enabled, appLogger)
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Server.GRPCPort))
+	if err != nil {
+		return fmt.Errorf("failed to listen on gRPC port %d: %w", cfg.Server.GRPCPort, err)
+	}
+
+	// Create gRPC server options
+	serverOpts := []grpc.ServerOption{
+		grpc.UnaryInterceptor(server.UnaryLoggingInterceptor(appLogger)),
+	}
+
+	// Add TLS credentials if enabled
+	if cfg.Server.TLS.Enabled {
+		tlsConfig, err := tls.LoadServerTLSConfig(cfg.Server.TLS, appLogger)
+		if err != nil {
+			return fmt.Errorf("failed to load TLS configuration: %w", err)
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		serverOpts = append(serverOpts, grpc.Creds(creds))
+		appLogger.Info("gRPC server configured with TLS", "min_version", cfg.Server.TLS.MinVersion)
+	} else {
+		appLogger.Warn("gRPC server running without TLS - not recommended for production")
+	}
+
+	grpcServer := grpc.NewServer(serverOpts...)
+
+	// Register services
+	userv1.RegisterUserServiceServer(grpcServer, server.NewUserGRPCServer(userService))
+	healthv1.RegisterHealthServiceServer(grpcServer, server.NewHealthGRPCServer(healthService))
+
+	// Enable reflection for development
+	if cfg.Environment == "development" {
+		reflection.Register(grpcServer)
+	}
+
+	appLogger.Info("Starting gRPC server", "port", cfg.Server.GRPCPort)
+
+	// Start server in goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := grpcServer.Serve(lis); err != nil {
+			serverErr <- fmt.Errorf("gRPC server failed: %w", err)
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		appLogger.Info("Shutting down gRPC server...")
+		grpcServer.GracefulStop()
+		return nil
+	case err := <-serverErr:
+		return err
+	}
+}
+
+func startGatewayServer(ctx context.Context, cfg *config.Config, appLogger logger.Logger{{- if ne .AuthType ""}}, authMiddleware *middleware.AuthMiddleware{{- end}}) error {
+	// Create gRPC Gateway mux
+	mux := runtime.NewServeMux()
+
+	// gRPC server endpoint
+	grpcEndpoint := fmt.Sprintf("localhost:%d", cfg.Server.GRPCPort)
+
+	// Get secure gRPC dial options
+	opts, err := tls.GetGRPCDialOptions(cfg.Server.TLS, appLogger)
+	if err != nil {
+		return fmt.Errorf("failed to create gRPC dial options: %w", err)
+	}
+
+	// Register services with gateway
+	if err := userv1.RegisterUserServiceHandlerFromEndpoint(ctx, mux, grpcEndpoint, opts); err != nil {
+		return fmt.Errorf("failed to register user service handler: %w", err)
+	}
+
+	if err := healthv1.RegisterHealthServiceHandlerFromEndpoint(ctx, mux, grpcEndpoint, opts); err != nil {
+		return fmt.Errorf("failed to register health service handler: %w", err)
+	}
+
+	// Create Gin router for additional REST endpoints and middleware
+	gin.SetMode(gin.ReleaseMode)
+	
+	router := gin.New()
+	router.Use(gin.Recovery())
+	
+	{{- if ne .AuthType ""}}
+	// Add authentication middleware to protected routes
+	api := router.Group("/api", authMiddleware.RequireAuth())
+	api.Any("/v1/*path", gin.WrapH(mux))
+	{{- else}}
+	// Mount gRPC Gateway
+	router.Any("/api/*path", gin.WrapH(mux))
+	{{- end}}
+
+	// Health endpoints (no auth required)
+	router.Any("/health", gin.WrapH(mux))
+	router.Any("/ready", gin.WrapH(mux))
+	router.Any("/live", gin.WrapH(mux))
+
+	// Additional custom REST endpoints can be added here
+	router.GET("/version", func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{
+			"version": "1.0.0",
+			"service": "{{.ProjectName}}",
+		})
+	})
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", cfg.Server.HTTPPort),
+		Handler: router,
+	}
+
+	appLogger.Info("Starting HTTP gateway server", "port", cfg.Server.HTTPPort)
+
+	// Start server in goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serverErr <- fmt.Errorf("HTTP server failed: %w", err)
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		appLogger.Info("Shutting down HTTP gateway server...")
+		
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			appLogger.Error("HTTP server forced to shutdown", "error", err)
+		}
+		return nil
+	case err := <-serverErr:
+		return err
+	}
+}

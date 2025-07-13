@@ -1,0 +1,283 @@
+{{- if ne .AuthType ""}}
+package middleware
+
+import (
+	{{- if eq .AuthType "oauth2"}}
+	"context"
+	{{- end}}
+	{{- if or (eq .AuthType "jwt") (eq .AuthType "api-key")}}
+	"fmt"
+	{{- end}}
+	{{- if eq .AuthType "api-key"}}
+	"math/rand"
+	{{- end}}
+	"net/http"
+	"strings"
+	{{- if or (eq .AuthType "jwt") (eq .AuthType "api-key")}}
+	"time"
+	{{- end}}
+
+	"github.com/gin-gonic/gin"
+	{{- if eq .AuthType "jwt"}}
+	"github.com/golang-jwt/jwt/v5"
+	{{- else if eq .AuthType "oauth2"}}
+	"golang.org/x/oauth2"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// AuthMiddleware provides authentication middleware
+type AuthMiddleware struct {
+	config config.AuthConfig
+	logger logger.Logger
+	{{- if eq .AuthType "oauth2"}}
+	oauth2Config *oauth2.Config
+	{{- end}}
+}
+
+// NewAuthMiddleware creates a new authentication middleware
+func NewAuthMiddleware(config config.AuthConfig, logger logger.Logger) *AuthMiddleware {
+	{{- if eq .AuthType "oauth2"}}
+	oauth2Config := &oauth2.Config{
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		RedirectURL:  config.RedirectURL,
+		Scopes:       config.Scopes,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  "https://accounts.google.com/o/oauth2/auth",
+			TokenURL: "https://oauth2.googleapis.com/token",
+		},
+	}
+	{{- end}}
+
+	return &AuthMiddleware{
+		config: config,
+		logger: logger,
+		{{- if eq .AuthType "oauth2"}}
+		oauth2Config: oauth2Config,
+		{{- end}}
+	}
+}
+
+// RequireAuth returns a middleware that requires authentication
+func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		{{- if eq .AuthType "jwt"}}
+		// Extract JWT token from Authorization header
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			m.logger.Warn("Missing Authorization header")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+			c.Abort()
+			return
+		}
+
+		// Check if it starts with "Bearer "
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			m.logger.Warn("Invalid Authorization header format")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
+			c.Abort()
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Parse and validate JWT token
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+			// Validate signing method
+			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+			}
+			return []byte(m.config.Secret), nil
+		})
+
+		if err != nil {
+			m.logger.Warn("JWT token validation failed", "error", err)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		if !token.Valid {
+			m.logger.Warn("JWT token is invalid")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid token"})
+			c.Abort()
+			return
+		}
+
+		// Extract claims
+		if claims, ok := token.Claims.(jwt.MapClaims); ok {
+			c.Set("user_id", claims["user_id"])
+			c.Set("email", claims["email"])
+			m.logger.Debug("User authenticated via JWT", "user_id", claims["user_id"])
+		}
+
+		{{- else if eq .AuthType "oauth2"}}
+		// For OAuth2, check for access token in Authorization header or session
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			m.logger.Warn("Missing Authorization header")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Authorization header required"})
+			c.Abort()
+			return
+		}
+
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			m.logger.Warn("Invalid Authorization header format")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid authorization header format"})
+			c.Abort()
+			return
+		}
+
+		accessToken := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// Validate OAuth2 access token (simplified - in production, verify with provider)
+		if accessToken == "" {
+			m.logger.Warn("Empty access token")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid access token"})
+			c.Abort()
+			return
+		}
+
+		// In a real implementation, you would verify the token with the OAuth2 provider
+		// For now, we'll just set some dummy user info
+		c.Set("user_id", "oauth_user")
+		c.Set("access_token", accessToken)
+		m.logger.Debug("User authenticated via OAuth2")
+
+		{{- else if eq .AuthType "api-key"}}
+		// Extract API key from header
+		apiKey := c.GetHeader("X-API-Key")
+		if apiKey == "" {
+			// Also check Authorization header for API key
+			authHeader := c.GetHeader("Authorization")
+			if strings.HasPrefix(authHeader, "ApiKey ") {
+				apiKey = strings.TrimPrefix(authHeader, "ApiKey ")
+			}
+		}
+
+		if apiKey == "" {
+			m.logger.Warn("Missing API key")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "API key required"})
+			c.Abort()
+			return
+		}
+
+		// Validate API key (simplified - in production, check against database)
+		if !m.validateAPIKey(apiKey) {
+			m.logger.Warn("Invalid API key", "api_key", apiKey)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Invalid API key"})
+			c.Abort()
+			return
+		}
+
+		c.Set("api_key", apiKey)
+		m.logger.Debug("User authenticated via API key")
+		{{- end}}
+
+		c.Next()
+	}
+}
+
+{{- if eq .AuthType "jwt"}}
+// GenerateJWT generates a JWT token for a user
+func (m *AuthMiddleware) GenerateJWT(userID, email string) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": userID,
+		"email":   email,
+		"iss":     m.config.Issuer,
+		"exp":     time.Now().Add(time.Minute * time.Duration(m.config.TTL)).Unix(),
+		"iat":     time.Now().Unix(),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(m.config.Secret))
+}
+
+{{- else if eq .AuthType "oauth2"}}
+// GetAuthURL returns the OAuth2 authorization URL
+func (m *AuthMiddleware) GetAuthURL(state string) string {
+	return m.oauth2Config.AuthCodeURL(state)
+}
+
+// ExchangeCodeForToken exchanges an authorization code for an access token
+func (m *AuthMiddleware) ExchangeCodeForToken(ctx context.Context, code string) (*oauth2.Token, error) {
+	return m.oauth2Config.Exchange(ctx, code)
+}
+
+{{- else if eq .AuthType "api-key"}}
+// validateAPIKey validates an API key (simplified implementation)
+func (m *AuthMiddleware) validateAPIKey(apiKey string) bool {
+	// In a real implementation, you would:
+	// 1. Check the API key against a database
+	// 2. Verify it's not expired
+	// 3. Check rate limits
+	// 4. Log usage for analytics
+	
+	// For this example, we'll accept any non-empty key
+	return len(apiKey) >= 32 // Require at least 32 characters
+}
+
+// GenerateAPIKey generates a new API key (simplified implementation)
+func (m *AuthMiddleware) GenerateAPIKey() string {
+	// In production, use a proper random string generator
+	// and store the key in the database with associated user info
+	return fmt.Sprintf("ak_%d_%s", time.Now().Unix(), generateRandomString(24))
+}
+
+// generateRandomString generates a random string of specified length
+func generateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(b)
+}
+{{- end}}
+
+// OptionalAuth returns middleware that attempts to authenticate but doesn't fail if no auth is provided
+func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		{{- if eq .AuthType "jwt"}}
+		authHeader := c.GetHeader("Authorization")
+		if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte(m.config.Secret), nil
+			})
+
+			if err == nil && token.Valid {
+				if claims, ok := token.Claims.(jwt.MapClaims); ok {
+					c.Set("user_id", claims["user_id"])
+					c.Set("email", claims["email"])
+					m.logger.Debug("User optionally authenticated via JWT", "user_id", claims["user_id"])
+				}
+			}
+		}
+
+		{{- else if eq .AuthType "api-key"}}
+		apiKey := c.GetHeader("X-API-Key")
+		if apiKey == "" {
+			authHeader := c.GetHeader("Authorization")
+			if strings.HasPrefix(authHeader, "ApiKey ") {
+				apiKey = strings.TrimPrefix(authHeader, "ApiKey ")
+			}
+		}
+
+		if apiKey != "" && m.validateAPIKey(apiKey) {
+			c.Set("api_key", apiKey)
+			m.logger.Debug("User optionally authenticated via API key")
+		}
+		{{- end}}
+
+		c.Next()
+	}
+}
+{{- end}}

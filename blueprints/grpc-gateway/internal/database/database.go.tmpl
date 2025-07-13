@@ -1,0 +1,268 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{- end}}
+	{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+	{{- else}}
+	{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+	{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/repository"
+)
+
+var (
+	{{- if eq .DatabaseORM "gorm"}}
+	db *gorm.DB
+	{{- else if eq .DatabaseORM "sqlx"}}
+	db *sqlx.DB
+	{{- else}}
+	db *sql.DB
+	{{- end}}
+)
+
+// Connect establishes a database connection
+{{- if eq .DatabaseORM "gorm"}}
+func Connect(config config.DatabaseConfig, logger logger.Logger) (*gorm.DB, error) {
+{{- else if eq .DatabaseORM "sqlx"}}
+func Connect(config config.DatabaseConfig, logger logger.Logger) (*sqlx.DB, error) {
+{{- else}}
+func Connect(config config.DatabaseConfig, logger logger.Logger) (*sql.DB, error) {
+{{- end}}
+	dsn := config.GetDSN()
+	if dsn == "" {
+		return nil, fmt.Errorf("invalid database configuration")
+	}
+
+	logger.Info("Connecting to database",
+		"driver", config.Driver,
+		"host", config.Host,
+		"port", config.Port,
+		"database", config.Database,
+	)
+
+	{{- if eq .DatabaseORM "gorm"}}
+	var dialector gorm.Dialector
+
+	switch config.Driver {
+	case "postgres":
+		dialector = postgres.Open(dsn)
+	case "mysql":
+		dialector = mysql.Open(dsn)
+	case "sqlite":
+		dialector = sqlite.Open(dsn)
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", config.Driver)
+	}
+
+	gormDB, err := gorm.Open(dialector, &gorm.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying sql.DB to configure connection pool
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(config.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(config.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	db = gormDB
+	logger.Info("Successfully connected to database")
+	return gormDB, nil
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	sqlxDB, err := sqlx.Connect(config.Driver, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Configure connection pool
+	sqlxDB.SetMaxOpenConns(25)
+	sqlxDB.SetMaxIdleConns(5)
+	sqlxDB.SetConnMaxLifetime(time.Hour)
+
+	// Test the connection
+	if err := sqlxDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	db = sqlxDB
+	logger.Info("Successfully connected to database")
+	return sqlxDB, nil
+
+	{{- else}}
+	sqlDB, err := sql.Open(config.Driver, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(25)
+	sqlDB.SetMaxIdleConns(5)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	db = sqlDB
+	logger.Info("Successfully connected to database")
+	return sqlDB, nil
+	{{- end}}
+}
+
+// Close closes the database connection
+func Close() error {
+	if db == nil {
+		return nil
+	}
+
+	{{- if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+	{{- else}}
+	return db.Close()
+	{{- end}}
+}
+
+// Migrate runs database migrations
+{{- if eq .DatabaseORM "gorm"}}
+func Migrate(db *gorm.DB, logger logger.Logger) error {
+	logger.Info("Running database migrations")
+
+	// Auto-migrate repository models
+	if err := db.AutoMigrate(&repository.User{}); err != nil {
+		return fmt.Errorf("failed to migrate user table: %w", err)
+	}
+
+	logger.Info("Database migrations completed successfully")
+	return nil
+}
+
+{{- else}}
+func Migrate(db interface{}, logger logger.Logger) error {
+	logger.Info("Running database migrations")
+
+	{{- if eq .DatabaseORM "sqlx"}}
+	sqlxDB := db.(*sqlx.DB)
+	{{- else}}
+	sqlDB := db.(*sql.DB)
+	{{- end}}
+
+	// Create users table
+	createUsersTable := `
+		CREATE TABLE IF NOT EXISTS users (
+			id VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			email VARCHAR(255) UNIQUE NOT NULL,
+			{{- if ne .AuthType ""}}
+			password VARCHAR(255) NOT NULL,
+			{{- end}}
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		);
+	`
+
+	{{- if eq .DatabaseDriver "mysql"}}
+	// MySQL specific syntax
+	createUsersTable = `
+		CREATE TABLE IF NOT EXISTS users (
+			id VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			email VARCHAR(255) UNIQUE NOT NULL,
+			{{- if ne .AuthType ""}}
+			password VARCHAR(255) NOT NULL,
+			{{- end}}
+			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+		) ENGINE=InnoDB;
+	`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	// SQLite specific syntax
+	createUsersTable = `
+		CREATE TABLE IF NOT EXISTS users (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			email TEXT UNIQUE NOT NULL,
+			{{- if ne .AuthType ""}}
+			password TEXT NOT NULL,
+			{{- end}}
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+	`
+	{{- end}}
+
+	{{- if eq .DatabaseORM "sqlx"}}
+	if _, err := sqlxDB.Exec(createUsersTable); err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+	{{- else}}
+	if _, err := sqlDB.Exec(createUsersTable); err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+	{{- end}}
+
+	{{- if eq .DatabaseDriver "sqlite"}}
+	// Create index for email on SQLite (since UNIQUE constraint creates an index automatically on some databases)
+	createEmailIndex := `CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);`
+	{{- if eq .DatabaseORM "sqlx"}}
+	if _, err := sqlxDB.Exec(createEmailIndex); err != nil {
+		return fmt.Errorf("failed to create email index: %w", err)
+	}
+	{{- else}}
+	if _, err := sqlDB.Exec(createEmailIndex); err != nil {
+		return fmt.Errorf("failed to create email index: %w", err)
+	}
+	{{- end}}
+	{{- end}}
+
+	logger.Info("Database migrations completed successfully")
+	return nil
+}
+{{- end}}
+
+{{- end}}

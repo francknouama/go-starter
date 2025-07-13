@@ -1,0 +1,250 @@
+package server
+
+import (
+	"context"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/services"
+	userv1 "{{.ModulePath}}/gen/user/v1"
+	healthv1 "{{.ModulePath}}/gen/health/v1"
+)
+
+// UserGRPCServer implements the UserService gRPC server
+type UserGRPCServer struct {
+	userv1.UnimplementedUserServiceServer
+	userService *services.UserService
+}
+
+// NewUserGRPCServer creates a new UserGRPCServer
+func NewUserGRPCServer(userService *services.UserService) *UserGRPCServer {
+	return &UserGRPCServer{
+		userService: userService,
+	}
+}
+
+// CreateUser creates a new user
+func (s *UserGRPCServer) CreateUser(ctx context.Context, req *userv1.CreateUserRequest) (*userv1.CreateUserResponse, error) {
+	user, err := s.userService.CreateUser(ctx, &services.CreateUserRequest{
+		Name:  req.Name,
+		Email: req.Email,
+		{{- if ne .AuthType ""}}
+		Password: req.Password,
+		{{- end}}
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to create user: %v", err)
+	}
+
+	return &userv1.CreateUserResponse{
+		User: &userv1.User{
+			Id:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		},
+	}, nil
+}
+
+// GetUser retrieves a user by ID
+func (s *UserGRPCServer) GetUser(ctx context.Context, req *userv1.GetUserRequest) (*userv1.GetUserResponse, error) {
+	user, err := s.userService.GetUser(ctx, req.UserId)
+	if err != nil {
+		if err == services.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to get user: %v", err)
+	}
+
+	return &userv1.GetUserResponse{
+		User: &userv1.User{
+			Id:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		},
+	}, nil
+}
+
+// UpdateUser updates an existing user
+func (s *UserGRPCServer) UpdateUser(ctx context.Context, req *userv1.UpdateUserRequest) (*userv1.UpdateUserResponse, error) {
+	user, err := s.userService.UpdateUser(ctx, req.UserId, &services.UpdateUserRequest{
+		Name:  req.Name,
+		Email: req.Email,
+	})
+	if err != nil {
+		if err == services.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to update user: %v", err)
+	}
+
+	return &userv1.UpdateUserResponse{
+		User: &userv1.User{
+			Id:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		},
+	}, nil
+}
+
+// DeleteUser deletes a user by ID
+func (s *UserGRPCServer) DeleteUser(ctx context.Context, req *userv1.DeleteUserRequest) (*emptypb.Empty, error) {
+	err := s.userService.DeleteUser(ctx, req.UserId)
+	if err != nil {
+		if err == services.ErrUserNotFound {
+			return nil, status.Errorf(codes.NotFound, "user not found")
+		}
+		return nil, status.Errorf(codes.Internal, "failed to delete user: %v", err)
+	}
+
+	return &emptypb.Empty{}, nil
+}
+
+// ListUsers retrieves a list of users with pagination
+func (s *UserGRPCServer) ListUsers(ctx context.Context, req *userv1.ListUsersRequest) (*userv1.ListUsersResponse, error) {
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	result, err := s.userService.ListUsers(ctx, &services.ListUsersRequest{
+		PageSize:  int(pageSize),
+		PageToken: req.PageToken,
+	})
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to list users: %v", err)
+	}
+
+	users := make([]*userv1.User, len(result.Users))
+	for i, user := range result.Users {
+		users[i] = &userv1.User{
+			Id:        user.ID,
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		}
+	}
+
+	return &userv1.ListUsersResponse{
+		Users:         users,
+		NextPageToken: result.NextPageToken,
+		TotalCount:    int32(result.TotalCount),
+	}, nil
+}
+
+// HealthGRPCServer implements the HealthService gRPC server
+type HealthGRPCServer struct {
+	healthv1.UnimplementedHealthServiceServer
+	healthService *services.HealthService
+}
+
+// NewHealthGRPCServer creates a new HealthGRPCServer
+func NewHealthGRPCServer(healthService *services.HealthService) *HealthGRPCServer {
+	return &HealthGRPCServer{
+		healthService: healthService,
+	}
+}
+
+// Check performs a health check
+func (s *HealthGRPCServer) Check(ctx context.Context, req *healthv1.HealthCheckRequest) (*healthv1.HealthCheckResponse, error) {
+	result := s.healthService.Check(ctx)
+	
+	return &healthv1.HealthCheckResponse{
+		Status:    mapHealthStatus(result.Status),
+		Message:   result.Message,
+		Timestamp: timestamppb.New(result.Timestamp),
+		Details:   result.Details,
+	}, nil
+}
+
+// ReadinessCheck performs a readiness check
+func (s *HealthGRPCServer) ReadinessCheck(ctx context.Context, req *healthv1.ReadinessCheckRequest) (*healthv1.ReadinessCheckResponse, error) {
+	result := s.healthService.ReadinessCheck(ctx)
+	
+	serviceStatuses := make([]*healthv1.ServiceStatus, len(result.Services))
+	for i, svc := range result.Services {
+		serviceStatuses[i] = &healthv1.ServiceStatus{
+			Name:      svc.Name,
+			Status:    mapHealthStatus(svc.Status),
+			Message:   svc.Message,
+			LastCheck: timestamppb.New(svc.LastCheck),
+		}
+	}
+
+	return &healthv1.ReadinessCheckResponse{
+		Status:    mapHealthStatus(result.Status),
+		Message:   result.Message,
+		Timestamp: timestamppb.New(result.Timestamp),
+		Services:  serviceStatuses,
+	}, nil
+}
+
+// LivenessCheck performs a liveness check
+func (s *HealthGRPCServer) LivenessCheck(ctx context.Context, req *healthv1.LivenessCheckRequest) (*healthv1.LivenessCheckResponse, error) {
+	result := s.healthService.LivenessCheck(ctx)
+	
+	return &healthv1.LivenessCheckResponse{
+		Status:    mapHealthStatus(result.Status),
+		Message:   result.Message,
+		Timestamp: timestamppb.New(result.Timestamp),
+	}, nil
+}
+
+// mapHealthStatus maps internal health status to protobuf enum
+func mapHealthStatus(status services.HealthStatus) healthv1.HealthStatus {
+	switch status {
+	case services.HealthStatusServing:
+		return healthv1.HealthStatus_SERVING
+	case services.HealthStatusNotServing:
+		return healthv1.HealthStatus_NOT_SERVING
+	case services.HealthStatusUnknown:
+		return healthv1.HealthStatus_SERVICE_UNKNOWN
+	default:
+		return healthv1.HealthStatus_UNKNOWN
+	}
+}
+
+// UnaryLoggingInterceptor is a gRPC unary interceptor for logging
+func UnaryLoggingInterceptor(logger logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		start := time.Now()
+		
+		logger.Info("gRPC request started",
+			"method", info.FullMethod,
+		)
+
+		resp, err := handler(ctx, req)
+		
+		duration := time.Since(start)
+		
+		if err != nil {
+			logger.Error("gRPC request failed",
+				"method", info.FullMethod,
+				"duration", duration,
+				"error", err,
+			)
+		} else {
+			logger.Info("gRPC request completed",
+				"method", info.FullMethod,
+				"duration", duration,
+			)
+		}
+
+		return resp, err
+	}
+}

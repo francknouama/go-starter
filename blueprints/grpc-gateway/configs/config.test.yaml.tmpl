@@ -1,0 +1,60 @@
+environment: test
+
+server:
+  http_port: {{add (.HttpPort | default 8080) 1000}}  # Use different ports for testing
+  grpc_port: {{add (.GrpcPort | default 50051) 1000}}
+  tls:
+    enabled: true
+    cert_file: ./certs/server.crt
+    key_file: ./certs/server.key
+    ca_file: ./certs/ca.crt
+    min_version: "1.3"
+    server_name: localhost
+
+logger:
+  level: warn
+  format: json
+  type: {{.Logger}}
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: {{.DatabaseDriver}}
+  {{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5432
+  username: {{.ProjectName}}_test
+  password: test_password
+  database: {{.ProjectName}}_test
+  ssl_mode: disable
+  {{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3306
+  username: {{.ProjectName}}_test
+  password: test_password
+  database: {{.ProjectName}}_test
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  database: ":memory:"  # Use in-memory database for testing
+  {{- end}}
+  {{- if eq .DatabaseORM "gorm"}}
+  max_open_conns: 5
+  max_idle_conns: 2
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  type: {{.AuthType}}
+  {{- if eq .AuthType "jwt"}}
+  secret: test-secret-key
+  issuer: {{.ProjectName}}-test
+  ttl: 5  # 5 minutes for testing
+  {{- else if eq .AuthType "oauth2"}}
+  client_id: test-client-id
+  client_secret: test-client-secret
+  redirect_url: http://localhost:{{add (.HttpPort | default 8080) 1000}}/auth/callback
+  scopes:
+    - openid
+    - profile
+    - email
+  {{- end}}
+{{- end}}

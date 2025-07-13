@@ -1,0 +1,239 @@
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+
+	{{if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+	{{else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{end}}
+
+	{{if eq .DatabaseORM "gorm"}}
+	"gorm.io/driver/{{.DatabaseDriver}}"
+	"gorm.io/gorm"
+	gormlogger "gorm.io/gorm/logger"
+	{{else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	{{end}}
+)
+
+// DB represents the database connection
+type DB struct {
+	{{if eq .DatabaseORM "gorm"}}
+	*gorm.DB
+	{{else if eq .DatabaseORM "sqlx"}}
+	*sqlx.DB
+	{{else}}
+	*sql.DB
+	{{end}}
+	logger logger.Logger
+}
+
+// NewConnection creates a new database connection
+func NewConnection(ctx context.Context, cfg *config.Config, log logger.Logger) (*DB, error) {
+	log.Info("Connecting to database", "driver", cfg.Database.Driver)
+
+	{{if eq .DatabaseORM "gorm"}}
+	// Configure GORM logger
+	gormConfig := &gorm.Config{
+		Logger: gormlogger.New(
+			&gormLoggerAdapter{logger: log},
+			gormlogger.Config{
+				SlowThreshold:             time.Second,
+				LogLevel:                  gormlogger.Info,
+				IgnoreRecordNotFoundError: true,
+				Colorful:                  false,
+			},
+		),
+	}
+
+	var db *gorm.DB
+	var err error
+
+	switch cfg.Database.Driver {
+	{{if eq .DatabaseDriver "postgres"}}
+	case "postgres":
+		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Name,
+			cfg.Database.SSLMode,
+		)
+		db, err = gorm.Open(postgres.Open(dsn), gormConfig)
+	{{else if eq .DatabaseDriver "mysql"}}
+	case "mysql":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.Name,
+		)
+		db, err = gorm.Open(mysql.Open(dsn), gormConfig)
+	{{else if eq .DatabaseDriver "sqlite"}}
+	case "sqlite":
+		db, err = gorm.Open(sqlite.Open(cfg.Database.Name), gormConfig)
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying SQL database to configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	{{else if eq .DatabaseORM "sqlx"}}
+	var dsn string
+	
+	switch cfg.Database.Driver {
+	{{if eq .DatabaseDriver "postgres"}}
+	case "postgres":
+		dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Name,
+			cfg.Database.SSLMode,
+		)
+	{{else if eq .DatabaseDriver "mysql"}}
+	case "mysql":
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.Name,
+		)
+	{{else if eq .DatabaseDriver "sqlite"}}
+	case "sqlite3":
+		dsn = cfg.Database.Name
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
+	}
+
+	db, err := sqlx.ConnectContext(ctx, cfg.Database.Driver, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	sqlDB := db.DB
+
+	{{else}}
+	var dsn string
+	
+	switch cfg.Database.Driver {
+	{{if eq .DatabaseDriver "postgres"}}
+	case "postgres":
+		dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Name,
+			cfg.Database.SSLMode,
+		)
+	{{else if eq .DatabaseDriver "mysql"}}
+	case "mysql":
+		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			cfg.Database.User,
+			cfg.Database.Password,
+			cfg.Database.Host,
+			cfg.Database.Port,
+			cfg.Database.Name,
+		)
+	{{else if eq .DatabaseDriver "sqlite"}}
+	case "sqlite3":
+		dsn = cfg.Database.Name
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
+	}
+
+	sqlDB, err := sql.Open(cfg.Database.Driver, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Test the connection
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+	{{end}}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.Database.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
+
+	log.Info("Database connection established successfully")
+
+	return &DB{
+		{{if eq .DatabaseORM "gorm"}}
+		DB: db,
+		{{else if eq .DatabaseORM "sqlx"}}
+		DB: db,
+		{{else}}
+		DB: sqlDB,
+		{{end}}
+		logger: log,
+	}, nil
+}
+
+// Close closes the database connection
+func (db *DB) Close() error {
+	db.logger.Info("Closing database connection")
+	{{if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+	{{else}}
+	return db.DB.Close()
+	{{end}}
+}
+
+// Ping verifies the database connection is alive
+func (db *DB) Ping(ctx context.Context) error {
+	{{if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+	{{else if eq .DatabaseORM "sqlx"}}
+	return db.DB.PingContext(ctx)
+	{{else}}
+	return db.DB.PingContext(ctx)
+	{{end}}
+}
+
+{{if eq .DatabaseORM "gorm"}}
+// gormLoggerAdapter adapts our logger interface to GORM's logger
+type gormLoggerAdapter struct {
+	logger logger.Logger
+}
+
+func (l *gormLoggerAdapter) Printf(format string, v ...interface{}) {
+	l.logger.Debug(fmt.Sprintf(format, v...))
+}
+{{end}}
