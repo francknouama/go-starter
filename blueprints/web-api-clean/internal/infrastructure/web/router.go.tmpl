@@ -3,7 +3,7 @@ package web
 import (
 	"{{.ModulePath}}/internal/adapters/controllers"
 	"{{.ModulePath}}/internal/domain/ports"
-	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	{{if ne .AuthType ""}}
 	"{{.ModulePath}}/internal/domain/usecases"
 	{{end}}
 	"{{.ModulePath}}/internal/infrastructure/config"
@@ -15,7 +15,7 @@ type RouterService struct {
 	router ports.Router
 	config *config.ServerConfig
 	logger ports.Logger
-	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	{{if ne .AuthType ""}}
 	authUseCase *usecases.AuthUseCase
 	{{end}}
 }
@@ -40,7 +40,7 @@ func NewRouterService(config *config.ServerConfig, logger ports.Logger) (*Router
 	return service, nil
 }
 
-{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+{{if ne .AuthType ""}}
 // SetAuthUseCase sets the auth use case for authentication middleware
 func (r *RouterService) SetAuthUseCase(authUseCase *usecases.AuthUseCase) {
 	r.authUseCase = authUseCase
@@ -84,7 +84,7 @@ func (r *RouterService) RegisterUserRoutes(controller *controllers.UserControlle
 	
 	// Protected routes
 	protected := users.Group("")
-	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	{{if ne .AuthType ""}}
 	protected.Use(middleware.Auth(r.authUseCase, r.logger))
 	{{end}}
 	protected.GET("", controller.ListUsers)
@@ -106,7 +106,7 @@ func (r *RouterService) RegisterAuthRoutes(controller *controllers.AuthControlle
 	
 	// Protected auth routes
 	protected := auth.Group("")
-	{{if and (ne .AuthType "") (ne .DatabaseDriver "")}}
+	{{if ne .AuthType ""}}
 	protected.Use(middleware.Auth(r.authUseCase, r.logger))
 	{{end}}
 	protected.POST("/logout", controller.Logout())

@@ -1,0 +1,349 @@
+{{if eq .Framework "stdlib"}}
+package adapters
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+	
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// StdlibContext adapts stdlib HTTP request/response to implement ports.HTTPContext
+type StdlibContext struct {
+	writer  http.ResponseWriter
+	request *http.Request
+	params  map[string]string
+	status  int
+	values  map[string]interface{}
+}
+
+// NewStdlibContext creates a new stdlib context
+func NewStdlibContext(w http.ResponseWriter, r *http.Request) *StdlibContext {
+	return &StdlibContext{
+		writer:  w,
+		request: r,
+		params:  make(map[string]string),
+		status:  http.StatusOK,
+		values:  make(map[string]interface{}),
+	}
+}
+
+// SetParam sets a URL parameter (for path parameters like /users/{id})
+func (s *StdlibContext) SetParam(key, value string) {
+	s.params[key] = value
+}
+
+// Ensure StdlibContext implements ports.HTTPContext
+var _ ports.HTTPContext = (*StdlibContext)(nil)
+
+// GetParam implements ports.HTTPContext.GetParam
+func (s *StdlibContext) GetParam(key string) string {
+	return s.params[key]
+}
+
+// GetQuery implements ports.HTTPContext.GetQuery
+func (s *StdlibContext) GetQuery(key string) string {
+	return s.request.URL.Query().Get(key)
+}
+
+// GetHeader implements ports.HTTPContext.GetHeader
+func (s *StdlibContext) GetHeader(key string) string {
+	return s.request.Header.Get(key)
+}
+
+// BindJSON implements ports.HTTPContext.BindJSON
+func (s *StdlibContext) BindJSON(obj interface{}) error {
+	if s.request.Body == nil {
+		return nil
+	}
+	defer s.request.Body.Close()
+	return json.NewDecoder(s.request.Body).Decode(obj)
+}
+
+// GetRequestContext implements ports.HTTPContext.GetRequestContext
+func (s *StdlibContext) GetRequestContext() context.Context {
+	return s.request.Context()
+}
+
+// GetMethod implements ports.HTTPContext.GetMethod
+func (s *StdlibContext) GetMethod() string {
+	return s.request.Method
+}
+
+// JSON implements ports.HTTPContext.JSON
+func (s *StdlibContext) JSON(code int, obj interface{}) {
+	s.status = code
+	s.writer.Header().Set("Content-Type", "application/json")
+	s.writer.WriteHeader(code)
+	json.NewEncoder(s.writer).Encode(obj)
+}
+
+// String implements ports.HTTPContext.String
+func (s *StdlibContext) String(code int, message string) {
+	s.status = code
+	s.writer.Header().Set("Content-Type", "text/plain")
+	s.writer.WriteHeader(code)
+	s.writer.Write([]byte(message))
+}
+
+// NoContent implements ports.HTTPContext.NoContent
+func (s *StdlibContext) NoContent(code int) {
+	s.status = code
+	s.writer.WriteHeader(code)
+}
+
+// SetHeader implements ports.HTTPContext.SetHeader
+func (s *StdlibContext) SetHeader(key, value string) {
+	s.writer.Header().Set(key, value)
+}
+
+// ClientIP implements ports.HTTPContext.ClientIP
+func (s *StdlibContext) ClientIP() string {
+	return s.GetClientIP()
+}
+
+// GetClientIP implements ports.HTTPContext.GetClientIP
+func (s *StdlibContext) GetClientIP() string {
+	// Check for forwarded headers first
+	ip := s.request.Header.Get("X-Forwarded-For")
+	if ip != "" {
+		return strings.Split(ip, ",")[0]
+	}
+	
+	ip = s.request.Header.Get("X-Real-IP")
+	if ip != "" {
+		return ip
+	}
+	
+	// Fall back to remote address
+	ip = s.request.RemoteAddr
+	if strings.Contains(ip, ":") {
+		ip = strings.Split(ip, ":")[0]
+	}
+	
+	return ip
+}
+
+// GetRequest implements ports.HTTPContext.GetRequest
+func (s *StdlibContext) GetRequest() *http.Request {
+	return s.request
+}
+
+// GetStatusCode implements ports.HTTPContext.GetStatusCode
+func (s *StdlibContext) GetStatusCode() int {
+	return s.status
+}
+
+// Next implements ports.HTTPContext.Next (no-op for stdlib)
+func (s *StdlibContext) Next() {
+	// No-op for stdlib since middleware pattern is different
+}
+
+// GetErrors implements ports.HTTPContext.GetErrors
+func (s *StdlibContext) GetErrors() []string {
+	// Stdlib doesn't have a built-in errors collection
+	return []string{}
+}
+
+// Set implements ports.HTTPContext.Set
+func (s *StdlibContext) Set(key string, value interface{}) {
+	s.values[key] = value
+}
+
+// Get implements ports.HTTPContext.Get
+func (s *StdlibContext) Get(key string) (interface{}, bool) {
+	value, exists := s.values[key]
+	return value, exists
+}
+
+// StdlibRouter adapts stdlib HTTP mux to implement ports.Router
+type StdlibRouter struct {
+	mux *http.ServeMux
+}
+
+// NewStdlibRouter creates a new StdlibRouter
+func NewStdlibRouter() ports.Router {
+	return &StdlibRouter{
+		mux: http.NewServeMux(),
+	}
+}
+
+// adaptHandler converts ports.HTTPHandler to http.HandlerFunc
+func (r *StdlibRouter) adaptHandler(handler ports.HTTPHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		ctx := NewStdlibContext(w, req)
+		
+		// Extract path parameters for patterns like /users/{id}
+		// This is a simple implementation - for production, consider using a router like gorilla/mux
+		path := req.URL.Path
+		if strings.Contains(path, "/") {
+			parts := strings.Split(path, "/")
+			if len(parts) > 0 && parts[len(parts)-1] != "" {
+				// Check if the last part looks like an ID (UUID, number, etc.)
+				lastPart := parts[len(parts)-1]
+				if lastPart != "users" && lastPart != "auth" {
+					ctx.SetParam("id", lastPart)
+				}
+			}
+		}
+		
+		handler(ctx)
+	}
+}
+
+// GET implements ports.Router.GET
+func (r *StdlibRouter) GET(path string, handler ports.HTTPHandler) {
+	r.mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodGet {
+			r.adaptHandler(handler)(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// POST implements ports.Router.POST
+func (r *StdlibRouter) POST(path string, handler ports.HTTPHandler) {
+	r.mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost {
+			r.adaptHandler(handler)(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// PUT implements ports.Router.PUT
+func (r *StdlibRouter) PUT(path string, handler ports.HTTPHandler) {
+	r.mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPut {
+			r.adaptHandler(handler)(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// DELETE implements ports.Router.DELETE
+func (r *StdlibRouter) DELETE(path string, handler ports.HTTPHandler) {
+	r.mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodDelete {
+			r.adaptHandler(handler)(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// PATCH implements ports.Router.PATCH
+func (r *StdlibRouter) PATCH(path string, handler ports.HTTPHandler) {
+	r.mux.HandleFunc(path, func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPatch {
+			r.adaptHandler(handler)(w, req)
+		} else {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		}
+	})
+}
+
+// Use implements ports.Router.Use (middleware)
+func (r *StdlibRouter) Use(middleware ports.HTTPHandler) {
+	// For stdlib, middleware needs to be applied at the handler level
+	// This is a simplified implementation
+}
+
+// Group implements ports.Router.Group
+func (r *StdlibRouter) Group(prefix string) ports.RouteGroup {
+	return &StdlibRouteGroup{
+		router: r,
+		prefix: prefix,
+	}
+}
+
+// StdlibRouteGroup implements ports.RouteGroup for stdlib
+type StdlibRouteGroup struct {
+	router *StdlibRouter
+	prefix string
+}
+
+// GET implements ports.RouteGroup.GET
+func (g *StdlibRouteGroup) GET(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.router.GET(fullPath, handler)
+}
+
+// POST implements ports.RouteGroup.POST
+func (g *StdlibRouteGroup) POST(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.router.POST(fullPath, handler)
+}
+
+// PUT implements ports.RouteGroup.PUT
+func (g *StdlibRouteGroup) PUT(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.router.PUT(fullPath, handler)
+}
+
+// DELETE implements ports.RouteGroup.DELETE
+func (g *StdlibRouteGroup) DELETE(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.router.DELETE(fullPath, handler)
+}
+
+// PATCH implements ports.RouteGroup.PATCH
+func (g *StdlibRouteGroup) PATCH(path string, handler ports.HTTPHandler) {
+	fullPath := g.prefix + path
+	g.router.PATCH(fullPath, handler)
+}
+
+// Use implements ports.RouteGroup.Use
+func (g *StdlibRouteGroup) Use(middleware ports.HTTPHandler) {
+	// Middleware implementation for route groups
+}
+
+// Group implements ports.RouteGroup.Group
+func (g *StdlibRouteGroup) Group(prefix string) ports.RouteGroup {
+	return &StdlibRouteGroup{
+		router: g.router,
+		prefix: g.prefix + prefix,
+	}
+}
+
+// StdlibWebServer adapts stdlib HTTP server to implement ports.WebServer
+type StdlibWebServer struct {
+	server *http.Server
+	mux    *http.ServeMux
+}
+
+// NewStdlibWebServer creates a new StdlibWebServer
+func NewStdlibWebServer(router ports.Router) ports.WebServer {
+	stdlibRouter := router.(*StdlibRouter)
+	return &StdlibWebServer{
+		mux: stdlibRouter.mux,
+	}
+}
+
+// Start implements ports.WebServer.Start
+func (s *StdlibWebServer) Start(addr string) error {
+	s.server = &http.Server{
+		Addr:    addr,
+		Handler: s.mux,
+	}
+	return s.server.ListenAndServe()
+}
+
+// Stop implements ports.WebServer.Stop
+func (s *StdlibWebServer) Stop() error {
+	if s.server != nil {
+		return s.server.Shutdown(context.Background())
+	}
+	return nil
+}
+
+// Handler implements ports.WebServer.Handler
+func (s *StdlibWebServer) Handler() http.Handler {
+	return s.mux
+}
+{{end}}

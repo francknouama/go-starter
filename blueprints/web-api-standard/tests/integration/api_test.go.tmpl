@@ -34,9 +34,6 @@ import (
 	{{- if ne .DatabaseDriver ""}}
 	"gorm.io/gorm"
 	{{- end}}
-	{{- if and (ne .AuthType "") (ne .DatabaseDriver "")}}
-	"github.com/golang-jwt/jwt/v5"
-	{{- end}}
 
 	{{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/config"
@@ -243,13 +240,13 @@ func (suite *APITestSuite) setupRoutes() {
 	// Auth routes
 	authHandler := handlers.NewAuthHandler(suite.authService)
 	auth := api.Group("/auth")
-	auth.POST("/login", handlers.NewAuthHandler(suite.authService).Login)
-	auth.POST("/register", handlers.NewAuthHandler(suite.authService).Register)
-	auth.POST("/refresh", handlers.NewAuthHandler(suite.authService).Refresh)
-	auth.POST("/logout", handlers.NewAuthHandler(suite.authService).Logout)
+	auth.POST("/login", authHandler.Login)
+	auth.POST("/register", authHandler.Register)
+	auth.POST("/refresh", authHandler.Refresh)
+	auth.POST("/logout", authHandler.Logout)
 
 	// Protected routes
-	authMiddleware := middleware.NewAuthMiddleware(suite.authService)
+	authMiddleware := appMiddleware.NewAuthMiddleware(suite.authService)
 	protected := api.Group("")
 	protected.Use(authMiddleware.RequireAuth())
 	{{- end}}
@@ -280,7 +277,7 @@ func (suite *APITestSuite) setupRoutes() {
 		})
 
 		// Protected routes
-		authMiddleware := middleware.NewAuthMiddleware(suite.authService)
+		authMiddleware := appMiddleware.NewAuthMiddleware(suite.authService)
 		api.Group(func(protected chi.Router) {
 			protected.Use(authMiddleware.RequireAuth())
 			// User routes
@@ -552,7 +549,7 @@ func (suite *APITestSuite) TestUserEndpoints() {
 		req.Header.Set("Content-Type", "application/json")
 		
 		{{- if eq .Framework "fiber"}}
-		resp, err := suite.router.Test(req)
+		resp, err = suite.router.Test(req)
 		assert.NoError(suite.T(), err)
 		defer resp.Body.Close()
 		assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)

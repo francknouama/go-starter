@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-{{if ne .Framework "fiber"}}	"time"{{end}}
+{{if or (ne .Framework "fiber") (ne .AuthType "")}}	"time"{{end}}
 
 {{if eq .Framework "gin"}}	"github.com/gin-gonic/gin"{{end}}
 {{if eq .Framework "echo"}}	"github.com/labstack/echo/v4"
@@ -158,8 +158,9 @@ func main() {
 {{- if ne .AuthType ""}}
 	// Public routes
 	public := v1.Group("")
-	public.POST("/auth/login", handlers.Login)
-	public.POST("/auth/register", handlers.Register)
+	authHandler := handlers.NewAuthHandler(authService)
+	public.POST("/auth/login", authHandler.Login)
+	public.POST("/auth/register", authHandler.Register)
 
 	// Protected routes
 	protected := v1.Group("")
@@ -200,8 +201,9 @@ func main() {
 {{- if ne .AuthType ""}}
 	// Public routes
 	public := v1.Group("")
-	public.Post("/auth/login", handlers.Login)
-	public.Post("/auth/register", handlers.Register)
+	authHandler := handlers.NewAuthHandler(authService)
+	public.Post("/auth/login", authHandler.Login)
+	public.Post("/auth/register", authHandler.Register)
 
 	// Protected routes
 	protected := v1.Group("")
@@ -237,8 +239,9 @@ func main() {
 	router.Route("/api/v1", func(v1 chi.Router) {
 {{- if ne .AuthType ""}}
 		// Public routes
-		v1.Post("/auth/login", handlers.Login)
-		v1.Post("/auth/register", handlers.Register)
+		authHandler := handlers.NewAuthHandler(authService)
+		v1.Post("/auth/login", authHandler.Login)
+		v1.Post("/auth/register", authHandler.Register)
 
 		// Protected routes
 		v1.Group(func(protected chi.Router) {
@@ -271,8 +274,9 @@ func main() {
 	// API routes - we'll use a simple routing approach
 {{- if ne .AuthType ""}}
 	// Public routes
-	mux.HandleFunc("/api/v1/auth/login", handlers.Login)
-	mux.HandleFunc("/api/v1/auth/register", handlers.Register)
+	authHandler := handlers.NewAuthHandler(authService)
+	mux.HandleFunc("/api/v1/auth/login", authHandler.Login)
+	mux.HandleFunc("/api/v1/auth/register", authHandler.Register)
 
 	// Protected routes (add auth middleware wrapper here)
 {{- if ne .DatabaseDriver ""}}

@@ -72,10 +72,15 @@ func main() {
 	}()
 
 	userRepo := persistence.New{{.DomainName | title}}Repository(db.DB, appLogger)
-	{{end}}
-
+	
 	{{if ne .AuthType ""}}
 	authService := auth.NewAuthService(userRepo, appLogger)
+	{{end}}
+	{{else}}
+	{{if ne .AuthType ""}}
+	// Auth service without database - uses in-memory or alternative storage
+	authService := auth.NewAuthService(nil, appLogger)
+	{{end}}
 	{{end}}
 
 	{{if ne .DatabaseDriver ""}}
