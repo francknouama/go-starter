@@ -1,72 +1,128 @@
-package integration_test
+package integration
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"{{.ModulePath}}/internal/infrastructure/config"
+	"github.com/stretchr/testify/require"
+	
 	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
 	"{{.ModulePath}}/internal/infrastructure/persistence"
-	"{{.ModulePath}}/internal/infrastructure/logger"
-	"{{.ModulePath}}/internal/shared/valueobjects"
 )
 
 func TestIntegration_{{.DomainName | title}}Repository(t *testing.T) {
-	// Load config for test database
-	cfg := config.LoadConfig()
-	cfg.Database.Database = cfg.Database.Database + "_test_repo"
+	// Setup database with testcontainers (ORM-specific)
+	db, cleanup := setupTestDatabase(t)
+	defer cleanup()
 
-	// Setup logger
-	appLogger := logger.NewLogger(&cfg.Logger)
+	// Create logger
+	logger := createTestLogger()
 
-	// Connect to test database
-	db, err := persistence.NewDatabaseConnection(&cfg.Database)
-	assert.NoError(t, err)
-	defer db.Close()
-
-	// Run migrations
-	err = persistence.RunMigrations(db, cfg.Database.Driver)
-	assert.NoError(t, err)
-
-	// Create repository
-	repo := persistence.New{{.DomainName | title}}Repository(db, appLogger)
+	// Create repository using the ORM-specific database connection
+	repo := persistence.New{{.DomainName | title}}Repository(db, logger)
 	ctx := context.Background()
 
 	// Test Save and FindByID
-	entity, err := {{.DomainName}}.New{{.DomainName | title}}("test-{{.DomainName}}", "Test {{.DomainName}} for repository")
-	assert.NoError(t, err)
+	entity, err := {{.DomainName}}.New{{.DomainName | title}}("test-{{.DomainName}}", "test@example.com", "Test {{.DomainName}} for repository")
+	require.NoError(t, err)
 
 	err = repo.Save(ctx, entity)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotEmpty(t, entity.ID().String())
 
 	found{{.DomainName | title}}, err := repo.FindByID(ctx, entity.ID())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, found{{.DomainName | title}})
 	assert.Equal(t, entity.ID(), found{{.DomainName | title}}.ID())
 	assert.Equal(t, entity.Name(), found{{.DomainName | title}}.Name())
 
 	// Test FindByName
 	found{{.DomainName | title}}, err = repo.FindByName(ctx, entity.Name())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, found{{.DomainName | title}})
 	assert.Equal(t, entity.ID(), found{{.DomainName | title}}.ID())
 
 	// Test Update
-	entity.UpdateDescription("Updated description")
+	err = entity.UpdateDescription("Updated description")
+	require.NoError(t, err)
 	err = repo.Save(ctx, entity)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	found{{.DomainName | title}}, err = repo.FindByID(ctx, entity.ID())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "Updated description", found{{.DomainName | title}}.Description())
 
 	// Test Delete
 	err = repo.Delete(ctx, entity.ID())
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	found{{.DomainName | title}}, err = repo.FindByID(ctx, entity.ID())
 	assert.Error(t, err)
 	assert.Nil(t, found{{.DomainName | title}})
+}
+
+func TestIntegration_{{.DomainName | title}}Repository_Parallel(t *testing.T) {
+	// Test that multiple tests can run in parallel with testcontainers
+	t.Parallel()
+
+	// Setup database with testcontainers
+	db, cleanup := setupTestDatabase(t)
+	defer cleanup()
+
+	// Create logger
+	logger := createTestLogger()
+
+	// Create repository
+	repo := persistence.New{{.DomainName | title}}Repository(db, logger)
+	ctx := context.Background()
+
+	// Create multiple entities to test parallel execution
+	for i := 0; i < 5; i++ {
+		entity, err := {{.DomainName}}.New{{.DomainName | title}}(
+			fmt.Sprintf("parallel-test-%d", i),
+			fmt.Sprintf("test%d@example.com", i),
+			fmt.Sprintf("Test {{.DomainName}} %d for parallel testing", i),
+		)
+		require.NoError(t, err)
+
+		err = repo.Save(ctx, entity)
+		require.NoError(t, err)
+
+		// Verify entity was saved
+		found, err := repo.FindByID(ctx, entity.ID())
+		require.NoError(t, err)
+		assert.Equal(t, entity.Name(), found.Name())
+	}
+}
+
+func TestIntegration_{{.DomainName | title}}Repository_Isolation(t *testing.T) {
+	// Test that each test gets a clean database state
+	t.Parallel()
+
+	// Setup database with testcontainers
+	db, cleanup := setupTestDatabase(t)
+	defer cleanup()
+
+	// Create logger
+	logger := createTestLogger()
+
+	// Create repository
+	repo := persistence.New{{.DomainName | title}}Repository(db, logger)
+	ctx := context.Background()
+
+	// Create test entity
+	entity, err := {{.DomainName}}.New{{.DomainName | title}}("isolation-test", "isolation@example.com", "Test isolation")
+	require.NoError(t, err)
+
+	// Save entity
+	err = repo.Save(ctx, entity)
+	require.NoError(t, err)
+
+	// Verify only this entity exists (proving isolation)
+	all, err := repo.FindAll(ctx, 0, 100)
+	require.NoError(t, err)
+	assert.Len(t, all, 1, "Each test should start with a clean database")
+	assert.Equal(t, entity.ID(), all[0].ID())
 }
