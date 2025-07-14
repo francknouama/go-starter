@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/charmbracelet/fang"
-	"github.com/fatih/color"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/francknouama/go-starter/internal/ascii"
 	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/spf13/cobra"
@@ -26,35 +26,49 @@ var rootCmd = &cobra.Command{
 
 // buildLongDescription creates a colorized long description with ASCII art
 func buildLongDescription() string {
-	// Color functions
-	cyan := color.New(color.FgCyan, color.Bold).SprintFunc()
-	yellow := color.New(color.FgYellow, color.Bold).SprintFunc()
-	green := color.New(color.FgGreen).SprintFunc()
-	blue := color.New(color.FgBlue).SprintFunc()
-	magenta := color.New(color.FgMagenta).SprintFunc()
+	// Get banner configuration from environment
+	bannerConfig := ascii.ConfigFromEnv()
+	
+	// Use lipgloss styles for consistent formatting
+	var (
+		cyanStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("14")).Bold(true)
+		yellowStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
+		greenStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+		blueStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("12"))
+		magentaStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	)
+	
+	// Disable colors if banner config says so
+	if !bannerConfig.Colors {
+		cyanStyle = lipgloss.NewStyle().Bold(true)
+		yellowStyle = lipgloss.NewStyle().Bold(true)
+		greenStyle = lipgloss.NewStyle()
+		blueStyle = lipgloss.NewStyle()
+		magentaStyle = lipgloss.NewStyle()
+	}
 
-	return ascii.Banner() + "\n" +
-		cyan("🚀 A comprehensive Go project generator") + "\n\n" +
+	return ascii.BannerWithConfig(bannerConfig) + "\n" +
+		cyanStyle.Render("🚀 A comprehensive Go project generator") + "\n\n" +
 		"Generate Go project structures with modern best practices,\n" +
 		"multiple architecture patterns, and deployment configurations.\n\n" +
-		yellow("📚 EXAMPLES:") + "\n" +
-		green("  go-starter new my-api                    ") + "# Interactive project creation\n" +
-		green("  go-starter new my-api --type=web-api     ") + "# Direct project creation\n" +
-		green("  go-starter list                          ") + "# List available blueprints\n" +
-		green("  go-starter version                       ") + "# Show version information\n\n" +
-		yellow("🏗️  SUPPORTED BLUEPRINTS:") + "\n" +
-		blue("  • web-api       ") + "- REST APIs with multiple architectures\n" +
-		blue("  • cli           ") + "- Command-line applications\n" +
-		blue("  • library       ") + "- Reusable Go packages\n" +
-		blue("  • lambda        ") + "- AWS Lambda functions\n" +
-		blue("  • microservice  ") + "- Distributed systems\n" +
-		blue("  • monolith      ") + "- Traditional web applications\n\n" +
-		yellow("🎨 ARCHITECTURE PATTERNS:") + "\n" +
-		magenta("  • Standard      ") + "- Simple, straightforward structure\n" +
-		magenta("  • Clean         ") + "- Clean Architecture principles\n" +
-		magenta("  • DDD           ") + "- Domain-Driven Design\n" +
-		magenta("  • Hexagonal     ") + "- Ports and Adapters pattern\n\n" +
-		"For more information, visit: " + cyan("https://github.com/francknouama/go-starter")
+		yellowStyle.Render("📚 EXAMPLES:") + "\n" +
+		greenStyle.Render("  go-starter new my-api                    ") + "# Interactive project creation\n" +
+		greenStyle.Render("  go-starter new my-api --type=web-api     ") + "# Direct project creation\n" +
+		greenStyle.Render("  go-starter list                          ") + "# List available blueprints\n" +
+		greenStyle.Render("  go-starter version                       ") + "# Show version information\n\n" +
+		yellowStyle.Render("🏗️  SUPPORTED BLUEPRINTS:") + "\n" +
+		blueStyle.Render("  • web-api       ") + "- REST APIs with multiple architectures\n" +
+		blueStyle.Render("  • cli           ") + "- Command-line applications\n" +
+		blueStyle.Render("  • library       ") + "- Reusable Go packages\n" +
+		blueStyle.Render("  • lambda        ") + "- AWS Lambda functions\n" +
+		blueStyle.Render("  • microservice  ") + "- Distributed systems\n" +
+		blueStyle.Render("  • monolith      ") + "- Traditional web applications\n\n" +
+		yellowStyle.Render("🎨 ARCHITECTURE PATTERNS:") + "\n" +
+		magentaStyle.Render("  • Standard      ") + "- Simple, straightforward structure\n" +
+		magentaStyle.Render("  • Clean         ") + "- Clean Architecture principles\n" +
+		magentaStyle.Render("  • DDD           ") + "- Domain-Driven Design\n" +
+		magentaStyle.Render("  • Hexagonal     ") + "- Ports and Adapters pattern\n\n" +
+		"For more information, visit: " + cyanStyle.Render("https://github.com/francknouama/go-starter")
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

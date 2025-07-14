@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/fang v0.2.0
 	github.com/charmbracelet/huh/spinner v0.0.0-20250603124601-31a1db2cbc39
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/fatih/color v1.18.0
+	github.com/muesli/termenv v0.16.0
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
@@ -51,7 +51,6 @@ require (
 	github.com/muesli/mango-cobra v1.2.0 // indirect
 	github.com/muesli/mango-pflag v0.1.0 // indirect
 	github.com/muesli/roff v0.1.0 // indirect
-	github.com/muesli/termenv v0.16.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

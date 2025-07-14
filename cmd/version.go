@@ -33,7 +33,10 @@ func init() {
 }
 
 func showVersion() {
-	// Define beautiful styles
+	// Get banner configuration from environment
+	bannerConfig := ascii.ConfigFromEnv()
+	
+	// Define beautiful styles that respect banner configuration
 	headerStyle := lipgloss.NewStyle().
 		Bold(true).
 		Foreground(lipgloss.Color("12")).
@@ -60,9 +63,17 @@ func showVersion() {
 		BorderForeground(lipgloss.Color("10")).
 		Padding(0, 2).
 		MarginTop(2)
+		
+	// Disable colors if banner config says so
+	if !bannerConfig.Colors {
+		headerStyle = headerStyle.Foreground(lipgloss.NoColor{}).BorderForeground(lipgloss.NoColor{})
+		labelStyle = labelStyle.Foreground(lipgloss.NoColor{})
+		valueStyle = valueStyle.Foreground(lipgloss.NoColor{})
+		footerStyle = footerStyle.Foreground(lipgloss.NoColor{}).BorderForeground(lipgloss.NoColor{})
+	}
 
-	// Display logo and version information
-	fmt.Print(ascii.Logo())
+	// Display logo using standardized banner system
+	fmt.Print(ascii.LogoWithConfig(bannerConfig))
 	fmt.Println()
 	fmt.Println(headerStyle.Render("🚀 Go-Starter Version Information"))
 	fmt.Println()

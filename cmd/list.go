@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/francknouama/go-starter/internal/ascii"
 	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/francknouama/go-starter/pkg/types"
 	"github.com/spf13/cobra"
@@ -28,6 +29,28 @@ func init() {
 }
 
 func listBlueprints() {
+	// Configure banner display from environment
+	bannerConfig := ascii.ConfigFromEnv()
+	
+	// Show header banner for list command
+	if bannerConfig.Enabled && !bannerConfig.Quiet {
+		// Use minimal banner for list command
+		headerConfig := *bannerConfig
+		headerConfig.Style = ascii.StyleMinimal
+		fmt.Print(ascii.BannerWithConfig(&headerConfig))
+		
+		headerStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Bold(true)
+		
+		if !bannerConfig.Colors {
+			headerStyle = lipgloss.NewStyle().Bold(true)
+		}
+		
+		fmt.Println(headerStyle.Render("📋 Browse available project blueprints"))
+		fmt.Println()
+	}
+	
 	registry := templates.NewRegistry()
 	blueprintList := registry.List()
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/francknouama/go-starter/internal/ascii"
 	"github.com/francknouama/go-starter/internal/config"
 	"github.com/francknouama/go-starter/internal/generator"
 	"github.com/francknouama/go-starter/internal/prompts"
@@ -31,6 +32,9 @@ var (
 	dryRun         bool
 	noGit          bool
 	randomName     bool
+	quiet          bool
+	noBanner       bool
+	bannerStyle    string
 )
 
 // newCmd represents the new command
@@ -76,9 +80,42 @@ func init() {
 	newCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview project structure without creating files")
 	newCmd.Flags().BoolVar(&noGit, "no-git", false, "Skip git repository initialization")
 	newCmd.Flags().BoolVar(&randomName, "random-name", false, "Generate a random project name (GitHub-style)")
+	
+	// Banner control options
+	newCmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress all output except errors")
+	newCmd.Flags().BoolVar(&noBanner, "no-banner", false, "Disable banner display")
+	newCmd.Flags().StringVar(&bannerStyle, "banner-style", "", "Banner style (full, minimal, none)")
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
+	// Configure banner display
+	bannerConfig := ascii.GetBannerConfig(quiet, noBanner, bannerStyle)
+	
+	// Show welcome banner for new project generation
+	if !bannerConfig.Quiet && bannerConfig.Enabled {
+		welcomeStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("11")).
+			Bold(true).
+			MarginBottom(1)
+		
+		if !bannerConfig.Colors {
+			welcomeStyle = lipgloss.NewStyle().Bold(true)
+		}
+		
+		// Show minimal banner for new command
+		if projectName == "" && projectType == "" {
+			// Interactive mode - show full welcome
+			ascii.PrintWelcomeWithConfig(bannerConfig)
+		} else {
+			// Direct mode - show minimal banner
+			minimalConfig := *bannerConfig
+			minimalConfig.Style = ascii.StyleMinimal
+			fmt.Print(ascii.BannerWithConfig(&minimalConfig))
+			fmt.Println(welcomeStyle.Render("🚀 Generating new Go project..."))
+			fmt.Println()
+		}
+	}
+	
 	// Get project name from args if provided
 	if len(args) > 0 {
 		projectName = args[0]
@@ -87,7 +124,9 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// Generate random name if requested and no name provided
 	if randomName && projectName == "" {
 		projectName = utils.GenerateRandomProjectName()
-		fmt.Printf("🎲 Generated random project name: %s\n", projectName)
+		if !quiet {
+			fmt.Printf("🎲 Generated random project name: %s\n", projectName)
+		}
 	}
 
 	// Initialize the prompter for interactive configuration
