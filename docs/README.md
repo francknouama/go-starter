@@ -1,29 +1,43 @@
 # go-starter Documentation
 
-Welcome to the comprehensive documentation for go-starter - the powerful Go project generator with a unique logger selector system.
+Welcome to the comprehensive go-starter documentation. Find everything you need to master Go project generation.
 
-## 📚 Documentation Overview
+## 🚀 Getting Started
 
-### Getting Started
-- **[Getting Started Guide](GETTING_STARTED.md)** - Installation, first project, and basic workflows
-- **[Quick Reference Card](QUICK_REFERENCE_CARD.md)** - All commands at a glance
+**New to go-starter?** Start here:
 
-### Choosing the Right Template
-- **[Blueprint Comparison Guide](BLUEPRINT_COMPARISON.md)** - Detailed comparison of all blueprints
-- **[Blueprint Usage Guide](BLUEPRINTS.md)** - In-depth guide for each blueprint type
+- 📖 **[Getting Started Guide](GETTING_STARTED.md)** - Your first project in 5 minutes
+- ⚙️ **[Installation Guide](INSTALLATION.md)** - All installation methods
+- 🏃‍♂️ **[Quick Reference](QUICK_REFERENCE_CARD.md)** - Common commands and patterns
 
-### Technical Guides
-- **[Logger Guide](LOGGER_GUIDE.md)** - Understanding the logger selector system
-- **[ORM Selection Guide](ORM_GUIDE.md)** - Choosing between GORM and raw SQL
+## 📚 Core Guides
 
-### Strategic Planning & Roadmap
-- **[Project Roadmap](../PROJECT_ROADMAP.md)** - Overall project strategy and timeline
-- **[SaaS Platform Backlog](../SAAS_BACKLOG.md)** - Web UI and business platform development
-- **[Blueprint Implementation Backlog](../BLUEPRINT_BACKLOG.md)** - Enterprise blueprint specifications
+### Project Creation
+- 📖 **[Project Types Guide](PROJECT_TYPES.md)** - Choose the right template (Web API, CLI, Library, Lambda)
+- 🏗️ **[Blueprint Guide](BLUEPRINTS.md)** - Deep dive into project templates
+- 📊 **[Blueprint Comparison](BLUEPRINT_COMPARISON.md)** - Side-by-side feature comparison
 
-### Help & Support
-- **[FAQ](FAQ.md)** - Frequently asked questions
-- **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Comprehensive problem-solving guide
+### Configuration & Customization
+- ⚙️ **[Configuration Guide](CONFIGURATION.md)** - Global settings and profiles
+- 📊 **[Logger Guide](LOGGER_GUIDE.md)** - Master the unique logger selector system
+- 🗃️ **[ORM Guide](ORM_GUIDE.md)** - Database and ORM selection
+
+## 🔧 Advanced Topics
+
+### Development & Testing
+- 🧪 **[Testing Guide](TESTING_GUIDE.md)** - Test your generated projects
+- 📝 **[TDD Enforcement](TDD-ENFORCEMENT.md)** - Test-driven development practices
+
+### Workflow & Productivity
+- 📋 **[Task Master Guide](TASK_MASTER_GUIDE.md)** - Organize development with AI-powered task management
+- 📝 **[Quick Reference](QUICK_REFERENCE.md)** - Command cheatsheet
+
+## 🆘 Help & Support
+
+- ❓ **[FAQ](FAQ.md)** - Frequently asked questions
+- 🔧 **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Solve common issues
+- 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** - Found a bug?
+- 💬 **[Discussions](https://github.com/francknouama/go-starter/discussions)** - Community support
 
 ## 🚀 Quick Start
 
