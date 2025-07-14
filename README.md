@@ -24,122 +24,83 @@ make build  # Production binary ready 🚀
 
 **That's it.** No configuration files. No dependency hunting. No project structure decisions. Just working, production-ready code.
 
-## 🎯 What You Get Instantly
+## 🎯 What You Get
 
-Every generated project includes:
+✅ **Compiles immediately** - Zero setup, zero errors  
+✅ **Production-ready** - Industry best practices built-in  
+✅ **Complete tests** - Unit, integration, benchmarks  
+✅ **Docker ready** - Dockerfile and docker-compose  
+✅ **CI/CD included** - GitHub Actions configured  
+✅ **Full documentation** - README, API docs, examples  
 
-- ✅ **Compiles immediately** - Zero setup, zero errors
-- ✅ **Production-ready structure** - Industry best practices built-in
-- ✅ **Complete test suite** - Unit tests, integration tests, benchmarks
-- ✅ **Docker ready** - Dockerfile and docker-compose included
-- ✅ **CI/CD pipeline** - GitHub Actions workflow configured
-- ✅ **Documentation** - README, API docs, examples included
+## 🚀 Four Project Types
 
-## 🚀 Choose Your Path
-
-### 🌐 REST APIs & Web Services
-```bash
-go-starter new user-service --type web-api
-```
-**Perfect for:** Microservices, REST APIs, web backends  
-**Includes:** Gin framework, database integration, middleware, health checks
-
-### 🖥️ CLI Tools & Automation
-```bash
-go-starter new deploy-tool --type cli  
-```
-**Perfect for:** DevOps tools, automation scripts, utilities  
-**Includes:** Cobra framework, subcommands, configuration, shell completion
-
-### 📦 Libraries & SDKs
-```bash
-go-starter new awesome-sdk --type library
-```
-**Perfect for:** Reusable packages, SDKs, shared components  
-**Includes:** Clean API design, examples, benchmarks, documentation
-
-### ⚡ Serverless Functions
-```bash
-go-starter new processor --type lambda
-```
-**Perfect for:** AWS Lambda, event processing, serverless APIs  
-**Includes:** Lambda runtime, SAM templates, deployment automation
+| Type | Use Case | Framework | 
+|------|----------|-----------|
+| **🌐 Web API** | REST APIs, microservices | Gin + database |
+| **🖥️ CLI Tool** | DevOps, automation | Cobra + subcommands |
+| **📦 Library** | SDKs, packages | Clean API + examples |
+| **⚡ Lambda** | Serverless, events | AWS runtime + SAM |
 
 ## 🎛️ Unique Logger Selector
 
-**The only Go generator with pluggable logging.** Choose your logging strategy, not your vendor:
+**Choose your logging strategy:**
 
 ```bash
-# High-performance APIs
 go-starter new api --logger zap        # Zero allocations ⚡
-
-# Cloud-native services  
+go-starter new app --logger slog       # Standard library 📚  
 go-starter new service --logger zerolog # JSON optimized ☁️
-
-# Standard library approach
-go-starter new app --logger slog       # Go 1.21+ built-in 📚
-
-# Feature-rich applications
-go-starter new platform --logger logrus # Hooks & formatters 🔧
+go-starter new tool --logger logrus    # Feature-rich 🔧
 ```
 
-**Switch anytime** without changing a single line of application code. Same interface, different performance characteristics.
+**Switch anytime** without changing application code.
 
-## 📈 Real Results
+## 📈 Before vs After
 
-**Before go-starter:**
-- 🕐 2-4 hours setting up project structure
-- 🐛 Configuration bugs and dependency conflicts  
-- 📚 Reading docs for project layout best practices
-- ⚠️ Missing tests, Docker configs, or CI/CD
-
-**After go-starter:**
-- ⚡ 30 seconds to working project
-- ✅ Everything works out of the box
-- 🏆 Industry best practices by default
-- 🚀 Focus on business logic, not boilerplate
+| Before go-starter | After go-starter |
+|-------------------|------------------|
+| 🕐 2-4 hours setup | ⚡ 30 seconds |
+| 🐛 Config bugs | ✅ Works out of the box |
+| 📚 Research best practices | 🏆 Best practices by default |
+| ⚠️ Missing tests/Docker/CI | 🚀 Everything included |
 
 ## 🏃‍♂️ Quick Start
 
-### 1. Install
 ```bash
+# 1. Install
 go install github.com/francknouama/go-starter@latest
-```
 
-### 2. Generate
-```bash
+# 2. Generate (interactive mode)
 go-starter new my-project
-# Follow the interactive prompts or use direct mode
+
+# 3. Ship
+cd my-project && make run
 ```
 
-### 3. Ship
-```bash
-cd my-project
-make run    # Development server
-make test   # Run tests  
-make build  # Production binary
-make docker # Container image
-```
+**Alternative installation:** [Download binaries](docs/INSTALLATION.md) • [All methods](docs/INSTALLATION.md)
 
-## 📚 Learn More
+## 📚 Documentation
 
-- 🚀 **[Quick Start Guide](docs/GETTING_STARTED.md)** - Your first project in 5 minutes
-- 📖 **[Project Types](docs/PROJECT_TYPES.md)** - Choose the right template  
-- 📊 **[Logger Guide](docs/LOGGER_GUIDE.md)** - Master the logger selector
-- ⚙️ **[Installation](docs/INSTALLATION.md)** - All installation methods
-- 🔧 **[Configuration](docs/CONFIGURATION.md)** - Customize your setup
+| Guide | Description |
+|-------|-------------|
+| 🚀 **[Quick Start](docs/GETTING_STARTED.md)** | Your first project in 5 minutes |
+| ⚙️ **[Installation](docs/INSTALLATION.md)** | All installation methods |
+| 📖 **[Project Types](docs/PROJECT_TYPES.md)** | Choose the right template |
+| 📊 **[Logger Guide](docs/LOGGER_GUIDE.md)** | Master the logger selector |
+| 🔧 **[Configuration](docs/CONFIGURATION.md)** | Customize your setup |
+| 📋 **[Complete Docs](docs/README.md)** | Full documentation index |
 
 ## 🛣️ What's Next
 
-**Current (v1.3.1):** 4 project types, 4 logger options, bulletproof basics
+**Current (v1.3.1):** 4 project types, 4 logger options, production-ready code
 
 **Coming Soon:**
-- 🏗️ **Advanced Architectures** - Clean Architecture, DDD, Hexagonal patterns
-- 🌐 **More Frameworks** - Echo, Fiber, Chi web frameworks  
-- 🗃️ **Database Options** - GORM, sqlx, sqlc, ent ORMs
+- 🏗️ **Advanced Architectures** - Clean, DDD, Hexagonal patterns  
+- 🌐 **More Frameworks** - Echo, Fiber, Chi, Bun Router
+- 🗃️ **Database Options** - GORM, sqlx, sqlc, ent, Bun ORM
+- 📊 **Analytics Databases** - ClickHouse, TimescaleDB
+- 🔍 **Monitoring & APM** - Prometheus, OpenTelemetry, Uptrace
 - 📱 **Web Interface** - Browser-based project generator
-
-See [PROJECT_ROADMAP.md](PROJECT_ROADMAP.md) for detailed plans.
 
 ## ❤️ Community
 
@@ -153,9 +114,11 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Ready to stop fighting boilerplate?**
+**Ready to 10x your Go development?**
 
 ```bash
 go install github.com/francknouama/go-starter@latest
 go-starter new my-project
 ```
+
+⭐ **[Star us on GitHub](https://github.com/francknouama/go-starter)** • 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** • 💬 **[Join Discussions](https://github.com/francknouama/go-starter/discussions)**
