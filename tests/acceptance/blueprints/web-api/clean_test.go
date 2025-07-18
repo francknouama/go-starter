@@ -38,7 +38,7 @@ func TestClean_WebAPI_LayerValidation(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 			Authentication: types.AuthConfig{
@@ -83,7 +83,7 @@ func TestClean_WebAPI_DependencyInjection(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -163,7 +163,7 @@ func TestClean_WebAPI_FrameworkAbstraction(t *testing.T) {
 				Logger:    "slog",
 				Features: &types.Features{
 					Database: types.DatabaseConfig{
-						Driver: "postgres",
+						Drivers: []string{"postgres"},
 						ORM:    "gorm",
 					},
 				},
@@ -189,15 +189,16 @@ func TestClean_WebAPI_DatabaseIntegration(t *testing.T) {
 	// Scenario: Database integration follows repository pattern
 
 	databases := []types.DatabaseConfig{
-		{Driver: "postgres", ORM: "gorm"},
-		{Driver: "mysql", ORM: "sqlx"},
+		{Drivers: []string{"postgres"}, ORM: "gorm"},
+		{Drivers: []string{"mysql"}, ORM: "sqlx"},
 	}
 
 	for _, db := range databases {
-		t.Run("Database_"+db.Driver+"_"+db.ORM, func(t *testing.T) {
+		driver := db.PrimaryDriver()
+		t.Run("Database_"+driver+"_"+db.ORM, func(t *testing.T) {
 			config := types.ProjectConfig{
-				Name:      "test-clean-db-" + db.Driver + "-" + db.ORM,
-				Module:    "github.com/test/test-clean-db-" + db.Driver + "-" + db.ORM,
+				Name:      "test-clean-db-" + driver + "-" + db.ORM,
+				Module:    "github.com/test/test-clean-db-" + driver + "-" + db.ORM,
 				Type:      "web-api-clean",
 				GoVersion: "1.21",
 				Framework: "gin",
@@ -242,7 +243,7 @@ func TestClean_WebAPI_ArchitectureCompliance(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},

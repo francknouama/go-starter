@@ -36,7 +36,7 @@ func TestHexagonal_WebAPI_PortsAndAdaptersValidation(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 			Authentication: types.AuthConfig{
@@ -86,7 +86,7 @@ func TestHexagonal_WebAPI_AdapterSwappability(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -133,7 +133,7 @@ func TestHexagonal_WebAPI_CoreIsolation(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -256,7 +256,7 @@ func TestHexagonal_WebAPI_ArchitectureCompliance(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},

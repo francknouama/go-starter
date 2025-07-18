@@ -209,7 +209,6 @@ type TestServer struct {
 	Port     int
 	BaseURL  string
 	process  *exec.Cmd
-	ctx      context.Context
 	cancel   context.CancelFunc
 }
 
@@ -235,7 +234,9 @@ func (ts *TestServer) IsHealthy() bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	
 	return resp.StatusCode == http.StatusOK
 }
@@ -271,7 +272,9 @@ func GetFreePort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer l.Close()
+	defer func() {
+		_ = l.Close()
+	}()
 	
 	return l.Addr().(*net.TCPAddr).Port, nil
 }

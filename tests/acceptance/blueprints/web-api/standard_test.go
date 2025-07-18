@@ -66,7 +66,7 @@ func TestStandard_WebAPI_WithDatabaseIntegration(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -161,7 +161,7 @@ func TestStandard_WebAPI_FrameworkVariations(t *testing.T) {
 				Logger:    "slog",
 				Features: &types.Features{
 					Database: types.DatabaseConfig{
-						Driver: "postgres",
+						Drivers: []string{"postgres"},
 						ORM:    "gorm",
 					},
 					Authentication: types.AuthConfig{
@@ -201,7 +201,7 @@ func TestStandard_WebAPI_ArchitectureCompliance(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -482,8 +482,11 @@ func (v *WebAPIValidator) validateStandardPrinciples(t *testing.T) {
 	}
 	
 	for _, dir := range expectedDirs {
-		if helpers.DirExists(filepath.Join(v.ProjectPath, dir)) {
-			// Directory exists, which is good for standard
+		dirPath := filepath.Join(v.ProjectPath, dir)
+		if helpers.DirExists(dirPath) {
+			t.Logf("✓ Expected directory exists: %s", dir)
+		} else {
+			t.Logf("⚠ Expected directory missing: %s", dir)
 		}
 	}
 	

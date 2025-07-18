@@ -101,11 +101,12 @@ func TestWebAPI_DatabaseIntegration_CrossArchitectures(t *testing.T) {
 			}
 
 			// Handle different architecture types
-			if tc.architecture == "standard" {
+			switch tc.architecture {
+			case "standard":
 				config.Type = "web-api-standard"
-			} else if tc.architecture == "clean" {
+			case "clean":
 				config.Type = "web-api-clean"
-			} else if tc.architecture == "ddd" {
+			case "ddd":
 				config.Type = "web-api-ddd"
 			}
 
@@ -170,11 +171,12 @@ func TestWebAPI_LoggerIntegration_CrossArchitectures(t *testing.T) {
 			}
 
 			// Handle different architecture types
-			if tc.architecture == "standard" {
+			switch tc.architecture {
+			case "standard":
 				config.Type = "web-api-standard"
-			} else if tc.architecture == "clean" {
+			case "clean":
 				config.Type = "web-api-clean"
-			} else if tc.architecture == "ddd" {
+			case "ddd":
 				config.Type = "web-api-ddd"
 			}
 
@@ -230,7 +232,7 @@ func TestWebAPI_CompilationValidation_AllArchitectures(t *testing.T) {
 				Logger:       "slog",
 				Features: &types.Features{
 					Database: types.DatabaseConfig{
-						Driver: "postgres",
+						Drivers: []string{"postgres"},
 						ORM:    "gorm",
 					},
 					Authentication: types.AuthConfig{
@@ -240,11 +242,12 @@ func TestWebAPI_CompilationValidation_AllArchitectures(t *testing.T) {
 			}
 
 			// Handle different architecture types
-			if architecture == "standard" {
+			switch architecture {
+			case "standard":
 				config.Type = "web-api-standard"
-			} else if architecture == "clean" {
+			case "clean":
 				config.Type = "web-api-clean"
-			} else if architecture == "ddd" {
+			case "ddd":
 				config.Type = "web-api-ddd"
 			}
 
@@ -297,18 +300,19 @@ func TestWebAPI_ArchitectureCompliance_AllPatterns(t *testing.T) {
 				Logger:       "slog",
 				Features: &types.Features{
 					Database: types.DatabaseConfig{
-						Driver: "postgres",
+						Drivers: []string{"postgres"},
 						ORM:    "gorm",
 					},
 				},
 			}
 
 			// Handle different architecture types
-			if architecture == "standard" {
+			switch architecture {
+			case "standard":
 				config.Type = "web-api-standard"
-			} else if architecture == "clean" {
+			case "clean":
 				config.Type = "web-api-clean"
-			} else if architecture == "ddd" {
+			case "ddd":
 				config.Type = "web-api-ddd"
 			}
 

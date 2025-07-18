@@ -37,7 +37,7 @@ func TestDDD_WebAPI_DomainStructureValidation(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 			Authentication: types.AuthConfig{
@@ -81,7 +81,7 @@ func TestDDD_WebAPI_BusinessRuleEnforcement(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -123,7 +123,7 @@ func TestDDD_WebAPI_CQRSImplementation(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
@@ -231,7 +231,7 @@ func TestDDD_WebAPI_ArchitectureCompliance(t *testing.T) {
 		Logger:    "slog",
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
-				Driver: "postgres",
+				Drivers: []string{"postgres"},
 				ORM:    "gorm",
 			},
 		},
