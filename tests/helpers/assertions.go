@@ -132,3 +132,112 @@ func FindFiles(t *testing.T, dir string, pattern string) []string {
 func StringContains(s, substr string) bool {
 	return strings.Contains(s, substr)
 }
+
+// AssertProjectCompiles validates that the project compiles successfully
+func AssertProjectCompiles(t *testing.T, projectPath string) {
+	t.Helper()
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = projectPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("Generated project should compile successfully.\nBuild output:\n%s\nError: %v", string(output), err)
+	}
+}
+
+// AssertDirectoryExists validates directory exists
+func AssertDirectoryExists(t *testing.T, dirPath string) {
+	t.Helper()
+	info, err := os.Stat(dirPath)
+	assert.NoError(t, err, "Directory %s should exist", dirPath)
+	assert.True(t, info.IsDir(), "Path %s should be a directory", dirPath)
+}
+
+// AssertCLIHelpOutput validates CLI help output
+func AssertCLIHelpOutput(t *testing.T, projectPath string) {
+	t.Helper()
+	
+	// Build the project first
+	buildCmd := exec.Command("go", "build", "-o", "test-cli", ".")
+	buildCmd.Dir = projectPath
+	buildOutput, buildErr := buildCmd.CombinedOutput()
+	if buildErr != nil {
+		t.Errorf("Failed to build CLI: %v\nOutput: %s", buildErr, string(buildOutput))
+		return
+	}
+	
+	// Run help command
+	helpCmd := exec.Command("./test-cli", "--help")
+	helpCmd.Dir = projectPath
+	helpOutput, helpErr := helpCmd.CombinedOutput()
+	if helpErr != nil {
+		t.Errorf("Failed to run help command: %v\nOutput: %s", helpErr, string(helpOutput))
+		return
+	}
+	
+	// Verify help output contains expected content
+	helpText := string(helpOutput)
+	assert.Contains(t, helpText, "Usage:")
+	assert.Contains(t, helpText, "Available Commands:")
+}
+
+// AssertCLIVersionOutput validates CLI version output
+func AssertCLIVersionOutput(t *testing.T, projectPath string) {
+	t.Helper()
+	
+	// Build the project first
+	buildCmd := exec.Command("go", "build", "-o", "test-cli", ".")
+	buildCmd.Dir = projectPath
+	buildOutput, buildErr := buildCmd.CombinedOutput()
+	if buildErr != nil {
+		t.Errorf("Failed to build CLI: %v\nOutput: %s", buildErr, string(buildOutput))
+		return
+	}
+	
+	// Run version command
+	versionCmd := exec.Command("./test-cli", "version")
+	versionCmd.Dir = projectPath
+	versionOutput, versionErr := versionCmd.CombinedOutput()
+	if versionErr != nil {
+		t.Errorf("Failed to run version command: %v\nOutput: %s", versionErr, string(versionOutput))
+		return
+	}
+	
+	// Verify version output contains expected content
+	versionText := string(versionOutput)
+	assert.Contains(t, versionText, "version")
+}
+
+// AssertLoggerFunctionality validates logger functionality
+func AssertLoggerFunctionality(t *testing.T, projectPath string, logger string) {
+	t.Helper()
+	
+	// Check if logger specific files exist and contain expected content
+	loggerFile := filepath.Join(projectPath, "internal", "logger", logger+".go")
+	if FileExists(loggerFile) {
+		content := ReadFileContent(t, loggerFile)
+		
+		// Check for common logger patterns
+		switch logger {
+		case "slog":
+			assert.Contains(t, content, "log/slog")
+		case "zap":
+			assert.Contains(t, content, "go.uber.org/zap")
+		case "logrus":
+			assert.Contains(t, content, "github.com/sirupsen/logrus")
+		case "zerolog":
+			assert.Contains(t, content, "github.com/rs/zerolog")
+		}
+	}
+}
+
+// AssertTestsRun validates that tests run successfully
+func AssertTestsRun(t *testing.T, projectPath string) {
+	t.Helper()
+	
+	cmd := exec.Command("go", "test", "./...")
+	cmd.Dir = projectPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Errorf("Tests should run successfully.\nTest output:\n%s\nError: %v", string(output), err)
+	}
+}
