@@ -87,6 +87,35 @@ jobs:
       run: go test -v ./tests/integration/... -run TestTemplateWithDatabaseOptions
       timeout-minutes: 10
 
+  acceptance-tests:
+    name: ATDD Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: 1.24
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Run ATDD tests for Web API blueprints
+      run: go test -v ./tests/acceptance/... -timeout 20m
+      timeout-minutes: 25
+
+    - name: Upload ATDD test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: atdd-test-results
+        path: |
+          tests/acceptance/**/*_test.log
+          tests/acceptance/**/*.out
+
   build:
     name: Build
     runs-on: ${{ matrix.os }}

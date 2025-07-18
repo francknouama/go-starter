@@ -11,6 +11,7 @@ PACKAGES=(
     "./internal/templates/..."
     "./internal/utils/..."
     "./pkg/..."
+    "./tests/acceptance/..."
 )
 
 # Minimum acceptable coverage percentage
