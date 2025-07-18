@@ -1,0 +1,752 @@
+openapi: 3.0.3
+info:
+  title: {{.ProjectName | title}} API
+  description: |
+    {{.ProjectName | title}} API built with Hexagonal Architecture (Ports and Adapters pattern).
+    
+    This API follows the principles of clean architecture with clear separation of concerns:
+    - **Domain Layer**: Core business logic and rules
+    - **Application Layer**: Use cases and business workflows
+    - **Infrastructure Layer**: External concerns (HTTP, database, etc.)
+    
+    The API is designed to be framework-agnostic and highly testable.
+  version: 1.0.0
+  contact:
+    name: {{.ProjectName | title}} Team
+    email: contact@{{.ProjectName}}.com
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.{{.ProjectName}}.com
+    description: Production server
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check endpoint
+      description: Returns the health status of the application
+      operationId: getHealth
+      responses:
+        '200':
+          description: Application is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+        '503':
+          description: Application is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthStatus'
+
+  /health/ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check endpoint
+      description: Returns the readiness status of the application
+      operationId: getReadiness
+      responses:
+        '200':
+          description: Application is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+        '503':
+          description: Application is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessStatus'
+
+  {{- if ne .DatabaseDriver ""}}
+  /api/v1/{{.DomainName}}s:
+    get:
+      tags:
+        - {{.DomainName | title}}
+      summary: List {{.DomainName}}s
+      description: Retrieve a paginated list of {{.DomainName}}s
+      operationId: list{{.DomainName | title}}s
+      parameters:
+        - name: page
+          in: query
+          description: Page number (1-based)
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: limit
+          in: query
+          description: Number of items per page
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+      responses:
+        '200':
+          description: List of {{.DomainName}}s
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/{{.DomainName | title}}'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMeta'
+        '400':
+          description: Invalid request parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    post:
+      tags:
+        - {{.DomainName | title}}
+      summary: Create {{.DomainName}}
+      description: Create a new {{.DomainName}}
+      operationId: create{{.DomainName | title}}
+      {{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+      {{- end}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Create{{.DomainName | title}}Request'
+      responses:
+        '201':
+          description: {{.DomainName | title}} created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/{{.DomainName | title}}'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: {{.DomainName | title}} already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/{{.DomainName}}s/{id}:
+    get:
+      tags:
+        - {{.DomainName | title}}
+      summary: Get {{.DomainName}} by ID
+      description: Retrieve a specific {{.DomainName}} by its ID
+      operationId: get{{.DomainName | title}}ById
+      parameters:
+        - name: id
+          in: path
+          description: {{.DomainName | title}} ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: {{.DomainName | title}} found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/{{.DomainName | title}}'
+        '404':
+          description: {{.DomainName | title}} not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    put:
+      tags:
+        - {{.DomainName | title}}
+      summary: Update {{.DomainName}}
+      description: Update an existing {{.DomainName}}
+      operationId: update{{.DomainName | title}}
+      {{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+      {{- end}}
+      parameters:
+        - name: id
+          in: path
+          description: {{.DomainName | title}} ID
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Update{{.DomainName | title}}Request'
+      responses:
+        '200':
+          description: {{.DomainName | title}} updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/{{.DomainName | title}}'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: {{.DomainName | title}} not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+    delete:
+      tags:
+        - {{.DomainName | title}}
+      summary: Delete {{.DomainName}}
+      description: Delete a specific {{.DomainName}}
+      operationId: delete{{.DomainName | title}}
+      {{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+      {{- end}}
+      parameters:
+        - name: id
+          in: path
+          description: {{.DomainName | title}} ID
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: {{.DomainName | title}} deleted successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: {{.DomainName | title}} not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  {{- end}}
+
+  {{- if ne .AuthType ""}}
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticate user and return access token
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: User registration
+      description: Register a new user account
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: Registration successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: Invalidate the current session/token
+      operationId: logout
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: Logout successful
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Get a new access token using refresh token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshTokenResponse'
+        '400':
+          description: Invalid request body
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  {{- end}}
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy, degraded]
+        message:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [healthy, unhealthy, degraded]
+              message:
+                type: string
+              details:
+                type: object
+        duration:
+          type: string
+          description: Duration of the health check
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadinessStatus:
+      type: object
+      properties:
+        ready:
+          type: boolean
+        message:
+          type: string
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              ready:
+                type: boolean
+              message:
+                type: string
+              details:
+                type: object
+        duration:
+          type: string
+          description: Duration of the readiness check
+        timestamp:
+          type: string
+          format: date-time
+
+    {{- if ne .DatabaseDriver ""}}
+    {{.DomainName | title}}:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique identifier
+        email:
+          type: string
+          format: email
+          description: Email address
+        first_name:
+          type: string
+          description: First name
+        last_name:
+          type: string
+          description: Last name
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        updated_at:
+          type: string
+          format: date-time
+          description: Last update timestamp
+      required:
+        - id
+        - email
+        - first_name
+        - last_name
+        - created_at
+        - updated_at
+
+    Create{{.DomainName | title}}Request:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email address
+        first_name:
+          type: string
+          description: First name
+        last_name:
+          type: string
+          description: Last name
+        password:
+          type: string
+          format: password
+          description: Password
+          minLength: 8
+      required:
+        - email
+        - first_name
+        - last_name
+        - password
+
+    Update{{.DomainName | title}}Request:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: Email address
+        first_name:
+          type: string
+          description: First name
+        last_name:
+          type: string
+          description: Last name
+      required:
+        - email
+        - first_name
+        - last_name
+    {{- end}}
+
+    {{- if ne .AuthType ""}}
+    LoginRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: User email
+        password:
+          type: string
+          format: password
+          description: User password
+      required:
+        - email
+        - password
+
+    LoginResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: JWT access token
+        refresh_token:
+          type: string
+          description: JWT refresh token
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+          description: Token expiration time in seconds
+        user:
+          $ref: '#/components/schemas/{{.DomainName | title}}'
+      required:
+        - access_token
+        - token_type
+        - expires_in
+
+    RegisterRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          description: User email
+        password:
+          type: string
+          format: password
+          description: User password
+          minLength: 8
+        first_name:
+          type: string
+          description: First name
+        last_name:
+          type: string
+          description: Last name
+      required:
+        - email
+        - password
+        - first_name
+        - last_name
+
+    RegisterResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: User ID
+        email:
+          type: string
+          format: email
+          description: User email
+        first_name:
+          type: string
+          description: First name
+        last_name:
+          type: string
+          description: Last name
+        created_at:
+          type: string
+          format: date-time
+          description: Creation timestamp
+      required:
+        - id
+        - email
+        - first_name
+        - last_name
+        - created_at
+
+    RefreshTokenRequest:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+          description: Refresh token
+      required:
+        - refresh_token
+
+    RefreshTokenResponse:
+      type: object
+      properties:
+        access_token:
+          type: string
+          description: New JWT access token
+        refresh_token:
+          type: string
+          description: New JWT refresh token
+        token_type:
+          type: string
+          default: Bearer
+        expires_in:
+          type: integer
+          description: Token expiration time in seconds
+      required:
+        - access_token
+        - token_type
+        - expires_in
+    {{- end}}
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+        limit:
+          type: integer
+          description: Number of items per page
+        total:
+          type: integer
+          description: Total number of items
+        total_pages:
+          type: integer
+          description: Total number of pages
+      required:
+        - page
+        - limit
+        - total
+        - total_pages
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: object
+          description: Additional error details
+        timestamp:
+          type: string
+          format: date-time
+          description: Error timestamp
+      required:
+        - error
+        - timestamp
+
+  {{- if ne .AuthType ""}}
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  {{- end}}
+
+tags:
+  - name: Health
+    description: Health and readiness checks
+  {{- if ne .DatabaseDriver ""}}
+  - name: {{.DomainName | title}}
+    description: {{.DomainName | title}} management operations
+  {{- end}}
+  {{- if ne .AuthType ""}}
+  - name: Authentication
+    description: User authentication and authorization
+  {{- end}}

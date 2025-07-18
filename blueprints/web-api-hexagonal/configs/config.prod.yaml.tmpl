@@ -1,0 +1,133 @@
+# Production configuration
+environment: production
+
+server:
+  host: 0.0.0.0
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+logging:
+  level: info
+  format: json
+  output: stdout
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: {{.DatabaseDriver}}
+  {{- if eq .DatabaseDriver "postgres"}}
+  host: ${DATABASE_HOST:localhost}
+  port: ${DATABASE_PORT:5432}
+  name: ${DATABASE_NAME:{{.ProjectName}}}
+  user: ${DATABASE_USER:postgres}
+  password: ${DATABASE_PASSWORD:postgres}
+  ssl_mode: ${DATABASE_SSL_MODE:require}
+  max_open_connections: ${DATABASE_MAX_OPEN_CONNECTIONS:50}
+  max_idle_connections: ${DATABASE_MAX_IDLE_CONNECTIONS:10}
+  connection_max_lifetime: ${DATABASE_CONNECTION_MAX_LIFETIME:1h}
+  {{- else if eq .DatabaseDriver "mysql"}}
+  host: ${DATABASE_HOST:localhost}
+  port: ${DATABASE_PORT:3306}
+  name: ${DATABASE_NAME:{{.ProjectName}}}
+  user: ${DATABASE_USER:root}
+  password: ${DATABASE_PASSWORD:root}
+  charset: utf8mb4
+  parse_time: true
+  max_open_connections: ${DATABASE_MAX_OPEN_CONNECTIONS:50}
+  max_idle_connections: ${DATABASE_MAX_IDLE_CONNECTIONS:10}
+  connection_max_lifetime: ${DATABASE_CONNECTION_MAX_LIFETIME:1h}
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  path: ${DATABASE_PATH:./data/{{.ProjectName}}.db}
+  {{- else if eq .DatabaseDriver "redis"}}
+  host: ${REDIS_HOST:localhost}
+  port: ${REDIS_PORT:6379}
+  password: ${REDIS_PASSWORD:""}
+  database: ${REDIS_DATABASE:0}
+  {{- end}}
+  {{- if ne .DatabaseORM ""}}
+  orm: {{.DatabaseORM}}
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  type: {{.AuthType}}
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: ${JWT_SECRET:change-this-in-production}
+    expiration: ${JWT_EXPIRATION:24h}
+    refresh_expiration: ${JWT_REFRESH_EXPIRATION:168h} # 7 days
+    issuer: ${JWT_ISSUER:{{.ProjectName}}}
+    audience: ${JWT_AUDIENCE:{{.ProjectName}}-users}
+  {{- else if eq .AuthType "session"}}
+  session:
+    secret: ${SESSION_SECRET:change-this-in-production}
+    cookie_name: ${SESSION_COOKIE_NAME:{{.ProjectName}}_session}
+    cookie_domain: ${SESSION_COOKIE_DOMAIN:}
+    cookie_secure: ${SESSION_COOKIE_SECURE:true}
+    cookie_http_only: ${SESSION_COOKIE_HTTP_ONLY:true}
+    cookie_same_site: ${SESSION_COOKIE_SAME_SITE:strict}
+    expiration: ${SESSION_EXPIRATION:24h}
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    providers:
+      google:
+        client_id: ${GOOGLE_CLIENT_ID:}
+        client_secret: ${GOOGLE_CLIENT_SECRET:}
+        redirect_url: ${GOOGLE_REDIRECT_URL:}
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: ${GITHUB_CLIENT_ID:}
+        client_secret: ${GITHUB_CLIENT_SECRET:}
+        redirect_url: ${GITHUB_REDIRECT_URL:}
+        scopes: ["user:email"]
+  {{- end}}
+{{- end}}
+
+cors:
+  allowed_origins:
+    - ${CORS_ALLOWED_ORIGINS:*}
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allowed_headers:
+    - Content-Type
+    - Authorization
+    - X-Requested-With
+  exposed_headers:
+    - Content-Length
+    - X-Total-Count
+  allow_credentials: ${CORS_ALLOW_CREDENTIALS:true}
+  max_age: 86400 # 24 hours
+
+security:
+  rate_limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    requests_per_minute: ${RATE_LIMIT_REQUESTS_PER_MINUTE:60}
+    burst: ${RATE_LIMIT_BURST:5}
+  request_size_limit: ${REQUEST_SIZE_LIMIT:10MB}
+  timeout:
+    read: ${TIMEOUT_READ:30s}
+    write: ${TIMEOUT_WRITE:30s}
+    idle: ${TIMEOUT_IDLE:120s}
+
+metrics:
+  enabled: ${METRICS_ENABLED:true}
+  path: ${METRICS_PATH:/metrics}
+  port: ${METRICS_PORT:9090}
+
+health_check:
+  enabled: ${HEALTH_CHECK_ENABLED:true}
+  path: ${HEALTH_CHECK_PATH:/health}
+  detailed_path: ${HEALTH_CHECK_DETAILED_PATH:/health/detailed}
+
+# Production-specific settings
+production:
+  debug: false
+  hot_reload: false
+  profiling: false
+  verbose_logging: false

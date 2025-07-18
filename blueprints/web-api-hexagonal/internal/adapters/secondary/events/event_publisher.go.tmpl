@@ -1,0 +1,143 @@
+package events
+
+import (
+	"context"
+	"sync"
+
+	"{{.ModulePath}}/internal/application/ports/output"
+	"{{.ModulePath}}/internal/domain/events"
+)
+
+// EventPublisher implements the EventPublisherPort interface
+// This is a secondary adapter for publishing domain events
+type EventPublisher struct {
+	subscribers map[string][]func(ctx context.Context, event events.DomainEvent)
+	mutex       sync.RWMutex
+	logger      output.LoggerPort
+}
+
+// NewEventPublisher creates a new event publisher
+func NewEventPublisher(logger output.LoggerPort) output.EventPublisherPort {
+	return &EventPublisher{
+		subscribers: make(map[string][]func(ctx context.Context, event events.DomainEvent)),
+		logger:      logger,
+	}
+}
+
+// Publish publishes a domain event to all subscribers
+func (e *EventPublisher) Publish(ctx context.Context, event events.DomainEvent) error {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+	
+	eventType := event.Type()
+	
+	e.logger.Debug(ctx, "Publishing domain event", 
+		output.String("event_type", eventType),
+		output.String("event_id", event.ID()),
+		output.String("aggregate_id", event.AggregateID()),
+	)
+	
+	// Get subscribers for this event type
+	subscribers, exists := e.subscribers[eventType]
+	if !exists {
+		e.logger.Debug(ctx, "No subscribers for event type", output.String("event_type", eventType))
+		return nil
+	}
+	
+	// Publish to all subscribers
+	for _, subscriber := range subscribers {
+		go func(sub func(ctx context.Context, event events.DomainEvent)) {
+			defer func() {
+				if r := recover(); r != nil {
+					e.logger.Error(ctx, "Event subscriber panic", 
+						output.String("event_type", eventType),
+						output.Any("panic", r),
+					)
+				}
+			}()
+			
+			sub(ctx, event)
+		}(subscriber)
+	}
+	
+	e.logger.Info(ctx, "Domain event published successfully", 
+		output.String("event_type", eventType),
+		output.String("event_id", event.ID()),
+		output.Int("subscriber_count", len(subscribers)),
+	)
+	
+	return nil
+}
+
+// Subscribe adds a subscriber for a specific event type
+func (e *EventPublisher) Subscribe(eventType string, handler func(ctx context.Context, event events.DomainEvent)) error {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	
+	if e.subscribers[eventType] == nil {
+		e.subscribers[eventType] = make([]func(ctx context.Context, event events.DomainEvent), 0)
+	}
+	
+	e.subscribers[eventType] = append(e.subscribers[eventType], handler)
+	
+	e.logger.Info(context.Background(), "Event subscriber registered", 
+		output.String("event_type", eventType),
+		output.Int("total_subscribers", len(e.subscribers[eventType])),
+	)
+	
+	return nil
+}
+
+// Unsubscribe removes all subscribers for a specific event type
+func (e *EventPublisher) Unsubscribe(eventType string) error {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	
+	subscriberCount := len(e.subscribers[eventType])
+	delete(e.subscribers, eventType)
+	
+	e.logger.Info(context.Background(), "Event subscribers unregistered", 
+		output.String("event_type", eventType),
+		output.Int("removed_subscribers", subscriberCount),
+	)
+	
+	return nil
+}
+
+// GetSubscriberCount returns the number of subscribers for a specific event type
+func (e *EventPublisher) GetSubscriberCount(eventType string) int {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+	
+	return len(e.subscribers[eventType])
+}
+
+// GetAllEventTypes returns all event types that have subscribers
+func (e *EventPublisher) GetAllEventTypes() []string {
+	e.mutex.RLock()
+	defer e.mutex.RUnlock()
+	
+	eventTypes := make([]string, 0, len(e.subscribers))
+	for eventType := range e.subscribers {
+		eventTypes = append(eventTypes, eventType)
+	}
+	
+	return eventTypes
+}
+
+// Clear removes all subscribers for all event types
+func (e *EventPublisher) Clear() {
+	e.mutex.Lock()
+	defer e.mutex.Unlock()
+	
+	totalSubscribers := 0
+	for _, subscribers := range e.subscribers {
+		totalSubscribers += len(subscribers)
+	}
+	
+	e.subscribers = make(map[string][]func(ctx context.Context, event events.DomainEvent))
+	
+	e.logger.Info(context.Background(), "All event subscribers cleared", 
+		output.Int("removed_subscribers", totalSubscribers),
+	)
+}

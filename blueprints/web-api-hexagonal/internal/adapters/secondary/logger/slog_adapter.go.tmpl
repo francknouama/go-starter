@@ -1,0 +1,95 @@
+package logger
+
+import (
+	"context"
+	"log/slog"
+	"os"
+
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// SlogAdapter implements the LoggerPort interface using slog
+type SlogAdapter struct {
+	logger *slog.Logger
+}
+
+// NewSlogAdapter creates a new slog adapter
+func NewSlogAdapter() output.LoggerPort {
+	// Create a structured logger with JSON format
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	})
+	
+	logger := slog.New(handler)
+	
+	return &SlogAdapter{
+		logger: logger,
+	}
+}
+
+// NewSlogAdapterWithLevel creates a new slog adapter with specified log level
+func NewSlogAdapterWithLevel(level string) output.LoggerPort {
+	var slogLevel slog.Level
+	
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "info":
+		slogLevel = slog.LevelInfo
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+	
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slogLevel,
+	})
+	
+	logger := slog.New(handler)
+	
+	return &SlogAdapter{
+		logger: logger,
+	}
+}
+
+// Debug logs a debug message
+func (s *SlogAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
+	s.logger.DebugContext(ctx, msg, args...)
+}
+
+// Info logs an info message
+func (s *SlogAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
+	s.logger.InfoContext(ctx, msg, args...)
+}
+
+// Warn logs a warning message
+func (s *SlogAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
+	s.logger.WarnContext(ctx, msg, args...)
+}
+
+// Error logs an error message
+func (s *SlogAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
+	s.logger.ErrorContext(ctx, msg, args...)
+}
+
+// With creates a new logger with additional fields
+func (s *SlogAdapter) With(args ...interface{}) output.LoggerPort {
+	return &SlogAdapter{
+		logger: s.logger.With(args...),
+	}
+}
+
+// WithFields creates a new logger with additional fields from a map
+func (s *SlogAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
+	args := make([]interface{}, 0, len(fields)*2)
+	for k, v := range fields {
+		args = append(args, k, v)
+	}
+	
+	return &SlogAdapter{
+		logger: s.logger.With(args...),
+	}
+}

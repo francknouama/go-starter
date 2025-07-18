@@ -1,0 +1,110 @@
+package middleware
+
+import (
+	"net/http"
+	"strings"
+)
+
+// CORSConfig represents CORS configuration
+type CORSConfig struct {
+	AllowedOrigins   []string
+	AllowedMethods   []string
+	AllowedHeaders   []string
+	ExposedHeaders   []string
+	AllowCredentials bool
+	MaxAge           int
+}
+
+// DefaultCORSConfig returns the default CORS configuration
+func DefaultCORSConfig() CORSConfig {
+	return CORSConfig{
+		AllowedOrigins:   []string{"*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"},
+		AllowedHeaders:   []string{"*"},
+		ExposedHeaders:   []string{},
+		AllowCredentials: false,
+		MaxAge:           86400, // 24 hours
+	}
+}
+
+// CORS returns a middleware that handles Cross-Origin Resource Sharing
+func CORS(config CORSConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			
+			// Set Access-Control-Allow-Origin
+			if isOriginAllowed(origin, config.AllowedOrigins) {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+			} else if len(config.AllowedOrigins) == 1 && config.AllowedOrigins[0] == "*" {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			}
+			
+			// Set Access-Control-Allow-Methods
+			if len(config.AllowedMethods) > 0 {
+				w.Header().Set("Access-Control-Allow-Methods", strings.Join(config.AllowedMethods, ", "))
+			}
+			
+			// Set Access-Control-Allow-Headers
+			if len(config.AllowedHeaders) > 0 {
+				if len(config.AllowedHeaders) == 1 && config.AllowedHeaders[0] == "*" {
+					// For wildcard, echo back the requested headers
+					requestedHeaders := r.Header.Get("Access-Control-Request-Headers")
+					if requestedHeaders != "" {
+						w.Header().Set("Access-Control-Allow-Headers", requestedHeaders)
+					}
+				} else {
+					w.Header().Set("Access-Control-Allow-Headers", strings.Join(config.AllowedHeaders, ", "))
+				}
+			}
+			
+			// Set Access-Control-Expose-Headers
+			if len(config.ExposedHeaders) > 0 {
+				w.Header().Set("Access-Control-Expose-Headers", strings.Join(config.ExposedHeaders, ", "))
+			}
+			
+			// Set Access-Control-Allow-Credentials
+			if config.AllowCredentials {
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+			
+			// Set Access-Control-Max-Age
+			if config.MaxAge > 0 {
+				w.Header().Set("Access-Control-Max-Age", string(rune(config.MaxAge)))
+			}
+			
+			// Handle preflight requests
+			if r.Method == "OPTIONS" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// isOriginAllowed checks if the origin is allowed
+func isOriginAllowed(origin string, allowedOrigins []string) bool {
+	if origin == "" {
+		return false
+	}
+	
+	for _, allowedOrigin := range allowedOrigins {
+		if allowedOrigin == "*" {
+			return true
+		}
+		if allowedOrigin == origin {
+			return true
+		}
+		// Support wildcards like *.example.com
+		if strings.HasPrefix(allowedOrigin, "*.") {
+			domain := strings.TrimPrefix(allowedOrigin, "*.")
+			if strings.HasSuffix(origin, "."+domain) || origin == domain {
+				return true
+			}
+		}
+	}
+	
+	return false
+}

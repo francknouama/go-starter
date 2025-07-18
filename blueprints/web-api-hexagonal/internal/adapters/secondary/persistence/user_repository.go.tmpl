@@ -1,0 +1,492 @@
+package persistence
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/application/ports/output"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+// {{.DomainName}}Repository implements the {{.DomainName | title}}RepositoryPort interface
+// This is a secondary adapter for database persistence
+type {{.DomainName}}Repository struct {
+	db     *Database
+	logger output.LoggerPort
+}
+
+// New{{.DomainName | title}}Repository creates a new {{.DomainName}} repository
+func New{{.DomainName | title}}Repository(db *Database, logger output.LoggerPort) output.{{.DomainName | title}}RepositoryPort {
+	return &{{.DomainName}}Repository{
+		db:     db,
+		logger: logger,
+	}
+}
+
+// Create saves a new {{.DomainName}} to the repository
+func (r *{{.DomainName}}Repository) Create(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error {
+	r.logger.Info(ctx, "Creating {{.DomainName}} in repository", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	model := &{{.DomainName | title}}Model{
+		ID:           {{.DomainName}}.ID().Value(),
+		Email:        {{.DomainName}}.Email().Value(),
+		FirstName:    {{.DomainName}}.FirstName(),
+		LastName:     {{.DomainName}}.LastName(),
+		PasswordHash: {{.DomainName}}.PasswordHash(),
+		CreatedAt:    {{.DomainName}}.CreatedAt().Unix(),
+		UpdatedAt:    {{.DomainName}}.UpdatedAt().Unix(),
+	}
+
+	if err := r.db.gorm.WithContext(ctx).Create(model).Error; err != nil {
+		r.logger.Error(ctx, "Failed to create {{.DomainName}} in database", output.Error(err))
+		return fmt.Errorf("failed to create {{.DomainName}}: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `INSERT INTO {{.DomainName}}s (id, email, first_name, last_name, password_hash, created_at, updated_at) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	
+	_, err := r.db.sqlx.ExecContext(ctx, query,
+		{{.DomainName}}.ID().Value(),
+		{{.DomainName}}.Email().Value(),
+		{{.DomainName}}.FirstName(),
+		{{.DomainName}}.LastName(),
+		{{.DomainName}}.PasswordHash(),
+		{{.DomainName}}.CreatedAt().Unix(),
+		{{.DomainName}}.UpdatedAt().Unix(),
+	)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to create {{.DomainName}} in database", output.Error(err))
+		return fmt.Errorf("failed to create {{.DomainName}}: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	query := `INSERT INTO {{.DomainName}}s (id, email, first_name, last_name, password_hash, created_at, updated_at) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	
+	_, err := r.db.sql.ExecContext(ctx, query,
+		{{.DomainName}}.ID().Value(),
+		{{.DomainName}}.Email().Value(),
+		{{.DomainName}}.FirstName(),
+		{{.DomainName}}.LastName(),
+		{{.DomainName}}.PasswordHash(),
+		{{.DomainName}}.CreatedAt().Unix(),
+		{{.DomainName}}.UpdatedAt().Unix(),
+	)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to create {{.DomainName}} in database", output.Error(err))
+		return fmt.Errorf("failed to create {{.DomainName}}: %w", err)
+	}
+	{{- end}}
+
+	r.logger.Info(ctx, "{{.DomainName | title}} created successfully in repository", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+	return nil
+}
+
+// GetByID retrieves a {{.DomainName}} by its ID
+func (r *{{.DomainName}}Repository) GetByID(ctx context.Context, id string) (*entities.{{.DomainName | title}}, error) {
+	r.logger.Info(ctx, "Getting {{.DomainName}} by ID from repository", output.String("{{.DomainName}}_id", id))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var model {{.DomainName | title}}Model
+	if err := r.db.gorm.WithContext(ctx).Where("id = ?", id).First(&model).Error; err != nil {
+		r.logger.Error(ctx, "Failed to get {{.DomainName}} by ID", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} not found: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	var model {{.DomainName | title}}Model
+	query := `SELECT id, email, first_name, last_name, password_hash, created_at, updated_at 
+			  FROM {{.DomainName}}s WHERE id = $1`
+	
+	if err := r.db.sqlx.GetContext(ctx, &model, query, id); err != nil {
+		r.logger.Error(ctx, "Failed to get {{.DomainName}} by ID", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} not found: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	var model {{.DomainName | title}}Model
+	query := `SELECT id, email, first_name, last_name, password_hash, created_at, updated_at 
+			  FROM {{.DomainName}}s WHERE id = $1`
+	
+	row := r.db.sql.QueryRowContext(ctx, query, id)
+	if err := row.Scan(&model.ID, &model.Email, &model.FirstName, &model.LastName, &model.PasswordHash, &model.CreatedAt, &model.UpdatedAt); err != nil {
+		r.logger.Error(ctx, "Failed to get {{.DomainName}} by ID", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} not found: %w", err)
+	}
+	{{- end}}
+
+	return r.modelToEntity(&model)
+}
+
+// GetByEmail retrieves a {{.DomainName}} by email
+func (r *{{.DomainName}}Repository) GetByEmail(ctx context.Context, email string) (*entities.{{.DomainName | title}}, error) {
+	r.logger.Info(ctx, "Getting {{.DomainName}} by email from repository", output.String("email", email))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var model {{.DomainName | title}}Model
+	if err := r.db.gorm.WithContext(ctx).Where("email = ?", email).First(&model).Error; err != nil {
+		r.logger.Error(ctx, "Failed to get {{.DomainName}} by email", output.String("email", email), output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} not found: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	var model {{.DomainName | title}}Model
+	query := `SELECT id, email, first_name, last_name, password_hash, created_at, updated_at 
+			  FROM {{.DomainName}}s WHERE email = $1`
+	
+	if err := r.db.sqlx.GetContext(ctx, &model, query, email); err != nil {
+		r.logger.Error(ctx, "Failed to get {{.DomainName}} by email", output.String("email", email), output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} not found: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	var model {{.DomainName | title}}Model
+	query := `SELECT id, email, first_name, last_name, password_hash, created_at, updated_at 
+			  FROM {{.DomainName}}s WHERE email = $1`
+	
+	row := r.db.sql.QueryRowContext(ctx, query, email)
+	if err := row.Scan(&model.ID, &model.Email, &model.FirstName, &model.LastName, &model.PasswordHash, &model.CreatedAt, &model.UpdatedAt); err != nil {
+		r.logger.Error(ctx, "Failed to get {{.DomainName}} by email", output.String("email", email), output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} not found: %w", err)
+	}
+	{{- end}}
+
+	return r.modelToEntity(&model)
+}
+
+// Update updates an existing {{.DomainName}}
+func (r *{{.DomainName}}Repository) Update(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error {
+	r.logger.Info(ctx, "Updating {{.DomainName}} in repository", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	model := &{{.DomainName | title}}Model{
+		ID:           {{.DomainName}}.ID().Value(),
+		Email:        {{.DomainName}}.Email().Value(),
+		FirstName:    {{.DomainName}}.FirstName(),
+		LastName:     {{.DomainName}}.LastName(),
+		PasswordHash: {{.DomainName}}.PasswordHash(),
+		UpdatedAt:    {{.DomainName}}.UpdatedAt().Unix(),
+	}
+
+	if err := r.db.gorm.WithContext(ctx).Where("id = ?", {{.DomainName}}.ID().Value()).Updates(model).Error; err != nil {
+		r.logger.Error(ctx, "Failed to update {{.DomainName}} in database", output.Error(err))
+		return fmt.Errorf("failed to update {{.DomainName}}: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `UPDATE {{.DomainName}}s SET email = $1, first_name = $2, last_name = $3, password_hash = $4, updated_at = $5 
+			  WHERE id = $6`
+	
+	_, err := r.db.sqlx.ExecContext(ctx, query,
+		{{.DomainName}}.Email().Value(),
+		{{.DomainName}}.FirstName(),
+		{{.DomainName}}.LastName(),
+		{{.DomainName}}.PasswordHash(),
+		{{.DomainName}}.UpdatedAt().Unix(),
+		{{.DomainName}}.ID().Value(),
+	)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to update {{.DomainName}} in database", output.Error(err))
+		return fmt.Errorf("failed to update {{.DomainName}}: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	query := `UPDATE {{.DomainName}}s SET email = $1, first_name = $2, last_name = $3, password_hash = $4, updated_at = $5 
+			  WHERE id = $6`
+	
+	_, err := r.db.sql.ExecContext(ctx, query,
+		{{.DomainName}}.Email().Value(),
+		{{.DomainName}}.FirstName(),
+		{{.DomainName}}.LastName(),
+		{{.DomainName}}.PasswordHash(),
+		{{.DomainName}}.UpdatedAt().Unix(),
+		{{.DomainName}}.ID().Value(),
+	)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to update {{.DomainName}} in database", output.Error(err))
+		return fmt.Errorf("failed to update {{.DomainName}}: %w", err)
+	}
+	{{- end}}
+
+	r.logger.Info(ctx, "{{.DomainName | title}} updated successfully in repository", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+	return nil
+}
+
+// Delete removes a {{.DomainName}} by its ID
+func (r *{{.DomainName}}Repository) Delete(ctx context.Context, id string) error {
+	r.logger.Info(ctx, "Deleting {{.DomainName}} from repository", output.String("{{.DomainName}}_id", id))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	if err := r.db.gorm.WithContext(ctx).Where("id = ?", id).Delete(&{{.DomainName | title}}Model{}).Error; err != nil {
+		r.logger.Error(ctx, "Failed to delete {{.DomainName}} from database", output.Error(err))
+		return fmt.Errorf("failed to delete {{.DomainName}}: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `DELETE FROM {{.DomainName}}s WHERE id = $1`
+	
+	_, err := r.db.sqlx.ExecContext(ctx, query, id)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to delete {{.DomainName}} from database", output.Error(err))
+		return fmt.Errorf("failed to delete {{.DomainName}}: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	query := `DELETE FROM {{.DomainName}}s WHERE id = $1`
+	
+	_, err := r.db.sql.ExecContext(ctx, query, id)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to delete {{.DomainName}} from database", output.Error(err))
+		return fmt.Errorf("failed to delete {{.DomainName}}: %w", err)
+	}
+	{{- end}}
+
+	r.logger.Info(ctx, "{{.DomainName | title}} deleted successfully from repository", output.String("{{.DomainName}}_id", id))
+	return nil
+}
+
+// List retrieves {{.DomainName}}s with pagination
+func (r *{{.DomainName}}Repository) List(ctx context.Context, limit, offset int) ([]*entities.{{.DomainName | title}}, error) {
+	r.logger.Info(ctx, "Listing {{.DomainName}}s from repository", output.Int("limit", limit), output.Int("offset", offset))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var models []{{.DomainName | title}}Model
+	if err := r.db.gorm.WithContext(ctx).Limit(limit).Offset(offset).Find(&models).Error; err != nil {
+		r.logger.Error(ctx, "Failed to list {{.DomainName}}s from database", output.Error(err))
+		return nil, fmt.Errorf("failed to list {{.DomainName}}s: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	var models []{{.DomainName | title}}Model
+	query := `SELECT id, email, first_name, last_name, password_hash, created_at, updated_at 
+			  FROM {{.DomainName}}s ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	
+	if err := r.db.sqlx.SelectContext(ctx, &models, query, limit, offset); err != nil {
+		r.logger.Error(ctx, "Failed to list {{.DomainName}}s from database", output.Error(err))
+		return nil, fmt.Errorf("failed to list {{.DomainName}}s: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	query := `SELECT id, email, first_name, last_name, password_hash, created_at, updated_at 
+			  FROM {{.DomainName}}s ORDER BY created_at DESC LIMIT $1 OFFSET $2`
+	
+	rows, err := r.db.sql.QueryContext(ctx, query, limit, offset)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to list {{.DomainName}}s from database", output.Error(err))
+		return nil, fmt.Errorf("failed to list {{.DomainName}}s: %w", err)
+	}
+	defer rows.Close()
+
+	var models []{{.DomainName | title}}Model
+	for rows.Next() {
+		var model {{.DomainName | title}}Model
+		if err := rows.Scan(&model.ID, &model.Email, &model.FirstName, &model.LastName, &model.PasswordHash, &model.CreatedAt, &model.UpdatedAt); err != nil {
+			r.logger.Error(ctx, "Failed to scan {{.DomainName}} row", output.Error(err))
+			return nil, fmt.Errorf("failed to scan {{.DomainName}} row: %w", err)
+		}
+		models = append(models, model)
+	}
+	{{- end}}
+
+	// Convert models to entities
+	entities := make([]*entities.{{.DomainName | title}}, len(models))
+	for i, model := range models {
+		entity, err := r.modelToEntity(&model)
+		if err != nil {
+			r.logger.Error(ctx, "Failed to convert {{.DomainName}} model to entity", output.Error(err))
+			return nil, fmt.Errorf("failed to convert {{.DomainName}} model to entity: %w", err)
+		}
+		entities[i] = entity
+	}
+
+	return entities, nil
+}
+
+// Count returns the total number of {{.DomainName}}s
+func (r *{{.DomainName}}Repository) Count(ctx context.Context) (int64, error) {
+	r.logger.Info(ctx, "Counting {{.DomainName}}s in repository")
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var count int64
+	if err := r.db.gorm.WithContext(ctx).Model(&{{.DomainName | title}}Model{}).Count(&count).Error; err != nil {
+		r.logger.Error(ctx, "Failed to count {{.DomainName}}s in database", output.Error(err))
+		return 0, fmt.Errorf("failed to count {{.DomainName}}s: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	var count int64
+	query := `SELECT COUNT(*) FROM {{.DomainName}}s`
+	
+	if err := r.db.sqlx.GetContext(ctx, &count, query); err != nil {
+		r.logger.Error(ctx, "Failed to count {{.DomainName}}s in database", output.Error(err))
+		return 0, fmt.Errorf("failed to count {{.DomainName}}s: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	var count int64
+	query := `SELECT COUNT(*) FROM {{.DomainName}}s`
+	
+	row := r.db.sql.QueryRowContext(ctx, query)
+	if err := row.Scan(&count); err != nil {
+		r.logger.Error(ctx, "Failed to count {{.DomainName}}s in database", output.Error(err))
+		return 0, fmt.Errorf("failed to count {{.DomainName}}s: %w", err)
+	}
+	{{- end}}
+
+	return count, nil
+}
+
+// ExistsByEmail checks if a {{.DomainName}} exists by email
+func (r *{{.DomainName}}Repository) ExistsByEmail(ctx context.Context, email string) (bool, error) {
+	r.logger.Info(ctx, "Checking if {{.DomainName}} exists by email", output.String("email", email))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var count int64
+	if err := r.db.gorm.WithContext(ctx).Model(&{{.DomainName | title}}Model{}).Where("email = ?", email).Count(&count).Error; err != nil {
+		r.logger.Error(ctx, "Failed to check {{.DomainName}} existence by email", output.Error(err))
+		return false, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	var count int64
+	query := `SELECT COUNT(*) FROM {{.DomainName}}s WHERE email = $1`
+	
+	if err := r.db.sqlx.GetContext(ctx, &count, query, email); err != nil {
+		r.logger.Error(ctx, "Failed to check {{.DomainName}} existence by email", output.Error(err))
+		return false, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	var count int64
+	query := `SELECT COUNT(*) FROM {{.DomainName}}s WHERE email = $1`
+	
+	row := r.db.sql.QueryRowContext(ctx, query, email)
+	if err := row.Scan(&count); err != nil {
+		r.logger.Error(ctx, "Failed to check {{.DomainName}} existence by email", output.Error(err))
+		return false, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+	{{- end}}
+
+	return count > 0, nil
+}
+
+// ExistsByID checks if a {{.DomainName}} exists by ID
+func (r *{{.DomainName}}Repository) ExistsByID(ctx context.Context, id string) (bool, error) {
+	r.logger.Info(ctx, "Checking if {{.DomainName}} exists by ID", output.String("{{.DomainName}}_id", id))
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var count int64
+	if err := r.db.gorm.WithContext(ctx).Model(&{{.DomainName | title}}Model{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		r.logger.Error(ctx, "Failed to check {{.DomainName}} existence by ID", output.Error(err))
+		return false, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	var count int64
+	query := `SELECT COUNT(*) FROM {{.DomainName}}s WHERE id = $1`
+	
+	if err := r.db.sqlx.GetContext(ctx, &count, query, id); err != nil {
+		r.logger.Error(ctx, "Failed to check {{.DomainName}} existence by ID", output.Error(err))
+		return false, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+
+	{{- else}}
+	// Standard database/sql implementation
+	var count int64
+	query := `SELECT COUNT(*) FROM {{.DomainName}}s WHERE id = $1`
+	
+	row := r.db.sql.QueryRowContext(ctx, query, id)
+	if err := row.Scan(&count); err != nil {
+		r.logger.Error(ctx, "Failed to check {{.DomainName}} existence by ID", output.Error(err))
+		return false, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+	{{- end}}
+
+	return count > 0, nil
+}
+
+// modelToEntity converts a database model to a domain entity
+func (r *{{.DomainName}}Repository) modelToEntity(model *{{.DomainName | title}}Model) (*entities.{{.DomainName | title}}, error) {
+	// Create value objects
+	{{.DomainName}}ID, err := valueobjects.{{.DomainName | title}}IDFromString(model.ID)
+	if err != nil {
+		return nil, fmt.Errorf("invalid {{.DomainName}} ID: %w", err)
+	}
+
+	email, err := valueobjects.NewEmail(model.Email)
+	if err != nil {
+		return nil, fmt.Errorf("invalid email: %w", err)
+	}
+
+	// Reconstruct entity
+	entity := entities.Reconstruct{{.DomainName | title}}(
+		{{.DomainName}}ID,
+		email,
+		model.FirstName,
+		model.LastName,
+		model.PasswordHash,
+		time.Unix(model.CreatedAt, 0),
+		time.Unix(model.UpdatedAt, 0),
+	)
+
+	return entity, nil
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// {{.DomainName | title}}Model represents the {{.DomainName}} database model
+type {{.DomainName | title}}Model struct {
+	ID           string `gorm:"primaryKey"`
+	Email        string `gorm:"unique;not null"`
+	FirstName    string `gorm:"not null"`
+	LastName     string `gorm:"not null"`
+	PasswordHash string `gorm:"not null"`
+	CreatedAt    int64  `gorm:"autoCreateTime"`
+	UpdatedAt    int64  `gorm:"autoUpdateTime"`
+}
+
+// TableName returns the table name for {{.DomainName | title}}Model
+func ({{.DomainName | title}}Model) TableName() string {
+	return "{{.DomainName}}s"
+}
+{{- else}}
+// {{.DomainName | title}}Model represents the {{.DomainName}} database model for SQL operations
+type {{.DomainName | title}}Model struct {
+	ID           string `db:"id"`
+	Email        string `db:"email"`
+	FirstName    string `db:"first_name"`
+	LastName     string `db:"last_name"`
+	PasswordHash string `db:"password_hash"`
+	CreatedAt    int64  `db:"created_at"`
+	UpdatedAt    int64  `db:"updated_at"`
+}
+{{- end}}

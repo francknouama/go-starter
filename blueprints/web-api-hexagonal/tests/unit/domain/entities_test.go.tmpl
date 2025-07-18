@@ -1,0 +1,394 @@
+package domain
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+func TestNewUser(t *testing.T) {
+	tests := []struct {
+		name        string
+		email       string
+		firstName   string
+		lastName    string
+		password    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "valid user creation",
+			email:     "test@example.com",
+			firstName: "John",
+			lastName:  "Doe",
+			password:  "password123",
+			wantErr:   false,
+		},
+		{
+			name:        "invalid email",
+			email:       "invalid-email",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "invalid email",
+		},
+		{
+			name:        "empty first name",
+			email:       "test@example.com",
+			firstName:   "",
+			lastName:    "Doe",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "first name cannot be empty",
+		},
+		{
+			name:        "empty last name",
+			email:       "test@example.com",
+			firstName:   "John",
+			lastName:    "",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "last name cannot be empty",
+		},
+		{
+			name:        "weak password",
+			email:       "test@example.com",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "123",
+			wantErr:     true,
+			errContains: "password too weak",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user, err := entities.NewUser(tt.email, tt.firstName, tt.lastName, tt.password)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Nil(t, user)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, user)
+				assert.Equal(t, tt.email, user.Email().Value())
+				assert.Equal(t, tt.firstName, user.FirstName())
+				assert.Equal(t, tt.lastName, user.LastName())
+				assert.NotEmpty(t, user.ID().Value())
+				assert.NotEmpty(t, user.PasswordHash())
+				assert.False(t, user.CreatedAt().IsZero())
+				assert.False(t, user.UpdatedAt().IsZero())
+			}
+		})
+	}
+}
+
+func TestUser_UpdateEmail(t *testing.T) {
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		newEmail    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:     "valid email update",
+			newEmail: "newemail@example.com",
+			wantErr:  false,
+		},
+		{
+			name:        "invalid email format",
+			newEmail:    "invalid-email",
+			wantErr:     true,
+			errContains: "invalid email",
+		},
+		{
+			name:        "empty email",
+			newEmail:    "",
+			wantErr:     true,
+			errContains: "email cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalUpdatedAt := user.UpdatedAt()
+			time.Sleep(time.Millisecond) // Ensure timestamp difference
+
+			err := user.UpdateEmail(tt.newEmail)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Equal(t, originalUpdatedAt, user.UpdatedAt())
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.newEmail, user.Email().Value())
+				assert.True(t, user.UpdatedAt().After(originalUpdatedAt))
+			}
+		})
+	}
+}
+
+func TestUser_UpdatePassword(t *testing.T) {
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		newPassword string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "valid password update",
+			newPassword: "newpassword123",
+			wantErr:     false,
+		},
+		{
+			name:        "weak password",
+			newPassword: "123",
+			wantErr:     true,
+			errContains: "password too weak",
+		},
+		{
+			name:        "empty password",
+			newPassword: "",
+			wantErr:     true,
+			errContains: "password cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalPasswordHash := user.PasswordHash()
+			originalUpdatedAt := user.UpdatedAt()
+			time.Sleep(time.Millisecond) // Ensure timestamp difference
+
+			err := user.UpdatePassword(tt.newPassword)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Equal(t, originalPasswordHash, user.PasswordHash())
+				assert.Equal(t, originalUpdatedAt, user.UpdatedAt())
+			} else {
+				assert.NoError(t, err)
+				assert.NotEqual(t, originalPasswordHash, user.PasswordHash())
+				assert.True(t, user.UpdatedAt().After(originalUpdatedAt))
+			}
+		})
+	}
+}
+
+func TestUser_VerifyPassword(t *testing.T) {
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		password string
+		want     bool
+	}{
+		{
+			name:     "correct password",
+			password: "password123",
+			want:     true,
+		},
+		{
+			name:     "incorrect password",
+			password: "wrongpassword",
+			want:     false,
+		},
+		{
+			name:     "empty password",
+			password: "",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := user.VerifyPassword(tt.password)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+func TestReconstructUser(t *testing.T) {
+	// Create value objects
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	email, err := valueobjects.NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	// Test reconstruction
+	now := time.Now()
+	user := entities.ReconstructUser(
+		userID,
+		email,
+		"John",
+		"Doe",
+		"$2a$10$hashedpassword",
+		now,
+		now,
+	)
+
+	assert.NotNil(t, user)
+	assert.Equal(t, userID.Value(), user.ID().Value())
+	assert.Equal(t, email.Value(), user.Email().Value())
+	assert.Equal(t, "John", user.FirstName())
+	assert.Equal(t, "Doe", user.LastName())
+	assert.Equal(t, "$2a$10$hashedpassword", user.PasswordHash())
+	assert.Equal(t, now, user.CreatedAt())
+	assert.Equal(t, now, user.UpdatedAt())
+}
+
+{{- if ne .AuthType ""}}
+func TestAuthSession_IsExpired(t *testing.T) {
+	// Create test session
+	sessionID, err := valueobjects.NewSessionID()
+	require.NoError(t, err)
+
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		expiresAt time.Time
+		want      bool
+	}{
+		{
+			name:      "not expired",
+			expiresAt: time.Now().Add(time.Hour),
+			want:      false,
+		},
+		{
+			name:      "expired",
+			expiresAt: time.Now().Add(-time.Hour),
+			want:      true,
+		},
+		{
+			name:      "expires now",
+			expiresAt: time.Now(),
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := entities.NewAuthSession(
+				sessionID,
+				userID,
+				"test-token",
+				tt.expiresAt,
+			)
+
+			result := session.IsExpired()
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+func TestRefreshToken_IsExpired(t *testing.T) {
+	// Create test refresh token
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		expiresAt time.Time
+		want      bool
+	}{
+		{
+			name:      "not expired",
+			expiresAt: time.Now().Add(time.Hour),
+			want:      false,
+		},
+		{
+			name:      "expired",
+			expiresAt: time.Now().Add(-time.Hour),
+			want:      true,
+		},
+		{
+			name:      "expires now",
+			expiresAt: time.Now(),
+			want:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			token := entities.NewRefreshToken(
+				"test-token",
+				userID,
+				tt.expiresAt,
+			)
+
+			result := token.IsExpired()
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+{{- end}}
+
+func TestHealthStatus_OverallHealthy(t *testing.T) {
+	checks := make(map[string]entities.HealthCheck)
+	checks["database"] = entities.HealthCheck{
+		Status:  entities.HealthStatusHealthy,
+		Message: "Database is healthy",
+	}
+	checks["cache"] = entities.HealthCheck{
+		Status:  entities.HealthStatusHealthy,
+		Message: "Cache is healthy",
+	}
+
+	status := entities.NewHealthStatus(
+		entities.HealthStatusHealthy,
+		"All systems healthy",
+		checks,
+		time.Millisecond*100,
+	)
+
+	assert.Equal(t, entities.HealthStatusHealthy, status.Status())
+	assert.Equal(t, "All systems healthy", status.Message())
+	assert.Equal(t, 2, len(status.Checks()))
+	assert.Equal(t, time.Millisecond*100, status.Duration())
+}
+
+func TestHealthStatus_OverallUnhealthy(t *testing.T) {
+	checks := make(map[string]entities.HealthCheck)
+	checks["database"] = entities.HealthCheck{
+		Status:  entities.HealthStatusUnhealthy,
+		Message: "Database is down",
+	}
+	checks["cache"] = entities.HealthCheck{
+		Status:  entities.HealthStatusHealthy,
+		Message: "Cache is healthy",
+	}
+
+	status := entities.NewHealthStatus(
+		entities.HealthStatusUnhealthy,
+		"System is unhealthy",
+		checks,
+		time.Millisecond*50,
+	)
+
+	assert.Equal(t, entities.HealthStatusUnhealthy, status.Status())
+	assert.Equal(t, "System is unhealthy", status.Message())
+	assert.Equal(t, 2, len(status.Checks()))
+	assert.Equal(t, time.Millisecond*50, status.Duration())
+}

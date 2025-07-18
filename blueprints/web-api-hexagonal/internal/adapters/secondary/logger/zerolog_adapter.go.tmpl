@@ -1,0 +1,127 @@
+package logger
+
+import (
+	"context"
+	"os"
+
+	"github.com/rs/zerolog"
+
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// ZerologAdapter implements the LoggerPort interface using zerolog
+type ZerologAdapter struct {
+	logger zerolog.Logger
+}
+
+// NewZerologAdapter creates a new zerolog adapter
+func NewZerologAdapter() output.LoggerPort {
+	// Create a logger with JSON output to stdout
+	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	
+	// Set global log level
+	zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	
+	return &ZerologAdapter{
+		logger: logger,
+	}
+}
+
+// NewZerologAdapterWithLevel creates a new zerolog adapter with specified log level
+func NewZerologAdapterWithLevel(level string) output.LoggerPort {
+	// Create a logger with JSON output to stdout
+	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	
+	// Set log level based on string
+	switch level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "info":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+	
+	return &ZerologAdapter{
+		logger: logger,
+	}
+}
+
+// Debug logs a debug message
+func (z *ZerologAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
+	event := z.logger.Debug()
+	z.addFieldsToEvent(event, args...)
+	event.Msg(msg)
+}
+
+// Info logs an info message
+func (z *ZerologAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
+	event := z.logger.Info()
+	z.addFieldsToEvent(event, args...)
+	event.Msg(msg)
+}
+
+// Warn logs a warning message
+func (z *ZerologAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
+	event := z.logger.Warn()
+	z.addFieldsToEvent(event, args...)
+	event.Msg(msg)
+}
+
+// Error logs an error message
+func (z *ZerologAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
+	event := z.logger.Error()
+	z.addFieldsToEvent(event, args...)
+	event.Msg(msg)
+}
+
+// With creates a new logger with additional fields
+func (z *ZerologAdapter) With(args ...interface{}) output.LoggerPort {
+	logger := z.logger.With()
+	z.addFieldsToContext(logger, args...)
+	
+	return &ZerologAdapter{
+		logger: logger.Logger(),
+	}
+}
+
+// WithFields creates a new logger with additional fields from a map
+func (z *ZerologAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
+	logger := z.logger.With()
+	
+	for k, v := range fields {
+		logger = logger.Interface(k, v)
+	}
+	
+	return &ZerologAdapter{
+		logger: logger.Logger(),
+	}
+}
+
+// addFieldsToEvent adds variadic arguments as fields to a zerolog event
+func (z *ZerologAdapter) addFieldsToEvent(event *zerolog.Event, args ...interface{}) {
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			key, ok := args[i].(string)
+			if ok {
+				event.Interface(key, args[i+1])
+			}
+		}
+	}
+}
+
+// addFieldsToContext adds variadic arguments as fields to a zerolog context
+func (z *ZerologAdapter) addFieldsToContext(ctx zerolog.Context, args ...interface{}) {
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			key, ok := args[i].(string)
+			if ok {
+				ctx = ctx.Interface(key, args[i+1])
+			}
+		}
+	}
+}

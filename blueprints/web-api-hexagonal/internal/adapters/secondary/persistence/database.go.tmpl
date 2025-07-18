@@ -1,0 +1,228 @@
+package persistence
+
+import (
+	"database/sql"
+	"fmt"
+
+	"{{.ModulePath}}/internal/infrastructure/config"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{- end}}
+	{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+	{{- else}}
+	{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+	{{- end}}
+)
+
+// Database represents the database connection
+type Database struct {
+	{{- if eq .DatabaseORM "gorm"}}
+	gorm *gorm.DB
+	{{- else if eq .DatabaseORM "sqlx"}}
+	sqlx *sqlx.DB
+	{{- else}}
+	sql  *sql.DB
+	{{- end}}
+}
+
+// NewDatabase creates a new database connection
+func NewDatabase(cfg *config.Config) (*Database, error) {
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	var dialector gorm.Dialector
+	
+	switch cfg.Database.Driver {
+	{{- if eq .DatabaseDriver "postgres"}}
+	case "postgres":
+		dialector = postgres.Open(cfg.GetDatabaseDSN())
+	{{- end}}
+	{{- if eq .DatabaseDriver "mysql"}}
+	case "mysql":
+		dialector = mysql.Open(cfg.GetDatabaseDSN())
+	{{- end}}
+	{{- if eq .DatabaseDriver "sqlite"}}
+	case "sqlite":
+		dialector = sqlite.Open(cfg.GetDatabaseDSN())
+	{{- end}}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
+	}
+	
+	db, err := gorm.Open(dialector, &gorm.Config{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	
+	// Auto-migrate tables
+	if err := db.AutoMigrate(
+		&{{.DomainName | title}}Model{},
+		&AuthSessionModel{},
+		&RefreshTokenModel{},
+		&PasswordResetTokenModel{},
+	); err != nil {
+		return nil, fmt.Errorf("failed to auto-migrate: %w", err)
+	}
+	
+	return &Database{gorm: db}, nil
+	
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	db, err := sqlx.Connect(cfg.Database.Driver, cfg.GetDatabaseDSN())
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	
+	// Test connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+	
+	return &Database{sqlx: db}, nil
+	
+	{{- else}}
+	// Standard database/sql implementation
+	db, err := sql.Open(cfg.Database.Driver, cfg.GetDatabaseDSN())
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+	
+	// Test connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+	
+	return &Database{sql: db}, nil
+	{{- end}}
+}
+
+// Close closes the database connection
+func (d *Database) Close() error {
+	{{- if eq .DatabaseORM "gorm"}}
+	sqlDB, err := d.gorm.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+	{{- else if eq .DatabaseORM "sqlx"}}
+	return d.sqlx.Close()
+	{{- else}}
+	return d.sql.Close()
+	{{- end}}
+}
+
+// GORM returns the GORM database instance
+{{- if eq .DatabaseORM "gorm"}}
+func (d *Database) GORM() *gorm.DB {
+	return d.gorm
+}
+{{- end}}
+
+// SQLx returns the SQLx database instance
+{{- if eq .DatabaseORM "sqlx"}}
+func (d *Database) SQLx() *sqlx.DB {
+	return d.sqlx
+}
+{{- end}}
+
+// SQL returns the standard SQL database instance
+{{- if eq .DatabaseORM ""}}
+func (d *Database) SQL() *sql.DB {
+	return d.sql
+}
+{{- end}}
+
+// Health checks the database connection health
+func (d *Database) Health() error {
+	{{- if eq .DatabaseORM "gorm"}}
+	sqlDB, err := d.gorm.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+	{{- else if eq .DatabaseORM "sqlx"}}
+	return d.sqlx.Ping()
+	{{- else}}
+	return d.sql.Ping()
+	{{- end}}
+}
+
+// Database models for persistence
+{{- if eq .DatabaseORM "gorm"}}
+
+// {{.DomainName | title}}Model represents the {{.DomainName}} database model
+type {{.DomainName | title}}Model struct {
+	ID           string `gorm:"primaryKey"`
+	Email        string `gorm:"unique;not null"`
+	FirstName    string `gorm:"not null"`
+	LastName     string `gorm:"not null"`
+	PasswordHash string `gorm:"not null"`
+	CreatedAt    int64  `gorm:"autoCreateTime"`
+	UpdatedAt    int64  `gorm:"autoUpdateTime"`
+}
+
+// TableName returns the table name for {{.DomainName | title}}Model
+func ({{.DomainName | title}}Model) TableName() string {
+	return "{{.DomainName}}s"
+}
+
+// AuthSessionModel represents the auth session database model
+type AuthSessionModel struct {
+	SessionID string `gorm:"primaryKey"`
+	UserID    string `gorm:"not null"`
+	Token     string `gorm:"not null"`
+	ExpiresAt int64  `gorm:"not null"`
+	CreatedAt int64  `gorm:"autoCreateTime"`
+}
+
+// TableName returns the table name for AuthSessionModel
+func (AuthSessionModel) TableName() string {
+	return "auth_sessions"
+}
+
+// RefreshTokenModel represents the refresh token database model
+type RefreshTokenModel struct {
+	Token     string `gorm:"primaryKey"`
+	UserID    string `gorm:"not null"`
+	ExpiresAt int64  `gorm:"not null"`
+	CreatedAt int64  `gorm:"autoCreateTime"`
+}
+
+// TableName returns the table name for RefreshTokenModel
+func (RefreshTokenModel) TableName() string {
+	return "refresh_tokens"
+}
+
+// PasswordResetTokenModel represents the password reset token database model
+type PasswordResetTokenModel struct {
+	Token     string `gorm:"primaryKey"`
+	UserID    string `gorm:"not null"`
+	ExpiresAt int64  `gorm:"not null"`
+	CreatedAt int64  `gorm:"autoCreateTime"`
+}
+
+// TableName returns the table name for PasswordResetTokenModel
+func (PasswordResetTokenModel) TableName() string {
+	return "password_reset_tokens"
+}
+
+{{- end}}

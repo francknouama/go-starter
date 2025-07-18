@@ -1,0 +1,227 @@
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"{{.ModulePath}}/internal/application/dto"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// AuthHandler handles authentication HTTP requests
+// This is a primary adapter that implements the HTTP interface
+type AuthHandler struct {
+	authPort input.AuthPort
+	logger   output.LoggerPort
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler(authPort input.AuthPort, logger output.LoggerPort) *AuthHandler {
+	return &AuthHandler{
+		authPort: authPort,
+		logger:   logger,
+	}
+}
+
+// HandleLogin handles login requests
+func (h *AuthHandler) HandleLogin(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Login request received")
+	
+	// Parse request body
+	var req dto.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid login request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the auth port to authenticate
+	loginResponse, err := h.authPort.Login(ctx, &req)
+	if err != nil {
+		h.logger.Error(ctx, "Login failed", output.String("email", req.Email), output.Error(err))
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+	
+	// Return login response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode(loginResponse); err != nil {
+		h.logger.Error(ctx, "Failed to encode login response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleRegister handles registration requests
+func (h *AuthHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Register request received")
+	
+	// Parse request body
+	var req dto.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid register request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the auth port to register
+	registerResponse, err := h.authPort.Register(ctx, &req)
+	if err != nil {
+		h.logger.Error(ctx, "Registration failed", output.String("email", req.Email), output.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Return registration response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	
+	if err := json.NewEncoder(w).Encode(registerResponse); err != nil {
+		h.logger.Error(ctx, "Failed to encode register response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleRefreshToken handles token refresh requests
+func (h *AuthHandler) HandleRefreshToken(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Refresh token request received")
+	
+	// Parse request body
+	var req dto.RefreshTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid refresh token request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the auth port to refresh token
+	refreshResponse, err := h.authPort.RefreshToken(ctx, &req)
+	if err != nil {
+		h.logger.Error(ctx, "Token refresh failed", output.Error(err))
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	
+	// Return refresh response as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode(refreshResponse); err != nil {
+		h.logger.Error(ctx, "Failed to encode refresh response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleLogout handles logout requests
+func (h *AuthHandler) HandleLogout(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Logout request received")
+	
+	// Extract token from Authorization header
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		h.logger.Error(ctx, "Missing authorization header")
+		http.Error(w, "Missing authorization header", http.StatusBadRequest)
+		return
+	}
+	
+	// Simple token extraction (in real implementation, use proper parsing)
+	token := authHeader
+	if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+		token = authHeader[7:]
+	}
+	
+	// Use the auth port to logout
+	if err := h.authPort.Logout(ctx, token); err != nil {
+		h.logger.Error(ctx, "Logout failed", output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleChangePassword handles password change requests
+func (h *AuthHandler) HandleChangePassword(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Change password request received")
+	
+	// Parse request body
+	var req dto.ChangePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid change password request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the auth port to change password
+	if err := h.authPort.ChangePassword(ctx, &req); err != nil {
+		h.logger.Error(ctx, "Password change failed", output.String("user_id", req.UserID), output.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleResetPassword handles password reset requests
+func (h *AuthHandler) HandleResetPassword(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Reset password request received")
+	
+	// Parse request body
+	var req dto.ResetPasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid reset password request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the auth port to reset password
+	if err := h.authPort.ResetPassword(ctx, &req); err != nil {
+		h.logger.Error(ctx, "Password reset failed", output.String("email", req.Email), output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleConfirmPasswordReset handles password reset confirmation requests
+func (h *AuthHandler) HandleConfirmPasswordReset(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Confirm password reset request received")
+	
+	// Parse request body
+	var req dto.ConfirmPasswordResetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid confirm password reset request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the auth port to confirm password reset
+	if err := h.authPort.ConfirmPasswordReset(ctx, &req); err != nil {
+		h.logger.Error(ctx, "Password reset confirmation failed", output.Error(err))
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}

@@ -1,0 +1,134 @@
+# Development configuration
+environment: development
+
+server:
+  host: localhost
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 30s
+  idle_timeout: 120s
+
+logging:
+  level: debug
+  format: json
+  output: stdout
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: {{.DatabaseDriver}}
+  {{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5432
+  name: {{.ProjectName}}_dev
+  user: postgres
+  password: postgres
+  ssl_mode: disable
+  max_open_connections: 25
+  max_idle_connections: 5
+  connection_max_lifetime: 1h
+  {{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3306
+  name: {{.ProjectName}}_dev
+  user: root
+  password: root
+  charset: utf8mb4
+  parse_time: true
+  max_open_connections: 25
+  max_idle_connections: 5
+  connection_max_lifetime: 1h
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  path: ./data/{{.ProjectName}}_dev.db
+  {{- else if eq .DatabaseDriver "redis"}}
+  host: localhost
+  port: 6379
+  password: ""
+  database: 0
+  {{- end}}
+  {{- if ne .DatabaseORM ""}}
+  orm: {{.DatabaseORM}}
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  type: {{.AuthType}}
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: your-dev-jwt-secret-key-change-in-production
+    expiration: 24h
+    refresh_expiration: 168h # 7 days
+    issuer: {{.ProjectName}}
+    audience: {{.ProjectName}}-users
+  {{- else if eq .AuthType "session"}}
+  session:
+    secret: your-dev-session-secret-key-change-in-production
+    cookie_name: {{.ProjectName}}_session
+    cookie_domain: localhost
+    cookie_secure: false
+    cookie_http_only: true
+    cookie_same_site: lax
+    expiration: 24h
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    providers:
+      google:
+        client_id: your-google-client-id
+        client_secret: your-google-client-secret
+        redirect_url: http://localhost:8080/auth/callback/google
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: your-github-client-id
+        client_secret: your-github-client-secret
+        redirect_url: http://localhost:8080/auth/callback/github
+        scopes: ["user:email"]
+  {{- end}}
+{{- end}}
+
+cors:
+  allowed_origins:
+    - http://localhost:3000
+    - http://localhost:8080
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allowed_headers:
+    - Content-Type
+    - Authorization
+    - X-Requested-With
+  exposed_headers:
+    - Content-Length
+    - X-Total-Count
+  allow_credentials: true
+  max_age: 86400 # 24 hours
+
+security:
+  rate_limit:
+    enabled: true
+    requests_per_minute: 100
+    burst: 10
+  request_size_limit: 10MB
+  timeout:
+    read: 30s
+    write: 30s
+    idle: 120s
+
+metrics:
+  enabled: true
+  path: /metrics
+  port: 9090
+
+health_check:
+  enabled: true
+  path: /health
+  detailed_path: /health/detailed
+
+# Development-specific settings
+development:
+  debug: true
+  hot_reload: true
+  profiling: true
+  verbose_logging: true

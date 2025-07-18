@@ -1,0 +1,258 @@
+package services
+
+import (
+	"context"
+	"time"
+
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+	"{{.ModulePath}}/internal/domain/entities"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/adapters/secondary/persistence"
+	{{- end}}
+)
+
+// HealthService implements the HealthPort interface
+// This is an application service that orchestrates health checks
+type HealthService struct {
+	logger output.LoggerPort
+	{{- if ne .DatabaseDriver ""}}
+	db     *persistence.Database // Database dependency for health checks
+	{{- end}}
+}
+
+// NewHealthService creates a new health service
+func NewHealthService(
+	logger output.LoggerPort,
+	{{- if ne .DatabaseDriver ""}}
+	db *persistence.Database,
+	{{- end}}
+) input.HealthPort {
+	return &HealthService{
+		logger: logger,
+		{{- if ne .DatabaseDriver ""}}
+		db:     db,
+		{{- end}}
+	}
+}
+
+// CheckHealth performs a comprehensive health check
+func (h *HealthService) CheckHealth(ctx context.Context) (*entities.HealthStatus, error) {
+	h.logger.Info(ctx, "Performing health check")
+	
+	startTime := time.Now()
+	checks := make(map[string]entities.HealthCheck)
+	
+	// Check application health
+	checks["application"] = h.checkApplication(ctx)
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Check database health
+	checks["database"] = h.checkDatabase(ctx)
+	{{- end}}
+	
+	// Check external dependencies
+	checks["external"] = h.checkExternalDependencies(ctx)
+	
+	// Determine overall status
+	overallStatus := entities.HealthStatusHealthy
+	for _, check := range checks {
+		if check.Status == entities.HealthStatusUnhealthy {
+			overallStatus = entities.HealthStatusUnhealthy
+			break
+		} else if check.Status == entities.HealthStatusDegraded {
+			overallStatus = entities.HealthStatusDegraded
+		}
+	}
+	
+	duration := time.Since(startTime)
+	
+	healthStatus := entities.NewHealthStatus(
+		overallStatus,
+		"Health check completed",
+		checks,
+		duration,
+	)
+	
+	h.logger.Info(ctx, "Health check completed", 
+		output.String("status", string(overallStatus)),
+		output.Duration("duration", duration),
+		output.Int("checks_count", len(checks)),
+	)
+	
+	return healthStatus, nil
+}
+
+// CheckReadiness performs a readiness check
+func (h *HealthService) CheckReadiness(ctx context.Context) (*entities.ReadinessStatus, error) {
+	h.logger.Info(ctx, "Performing readiness check")
+	
+	startTime := time.Now()
+	checks := make(map[string]entities.ReadinessCheck)
+	
+	// Check if application is ready to serve requests
+	checks["application"] = h.checkApplicationReadiness(ctx)
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Check database readiness
+	checks["database"] = h.checkDatabaseReadiness(ctx)
+	{{- end}}
+	
+	// Check external dependencies readiness
+	checks["external"] = h.checkExternalDependenciesReadiness(ctx)
+	
+	// Determine overall readiness
+	ready := true
+	for _, check := range checks {
+		if !check.Ready {
+			ready = false
+			break
+		}
+	}
+	
+	duration := time.Since(startTime)
+	
+	readinessStatus := entities.NewReadinessStatus(
+		ready,
+		"Readiness check completed",
+		checks,
+		duration,
+	)
+	
+	h.logger.Info(ctx, "Readiness check completed", 
+		output.Bool("ready", ready),
+		output.Duration("duration", duration),
+		output.Int("checks_count", len(checks)),
+	)
+	
+	return readinessStatus, nil
+}
+
+// checkApplication checks the application health
+func (h *HealthService) checkApplication(ctx context.Context) entities.HealthCheck {
+	// Basic application health check
+	// In a real implementation, you might check memory usage, goroutine count, etc.
+	return entities.HealthCheck{
+		Status:  entities.HealthStatusHealthy,
+		Message: "Application is running",
+		Details: map[string]interface{}{
+			"version":   "1.0.0",
+			"timestamp": time.Now().UTC(),
+		},
+	}
+}
+
+{{- if ne .DatabaseDriver ""}}
+// checkDatabase checks the database health
+func (h *HealthService) checkDatabase(ctx context.Context) entities.HealthCheck {
+	if h.db == nil {
+		return entities.HealthCheck{
+			Status:  entities.HealthStatusUnhealthy,
+			Message: "Database not configured",
+			Details: map[string]interface{}{
+				"error": "database instance is nil",
+			},
+		}
+	}
+	
+	// Test database connection
+	if err := h.db.Health(); err != nil {
+		h.logger.Error(ctx, "Database health check failed", output.Error(err))
+		return entities.HealthCheck{
+			Status:  entities.HealthStatusUnhealthy,
+			Message: "Database connection failed",
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+	
+	return entities.HealthCheck{
+		Status:  entities.HealthStatusHealthy,
+		Message: "Database is healthy",
+		Details: map[string]interface{}{
+			"driver": "{{.DatabaseDriver}}",
+			"orm":    "{{.DatabaseORM}}",
+		},
+	}
+}
+{{- end}}
+
+// checkExternalDependencies checks external service dependencies
+func (h *HealthService) checkExternalDependencies(ctx context.Context) entities.HealthCheck {
+	// Check external services like APIs, message queues, etc.
+	// For now, we'll just return healthy
+	return entities.HealthCheck{
+		Status:  entities.HealthStatusHealthy,
+		Message: "External dependencies are healthy",
+		Details: map[string]interface{}{
+			"checked_services": []string{
+				// Add your external service checks here
+			},
+		},
+	}
+}
+
+// checkApplicationReadiness checks if the application is ready to serve requests
+func (h *HealthService) checkApplicationReadiness(ctx context.Context) entities.ReadinessCheck {
+	// Check if the application is fully initialized and ready
+	return entities.ReadinessCheck{
+		Ready:   true,
+		Message: "Application is ready to serve requests",
+		Details: map[string]interface{}{
+			"initialized": true,
+			"timestamp":   time.Now().UTC(),
+		},
+	}
+}
+
+{{- if ne .DatabaseDriver ""}}
+// checkDatabaseReadiness checks if the database is ready
+func (h *HealthService) checkDatabaseReadiness(ctx context.Context) entities.ReadinessCheck {
+	if h.db == nil {
+		return entities.ReadinessCheck{
+			Ready:   false,
+			Message: "Database not configured",
+			Details: map[string]interface{}{
+				"error": "database instance is nil",
+			},
+		}
+	}
+	
+	// Test database connection
+	if err := h.db.Health(); err != nil {
+		h.logger.Error(ctx, "Database readiness check failed", output.Error(err))
+		return entities.ReadinessCheck{
+			Ready:   false,
+			Message: "Database not ready",
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+	
+	return entities.ReadinessCheck{
+		Ready:   true,
+		Message: "Database is ready",
+		Details: map[string]interface{}{
+			"driver": "{{.DatabaseDriver}}",
+			"orm":    "{{.DatabaseORM}}",
+		},
+	}
+}
+{{- end}}
+
+// checkExternalDependenciesReadiness checks if external dependencies are ready
+func (h *HealthService) checkExternalDependenciesReadiness(ctx context.Context) entities.ReadinessCheck {
+	// Check if external services are ready
+	// For now, we'll just return ready
+	return entities.ReadinessCheck{
+		Ready:   true,
+		Message: "External dependencies are ready",
+		Details: map[string]interface{}{
+			"checked_services": []string{
+				// Add your external service readiness checks here
+			},
+		},
+	}
+}

@@ -1,0 +1,160 @@
+package middleware
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// LoggingConfig represents logging middleware configuration
+type LoggingConfig struct {
+	SkipPaths []string
+	Logger    output.LoggerPort
+}
+
+// ResponseWriter wraps http.ResponseWriter to capture status code and response size
+type ResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	size       int
+}
+
+// NewResponseWriter creates a new ResponseWriter
+func NewResponseWriter(w http.ResponseWriter) *ResponseWriter {
+	return &ResponseWriter{
+		ResponseWriter: w,
+		statusCode:     http.StatusOK,
+		size:          0,
+	}
+}
+
+// WriteHeader captures the status code
+func (rw *ResponseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Write captures the response size
+func (rw *ResponseWriter) Write(b []byte) (int, error) {
+	size, err := rw.ResponseWriter.Write(b)
+	rw.size += size
+	return size, err
+}
+
+// StatusCode returns the captured status code
+func (rw *ResponseWriter) StatusCode() int {
+	return rw.statusCode
+}
+
+// Size returns the captured response size
+func (rw *ResponseWriter) Size() int {
+	return rw.size
+}
+
+// Logging returns a middleware that logs HTTP requests
+func Logging(config LoggingConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			
+			// Skip logging for certain paths
+			for _, path := range config.SkipPaths {
+				if r.URL.Path == path {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			
+			// Wrap the response writer to capture status and size
+			rw := NewResponseWriter(w)
+			
+			// Process the request
+			next.ServeHTTP(rw, r)
+			
+			// Calculate request duration
+			duration := time.Since(start)
+			
+			// Log the request
+			logRequestInfo(config.Logger, r, rw, duration)
+		})
+	}
+}
+
+// logRequestInfo logs the HTTP request information
+func logRequestInfo(logger output.LoggerPort, r *http.Request, rw *ResponseWriter, duration time.Duration) {
+	ctx := r.Context()
+	
+	// Determine log level based on status code
+	statusCode := rw.StatusCode()
+	
+	fields := []interface{}{
+		output.String("method", r.Method),
+		output.String("path", r.URL.Path),
+		output.String("remote_addr", getClientIP(r)),
+		output.String("user_agent", r.UserAgent()),
+		output.Int("status_code", statusCode),
+		output.Int("response_size", rw.Size()),
+		output.Duration("duration", duration),
+	}
+	
+	// Add query parameters if present
+	if r.URL.RawQuery != "" {
+		fields = append(fields, output.String("query", r.URL.RawQuery))
+	}
+	
+	// Add referer if present
+	if referer := r.Header.Get("Referer"); referer != "" {
+		fields = append(fields, output.String("referer", referer))
+	}
+	
+	// Add request ID if present
+	if requestID := r.Header.Get("X-Request-ID"); requestID != "" {
+		fields = append(fields, output.String("request_id", requestID))
+	}
+	
+	// Log based on status code
+	switch {
+	case statusCode >= 500:
+		logger.Error(ctx, "HTTP Request", fields...)
+	case statusCode >= 400:
+		logger.Warn(ctx, "HTTP Request", fields...)
+	default:
+		logger.Info(ctx, "HTTP Request", fields...)
+	}
+}
+
+// getClientIP extracts the client IP address from the request
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header (most common)
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// X-Forwarded-For can contain multiple IPs, use the first one
+		if idx := strings.Index(xff, ","); idx != -1 {
+			return strings.TrimSpace(xff[:idx])
+		}
+		return strings.TrimSpace(xff)
+	}
+	
+	// Check X-Real-IP header
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return strings.TrimSpace(xri)
+	}
+	
+	// Check CF-Connecting-IP (Cloudflare)
+	if cfip := r.Header.Get("CF-Connecting-IP"); cfip != "" {
+		return strings.TrimSpace(cfip)
+	}
+	
+	// Fall back to RemoteAddr
+	return r.RemoteAddr
+}
+
+// LoggingWithDefaults returns a logging middleware with default configuration
+func LoggingWithDefaults(logger output.LoggerPort) func(http.Handler) http.Handler {
+	config := LoggingConfig{
+		SkipPaths: []string{"/health", "/metrics", "/favicon.ico"},
+		Logger:    logger,
+	}
+	return Logging(config)
+}

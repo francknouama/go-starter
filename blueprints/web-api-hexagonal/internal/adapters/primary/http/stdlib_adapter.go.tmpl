@@ -1,0 +1,169 @@
+package http
+
+import (
+	"net/http"
+	"strings"
+
+	"{{.ModulePath}}/internal/adapters/primary/http/middleware"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// StdlibAdapter implements the HTTP server using standard library
+type StdlibAdapter struct {
+	mux         *http.ServeMux
+	healthPort  input.HealthPort
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port input.{{.DomainName | title}}Port
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort    input.AuthPort
+	{{- end}}
+	logger      output.LoggerPort
+}
+
+// NewStdlibAdapter creates a new standard library HTTP adapter
+func NewStdlibAdapter(
+	healthPort input.HealthPort,
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port input.{{.DomainName | title}}Port,
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort input.AuthPort,
+	{{- end}}
+	logger output.LoggerPort,
+) *StdlibAdapter {
+	mux := http.NewServeMux()
+	
+	adapter := &StdlibAdapter{
+		mux:         mux,
+		healthPort:  healthPort,
+		{{- if ne .DatabaseDriver ""}}
+		{{.DomainName}}Port: {{.DomainName}}Port,
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		authPort:    authPort,
+		{{- end}}
+		logger:      logger,
+	}
+	
+	adapter.setupRoutes()
+	
+	return adapter
+}
+
+// setupRoutes configures all the HTTP routes
+func (s *StdlibAdapter) setupRoutes() {
+	// Health check routes
+	healthHandler := NewHealthHandler(s.healthPort, s.logger)
+	s.mux.HandleFunc("/health", healthHandler.HandleHealth)
+	s.mux.HandleFunc("/health/ready", healthHandler.HandleReadiness)
+	
+	{{- if ne .DatabaseDriver ""}}
+	// {{.DomainName | title}} routes
+	{{.DomainName}}Handler := New{{.DomainName | title}}Handler(s.{{.DomainName}}Port, s.logger)
+	s.mux.HandleFunc("/api/v1/{{.DomainName}}s", s.handleWithMethod(map[string]http.HandlerFunc{
+		"POST": {{.DomainName}}Handler.HandleCreate,
+		"GET":  {{.DomainName}}Handler.HandleList,
+	}))
+	s.mux.HandleFunc("/api/v1/{{.DomainName}}s/", s.handleWithMethodAndID(map[string]http.HandlerFunc{
+		"GET":    {{.DomainName}}Handler.HandleGetByID,
+		"PUT":    {{.DomainName}}Handler.HandleUpdate,
+		"DELETE": {{.DomainName}}Handler.HandleDelete,
+	}))
+	{{- end}}
+	
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	authHandler := NewAuthHandler(s.authPort, s.logger)
+	s.mux.HandleFunc("/api/v1/auth/login", authHandler.HandleLogin)
+	s.mux.HandleFunc("/api/v1/auth/register", authHandler.HandleRegister)
+	s.mux.HandleFunc("/api/v1/auth/refresh", authHandler.HandleRefreshToken)
+	s.mux.HandleFunc("/api/v1/auth/logout", authHandler.HandleLogout)
+	s.mux.HandleFunc("/api/v1/auth/change-password", authHandler.HandleChangePassword)
+	s.mux.HandleFunc("/api/v1/auth/reset-password", authHandler.HandleResetPassword)
+	s.mux.HandleFunc("/api/v1/auth/confirm-reset", authHandler.HandleConfirmPasswordReset)
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Protected {{.DomainName}} routes
+	{{.DomainName}}Handler := New{{.DomainName | title}}Handler(s.{{.DomainName}}Port, s.logger)
+	authConfig := middleware.DefaultAuthConfig(s.authPort, s.logger)
+	s.mux.HandleFunc("/api/v1/{{.DomainName}}s/me", s.withAuth(authConfig, {{.DomainName}}Handler.HandleGetProfile))
+	s.mux.HandleFunc("/api/v1/{{.DomainName}}s/me/update", s.withAuth(authConfig, {{.DomainName}}Handler.HandleUpdateProfile))
+	{{- end}}
+	{{- end}}
+}
+
+// handleWithMethod routes requests based on HTTP method
+func (s *StdlibAdapter) handleWithMethod(handlers map[string]http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handler, exists := handlers[r.Method]
+		if !exists {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		handler(w, r)
+	}
+}
+
+// handleWithMethodAndID routes requests based on HTTP method and extracts ID from URL
+func (s *StdlibAdapter) handleWithMethodAndID(handlers map[string]http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		handler, exists := handlers[r.Method]
+		if !exists {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		
+		// Extract ID from URL path
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/{{.DomainName}}s/"), "/")
+		if len(parts) > 0 && parts[0] != "" {
+			// Add ID to request context or as a query parameter
+			q := r.URL.Query()
+			q.Set("id", parts[0])
+			r.URL.RawQuery = q.Encode()
+		}
+		
+		handler(w, r)
+	}
+}
+
+// withAuth wraps a handler with authentication middleware
+func (s *StdlibAdapter) withAuth(authConfig middleware.AuthConfig, handler http.HandlerFunc) http.HandlerFunc {
+	return middleware.Auth(authConfig)(handler).ServeHTTP
+}
+
+// withMiddleware wraps handlers with the middleware chain
+func (s *StdlibAdapter) withMiddleware(handler http.Handler) http.Handler {
+	// CORS middleware
+	corsConfig := middleware.DefaultCORSConfig()
+	handler = middleware.CORS(corsConfig)(handler)
+	
+	// Logging middleware
+	loggingConfig := middleware.LoggingConfig{
+		SkipPaths: []string{"/health", "/metrics"},
+		Logger:    s.logger,
+	}
+	handler = middleware.Logging(loggingConfig)(handler)
+	
+	return handler
+}
+
+// Start starts the HTTP server
+func (s *StdlibAdapter) Start(addr string) error {
+	s.logger.Info(nil, "Starting standard library HTTP server", output.String("address", addr))
+	return http.ListenAndServe(addr, s.withMiddleware(s.mux))
+}
+
+// Stop stops the HTTP server gracefully
+func (s *StdlibAdapter) Stop() error {
+	s.logger.Info(nil, "Stopping standard library HTTP server")
+	// Standard library doesn't have built-in graceful shutdown
+	// In a real implementation, you might want to use http.Server with context
+	return nil
+}
+
+// Handler returns the underlying HTTP handler
+func (s *StdlibAdapter) Handler() http.Handler {
+	return s.withMiddleware(s.mux)
+}

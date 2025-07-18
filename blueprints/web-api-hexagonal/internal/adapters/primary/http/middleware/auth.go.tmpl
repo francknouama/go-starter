@@ -1,0 +1,158 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// AuthConfig represents authentication middleware configuration
+type AuthConfig struct {
+	AuthPort   input.AuthPort
+	Logger     output.LoggerPort
+	SkipPaths  []string
+	TokenHeader string
+}
+
+// DefaultAuthConfig returns the default authentication configuration
+func DefaultAuthConfig(authPort input.AuthPort, logger output.LoggerPort) AuthConfig {
+	return AuthConfig{
+		AuthPort:    authPort,
+		Logger:      logger,
+		SkipPaths:   []string{"/health", "/metrics", "/api/v1/auth/login", "/api/v1/auth/register"},
+		TokenHeader: "Authorization",
+	}
+}
+
+// Auth returns a middleware that handles authentication
+func Auth(config AuthConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			
+			// Skip authentication for certain paths
+			for _, path := range config.SkipPaths {
+				if r.URL.Path == path {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			
+			// Extract token from header
+			token := extractToken(r, config.TokenHeader)
+			if token == "" {
+				config.Logger.Warn(ctx, "Missing authentication token")
+				http.Error(w, "Unauthorized: missing authentication token", http.StatusUnauthorized)
+				return
+			}
+			
+			// Validate token using auth port
+			user, err := config.AuthPort.ValidateToken(ctx, token)
+			if err != nil {
+				config.Logger.Warn(ctx, "Invalid authentication token", output.Error(err))
+				http.Error(w, "Unauthorized: invalid authentication token", http.StatusUnauthorized)
+				return
+			}
+			
+			// Add user to context
+			ctx = context.WithValue(ctx, "user", user)
+			ctx = context.WithValue(ctx, "user_id", user.ID().Value())
+			
+			// Continue to next handler
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// OptionalAuth returns a middleware that optionally handles authentication
+// If a token is provided, it validates it and adds user to context
+// If no token is provided, it continues without authentication
+func OptionalAuth(config AuthConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			
+			// Extract token from header
+			token := extractToken(r, config.TokenHeader)
+			if token == "" {
+				// No token provided, continue without authentication
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			// Validate token using auth port
+			user, err := config.AuthPort.ValidateToken(ctx, token)
+			if err != nil {
+				config.Logger.Warn(ctx, "Invalid authentication token", output.Error(err))
+				// Invalid token, continue without authentication
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			// Add user to context
+			ctx = context.WithValue(ctx, "user", user)
+			ctx = context.WithValue(ctx, "user_id", user.ID().Value())
+			
+			// Continue to next handler
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// RequireRole returns a middleware that requires a specific role
+func RequireRole(role string, config AuthConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
+			
+			// First, ensure user is authenticated
+			user := ctx.Value("user")
+			if user == nil {
+				config.Logger.Warn(ctx, "User not authenticated for role requirement", output.String("required_role", role))
+				http.Error(w, "Unauthorized: authentication required", http.StatusUnauthorized)
+				return
+			}
+			
+			// Check if user has required role
+			// Note: This assumes the user entity has a method to check roles
+			// Implementation depends on your specific user entity structure
+			config.Logger.Info(ctx, "Role requirement check", output.String("required_role", role))
+			
+			// For now, we'll just continue - implement role checking based on your user entity
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// extractToken extracts the authentication token from the request
+func extractToken(r *http.Request, tokenHeader string) string {
+	// Get token from header
+	authHeader := r.Header.Get(tokenHeader)
+	if authHeader == "" {
+		return ""
+	}
+	
+	// Handle Bearer token format
+	if strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimPrefix(authHeader, "Bearer ")
+	}
+	
+	// Handle other formats or return as-is
+	return authHeader
+}
+
+// GetUserFromContext extracts the user from the request context
+func GetUserFromContext(ctx context.Context) interface{} {
+	return ctx.Value("user")
+}
+
+// GetUserIDFromContext extracts the user ID from the request context
+func GetUserIDFromContext(ctx context.Context) string {
+	if userID, ok := ctx.Value("user_id").(string); ok {
+		return userID
+	}
+	return ""
+}

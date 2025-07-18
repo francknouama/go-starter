@@ -1,0 +1,112 @@
+package logger
+
+import (
+	"context"
+
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// ZapAdapter implements the LoggerPort interface using zap
+type ZapAdapter struct {
+	logger *zap.Logger
+}
+
+// NewZapAdapter creates a new zap adapter
+func NewZapAdapter() output.LoggerPort {
+	// Create a production logger with JSON encoding
+	logger, _ := zap.NewProduction()
+	
+	return &ZapAdapter{
+		logger: logger,
+	}
+}
+
+// NewZapAdapterWithLevel creates a new zap adapter with specified log level
+func NewZapAdapterWithLevel(level string) output.LoggerPort {
+	var zapLevel zapcore.Level
+	
+	switch level {
+	case "debug":
+		zapLevel = zapcore.DebugLevel
+	case "info":
+		zapLevel = zapcore.InfoLevel
+	case "warn":
+		zapLevel = zapcore.WarnLevel
+	case "error":
+		zapLevel = zapcore.ErrorLevel
+	default:
+		zapLevel = zapcore.InfoLevel
+	}
+	
+	config := zap.NewProductionConfig()
+	config.Level = zap.NewAtomicLevelAt(zapLevel)
+	
+	logger, _ := config.Build()
+	
+	return &ZapAdapter{
+		logger: logger,
+	}
+}
+
+// Debug logs a debug message
+func (z *ZapAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
+	fields := z.convertArgsToFields(args...)
+	z.logger.Debug(msg, fields...)
+}
+
+// Info logs an info message
+func (z *ZapAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
+	fields := z.convertArgsToFields(args...)
+	z.logger.Info(msg, fields...)
+}
+
+// Warn logs a warning message
+func (z *ZapAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
+	fields := z.convertArgsToFields(args...)
+	z.logger.Warn(msg, fields...)
+}
+
+// Error logs an error message
+func (z *ZapAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
+	fields := z.convertArgsToFields(args...)
+	z.logger.Error(msg, fields...)
+}
+
+// With creates a new logger with additional fields
+func (z *ZapAdapter) With(args ...interface{}) output.LoggerPort {
+	fields := z.convertArgsToFields(args...)
+	return &ZapAdapter{
+		logger: z.logger.With(fields...),
+	}
+}
+
+// WithFields creates a new logger with additional fields from a map
+func (z *ZapAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	
+	return &ZapAdapter{
+		logger: z.logger.With(zapFields...),
+	}
+}
+
+// convertArgsToFields converts variadic arguments to zap fields
+func (z *ZapAdapter) convertArgsToFields(args ...interface{}) []zap.Field {
+	fields := make([]zap.Field, 0, len(args)/2)
+	
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			key, ok := args[i].(string)
+			if ok {
+				fields = append(fields, zap.Any(key, args[i+1]))
+			}
+		}
+	}
+	
+	return fields
+}

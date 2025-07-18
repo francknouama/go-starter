@@ -1,0 +1,152 @@
+package http
+
+import (
+	"io"
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	echomiddleware "github.com/labstack/echo/v4/middleware"
+
+	"{{.ModulePath}}/internal/adapters/primary/http/middleware"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// EchoAdapter implements the HTTP server using Echo framework
+type EchoAdapter struct {
+	echo        *echo.Echo
+	healthPort  input.HealthPort
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port input.{{.DomainName | title}}Port
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort    input.AuthPort
+	{{- end}}
+	logger      output.LoggerPort
+}
+
+// NewEchoAdapter creates a new Echo HTTP adapter
+func NewEchoAdapter(
+	healthPort input.HealthPort,
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port input.{{.DomainName | title}}Port,
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort input.AuthPort,
+	{{- end}}
+	logger output.LoggerPort,
+) *EchoAdapter {
+	e := echo.New()
+	
+	// Disable Echo's default logger
+	e.Logger.SetOutput(io.Discard)
+	
+	// Add recovery middleware
+	e.Use(echomiddleware.Recover())
+	
+	adapter := &EchoAdapter{
+		echo:        e,
+		healthPort:  healthPort,
+		{{- if ne .DatabaseDriver ""}}
+		{{.DomainName}}Port: {{.DomainName}}Port,
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		authPort:    authPort,
+		{{- end}}
+		logger:      logger,
+	}
+	
+	adapter.setupMiddleware()
+	adapter.setupRoutes()
+	
+	return adapter
+}
+
+// setupMiddleware configures the middleware chain
+func (e *EchoAdapter) setupMiddleware() {
+	// CORS middleware
+	corsConfig := middleware.DefaultCORSConfig()
+	e.echo.Use(echo.WrapMiddleware(middleware.CORS(corsConfig)))
+	
+	// Logging middleware
+	loggingConfig := middleware.LoggingConfig{
+		SkipPaths: []string{"/health", "/metrics"},
+		Logger:    e.logger,
+	}
+	e.echo.Use(echo.WrapMiddleware(middleware.Logging(loggingConfig)))
+}
+
+// setupRoutes configures all the HTTP routes
+func (e *EchoAdapter) setupRoutes() {
+	// Health check routes
+	healthHandler := NewHealthHandler(e.healthPort, e.logger)
+	e.echo.GET("/health", e.adaptHandler(healthHandler.HandleHealth))
+	e.echo.GET("/health/ready", e.adaptHandler(healthHandler.HandleReadiness))
+	
+	// API routes
+	api := e.echo.Group("/api/v1")
+	
+	{{- if ne .DatabaseDriver ""}}
+	// {{.DomainName | title}} routes
+	{{.DomainName}}Handler := New{{.DomainName | title}}Handler(e.{{.DomainName}}Port, e.logger)
+	{{.DomainName}}Routes := api.Group("/{{.DomainName}}s")
+	{
+		{{.DomainName}}Routes.POST("", e.adaptHandler({{.DomainName}}Handler.HandleCreate))
+		{{.DomainName}}Routes.GET("/:id", e.adaptHandler({{.DomainName}}Handler.HandleGetByID))
+		{{.DomainName}}Routes.PUT("/:id", e.adaptHandler({{.DomainName}}Handler.HandleUpdate))
+		{{.DomainName}}Routes.DELETE("/:id", e.adaptHandler({{.DomainName}}Handler.HandleDelete))
+		{{.DomainName}}Routes.GET("", e.adaptHandler({{.DomainName}}Handler.HandleList))
+	}
+	{{- end}}
+	
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	authHandler := NewAuthHandler(e.authPort, e.logger)
+	authRoutes := api.Group("/auth")
+	{
+		authRoutes.POST("/login", e.adaptHandler(authHandler.HandleLogin))
+		authRoutes.POST("/register", e.adaptHandler(authHandler.HandleRegister))
+		authRoutes.POST("/refresh", e.adaptHandler(authHandler.HandleRefreshToken))
+		authRoutes.POST("/logout", e.adaptHandler(authHandler.HandleLogout))
+		authRoutes.POST("/change-password", e.adaptHandler(authHandler.HandleChangePassword))
+		authRoutes.POST("/reset-password", e.adaptHandler(authHandler.HandleResetPassword))
+		authRoutes.POST("/confirm-reset", e.adaptHandler(authHandler.HandleConfirmPasswordReset))
+	}
+	
+	// Protected routes that require authentication
+	authConfig := middleware.DefaultAuthConfig(e.authPort, e.logger)
+	protected := api.Group("")
+	protected.Use(echo.WrapMiddleware(middleware.Auth(authConfig)))
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Protected {{.DomainName}} routes
+	protected{{.DomainName | title}}Routes := protected.Group("/{{.DomainName}}s")
+	{
+		protected{{.DomainName | title}}Routes.GET("/me", e.adaptHandler({{.DomainName}}Handler.HandleGetProfile))
+		protected{{.DomainName | title}}Routes.PUT("/me", e.adaptHandler({{.DomainName}}Handler.HandleUpdateProfile))
+	}
+	{{- end}}
+	{{- end}}
+}
+
+// adaptHandler adapts a standard HTTP handler to Echo handler
+func (e *EchoAdapter) adaptHandler(handler http.HandlerFunc) echo.HandlerFunc {
+	return echo.WrapHandler(http.HandlerFunc(handler))
+}
+
+// Start starts the HTTP server
+func (e *EchoAdapter) Start(addr string) error {
+	e.logger.Info(nil, "Starting Echo HTTP server", output.String("address", addr))
+	return e.echo.Start(addr)
+}
+
+// Stop stops the HTTP server gracefully
+func (e *EchoAdapter) Stop() error {
+	e.logger.Info(nil, "Stopping Echo HTTP server")
+	return e.echo.Close()
+}
+
+// Handler returns the underlying HTTP handler
+func (e *EchoAdapter) Handler() http.Handler {
+	return e.echo
+}

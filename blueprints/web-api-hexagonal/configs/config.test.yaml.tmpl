@@ -1,0 +1,136 @@
+# Test configuration
+environment: test
+
+server:
+  host: localhost
+  port: 8081
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 30s
+
+logging:
+  level: warn
+  format: json
+  output: stdout
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: {{.DatabaseDriver}}
+  {{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5432
+  name: {{.ProjectName}}_test
+  user: postgres
+  password: postgres
+  ssl_mode: disable
+  max_open_connections: 10
+  max_idle_connections: 2
+  connection_max_lifetime: 30m
+  {{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3306
+  name: {{.ProjectName}}_test
+  user: root
+  password: root
+  charset: utf8mb4
+  parse_time: true
+  max_open_connections: 10
+  max_idle_connections: 2
+  connection_max_lifetime: 30m
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  path: ":memory:"
+  {{- else if eq .DatabaseDriver "redis"}}
+  host: localhost
+  port: 6379
+  password: ""
+  database: 1
+  {{- end}}
+  {{- if ne .DatabaseORM ""}}
+  orm: {{.DatabaseORM}}
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  type: {{.AuthType}}
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: test-jwt-secret-key-not-for-production
+    expiration: 1h
+    refresh_expiration: 24h
+    issuer: {{.ProjectName}}-test
+    audience: {{.ProjectName}}-test-users
+  {{- else if eq .AuthType "session"}}
+  session:
+    secret: test-session-secret-key-not-for-production
+    cookie_name: {{.ProjectName}}_test_session
+    cookie_domain: localhost
+    cookie_secure: false
+    cookie_http_only: true
+    cookie_same_site: lax
+    expiration: 1h
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    providers:
+      google:
+        client_id: test-google-client-id
+        client_secret: test-google-client-secret
+        redirect_url: http://localhost:8081/auth/callback/google
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: test-github-client-id
+        client_secret: test-github-client-secret
+        redirect_url: http://localhost:8081/auth/callback/github
+        scopes: ["user:email"]
+  {{- end}}
+{{- end}}
+
+cors:
+  allowed_origins:
+    - http://localhost:3000
+    - http://localhost:8081
+  allowed_methods:
+    - GET
+    - POST
+    - PUT
+    - DELETE
+    - OPTIONS
+  allowed_headers:
+    - Content-Type
+    - Authorization
+    - X-Requested-With
+  exposed_headers:
+    - Content-Length
+    - X-Total-Count
+  allow_credentials: true
+  max_age: 3600 # 1 hour
+
+security:
+  rate_limit:
+    enabled: false
+    requests_per_minute: 1000
+    burst: 100
+  request_size_limit: 1MB
+  timeout:
+    read: 10s
+    write: 10s
+    idle: 30s
+
+metrics:
+  enabled: false
+  path: /metrics
+  port: 9091
+
+health_check:
+  enabled: true
+  path: /health
+  detailed_path: /health/detailed
+
+# Test-specific settings
+test:
+  debug: false
+  hot_reload: false
+  profiling: false
+  verbose_logging: false
+  fast_mode: true
+  skip_migrations: false

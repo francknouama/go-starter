@@ -1,0 +1,151 @@
+package http
+
+import (
+	"net/http"
+
+	"github.com/gofiber/fiber/v2"
+	fibermiddleware "github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/adaptor"
+
+	"{{.ModulePath}}/internal/adapters/primary/http/middleware"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// FiberAdapter implements the HTTP server using Fiber framework
+type FiberAdapter struct {
+	app         *fiber.App
+	healthPort  input.HealthPort
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port input.{{.DomainName | title}}Port
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort    input.AuthPort
+	{{- end}}
+	logger      output.LoggerPort
+}
+
+// NewFiberAdapter creates a new Fiber HTTP adapter
+func NewFiberAdapter(
+	healthPort input.HealthPort,
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port input.{{.DomainName | title}}Port,
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort input.AuthPort,
+	{{- end}}
+	logger output.LoggerPort,
+) *FiberAdapter {
+	app := fiber.New(fiber.Config{
+		DisableStartupMessage: true,
+	})
+	
+	// Add recovery middleware
+	app.Use(fibermiddleware.New())
+	
+	adapter := &FiberAdapter{
+		app:         app,
+		healthPort:  healthPort,
+		{{- if ne .DatabaseDriver ""}}
+		{{.DomainName}}Port: {{.DomainName}}Port,
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		authPort:    authPort,
+		{{- end}}
+		logger:      logger,
+	}
+	
+	adapter.setupMiddleware()
+	adapter.setupRoutes()
+	
+	return adapter
+}
+
+// setupMiddleware configures the middleware chain
+func (f *FiberAdapter) setupMiddleware() {
+	// CORS middleware
+	corsConfig := middleware.DefaultCORSConfig()
+	f.app.Use(adaptor.HTTPMiddleware(middleware.CORS(corsConfig)))
+	
+	// Logging middleware
+	loggingConfig := middleware.LoggingConfig{
+		SkipPaths: []string{"/health", "/metrics"},
+		Logger:    f.logger,
+	}
+	f.app.Use(adaptor.HTTPMiddleware(middleware.Logging(loggingConfig)))
+}
+
+// setupRoutes configures all the HTTP routes
+func (f *FiberAdapter) setupRoutes() {
+	// Health check routes
+	healthHandler := NewHealthHandler(f.healthPort, f.logger)
+	f.app.Get("/health", f.adaptHandler(healthHandler.HandleHealth))
+	f.app.Get("/health/ready", f.adaptHandler(healthHandler.HandleReadiness))
+	
+	// API routes
+	api := f.app.Group("/api/v1")
+	
+	{{- if ne .DatabaseDriver ""}}
+	// {{.DomainName | title}} routes
+	{{.DomainName}}Handler := New{{.DomainName | title}}Handler(f.{{.DomainName}}Port, f.logger)
+	{{.DomainName}}Routes := api.Group("/{{.DomainName}}s")
+	{
+		{{.DomainName}}Routes.Post("", f.adaptHandler({{.DomainName}}Handler.HandleCreate))
+		{{.DomainName}}Routes.Get("/:id", f.adaptHandler({{.DomainName}}Handler.HandleGetByID))
+		{{.DomainName}}Routes.Put("/:id", f.adaptHandler({{.DomainName}}Handler.HandleUpdate))
+		{{.DomainName}}Routes.Delete("/:id", f.adaptHandler({{.DomainName}}Handler.HandleDelete))
+		{{.DomainName}}Routes.Get("", f.adaptHandler({{.DomainName}}Handler.HandleList))
+	}
+	{{- end}}
+	
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	authHandler := NewAuthHandler(f.authPort, f.logger)
+	authRoutes := api.Group("/auth")
+	{
+		authRoutes.Post("/login", f.adaptHandler(authHandler.HandleLogin))
+		authRoutes.Post("/register", f.adaptHandler(authHandler.HandleRegister))
+		authRoutes.Post("/refresh", f.adaptHandler(authHandler.HandleRefreshToken))
+		authRoutes.Post("/logout", f.adaptHandler(authHandler.HandleLogout))
+		authRoutes.Post("/change-password", f.adaptHandler(authHandler.HandleChangePassword))
+		authRoutes.Post("/reset-password", f.adaptHandler(authHandler.HandleResetPassword))
+		authRoutes.Post("/confirm-reset", f.adaptHandler(authHandler.HandleConfirmPasswordReset))
+	}
+	
+	// Protected routes that require authentication
+	authConfig := middleware.DefaultAuthConfig(f.authPort, f.logger)
+	protected := api.Group("")
+	protected.Use(adaptor.HTTPMiddleware(middleware.Auth(authConfig)))
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Protected {{.DomainName}} routes
+	protected{{.DomainName | title}}Routes := protected.Group("/{{.DomainName}}s")
+	{
+		protected{{.DomainName | title}}Routes.Get("/me", f.adaptHandler({{.DomainName}}Handler.HandleGetProfile))
+		protected{{.DomainName | title}}Routes.Put("/me", f.adaptHandler({{.DomainName}}Handler.HandleUpdateProfile))
+	}
+	{{- end}}
+	{{- end}}
+}
+
+// adaptHandler adapts a standard HTTP handler to Fiber handler
+func (f *FiberAdapter) adaptHandler(handler http.HandlerFunc) fiber.Handler {
+	return adaptor.HTTPHandler(handler)
+}
+
+// Start starts the HTTP server
+func (f *FiberAdapter) Start(addr string) error {
+	f.logger.Info(nil, "Starting Fiber HTTP server", output.String("address", addr))
+	return f.app.Listen(addr)
+}
+
+// Stop stops the HTTP server gracefully
+func (f *FiberAdapter) Stop() error {
+	f.logger.Info(nil, "Stopping Fiber HTTP server")
+	return f.app.Shutdown()
+}
+
+// Handler returns the underlying HTTP handler
+func (f *FiberAdapter) Handler() http.Handler {
+	return adaptor.FiberApp(f.app)
+}
