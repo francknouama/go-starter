@@ -102,6 +102,7 @@ func TestStandard_WebAPI_LoggerIntegration(t *testing.T) {
 
 	for _, logger := range loggers {
 		t.Run("Logger_"+logger, func(t *testing.T) {
+			t.Parallel() // Safe to run logger tests in parallel
 			// Scenario: Logger integration
 			// Given I generate a "standard" web API with "<logger>"
 			// Then logging should be properly configured
@@ -150,6 +151,7 @@ func TestStandard_WebAPI_FrameworkVariations(t *testing.T) {
 
 	for _, framework := range frameworks {
 		t.Run("Framework_"+framework, func(t *testing.T) {
+			t.Parallel() // Safe to run framework tests in parallel
 			config := types.ProjectConfig{
 				Name:      "test-standard-" + framework,
 				Module:    "github.com/test/test-standard-" + framework,
