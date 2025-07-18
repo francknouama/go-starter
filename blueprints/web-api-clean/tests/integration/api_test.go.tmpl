@@ -12,8 +12,8 @@ import (
 	"{{.ModulePath}}/internal/infrastructure/logger"
 )
 
-// MockHTTPContext implements ports.HTTPContext for testing
-type MockHTTPContext struct {
+// mockHTTPContext implements ports.HTTPContext for testing
+type mockHTTPContext struct {
 	statusCode int
 	body       interface{}
 	headers    map[string]string
@@ -22,8 +22,8 @@ type MockHTTPContext struct {
 	request    *http.Request
 }
 
-func NewMockHTTPContext() *MockHTTPContext {
-	return &MockHTTPContext{
+func newMockHTTPContext() *mockHTTPContext {
+	return &mockHTTPContext{
 		headers: make(map[string]string),
 		params:  make(map[string]string),
 		queries: make(map[string]string),
@@ -32,82 +32,82 @@ func NewMockHTTPContext() *MockHTTPContext {
 }
 
 // Request data methods
-func (m *MockHTTPContext) GetParam(key string) string {
+func (m *mockHTTPContext) GetParam(key string) string {
 	return m.params[key]
 }
 
-func (m *MockHTTPContext) GetQuery(key string) string {
+func (m *mockHTTPContext) GetQuery(key string) string {
 	return m.queries[key]
 }
 
-func (m *MockHTTPContext) GetHeader(key string) string {
+func (m *mockHTTPContext) GetHeader(key string) string {
 	return m.headers[key]
 }
 
-func (m *MockHTTPContext) BindJSON(obj interface{}) error {
+func (m *mockHTTPContext) BindJSON(obj interface{}) error {
 	return nil
 }
 
-func (m *MockHTTPContext) GetRequestContext() context.Context {
+func (m *mockHTTPContext) GetRequestContext() context.Context {
 	return context.Background()
 }
 
-func (m *MockHTTPContext) GetMethod() string {
+func (m *mockHTTPContext) GetMethod() string {
 	return m.request.Method
 }
 
-func (m *MockHTTPContext) GetRequest() *http.Request {
+func (m *mockHTTPContext) GetRequest() *http.Request {
 	return m.request
 }
 
 // Response methods
-func (m *MockHTTPContext) JSON(code int, obj interface{}) {
+func (m *mockHTTPContext) JSON(code int, obj interface{}) {
 	m.statusCode = code
 	m.body = obj
 }
 
-func (m *MockHTTPContext) String(code int, message string) {
+func (m *mockHTTPContext) String(code int, message string) {
 	m.statusCode = code
 	m.body = message
 }
 
-func (m *MockHTTPContext) NoContent(code int) {
+func (m *mockHTTPContext) NoContent(code int) {
 	m.statusCode = code
 	m.body = nil
 }
 
-func (m *MockHTTPContext) SetHeader(key, value string) {
+func (m *mockHTTPContext) SetHeader(key, value string) {
 	m.headers[key] = value
 }
 
-func (m *MockHTTPContext) GetStatusCode() int {
+func (m *mockHTTPContext) GetStatusCode() int {
 	return m.statusCode
 }
 
 // Client info methods
-func (m *MockHTTPContext) ClientIP() string {
+func (m *mockHTTPContext) ClientIP() string {
 	return "127.0.0.1"
 }
 
-func (m *MockHTTPContext) GetClientIP() string {
+func (m *mockHTTPContext) GetClientIP() string {
 	return "127.0.0.1"
 }
 
 // Middleware support methods
-func (m *MockHTTPContext) Next() {
+func (m *mockHTTPContext) Next() {
 	// No-op for testing
 }
 
-func (m *MockHTTPContext) GetErrors() []string {
+func (m *mockHTTPContext) GetErrors() []string {
 	return []string{}
 }
 
 // Context values for middleware data passing
-func (m *MockHTTPContext) Set(key string, value interface{}) {
+func (m *mockHTTPContext) Set(key string, value interface{}) {
 	// For testing, we can just ignore this or store in a map if needed
 }
 
-func (m *MockHTTPContext) Get(key string) (interface{}, bool) {
+func (m *mockHTTPContext) Get(key string) (interface{}, bool) {
 	// For testing, return nil/false unless specifically needed
 	return nil, false
 }
@@ -117,7 +117,7 @@ func TestHealthController(t *testing.T) {
 	healthController := controllers.NewHealthController()
 
 	// Create mock context
-	ctx := NewMockHTTPContext()
+	ctx := newMockHTTPContext()
 
 	// Test health endpoint
 	healthController.Health(ctx)
@@ -140,7 +140,7 @@ func TestReadinessController(t *testing.T) {
 	healthController := controllers.NewHealthController()
 
 	// Create mock context
-	ctx := NewMockHTTPContext()
+	ctx := newMockHTTPContext()
 
 	// Test readiness endpoint
 	healthController.Readiness(ctx)
@@ -160,7 +160,7 @@ func TestLivenessController(t *testing.T) {
 	healthController := controllers.NewHealthController()
 
 	// Create mock context
-	ctx := NewMockHTTPContext()
+	ctx := newMockHTTPContext()
 
 	// Test liveness endpoint
 	healthController.Liveness(ctx)
