@@ -16,17 +16,17 @@ import (
 	"{{.ModulePath}}/internal/services"
 )
 
-// MockUserRepository is a mock implementation of UserRepository
-type MockUserRepository struct {
+// mockUserRepository is a mock implementation of UserRepository
+type mockUserRepository struct {
 	mock.Mock
 }
 
-func (m *MockUserRepository) GetAll(limit, offset int) ([]models.User, error) {
+func (m *mockUserRepository) GetAll(limit, offset int) ([]models.User, error) {
 	args := m.Called(limit, offset)
 	return args.Get(0).([]models.User), args.Error(1)
 }
 
-func (m *MockUserRepository) GetByID(id uint) (*models.User, error) {
+func (m *mockUserRepository) GetByID(id uint) (*models.User, error) {
 	args := m.Called(id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -34,7 +34,7 @@ func (m *MockUserRepository) GetByID(id uint) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserRepository) GetByEmail(email string) (*models.User, error) {
+func (m *mockUserRepository) GetByEmail(email string) (*models.User, error) {
 	args := m.Called(email)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -42,7 +42,7 @@ func (m *MockUserRepository) GetByEmail(email string) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserRepository) Create(user *models.User) error {
+func (m *mockUserRepository) Create(user *models.User) error {
 	args := m.Called(user)
 	// Simulate setting ID and timestamps
 	user.ID = 1
@@ -51,18 +51,18 @@ func (m *MockUserRepository) Create(user *models.User) error {
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) Update(user *models.User) error {
+func (m *mockUserRepository) Update(user *models.User) error {
 	args := m.Called(user)
 	user.UpdatedAt = time.Now()
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) Delete(id uint) error {
+func (m *mockUserRepository) Delete(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) Count() (int, error) {
+func (m *mockUserRepository) Count() (int, error) {
 	args := m.Called()
 	return args.Int(0), args.Error(1)
 }
@@ -70,12 +70,12 @@ func (m *MockUserRepository) Count() (int, error) {
 // UserServiceTestSuite tests the UserService
 type UserServiceTestSuite struct {
 	suite.Suite
-	mockRepo    *MockUserRepository
+	mockRepo    *mockUserRepository
 	userService services.UserService
 }
 
 func (suite *UserServiceTestSuite) SetupTest() {
-	suite.mockRepo = new(MockUserRepository)
+	suite.mockRepo = new(mockUserRepository)
 	suite.userService = services.NewUserService(suite.mockRepo)
 }
 
@@ -267,21 +267,21 @@ func (suite *UserServiceTestSuite) TestDeleteUser_NotFound() {
 // AuthServiceTestSuite tests the AuthService
 type AuthServiceTestSuite struct {
 	suite.Suite
-	mockUserService *MockUserService
+	mockUserService *mockUserService
 	authService     services.AuthService
 }
 
-// MockUserService is a mock implementation of UserService for auth tests
-type MockUserService struct {
+// mockUserService is a mock implementation of UserService for auth tests
+type mockUserService struct {
 	mock.Mock
 }
 
-func (m *MockUserService) GetUsers(page, limit int) ([]models.User, int, error) {
+func (m *mockUserService) GetUsers(page, limit int) ([]models.User, int, error) {
 	args := m.Called(page, limit)
 	return args.Get(0).([]models.User), args.Int(1), args.Error(2)
 }
 
-func (m *MockUserService) GetUserByID(id uint) (*models.User, error) {
+func (m *mockUserService) GetUserByID(id uint) (*models.User, error) {
 	args := m.Called(id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -289,7 +289,7 @@ func (m *MockUserService) GetUserByID(id uint) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserService) GetUserByEmail(email string) (*models.User, error) {
+func (m *mockUserService) GetUserByEmail(email string) (*models.User, error) {
 	args := m.Called(email)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -297,7 +297,7 @@ func (m *MockUserService) GetUserByEmail(email string) (*models.User, error) {
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserService) CreateUser(req models.CreateUserRequest) (*models.User, error) {
+func (m *mockUserService) CreateUser(req models.CreateUserRequest) (*models.User, error) {
 	args := m.Called(req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -305,7 +305,7 @@ func (m *MockUserService) CreateUser(req models.CreateUserRequest) (*models.User
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserService) UpdateUser(id uint, req models.UpdateUserRequest) (*models.User, error) {
+func (m *mockUserService) UpdateUser(id uint, req models.UpdateUserRequest) (*models.User, error) {
 	args := m.Called(id, req)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -313,13 +313,13 @@ func (m *MockUserService) UpdateUser(id uint, req models.UpdateUserRequest) (*mo
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserService) DeleteUser(id uint) error {
+func (m *mockUserService) DeleteUser(id uint) error {
 	args := m.Called(id)
 	return args.Error(0)
 }
 
 func (suite *AuthServiceTestSuite) SetupTest() {
-	suite.mockUserService = new(MockUserService)
+	suite.mockUserService = new(mockUserService)
 	suite.authService = services.NewAuthService(suite.mockUserService, "test-secret", time.Hour)
 }
 

@@ -35,17 +35,17 @@ func newNullLogger() logger.Logger {
 	return &nullLogger{}
 }
 
-// MockUserRepository is a mock implementation of UserRepository
-type MockUserRepository struct {
+// mockUserRepository is a mock implementation of UserRepository
+type mockUserRepository struct {
 	mock.Mock
 }
 
-func (m *MockUserRepository) Create(ctx context.Context, user *repository.User) (*repository.User, error) {
+func (m *mockUserRepository) Create(ctx context.Context, user *repository.User) (*repository.User, error) {
 	args := m.Called(ctx, user)
 	return args.Get(0).(*repository.User), args.Error(1)
 }
 
-func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*repository.User, error) {
+func (m *mockUserRepository) GetByID(ctx context.Context, id string) (*repository.User, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -53,7 +53,7 @@ func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*repositor
 	return args.Get(0).(*repository.User), args.Error(1)
 }
 
-func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*repository.User, error) {
+func (m *mockUserRepository) GetByEmail(ctx context.Context, email string) (*repository.User, error) {
 	args := m.Called(ctx, email)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -61,17 +61,17 @@ func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*rep
 	return args.Get(0).(*repository.User), args.Error(1)
 }
 
-func (m *MockUserRepository) Update(ctx context.Context, user *repository.User) (*repository.User, error) {
+func (m *mockUserRepository) Update(ctx context.Context, user *repository.User) (*repository.User, error) {
 	args := m.Called(ctx, user)
 	return args.Get(0).(*repository.User), args.Error(1)
 }
 
-func (m *MockUserRepository) Delete(ctx context.Context, id string) error {
+func (m *mockUserRepository) Delete(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*repository.User, string, int, error) {
+func (m *mockUserRepository) List(ctx context.Context, pageSize int, pageToken string) ([]*repository.User, string, int, error) {
 	args := m.Called(ctx, pageSize, pageToken)
 	return args.Get(0).([]*repository.User), args.String(1), args.Int(2), args.Error(3)
 }
@@ -89,7 +89,7 @@ func TestAuthService(t *testing.T) {
 	{{- end}}
 
 	t.Run("Login", func(t *testing.T) {
-		mockRepo := new(MockUserRepository)
+		mockRepo := new(mockUserRepository)
 		authService := NewAuthService(
 			mockRepo,
 			passwordService,
@@ -220,7 +220,7 @@ func TestAuthService(t *testing.T) {
 
 	{{- if eq .AuthType "jwt"}}
 	t.Run("ChangePassword", func(t *testing.T) {
-		mockRepo := new(MockUserRepository)
+		mockRepo := new(mockUserRepository)
 		authService := NewAuthService(mockRepo, passwordService, logger, authMiddleware)
 
 		testUserID := "user-123"
@@ -315,7 +315,7 @@ func TestAuthService(t *testing.T) {
 	{{- end}}
 
 	t.Run("VerifyUser", func(t *testing.T) {
-		mockRepo := new(MockUserRepository)
+		mockRepo := new(mockUserRepository)
 		authService := NewAuthService(
 			mockRepo,
 			passwordService,
@@ -394,7 +394,7 @@ func TestAuthServiceSecurityProperties(t *testing.T) {
 	{{- end}}
 
 	t.Run("login timing consistency", func(t *testing.T) {
-		mockRepo := new(MockUserRepository)
+		mockRepo := new(mockUserRepository)
 		authService := NewAuthService(
 			mockRepo,
 			passwordService,
@@ -454,7 +454,7 @@ func TestAuthServiceSecurityProperties(t *testing.T) {
 	})
 
 	t.Run("password rehashing", func(t *testing.T) {
-		mockRepo := new(MockUserRepository)
+		mockRepo := new(mockUserRepository)
 		authService := NewAuthService(
 			mockRepo,
 			passwordService,

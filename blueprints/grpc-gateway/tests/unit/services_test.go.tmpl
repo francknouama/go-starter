@@ -19,55 +19,55 @@ import (
 	userv1 "{{.ModulePath}}/gen/user/v1"
 )
 
-// MockUserRepository is a mock implementation of the user repository
-type MockUserRepository struct {
+// mockUserRepository is a mock implementation of the user repository
+type mockUserRepository struct {
 	mock.Mock
 }
 
-func (m *MockUserRepository) Create(ctx context.Context, user *models.User) error {
+func (m *mockUserRepository) Create(ctx context.Context, user *models.User) error {
 	args := m.Called(ctx, user)
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
+func (m *mockUserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
 	args := m.Called(ctx, id)
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+func (m *mockUserRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
 	args := m.Called(ctx, email)
 	return args.Get(0).(*models.User), args.Error(1)
 }
 
-func (m *MockUserRepository) List(ctx context.Context, limit, offset int32) ([]*models.User, int64, error) {
+func (m *mockUserRepository) List(ctx context.Context, limit, offset int32) ([]*models.User, int64, error) {
 	args := m.Called(ctx, limit, offset)
 	return args.Get(0).([]*models.User), args.Get(1).(int64), args.Error(2)
 }
 
-func (m *MockUserRepository) Update(ctx context.Context, user *models.User) error {
+func (m *mockUserRepository) Update(ctx context.Context, user *models.User) error {
 	args := m.Called(ctx, user)
 	return args.Error(0)
 }
 
-func (m *MockUserRepository) Delete(ctx context.Context, id string) error {
+func (m *mockUserRepository) Delete(ctx context.Context, id string) error {
 	args := m.Called(ctx, id)
 	return args.Error(0)
 }
 
-// MockLogger is a simple mock logger for testing
-type MockLogger struct{}
+// mockLogger is a simple mock logger for testing
+type mockLogger struct{}
 
-func (l *MockLogger) Debug(msg string, keysAndValues ...interface{}) {}
-func (l *MockLogger) Info(msg string, keysAndValues ...interface{})  {}
-func (l *MockLogger) Warn(msg string, keysAndValues ...interface{})  {}
-func (l *MockLogger) Error(msg string, keysAndValues ...interface{}) {}
-func (l *MockLogger) Fatal(msg string, keysAndValues ...interface{}) {}
-func (l *MockLogger) With(keysAndValues ...interface{}) logger.Logger {
+func (l *mockLogger) Debug(msg string, keysAndValues ...interface{}) {}
+func (l *mockLogger) Info(msg string, keysAndValues ...interface{})  {}
+func (l *mockLogger) Warn(msg string, keysAndValues ...interface{})  {}
+func (l *mockLogger) Error(msg string, keysAndValues ...interface{}) {}
+func (l *mockLogger) Fatal(msg string, keysAndValues ...interface{}) {}
+func (l *mockLogger) With(keysAndValues ...interface{}) logger.Logger {
 	return l
 }
 
 func TestHealthService(t *testing.T) {
-	log := &MockLogger{}
+	log := &mockLogger{}
 	healthService := services.NewHealthService(log)
 
 	t.Run("Check", func(t *testing.T) {
@@ -95,8 +95,8 @@ func TestHealthService(t *testing.T) {
 }
 
 func TestUserService(t *testing.T) {
-	log := &MockLogger{}
-	mockRepo := new(MockUserRepository)
+	log := &mockLogger{}
+	mockRepo := new(mockUserRepository)
 	
 	{{if ne .DatabaseDriver ""}}
 	userService := services.NewUserService(mockRepo, log)
