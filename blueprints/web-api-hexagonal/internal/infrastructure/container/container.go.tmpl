@@ -1,0 +1,215 @@
+package container
+
+import (
+	"{{.ModulePath}}/internal/adapters/primary/http"
+	"{{.ModulePath}}/internal/adapters/secondary/events"
+	"{{.ModulePath}}/internal/adapters/secondary/logger"
+	"{{.ModulePath}}/internal/adapters/secondary/persistence"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+	"{{.ModulePath}}/internal/application/services"
+	"{{.ModulePath}}/internal/domain/services"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// Container holds all application dependencies
+// This is the composition root for the hexagonal architecture
+type Container struct {
+	config *config.Config
+
+	// Output ports (secondary adapters)
+	logger          output.LoggerPort
+	eventPublisher  output.EventPublisherPort
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Repository output.{{.DomainName | title}}RepositoryPort
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authRepository  output.AuthRepositoryPort
+	{{- end}}
+
+	// Domain services
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}DomainService services.{{.DomainName | title}}DomainService
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authDomainService services.AuthDomainService
+	{{- end}}
+
+	// Application services (input ports)
+	healthPort input.HealthPort
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Port  input.{{.DomainName | title}}Port
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authPort   input.AuthPort
+	{{- end}}
+
+	// Primary adapters (HTTP handlers)
+	healthHandler *http.HealthHandler
+	{{- if ne .DatabaseDriver ""}}
+	{{.DomainName}}Handler  *http.{{.DomainName | title}}Handler
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authHandler   *http.AuthHandler
+	{{- end}}
+}
+
+// NewContainer creates a new dependency injection container
+func NewContainer(cfg *config.Config) *Container {
+	return &Container{
+		config: cfg,
+	}
+}
+
+// Initialize initializes all dependencies in the correct order
+func (c *Container) Initialize() error {
+	// Initialize secondary adapters (output ports)
+	if err := c.initializeSecondaryAdapters(); err != nil {
+		return err
+	}
+
+	// Initialize domain services
+	if err := c.initializeDomainServices(); err != nil {
+		return err
+	}
+
+	// Initialize application services (input ports)
+	if err := c.initializeApplicationServices(); err != nil {
+		return err
+	}
+
+	// Initialize primary adapters (HTTP handlers)
+	if err := c.initializePrimaryAdapters(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// initializeSecondaryAdapters initializes all secondary adapters
+func (c *Container) initializeSecondaryAdapters() error {
+	// Initialize logger adapter
+	{{- if eq .Logger "slog"}}
+	c.logger = logger.NewSlogAdapter(c.config.Logger)
+	{{- else if eq .Logger "zap"}}
+	c.logger = logger.NewZapAdapter(c.config.Logger)
+	{{- else if eq .Logger "logrus"}}
+	c.logger = logger.NewLogrusAdapter(c.config.Logger)
+	{{- else if eq .Logger "zerolog"}}
+	c.logger = logger.NewZerologAdapter(c.config.Logger)
+	{{- else}}
+	c.logger = logger.NewSlogAdapter(c.config.Logger)
+	{{- end}}
+
+	// Initialize event publisher
+	c.eventPublisher = events.NewEventPublisher(c.logger)
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database and repository
+	db, err := persistence.NewDatabase(c.config)
+	if err != nil {
+		return err
+	}
+
+	c.{{.DomainName}}Repository = persistence.New{{.DomainName | title}}Repository(db, c.logger)
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Initialize auth repository
+	c.authRepository = persistence.NewAuthRepository(db, c.logger)
+	{{- end}}
+
+	return nil
+}
+
+// initializeDomainServices initializes all domain services
+func (c *Container) initializeDomainServices() error {
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize {{.DomainName}} domain service
+	c.{{.DomainName}}DomainService = services.New{{.DomainName | title}}DomainService()
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Initialize auth domain service
+	c.authDomainService = services.NewAuthDomainService()
+	{{- end}}
+
+	return nil
+}
+
+// initializeApplicationServices initializes all application services
+func (c *Container) initializeApplicationServices() error {
+	// Initialize health service
+	c.healthPort = services.NewHealthService(c.logger)
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize {{.DomainName}} service
+	c.{{.DomainName}}Port = services.New{{.DomainName | title}}Service(
+		c.{{.DomainName}}Repository,
+		c.{{.DomainName}}DomainService,
+		c.eventPublisher,
+		c.logger,
+	)
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Initialize auth service
+	c.authPort = services.NewAuthService(
+		c.{{.DomainName}}Repository,
+		c.authRepository,
+		c.authDomainService,
+		c.eventPublisher,
+		c.logger,
+		c.config.Auth,
+	)
+	{{- end}}
+
+	return nil
+}
+
+// initializePrimaryAdapters initializes all primary adapters
+func (c *Container) initializePrimaryAdapters() error {
+	// Initialize health handler
+	c.healthHandler = http.NewHealthHandler(c.healthPort, c.logger)
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize {{.DomainName}} handler
+	c.{{.DomainName}}Handler = http.New{{.DomainName | title}}Handler(c.{{.DomainName}}Port, c.logger)
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Initialize auth handler
+	c.authHandler = http.NewAuthHandler(c.authPort, c.logger)
+	{{- end}}
+
+	return nil
+}
+
+// GetHealthHandler returns the health handler
+func (c *Container) GetHealthHandler() *http.HealthHandler {
+	return c.healthHandler
+}
+
+{{- if ne .DatabaseDriver ""}}
+// Get{{.DomainName | title}}Handler returns the {{.DomainName}} handler
+func (c *Container) Get{{.DomainName | title}}Handler() *http.{{.DomainName | title}}Handler {
+	return c.{{.DomainName}}Handler
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+// GetAuthHandler returns the auth handler
+func (c *Container) GetAuthHandler() *http.AuthHandler {
+	return c.authHandler
+}
+{{- end}}
+
+// GetLogger returns the logger
+func (c *Container) GetLogger() output.LoggerPort {
+	return c.logger
+}
+
+// GetConfig returns the configuration
+func (c *Container) GetConfig() *config.Config {
+	return c.config
+}

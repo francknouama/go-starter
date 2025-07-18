@@ -1,0 +1,104 @@
+package services
+
+import (
+	"context"
+	"errors"
+
+	"{{.ModulePath}}/internal/domain/entities"
+)
+
+// {{.DomainName | title}}DomainService defines the interface for {{.DomainName}} domain services
+type {{.DomainName | title}}DomainService interface {
+	// Validate{{.DomainName | title}} validates a {{.DomainName}} entity against domain rules
+	Validate{{.DomainName | title}}(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error
+	
+	// Can{{.DomainName | title}}BeDeleted checks if a {{.DomainName}} can be deleted
+	Can{{.DomainName | title}}BeDeleted(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error
+	
+	// ValidateEmail{{.DomainName | title}}Uniqueness validates that an email is unique
+	ValidateEmail{{.DomainName | title}}Uniqueness(ctx context.Context, email string, exclude{{.DomainName | title}}ID string) error
+}
+
+// {{.DomainName}}DomainService implements the {{.DomainName | title}}DomainService interface
+type {{.DomainName}}DomainService struct {
+	// No external dependencies - this is pure domain logic
+}
+
+// New{{.DomainName | title}}DomainService creates a new {{.DomainName}} domain service
+func New{{.DomainName | title}}DomainService() {{.DomainName | title}}DomainService {
+	return &{{.DomainName}}DomainService{}
+}
+
+// Validate{{.DomainName | title}} validates a {{.DomainName}} entity against domain rules
+func (s *{{.DomainName}}DomainService) Validate{{.DomainName | title}}(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error {
+	// Domain validation rules
+	if {{.DomainName}}.ID().IsEmpty() {
+		return errors.New("{{.DomainName}} ID cannot be empty")
+	}
+	
+	if {{.DomainName}}.Email().IsEmpty() {
+		return errors.New("{{.DomainName}} email cannot be empty")
+	}
+	
+	if {{.DomainName}}.FirstName() == "" {
+		return errors.New("{{.DomainName}} first name cannot be empty")
+	}
+	
+	if {{.DomainName}}.LastName() == "" {
+		return errors.New("{{.DomainName}} last name cannot be empty")
+	}
+	
+	// Business rule: Full name cannot be too long
+	if len({{.DomainName}}.FullName()) > 100 {
+		return errors.New("{{.DomainName}} full name cannot exceed 100 characters")
+	}
+	
+	// Business rule: No profanity in names (placeholder)
+	if s.containsProfanity({{.DomainName}}.FirstName()) || s.containsProfanity({{.DomainName}}.LastName()) {
+		return errors.New("{{.DomainName}} name contains inappropriate content")
+	}
+	
+	return nil
+}
+
+// Can{{.DomainName | title}}BeDeleted checks if a {{.DomainName}} can be deleted
+func (s *{{.DomainName}}DomainService) Can{{.DomainName | title}}BeDeleted(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error {
+	// Business rules for deletion
+	// For example: Cannot delete system administrators
+	if s.isSystemAdmin({{.DomainName}}) {
+		return errors.New("cannot delete system administrator")
+	}
+	
+	// Cannot delete {{.DomainName}}s created in the last 24 hours (cooling period)
+	if s.isRecentlyCreated({{.DomainName}}) {
+		return errors.New("cannot delete recently created {{.DomainName}}s")
+	}
+	
+	return nil
+}
+
+// ValidateEmail{{.DomainName | title}}Uniqueness validates that an email is unique
+func (s *{{.DomainName}}DomainService) ValidateEmail{{.DomainName | title}}Uniqueness(ctx context.Context, email string, exclude{{.DomainName | title}}ID string) error {
+	// This would typically involve a repository call, but since this is pure domain logic,
+	// we'll implement this validation in the application service instead
+	return nil
+}
+
+// containsProfanity checks if text contains profanity (placeholder implementation)
+func (s *{{.DomainName}}DomainService) containsProfanity(text string) bool {
+	// In a real implementation, this would check against a profanity filter
+	return false
+}
+
+// isSystemAdmin checks if the {{.DomainName}} is a system administrator
+func (s *{{.DomainName}}DomainService) isSystemAdmin({{.DomainName}} *entities.{{.DomainName | title}}) bool {
+	// Business rule: System admin email check
+	return {{.DomainName}}.Email().Value() == "admin@system.com"
+}
+
+// isRecentlyCreated checks if the {{.DomainName}} was created recently
+func (s *{{.DomainName}}DomainService) isRecentlyCreated({{.DomainName}} *entities.{{.DomainName | title}}) bool {
+	// Business rule: 24-hour cooling period
+	// return time.Since({{.DomainName}}.CreatedAt()) < 24*time.Hour
+	return false // Simplified for template
+}

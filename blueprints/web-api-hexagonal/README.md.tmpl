@@ -1,0 +1,264 @@
+# {{.ProjectName}}
+
+{{.ProjectName}} is a web API built with **Hexagonal Architecture** (Ports and Adapters pattern), providing a clean separation between business logic and external concerns.
+
+## Architecture
+
+This project implements the Hexagonal Architecture pattern with the following layers:
+
+### Domain Layer (Core)
+- **Entities**: Core business objects (`internal/domain/entities/`)
+- **Value Objects**: Immutable objects that describe aspects of the domain (`internal/domain/valueobjects/`)
+- **Domain Services**: Business logic that doesn't belong to a specific entity (`internal/domain/services/`)
+- **Domain Events**: Events that represent domain changes (`internal/domain/events/`)
+
+### Application Layer (Use Cases)
+- **Ports**: Interfaces that define contracts (`internal/application/ports/`)
+  - **Input Ports**: Primary ports for driving the application
+  - **Output Ports**: Secondary ports for driven adapters
+- **Services**: Application services that orchestrate domain operations (`internal/application/services/`)
+- **DTOs**: Data Transfer Objects for external communication (`internal/application/dto/`)
+
+### Adapters Layer (Infrastructure)
+- **Primary Adapters**: Driving adapters (HTTP handlers) (`internal/adapters/primary/`)
+- **Secondary Adapters**: Driven adapters (repositories, external services) (`internal/adapters/secondary/`)
+
+### Infrastructure Layer
+- **Configuration**: Application configuration (`internal/infrastructure/config/`)
+- **Container**: Dependency injection container (`internal/infrastructure/container/`)
+- **Server**: HTTP server setup (`internal/infrastructure/server/`)
+
+## Features
+
+{{- if eq .Framework "gin"}}
+- **Gin** HTTP framework
+{{- else if eq .Framework "echo"}}
+- **Echo** HTTP framework
+{{- else if eq .Framework "fiber"}}
+- **Fiber** HTTP framework
+{{- else if eq .Framework "chi"}}
+- **Chi** HTTP router
+{{- else}}
+- **Standard Library** HTTP server
+{{- end}}
+{{- if ne .DatabaseDriver ""}}
+- **{{.DatabaseDriver | title}}** database integration
+{{- if eq .DatabaseORM "gorm"}}
+- **GORM** ORM
+{{- else if eq .DatabaseORM "sqlx"}}
+- **SQLx** query builder
+{{- end}}
+{{- end}}
+{{- if ne .AuthType ""}}
+- **{{.AuthType | upper}}** authentication
+{{- end}}
+{{- if eq .Logger "slog"}}
+- **Structured logging** with slog
+{{- else if eq .Logger "zap"}}
+- **High-performance logging** with Zap
+{{- else if eq .Logger "logrus"}}
+- **Structured logging** with Logrus
+{{- else if eq .Logger "zerolog"}}
+- **Zero-allocation logging** with Zerolog
+{{- end}}
+- **Domain events** for decoupled communication
+- **Dependency injection** container
+- **Graceful shutdown**
+- **Configuration management**
+- **Docker support**
+
+## Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}} or higher
+{{- if ne .DatabaseDriver ""}}
+- {{.DatabaseDriver | title}} database
+{{- end}}
+- Make (optional)
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone <repository-url>
+   cd {{.ProjectName}}
+   ```
+
+2. Install dependencies:
+   ```bash
+   make install
+   # or
+   go mod tidy
+   ```
+
+3. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+{{- if ne .DatabaseDriver ""}}
+4. Set up the database:
+   ```bash
+   # Create database and run migrations
+   make migrate
+   ```
+{{- end}}
+
+### Running the Application
+
+```bash
+# Development mode
+make dev
+
+# Production build
+make build
+./bin/{{.ProjectName}}
+
+# Using Docker
+make docker-build
+make docker-run
+```
+
+## API Endpoints
+
+### Health Check
+- `GET /health` - Health check endpoint
+- `GET /ready` - Readiness check endpoint
+
+{{- if ne .DatabaseDriver ""}}
+### {{.DomainName | title}} Management
+- `POST /{{.DomainName}}s` - Create a new {{.DomainName}}
+- `GET /{{.DomainName}}s` - List {{.DomainName}}s
+- `GET /{{.DomainName}}s/{id}` - Get {{.DomainName}} by ID
+- `PUT /{{.DomainName}}s/{id}` - Update {{.DomainName}}
+- `DELETE /{{.DomainName}}s/{id}` - Delete {{.DomainName}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+### Authentication
+- `POST /auth/login` - Login
+- `POST /auth/register` - Register
+- `POST /auth/refresh` - Refresh token
+- `POST /auth/logout` - Logout
+{{- end}}
+
+## Configuration
+
+The application can be configured through:
+
+1. **Configuration files**: `configs/config.yaml`
+2. **Environment variables**: Prefixed with `{{.ProjectName | upper}}_`
+3. **Command-line flags**: (if implemented)
+
+### Environment Variables
+
+```env
+# Server
+PORT=8080
+HOST=localhost
+
+{{- if ne .DatabaseDriver ""}}
+# Database
+DATABASE_URL={{.DatabaseDriver}}://user:password@localhost:5432/{{.ProjectName}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+# Authentication
+JWT_SECRET=your-secret-key
+{{- end}}
+
+# Logger
+LOG_LEVEL=info
+LOG_FORMAT=json
+```
+
+## Testing
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Run specific test
+go test -v ./internal/domain/entities/...
+```
+
+## Development
+
+### Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/
+│   └── server/           # Application entry point
+├── internal/
+│   ├── domain/           # Domain layer (core business logic)
+│   │   ├── entities/     # Domain entities
+│   │   ├── valueobjects/ # Value objects
+│   │   ├── services/     # Domain services
+│   │   └── events/       # Domain events
+│   ├── application/      # Application layer (use cases)
+│   │   ├── ports/        # Input and output ports
+│   │   ├── services/     # Application services
+│   │   └── dto/          # Data Transfer Objects
+│   ├── adapters/         # Adapters layer
+│   │   ├── primary/      # Primary adapters (HTTP)
+│   │   └── secondary/    # Secondary adapters (DB, external services)
+│   └── infrastructure/   # Infrastructure layer
+│       ├── config/       # Configuration
+│       ├── container/    # Dependency injection
+│       └── server/       # HTTP server
+├── tests/                # Test files
+├── configs/              # Configuration files
+├── migrations/           # Database migrations
+├── api/                  # API documentation
+└── docker-compose.yml    # Docker Compose configuration
+```
+
+### Adding New Features
+
+1. **Define domain entities** in `internal/domain/entities/`
+2. **Create value objects** in `internal/domain/valueobjects/`
+3. **Implement domain services** in `internal/domain/services/`
+4. **Define ports** in `internal/application/ports/`
+5. **Create application services** in `internal/application/services/`
+6. **Implement adapters** in `internal/adapters/`
+7. **Wire dependencies** in `internal/infrastructure/container/`
+
+### Code Quality
+
+```bash
+# Format code
+make fmt
+
+# Run linter
+make lint
+
+# Generate mocks
+make generate-mocks
+```
+
+## Docker
+
+```bash
+# Build image
+make docker-build
+
+# Run container
+make docker-run
+
+# Using Docker Compose
+docker-compose up
+```
+
+## License
+
+This project is licensed under the {{.License}} License.
+
+## Author
+
+{{.Author}} <{{.Email}}>

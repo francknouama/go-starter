@@ -1,0 +1,66 @@
+package output
+
+import (
+	"context"
+)
+
+// LoggerPort defines the interface for logging operations
+// This is a secondary port that will be implemented by driven adapters
+type LoggerPort interface {
+	// Debug logs a debug message
+	Debug(ctx context.Context, msg string, fields ...Field)
+	
+	// Info logs an info message
+	Info(ctx context.Context, msg string, fields ...Field)
+	
+	// Warn logs a warning message
+	Warn(ctx context.Context, msg string, fields ...Field)
+	
+	// Error logs an error message
+	Error(ctx context.Context, msg string, fields ...Field)
+	
+	// Fatal logs a fatal message and terminates the application
+	Fatal(ctx context.Context, msg string, fields ...Field)
+	
+	// WithFields returns a logger with additional fields
+	WithFields(fields ...Field) LoggerPort
+	
+	// WithError returns a logger with an error field
+	WithError(err error) LoggerPort
+}
+
+// Field represents a structured logging field
+type Field struct {
+	Key   string
+	Value interface{}
+}
+
+// String creates a string field
+func String(key, value string) Field {
+	return Field{Key: key, Value: value}
+}
+
+// Int creates an integer field
+func Int(key string, value int) Field {
+	return Field{Key: key, Value: value}
+}
+
+// Int64 creates an int64 field
+func Int64(key string, value int64) Field {
+	return Field{Key: key, Value: value}
+}
+
+// Bool creates a boolean field
+func Bool(key string, value bool) Field {
+	return Field{Key: key, Value: value}
+}
+
+// Any creates a field with any value
+func Any(key string, value interface{}) Field {
+	return Field{Key: key, Value: value}
+}
+
+// Error creates an error field
+func Error(err error) Field {
+	return Field{Key: "error", Value: err}
+}

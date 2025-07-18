@@ -1,0 +1,35 @@
+package output
+
+import (
+	"context"
+	"{{.ModulePath}}/internal/domain/events"
+)
+
+// EventPublisherPort defines the interface for publishing domain events
+// This is a secondary port that will be implemented by driven adapters
+type EventPublisherPort interface {
+	// Publish publishes a domain event
+	Publish(ctx context.Context, event events.DomainEvent) error
+	
+	// PublishBatch publishes multiple domain events in a batch
+	PublishBatch(ctx context.Context, events []events.DomainEvent) error
+	
+	// Subscribe subscribes to domain events of a specific type
+	Subscribe(ctx context.Context, eventType string, handler EventHandler) error
+	
+	// Unsubscribe unsubscribes from domain events
+	Unsubscribe(ctx context.Context, eventType string, handler EventHandler) error
+}
+
+// EventHandler defines the interface for handling domain events
+type EventHandler interface {
+	Handle(ctx context.Context, event events.DomainEvent) error
+}
+
+// EventHandlerFunc is a function type that implements EventHandler
+type EventHandlerFunc func(ctx context.Context, event events.DomainEvent) error
+
+// Handle implements EventHandler
+func (f EventHandlerFunc) Handle(ctx context.Context, event events.DomainEvent) error {
+	return f(ctx, event)
+}

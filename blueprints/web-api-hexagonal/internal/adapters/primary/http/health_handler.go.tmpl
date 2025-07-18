@@ -1,0 +1,77 @@
+package http
+
+import (
+	"net/http"
+
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// HealthHandler handles health check requests
+// This is a primary adapter that implements the HTTP interface
+type HealthHandler struct {
+	healthPort input.HealthPort
+	logger     output.LoggerPort
+}
+
+// NewHealthHandler creates a new health handler
+func NewHealthHandler(healthPort input.HealthPort, logger output.LoggerPort) *HealthHandler {
+	return &HealthHandler{
+		healthPort: healthPort,
+		logger:     logger,
+	}
+}
+
+// HandleHealth handles health check requests
+func (h *HealthHandler) HandleHealth(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Health check requested")
+	
+	// Use the health port to check application health
+	healthStatus, err := h.healthPort.CheckHealth(ctx)
+	if err != nil {
+		h.logger.Error(ctx, "Health check failed", output.Error(err))
+		http.Error(w, "Health check failed", http.StatusInternalServerError)
+		return
+	}
+	
+	// Return health status as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	// In a real implementation, we would use json.Marshal
+	response := `{"status":"` + healthStatus.Status + `","timestamp":` + string(healthStatus.Timestamp) + `}`
+	w.Write([]byte(response))
+}
+
+// HandleReadiness handles readiness check requests
+func (h *HealthHandler) HandleReadiness(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Readiness check requested")
+	
+	// Use the health port to check application readiness
+	readinessStatus, err := h.healthPort.CheckReadiness(ctx)
+	if err != nil {
+		h.logger.Error(ctx, "Readiness check failed", output.Error(err))
+		http.Error(w, "Readiness check failed", http.StatusInternalServerError)
+		return
+	}
+	
+	// Return readiness status as JSON
+	w.Header().Set("Content-Type", "application/json")
+	if readinessStatus.Ready {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	
+	// In a real implementation, we would use json.Marshal
+	readyStatus := "true"
+	if !readinessStatus.Ready {
+		readyStatus = "false"
+	}
+	response := `{"ready":` + readyStatus + `,"timestamp":` + string(readinessStatus.Timestamp) + `}`
+	w.Write([]byte(response))
+}

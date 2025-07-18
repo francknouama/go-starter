@@ -1,0 +1,170 @@
+package events
+
+import (
+	"time"
+)
+
+// DomainEvent represents a domain event
+type DomainEvent interface {
+	// EventType returns the type of the event
+	EventType() string
+	
+	// EventID returns the unique identifier of the event
+	EventID() string
+	
+	// AggregateID returns the ID of the aggregate that produced the event
+	AggregateID() string
+	
+	// Timestamp returns when the event occurred
+	Timestamp() time.Time
+	
+	// EventData returns the event data
+	EventData() interface{}
+}
+
+// Base event structure
+type baseEvent struct {
+	eventType   string
+	eventID     string
+	aggregateID string
+	timestamp   time.Time
+	data        interface{}
+}
+
+// EventType returns the type of the event
+func (e *baseEvent) EventType() string {
+	return e.eventType
+}
+
+// EventID returns the unique identifier of the event
+func (e *baseEvent) EventID() string {
+	return e.eventID
+}
+
+// AggregateID returns the ID of the aggregate that produced the event
+func (e *baseEvent) AggregateID() string {
+	return e.aggregateID
+}
+
+// Timestamp returns when the event occurred
+func (e *baseEvent) Timestamp() time.Time {
+	return e.timestamp
+}
+
+// EventData returns the event data
+func (e *baseEvent) EventData() interface{} {
+	return e.data
+}
+
+// {{.DomainName | title}}CreatedEvent represents a {{.DomainName}} created event
+type {{.DomainName | title}}CreatedEvent struct {
+	*baseEvent
+	{{.DomainName | title}}ID string `json:"{{.DomainName}}_id"`
+	Email  string `json:"email"`
+}
+
+// New{{.DomainName | title}}CreatedEvent creates a new {{.DomainName}} created event
+func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID, email string) DomainEvent {
+	return &{{.DomainName | title}}CreatedEvent{
+		baseEvent: &baseEvent{
+			eventType:   "{{.DomainName}}.created",
+			eventID:     generateEventID(),
+			aggregateID: {{.DomainName}}ID,
+			timestamp:   time.Now(),
+		},
+		{{.DomainName | title}}ID: {{.DomainName}}ID,
+		Email:  email,
+	}
+}
+
+// {{.DomainName | title}}UpdatedEvent represents a {{.DomainName}} updated event
+type {{.DomainName | title}}UpdatedEvent struct {
+	*baseEvent
+	{{.DomainName | title}}ID string `json:"{{.DomainName}}_id"`
+	Email  string `json:"email"`
+}
+
+// New{{.DomainName | title}}UpdatedEvent creates a new {{.DomainName}} updated event
+func New{{.DomainName | title}}UpdatedEvent({{.DomainName}}ID, email string) DomainEvent {
+	return &{{.DomainName | title}}UpdatedEvent{
+		baseEvent: &baseEvent{
+			eventType:   "{{.DomainName}}.updated",
+			eventID:     generateEventID(),
+			aggregateID: {{.DomainName}}ID,
+			timestamp:   time.Now(),
+		},
+		{{.DomainName | title}}ID: {{.DomainName}}ID,
+		Email:  email,
+	}
+}
+
+// {{.DomainName | title}}DeletedEvent represents a {{.DomainName}} deleted event
+type {{.DomainName | title}}DeletedEvent struct {
+	*baseEvent
+	{{.DomainName | title}}ID string `json:"{{.DomainName}}_id"`
+	Email  string `json:"email"`
+}
+
+// New{{.DomainName | title}}DeletedEvent creates a new {{.DomainName}} deleted event
+func New{{.DomainName | title}}DeletedEvent({{.DomainName}}ID, email string) DomainEvent {
+	return &{{.DomainName | title}}DeletedEvent{
+		baseEvent: &baseEvent{
+			eventType:   "{{.DomainName}}.deleted",
+			eventID:     generateEventID(),
+			aggregateID: {{.DomainName}}ID,
+			timestamp:   time.Now(),
+		},
+		{{.DomainName | title}}ID: {{.DomainName}}ID,
+		Email:  email,
+	}
+}
+
+// {{.DomainName | title}}EmailChangedEvent represents a {{.DomainName}} email changed event
+type {{.DomainName | title}}EmailChangedEvent struct {
+	*baseEvent
+	{{.DomainName | title}}ID string `json:"{{.DomainName}}_id"`
+	OldEmail string `json:"old_email"`
+	NewEmail string `json:"new_email"`
+}
+
+// New{{.DomainName | title}}EmailChangedEvent creates a new {{.DomainName}} email changed event
+func New{{.DomainName | title}}EmailChangedEvent({{.DomainName}}ID, oldEmail, newEmail string) DomainEvent {
+	return &{{.DomainName | title}}EmailChangedEvent{
+		baseEvent: &baseEvent{
+			eventType:   "{{.DomainName}}.email.changed",
+			eventID:     generateEventID(),
+			aggregateID: {{.DomainName}}ID,
+			timestamp:   time.Now(),
+		},
+		{{.DomainName | title}}ID: {{.DomainName}}ID,
+		OldEmail: oldEmail,
+		NewEmail: newEmail,
+	}
+}
+
+// {{.DomainName | title}}PasswordChangedEvent represents a {{.DomainName}} password changed event
+type {{.DomainName | title}}PasswordChangedEvent struct {
+	*baseEvent
+	{{.DomainName | title}}ID string `json:"{{.DomainName}}_id"`
+	Email  string `json:"email"`
+}
+
+// New{{.DomainName | title}}PasswordChangedEvent creates a new {{.DomainName}} password changed event
+func New{{.DomainName | title}}PasswordChangedEvent({{.DomainName}}ID, email string) DomainEvent {
+	return &{{.DomainName | title}}PasswordChangedEvent{
+		baseEvent: &baseEvent{
+			eventType:   "{{.DomainName}}.password.changed",
+			eventID:     generateEventID(),
+			aggregateID: {{.DomainName}}ID,
+			timestamp:   time.Now(),
+		},
+		{{.DomainName | title}}ID: {{.DomainName}}ID,
+		Email:  email,
+	}
+}
+
+// generateEventID generates a unique event ID
+func generateEventID() string {
+	// In a real implementation, this would use UUID or similar
+	return "event_" + string(time.Now().UnixNano())
+}

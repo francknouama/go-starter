@@ -1,0 +1,55 @@
+.PHONY: build test clean run dev install lint
+
+# Build the application
+build:
+	go build -o bin/{{.ProjectName}} cmd/server/main.go
+
+# Run tests
+test:
+	go test -v ./...
+
+# Clean build artifacts
+clean:
+	rm -rf bin/
+
+# Run the application
+run:
+	go run cmd/server/main.go
+
+# Run in development mode
+dev:
+	go run cmd/server/main.go
+
+# Install dependencies
+install:
+	go mod tidy
+	go mod download
+
+# Run linter
+lint:
+	golangci-lint run
+
+# Format code
+fmt:
+	go fmt ./...
+
+# Run tests with coverage
+test-coverage:
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+# Build for production
+build-prod:
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/{{.ProjectName}} cmd/server/main.go
+
+# Docker build
+docker-build:
+	docker build -t {{.ProjectName}} .
+
+# Docker run
+docker-run:
+	docker run -p 8080:8080 {{.ProjectName}}
+
+# Generate mocks
+generate-mocks:
+	go generate ./...

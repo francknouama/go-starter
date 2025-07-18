@@ -1,0 +1,80 @@
+package valueobjects
+
+import (
+	"errors"
+	"regexp"
+	"strings"
+)
+
+// Email represents a valid email address
+type Email struct {
+	value string
+}
+
+// emailRegex is a basic email validation regex
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// NewEmail creates a new Email value object
+func NewEmail(value string) (Email, error) {
+	if value == "" {
+		return Email{}, ErrEmptyEmail
+	}
+	
+	value = strings.ToLower(strings.TrimSpace(value))
+	
+	if !emailRegex.MatchString(value) {
+		return Email{}, ErrInvalidEmailFormat
+	}
+	
+	return Email{value: value}, nil
+}
+
+// Value returns the string value of the email
+func (e Email) Value() string {
+	return e.value
+}
+
+// IsEmpty checks if the email is empty
+func (e Email) IsEmpty() bool {
+	return e.value == ""
+}
+
+// Equals checks if two emails are equal
+func (e Email) Equals(other Email) bool {
+	return e.value == other.value
+}
+
+// String returns the string representation of the email
+func (e Email) String() string {
+	return e.value
+}
+
+// Domain returns the domain part of the email
+func (e Email) Domain() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+// LocalPart returns the local part of the email
+func (e Email) LocalPart() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
+}
+
+// Value object errors
+var (
+	// ErrEmptyEmail is returned when the email is empty
+	ErrEmptyEmail = errors.New("email cannot be empty")
+	
+	// ErrInvalidEmailFormat is returned when the email format is invalid
+	ErrInvalidEmailFormat = errors.New("invalid email format")
+	
+	// ErrInvalid{{.DomainName | title}}ID is returned when the {{.DomainName}} ID is invalid
+	ErrInvalid{{.DomainName | title}}ID = errors.New("invalid {{.DomainName}} ID")
+)

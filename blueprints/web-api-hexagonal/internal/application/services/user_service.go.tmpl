@@ -1,0 +1,252 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/application/dto"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/events"
+	"{{.ModulePath}}/internal/domain/services"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+// {{.DomainName | title}}Service implements the {{.DomainName | title}}Port interface
+// This is an application service that orchestrates domain operations
+type {{.DomainName | title}}Service struct {
+	{{.DomainName}}Repo       output.{{.DomainName | title}}RepositoryPort
+	domainService   services.{{.DomainName | title}}DomainService
+	eventPublisher  output.EventPublisherPort
+	logger          output.LoggerPort
+}
+
+// New{{.DomainName | title}}Service creates a new {{.DomainName | title}}Service
+func New{{.DomainName | title}}Service(
+	{{.DomainName}}Repo output.{{.DomainName | title}}RepositoryPort,
+	domainService services.{{.DomainName | title}}DomainService,
+	eventPublisher output.EventPublisherPort,
+	logger output.LoggerPort,
+) input.{{.DomainName | title}}Port {
+	return &{{.DomainName | title}}Service{
+		{{.DomainName}}Repo:       {{.DomainName}}Repo,
+		domainService:   domainService,
+		eventPublisher:  eventPublisher,
+		logger:          logger,
+	}
+}
+
+// Create{{.DomainName | title}} creates a new {{.DomainName}}
+func (s *{{.DomainName | title}}Service) Create{{.DomainName | title}}(ctx context.Context, req *dto.Create{{.DomainName | title}}Request) (*dto.{{.DomainName | title}}Response, error) {
+	s.logger.Info(ctx, "Creating {{.DomainName}}", output.String("email", req.Email))
+
+	// Check if {{.DomainName}} already exists
+	exists, err := s.{{.DomainName}}Repo.ExistsByEmail(ctx, req.Email)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to check {{.DomainName}} existence", output.String("email", req.Email), output.Error(err))
+		return nil, fmt.Errorf("failed to check {{.DomainName}} existence: %w", err)
+	}
+	if exists {
+		return nil, fmt.Errorf("{{.DomainName}} with email %s already exists", req.Email)
+	}
+
+	// Create value objects
+	email, err := valueobjects.NewEmail(req.Email)
+	if err != nil {
+		s.logger.Error(ctx, "Invalid email format", output.String("email", req.Email), output.Error(err))
+		return nil, fmt.Errorf("invalid email format: %w", err)
+	}
+
+	{{.DomainName}}ID, err := valueobjects.New{{.DomainName | title}}ID()
+	if err != nil {
+		s.logger.Error(ctx, "Failed to generate {{.DomainName}} ID", output.Error(err))
+		return nil, fmt.Errorf("failed to generate {{.DomainName}} ID: %w", err)
+	}
+
+	// Create {{.DomainName}} entity
+	{{.DomainName}}, err := entities.New{{.DomainName | title}}(
+		{{.DomainName}}ID,
+		email,
+		req.FirstName,
+		req.LastName,
+		req.Password,
+	)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to create {{.DomainName}} entity", output.Error(err))
+		return nil, fmt.Errorf("failed to create {{.DomainName}} entity: %w", err)
+	}
+
+	// Use domain service to validate business rules
+	if err := s.domainService.Validate{{.DomainName | title}}(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "{{.DomainName | title}} validation failed", output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} validation failed: %w", err)
+	}
+
+	// Save {{.DomainName}} to repository
+	if err := s.{{.DomainName}}Repo.Create(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "Failed to save {{.DomainName}}", output.String("{{.DomainName}}_id", {{.DomainName}}ID.Value()), output.Error(err))
+		return nil, fmt.Errorf("failed to save {{.DomainName}}: %w", err)
+	}
+
+	// Publish domain event
+	event := events.New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID.Value(), email.Value())
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish {{.DomainName}} created event", output.String("{{.DomainName}}_id", {{.DomainName}}ID.Value()), output.Error(err))
+	}
+
+	s.logger.Info(ctx, "{{.DomainName | title}} created successfully", output.String("{{.DomainName}}_id", {{.DomainName}}ID.Value()))
+
+	return s.toDTO({{.DomainName}}), nil
+}
+
+// Get{{.DomainName | title}}ByID retrieves a {{.DomainName}} by ID
+func (s *{{.DomainName | title}}Service) Get{{.DomainName | title}}ByID(ctx context.Context, id string) (*dto.{{.DomainName | title}}Response, error) {
+	s.logger.Info(ctx, "Getting {{.DomainName}} by ID", output.String("{{.DomainName}}_id", id))
+
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByID(ctx, id)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} by ID", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return nil, fmt.Errorf("failed to get {{.DomainName}} by ID: %w", err)
+	}
+
+	return s.toDTO({{.DomainName}}), nil
+}
+
+// Update{{.DomainName | title}} updates an existing {{.DomainName}}
+func (s *{{.DomainName | title}}Service) Update{{.DomainName | title}}(ctx context.Context, id string, req *dto.Update{{.DomainName | title}}Request) (*dto.{{.DomainName | title}}Response, error) {
+	s.logger.Info(ctx, "Updating {{.DomainName}}", output.String("{{.DomainName}}_id", id))
+
+	// Get existing {{.DomainName}}
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByID(ctx, id)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} for update", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return nil, fmt.Errorf("failed to get {{.DomainName}} for update: %w", err)
+	}
+
+	// Update fields if provided
+	if req.Email != nil {
+		email, err := valueobjects.NewEmail(*req.Email)
+		if err != nil {
+			s.logger.Error(ctx, "Invalid email format", output.String("email", *req.Email), output.Error(err))
+			return nil, fmt.Errorf("invalid email format: %w", err)
+		}
+		{{.DomainName}}.UpdateEmail(email)
+	}
+
+	if req.FirstName != nil {
+		{{.DomainName}}.UpdateFirstName(*req.FirstName)
+	}
+
+	if req.LastName != nil {
+		{{.DomainName}}.UpdateLastName(*req.LastName)
+	}
+
+	// Use domain service to validate business rules
+	if err := s.domainService.Validate{{.DomainName | title}}(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "{{.DomainName | title}} validation failed", output.Error(err))
+		return nil, fmt.Errorf("{{.DomainName}} validation failed: %w", err)
+	}
+
+	// Update {{.DomainName}} in repository
+	if err := s.{{.DomainName}}Repo.Update(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "Failed to update {{.DomainName}}", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return nil, fmt.Errorf("failed to update {{.DomainName}}: %w", err)
+	}
+
+	// Publish domain event
+	event := events.New{{.DomainName | title}}UpdatedEvent({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value())
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish {{.DomainName}} updated event", output.String("{{.DomainName}}_id", id), output.Error(err))
+	}
+
+	s.logger.Info(ctx, "{{.DomainName | title}} updated successfully", output.String("{{.DomainName}}_id", id))
+
+	return s.toDTO({{.DomainName}}), nil
+}
+
+// Delete{{.DomainName | title}} deletes a {{.DomainName}} by ID
+func (s *{{.DomainName | title}}Service) Delete{{.DomainName | title}}(ctx context.Context, id string) error {
+	s.logger.Info(ctx, "Deleting {{.DomainName}}", output.String("{{.DomainName}}_id", id))
+
+	// Check if {{.DomainName}} exists
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByID(ctx, id)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} for deletion", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return fmt.Errorf("failed to get {{.DomainName}} for deletion: %w", err)
+	}
+
+	// Delete {{.DomainName}} from repository
+	if err := s.{{.DomainName}}Repo.Delete(ctx, id); err != nil {
+		s.logger.Error(ctx, "Failed to delete {{.DomainName}}", output.String("{{.DomainName}}_id", id), output.Error(err))
+		return fmt.Errorf("failed to delete {{.DomainName}}: %w", err)
+	}
+
+	// Publish domain event
+	event := events.New{{.DomainName | title}}DeletedEvent({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value())
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish {{.DomainName}} deleted event", output.String("{{.DomainName}}_id", id), output.Error(err))
+	}
+
+	s.logger.Info(ctx, "{{.DomainName | title}} deleted successfully", output.String("{{.DomainName}}_id", id))
+
+	return nil
+}
+
+// List{{.DomainName | title}}s retrieves a list of {{.DomainName}}s with pagination
+func (s *{{.DomainName | title}}Service) List{{.DomainName | title}}s(ctx context.Context, req *dto.List{{.DomainName | title}}sRequest) (*dto.List{{.DomainName | title}}sResponse, error) {
+	s.logger.Info(ctx, "Listing {{.DomainName}}s", output.Int("limit", req.Limit), output.Int("offset", req.Offset))
+
+	// Get {{.DomainName}}s from repository
+	{{.DomainName}}s, err := s.{{.DomainName}}Repo.List(ctx, req.Limit, req.Offset)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to list {{.DomainName}}s", output.Error(err))
+		return nil, fmt.Errorf("failed to list {{.DomainName}}s: %w", err)
+	}
+
+	// Get total count
+	total, err := s.{{.DomainName}}Repo.Count(ctx)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to count {{.DomainName}}s", output.Error(err))
+		return nil, fmt.Errorf("failed to count {{.DomainName}}s: %w", err)
+	}
+
+	// Convert to DTOs
+	{{.DomainName}}DTOs := make([]dto.{{.DomainName | title}}Response, len({{.DomainName}}s))
+	for i, {{.DomainName}} := range {{.DomainName}}s {
+		{{.DomainName}}DTOs[i] = *s.toDTO({{.DomainName}})
+	}
+
+	return &dto.List{{.DomainName | title}}sResponse{
+		{{.DomainName | title}}s: {{.DomainName}}DTOs,
+		Total:   total,
+		Limit:   req.Limit,
+		Offset:  req.Offset,
+	}, nil
+}
+
+// Get{{.DomainName | title}}ByEmail retrieves a {{.DomainName}} by email
+func (s *{{.DomainName | title}}Service) Get{{.DomainName | title}}ByEmail(ctx context.Context, email string) (*dto.{{.DomainName | title}}Response, error) {
+	s.logger.Info(ctx, "Getting {{.DomainName}} by email", output.String("email", email))
+
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByEmail(ctx, email)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} by email", output.String("email", email), output.Error(err))
+		return nil, fmt.Errorf("failed to get {{.DomainName}} by email: %w", err)
+	}
+
+	return s.toDTO({{.DomainName}}), nil
+}
+
+// toDTO converts a {{.DomainName}} entity to a DTO
+func (s *{{.DomainName | title}}Service) toDTO({{.DomainName}} *entities.{{.DomainName | title}}) *dto.{{.DomainName | title}}Response {
+	return &dto.{{.DomainName | title}}Response{
+		ID:        {{.DomainName}}.ID().Value(),
+		Email:     {{.DomainName}}.Email().Value(),
+		FirstName: {{.DomainName}}.FirstName(),
+		LastName:  {{.DomainName}}.LastName(),
+		CreatedAt: {{.DomainName}}.CreatedAt(),
+		UpdatedAt: {{.DomainName}}.UpdatedAt(),
+	}
+}

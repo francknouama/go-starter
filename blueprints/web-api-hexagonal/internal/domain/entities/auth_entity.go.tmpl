@@ -1,0 +1,123 @@
+package entities
+
+import (
+	"time"
+)
+
+// AuthSession represents an authentication session in the domain
+type AuthSession struct {
+	sessionID string
+	userID    string
+	token     string
+	expiresAt time.Time
+	createdAt time.Time
+}
+
+// NewAuthSession creates a new authentication session
+func NewAuthSession(sessionID, userID, token string, expiresAt time.Time) *AuthSession {
+	return &AuthSession{
+		sessionID: sessionID,
+		userID:    userID,
+		token:     token,
+		expiresAt: expiresAt,
+		createdAt: time.Now(),
+	}
+}
+
+// SessionID returns the session ID
+func (s *AuthSession) SessionID() string {
+	return s.sessionID
+}
+
+// UserID returns the user ID
+func (s *AuthSession) UserID() string {
+	return s.userID
+}
+
+// Token returns the authentication token
+func (s *AuthSession) Token() string {
+	return s.token
+}
+
+// ExpiresAt returns the expiration time
+func (s *AuthSession) ExpiresAt() time.Time {
+	return s.expiresAt
+}
+
+// CreatedAt returns the creation time
+func (s *AuthSession) CreatedAt() time.Time {
+	return s.createdAt
+}
+
+// IsExpired checks if the session has expired
+func (s *AuthSession) IsExpired() bool {
+	return time.Now().After(s.expiresAt)
+}
+
+// IsValid checks if the session is valid
+func (s *AuthSession) IsValid() bool {
+	return !s.IsExpired()
+}
+
+// RefreshToken represents a refresh token in the domain
+type RefreshToken struct {
+	token     string
+	userID    string
+	expiresAt time.Time
+	createdAt time.Time
+}
+
+// NewRefreshToken creates a new refresh token
+func NewRefreshToken(token, userID string, expiresAt time.Time) *RefreshToken {
+	return &RefreshToken{
+		token:     token,
+		userID:    userID,
+		expiresAt: expiresAt,
+		createdAt: time.Now(),
+	}
+}
+
+// Token returns the refresh token
+func (r *RefreshToken) Token() string {
+	return r.token
+}
+
+// UserID returns the user ID
+func (r *RefreshToken) UserID() string {
+	return r.userID
+}
+
+// ExpiresAt returns the expiration time
+func (r *RefreshToken) ExpiresAt() time.Time {
+	return r.expiresAt
+}
+
+// CreatedAt returns the creation time
+func (r *RefreshToken) CreatedAt() time.Time {
+	return r.createdAt
+}
+
+// IsExpired checks if the refresh token has expired
+func (r *RefreshToken) IsExpired() bool {
+	return time.Now().After(r.expiresAt)
+}
+
+// IsValid checks if the refresh token is valid
+func (r *RefreshToken) IsValid() bool {
+	return !r.IsExpired()
+}
+
+// Domain errors for authentication
+var (
+	// ErrInvalidSession is returned when a session is invalid
+	ErrInvalidSession = errors.New("invalid session")
+	
+	// ErrExpiredSession is returned when a session has expired
+	ErrExpiredSession = errors.New("session has expired")
+	
+	// ErrInvalidToken is returned when a token is invalid
+	ErrInvalidToken = errors.New("invalid token")
+	
+	// ErrExpiredToken is returned when a token has expired
+	ErrExpiredToken = errors.New("token has expired")
+)

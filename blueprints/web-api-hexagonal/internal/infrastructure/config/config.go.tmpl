@@ -1,0 +1,166 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+// Config represents the application configuration
+type Config struct {
+	Server   ServerConfig   `mapstructure:"server"`
+	Database DatabaseConfig `mapstructure:"database"`
+	Logger   LoggerConfig   `mapstructure:"logger"`
+	Auth     AuthConfig     `mapstructure:"auth"`
+}
+
+// ServerConfig represents the server configuration
+type ServerConfig struct {
+	Port           int           `mapstructure:"port"`
+	Host           string        `mapstructure:"host"`
+	ReadTimeout    time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout   time.Duration `mapstructure:"write_timeout"`
+	MaxHeaderBytes int           `mapstructure:"max_header_bytes"`
+}
+
+// DatabaseConfig represents the database configuration
+type DatabaseConfig struct {
+	Driver   string `mapstructure:"driver"`
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	User     string `mapstructure:"user"`
+	Password string `mapstructure:"password"`
+	Name     string `mapstructure:"name"`
+	SSLMode  string `mapstructure:"ssl_mode"`
+}
+
+// LoggerConfig represents the logger configuration
+type LoggerConfig struct {
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
+}
+
+// AuthConfig represents the authentication configuration
+type AuthConfig struct {
+	JWTSecret     string        `mapstructure:"jwt_secret"`
+	TokenDuration time.Duration `mapstructure:"token_duration"`
+}
+
+// Load loads the configuration from various sources
+func Load() (*Config, error) {
+	// Set default values
+	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("server.host", "localhost")
+	viper.SetDefault("server.read_timeout", 10*time.Second)
+	viper.SetDefault("server.write_timeout", 10*time.Second)
+	viper.SetDefault("server.max_header_bytes", 1<<20) // 1MB
+	
+	viper.SetDefault("database.driver", "{{.DatabaseDriver}}")
+	viper.SetDefault("database.host", "localhost")
+	viper.SetDefault("database.port", 5432)
+	viper.SetDefault("database.user", "{{.ProjectName}}")
+	viper.SetDefault("database.password", "password")
+	viper.SetDefault("database.name", "{{.ProjectName}}")
+	viper.SetDefault("database.ssl_mode", "disable")
+	
+	viper.SetDefault("logger.level", "info")
+	viper.SetDefault("logger.format", "json")
+	
+	viper.SetDefault("auth.jwt_secret", "your-secret-key")
+	viper.SetDefault("auth.token_duration", 24*time.Hour)
+
+	// Set configuration file
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath("./configs")
+	viper.AddConfigPath(".")
+
+	// Environment variables
+	viper.SetEnvPrefix("{{.ProjectName | upper}}")
+	viper.AutomaticEnv()
+
+	// Override with environment variables if present
+	if port := os.Getenv("PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			viper.Set("server.port", p)
+		}
+	}
+
+	if host := os.Getenv("HOST"); host != "" {
+		viper.Set("server.host", host)
+	}
+
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		// Parse DATABASE_URL if provided
+		// This is a simplified implementation
+		viper.Set("database.url", dbURL)
+	}
+
+	// Read configuration file
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+	}
+
+	// Unmarshal configuration
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Validate configuration
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	if c.Server.Port <= 0 || c.Server.Port > 65535 {
+		return fmt.Errorf("invalid server port: %d", c.Server.Port)
+	}
+
+	if c.Server.Host == "" {
+		return fmt.Errorf("server host cannot be empty")
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	if c.Database.Driver == "" {
+		return fmt.Errorf("database driver cannot be empty")
+	}
+	{{- end}}
+
+	{{- if eq .AuthType "jwt"}}
+	if c.Auth.JWTSecret == "" {
+		return fmt.Errorf("JWT secret cannot be empty")
+	}
+	{{- end}}
+
+	return nil
+}
+
+// GetDatabaseDSN returns the database connection string
+func (c *Config) GetDatabaseDSN() string {
+	{{- if eq .DatabaseDriver "postgres"}}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.Database.Host, c.Database.Port, c.Database.User, c.Database.Password, c.Database.Name, c.Database.SSLMode)
+	{{- else if eq .DatabaseDriver "mysql"}}
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		c.Database.User, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Name)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	return c.Database.Name
+	{{- else}}
+	return ""
+	{{- end}}
+}
+
+// GetServerAddress returns the server address
+func (c *Config) GetServerAddress() string {
+	return fmt.Sprintf("%s:%d", c.Server.Host, c.Server.Port)
+}

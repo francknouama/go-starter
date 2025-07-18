@@ -1,0 +1,67 @@
+package output
+
+import (
+	"context"
+	"time"
+)
+
+// AuthRepositoryPort defines the interface for authentication persistence operations
+// This is a secondary port that will be implemented by driven adapters
+type AuthRepositoryPort interface {
+	// StoreRefreshToken stores a refresh token
+	StoreRefreshToken(ctx context.Context, userID, token string, expiresAt time.Time) error
+	
+	// GetRefreshToken retrieves a refresh token
+	GetRefreshToken(ctx context.Context, token string) (*RefreshToken, error)
+	
+	// RevokeRefreshToken revokes a refresh token
+	RevokeRefreshToken(ctx context.Context, token string) error
+	
+	// RevokeAllUserTokens revokes all refresh tokens for a user
+	RevokeAllUserTokens(ctx context.Context, userID string) error
+	
+	// CleanupExpiredTokens removes expired refresh tokens
+	CleanupExpiredTokens(ctx context.Context) error
+	
+	// StorePasswordResetToken stores a password reset token
+	StorePasswordResetToken(ctx context.Context, userID, token string, expiresAt time.Time) error
+	
+	// GetPasswordResetToken retrieves a password reset token
+	GetPasswordResetToken(ctx context.Context, token string) (*PasswordResetToken, error)
+	
+	// RevokePasswordResetToken revokes a password reset token
+	RevokePasswordResetToken(ctx context.Context, token string) error
+	
+	// StoreSession stores a user session
+	StoreSession(ctx context.Context, sessionID, userID string, expiresAt time.Time) error
+	
+	// GetSession retrieves a user session
+	GetSession(ctx context.Context, sessionID string) (*Session, error)
+	
+	// RevokeSession revokes a user session
+	RevokeSession(ctx context.Context, sessionID string) error
+}
+
+// RefreshToken represents a stored refresh token
+type RefreshToken struct {
+	Token     string    `json:"token"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// PasswordResetToken represents a stored password reset token
+type PasswordResetToken struct {
+	Token     string    `json:"token"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Session represents a user session
+type Session struct {
+	SessionID string    `json:"session_id"`
+	UserID    string    `json:"user_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+}

@@ -1,0 +1,398 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/application/dto"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/events"
+	"{{.ModulePath}}/internal/domain/services"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+// AuthService implements the AuthPort interface
+// This is an application service that orchestrates authentication operations
+type AuthService struct {
+	{{.DomainName}}Repo       output.{{.DomainName | title}}RepositoryPort
+	authRepo        output.AuthRepositoryPort
+	authDomainService services.AuthDomainService
+	eventPublisher  output.EventPublisherPort
+	logger          output.LoggerPort
+	authConfig      config.AuthConfig
+}
+
+// NewAuthService creates a new AuthService
+func NewAuthService(
+	{{.DomainName}}Repo output.{{.DomainName | title}}RepositoryPort,
+	authRepo output.AuthRepositoryPort,
+	authDomainService services.AuthDomainService,
+	eventPublisher output.EventPublisherPort,
+	logger output.LoggerPort,
+	authConfig config.AuthConfig,
+) input.AuthPort {
+	return &AuthService{
+		{{.DomainName}}Repo:       {{.DomainName}}Repo,
+		authRepo:        authRepo,
+		authDomainService: authDomainService,
+		eventPublisher:  eventPublisher,
+		logger:          logger,
+		authConfig:      authConfig,
+	}
+}
+
+// Login authenticates a {{.DomainName}} and returns a token
+func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.LoginResponse, error) {
+	s.logger.Info(ctx, "Login attempt", output.String("email", req.Email))
+
+	// Get {{.DomainName}} by email
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByEmail(ctx, req.Email)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} by email", output.String("email", req.Email), output.Error(err))
+		
+		// Publish login failed event
+		event := events.New{{.DomainName | title}}LoginFailedEvent(req.Email, "", "", "{{.DomainName}} not found")
+		s.eventPublisher.Publish(ctx, event)
+		
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
+	// Use domain service to validate login
+	if err := s.authDomainService.ValidateLogin(ctx, {{.DomainName}}, req.Password); err != nil {
+		s.logger.Error(ctx, "Login validation failed", output.String("email", req.Email), output.Error(err))
+		
+		// Publish login failed event
+		event := events.New{{.DomainName | title}}LoginFailedEvent(req.Email, "", "", "invalid password")
+		s.eventPublisher.Publish(ctx, event)
+		
+		return nil, fmt.Errorf("invalid credentials")
+	}
+
+	// Generate tokens
+	accessToken, err := s.generateAccessToken({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value())
+	if err != nil {
+		s.logger.Error(ctx, "Failed to generate access token", output.Error(err))
+		return nil, fmt.Errorf("failed to generate access token")
+	}
+
+	refreshToken, err := s.generateRefreshToken({{.DomainName}}.ID().Value())
+	if err != nil {
+		s.logger.Error(ctx, "Failed to generate refresh token", output.Error(err))
+		return nil, fmt.Errorf("failed to generate refresh token")
+	}
+
+	// Store refresh token
+	expiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 days
+	if err := s.authRepo.StoreRefreshToken(ctx, {{.DomainName}}.ID().Value(), refreshToken, expiresAt); err != nil {
+		s.logger.Error(ctx, "Failed to store refresh token", output.Error(err))
+		return nil, fmt.Errorf("failed to store refresh token")
+	}
+
+	// Publish login success event
+	event := events.New{{.DomainName | title}}LoggedInEvent({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value(), "", "", "")
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish login event", output.Error(err))
+	}
+
+	s.logger.Info(ctx, "Login successful", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+
+	return &dto.LoginResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.authConfig.TokenDuration.Seconds()),
+		User: dto.{{.DomainName | title}}Response{
+			ID:        {{.DomainName}}.ID().Value(),
+			Email:     {{.DomainName}}.Email().Value(),
+			FirstName: {{.DomainName}}.FirstName(),
+			LastName:  {{.DomainName}}.LastName(),
+			CreatedAt: {{.DomainName}}.CreatedAt(),
+			UpdatedAt: {{.DomainName}}.UpdatedAt(),
+		},
+	}, nil
+}
+
+// Register creates a new {{.DomainName}} account
+func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.RegisterResponse, error) {
+	s.logger.Info(ctx, "Registration attempt", output.String("email", req.Email))
+
+	// Create {{.DomainName}} using the {{.DomainName}} service
+	createReq := &dto.Create{{.DomainName | title}}Request{
+		Email:     req.Email,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Password:  req.Password,
+	}
+
+	{{.DomainName}}Response, err := s.{{.DomainName}}Repo.Create(ctx, createReq)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to create {{.DomainName}} during registration", output.String("email", req.Email), output.Error(err))
+		return nil, fmt.Errorf("failed to create {{.DomainName}}: %w", err)
+	}
+
+	// Publish registration event
+	event := events.New{{.DomainName | title}}RegisteredEvent({{.DomainName}}Response.ID, {{.DomainName}}Response.Email, "", "")
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish registration event", output.Error(err))
+	}
+
+	s.logger.Info(ctx, "Registration successful", output.String("{{.DomainName}}_id", {{.DomainName}}Response.ID))
+
+	return &dto.RegisterResponse{
+		User:    *{{.DomainName}}Response,
+		Message: "Registration successful",
+	}, nil
+}
+
+// RefreshToken refreshes an authentication token
+func (s *AuthService) RefreshToken(ctx context.Context, req *dto.RefreshTokenRequest) (*dto.RefreshTokenResponse, error) {
+	s.logger.Info(ctx, "Token refresh attempt")
+
+	// Get stored refresh token
+	storedToken, err := s.authRepo.GetRefreshToken(ctx, req.RefreshToken)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get refresh token", output.Error(err))
+		return nil, fmt.Errorf("invalid refresh token")
+	}
+
+	// Check if token is expired
+	if time.Now().After(storedToken.ExpiresAt) {
+		s.logger.Error(ctx, "Refresh token has expired")
+		return nil, fmt.Errorf("refresh token has expired")
+	}
+
+	// Generate new access token
+	accessToken, err := s.generateAccessToken(storedToken.UserID, "")
+	if err != nil {
+		s.logger.Error(ctx, "Failed to generate access token", output.Error(err))
+		return nil, fmt.Errorf("failed to generate access token")
+	}
+
+	// Generate new refresh token
+	newRefreshToken, err := s.generateRefreshToken(storedToken.UserID)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to generate refresh token", output.Error(err))
+		return nil, fmt.Errorf("failed to generate refresh token")
+	}
+
+	// Store new refresh token
+	expiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 days
+	if err := s.authRepo.StoreRefreshToken(ctx, storedToken.UserID, newRefreshToken, expiresAt); err != nil {
+		s.logger.Error(ctx, "Failed to store refresh token", output.Error(err))
+		return nil, fmt.Errorf("failed to store refresh token")
+	}
+
+	// Revoke old refresh token
+	if err := s.authRepo.RevokeRefreshToken(ctx, req.RefreshToken); err != nil {
+		s.logger.Warn(ctx, "Failed to revoke old refresh token", output.Error(err))
+	}
+
+	// Publish token refresh event
+	event := events.NewTokenRefreshedEvent(storedToken.UserID, "", req.RefreshToken, newRefreshToken, "", "")
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish token refresh event", output.Error(err))
+	}
+
+	s.logger.Info(ctx, "Token refresh successful", output.String("{{.DomainName}}_id", storedToken.UserID))
+
+	return &dto.RefreshTokenResponse{
+		AccessToken:  accessToken,
+		RefreshToken: newRefreshToken,
+		TokenType:    "Bearer",
+		ExpiresIn:    int(s.authConfig.TokenDuration.Seconds()),
+	}, nil
+}
+
+// ValidateToken validates an authentication token
+func (s *AuthService) ValidateToken(ctx context.Context, token string) (*dto.TokenValidationResponse, error) {
+	s.logger.Info(ctx, "Token validation attempt")
+
+	// This is a simplified implementation
+	// In a real application, you would parse and validate the JWT token
+	if token == "" {
+		return &dto.TokenValidationResponse{
+			Valid: false,
+		}, nil
+	}
+
+	// Placeholder validation logic
+	return &dto.TokenValidationResponse{
+		Valid:  true,
+		UserID: "placeholder_user_id",
+		Email:  "placeholder@example.com",
+	}, nil
+}
+
+// Logout invalidates an authentication token
+func (s *AuthService) Logout(ctx context.Context, token string) error {
+	s.logger.Info(ctx, "Logout attempt")
+
+	// In a real implementation, you would:
+	// 1. Parse the token to get user ID
+	// 2. Revoke all refresh tokens for the user
+	// 3. Add token to a blacklist
+
+	// Placeholder logout logic
+	s.logger.Info(ctx, "Logout successful")
+
+	return nil
+}
+
+// ChangePassword changes a {{.DomainName}}'s password
+func (s *AuthService) ChangePassword(ctx context.Context, req *dto.ChangePasswordRequest) error {
+	s.logger.Info(ctx, "Password change attempt", output.String("{{.DomainName}}_id", req.UserID))
+
+	// Get {{.DomainName}} by ID
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByID(ctx, req.UserID)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} for password change", output.Error(err))
+		return fmt.Errorf("{{.DomainName}} not found")
+	}
+
+	// Validate current password
+	if !{{.DomainName}}.ValidatePassword(req.CurrentPassword) {
+		s.logger.Error(ctx, "Current password validation failed")
+		return fmt.Errorf("invalid current password")
+	}
+
+	// Use domain service to validate new password
+	if err := s.authDomainService.ValidatePasswordStrength(ctx, req.NewPassword); err != nil {
+		s.logger.Error(ctx, "New password validation failed", output.Error(err))
+		return fmt.Errorf("new password validation failed: %w", err)
+	}
+
+	// Update password
+	if err := {{.DomainName}}.UpdatePassword(req.NewPassword); err != nil {
+		s.logger.Error(ctx, "Failed to update password", output.Error(err))
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	// Save updated {{.DomainName}}
+	if err := s.{{.DomainName}}Repo.Update(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "Failed to save {{.DomainName}} after password change", output.Error(err))
+		return fmt.Errorf("failed to save {{.DomainName}}: %w", err)
+	}
+
+	// Publish password change event
+	event := events.New{{.DomainName | title}}PasswordChangedEvent({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value())
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish password change event", output.Error(err))
+	}
+
+	s.logger.Info(ctx, "Password change successful", output.String("{{.DomainName}}_id", req.UserID))
+
+	return nil
+}
+
+// ResetPassword initiates a password reset
+func (s *AuthService) ResetPassword(ctx context.Context, req *dto.ResetPasswordRequest) error {
+	s.logger.Info(ctx, "Password reset request", output.String("email", req.Email))
+
+	// Get {{.DomainName}} by email
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByEmail(ctx, req.Email)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} for password reset", output.Error(err))
+		// Don't reveal if email exists or not
+		return nil
+	}
+
+	// Generate reset token
+	resetToken := s.generatePasswordResetToken()
+	expiresAt := time.Now().Add(1 * time.Hour) // 1 hour
+
+	// Store reset token
+	if err := s.authRepo.StorePasswordResetToken(ctx, {{.DomainName}}.ID().Value(), resetToken, expiresAt); err != nil {
+		s.logger.Error(ctx, "Failed to store password reset token", output.Error(err))
+		return fmt.Errorf("failed to store password reset token")
+	}
+
+	// Publish password reset event
+	event := events.NewPasswordResetRequestedEvent({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value(), resetToken, "", "")
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish password reset event", output.Error(err))
+	}
+
+	s.logger.Info(ctx, "Password reset token generated", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+
+	return nil
+}
+
+// ConfirmPasswordReset confirms a password reset with a token
+func (s *AuthService) ConfirmPasswordReset(ctx context.Context, req *dto.ConfirmPasswordResetRequest) error {
+	s.logger.Info(ctx, "Password reset confirmation attempt")
+
+	// Get reset token
+	resetToken, err := s.authRepo.GetPasswordResetToken(ctx, req.Token)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get password reset token", output.Error(err))
+		return fmt.Errorf("invalid reset token")
+	}
+
+	// Check if token is expired
+	if time.Now().After(resetToken.ExpiresAt) {
+		s.logger.Error(ctx, "Password reset token has expired")
+		return fmt.Errorf("reset token has expired")
+	}
+
+	// Get {{.DomainName}} by ID
+	{{.DomainName}}, err := s.{{.DomainName}}Repo.GetByID(ctx, resetToken.UserID)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to get {{.DomainName}} for password reset", output.Error(err))
+		return fmt.Errorf("{{.DomainName}} not found")
+	}
+
+	// Validate new password
+	if err := s.authDomainService.ValidatePasswordStrength(ctx, req.NewPassword); err != nil {
+		s.logger.Error(ctx, "New password validation failed", output.Error(err))
+		return fmt.Errorf("new password validation failed: %w", err)
+	}
+
+	// Update password
+	if err := {{.DomainName}}.UpdatePassword(req.NewPassword); err != nil {
+		s.logger.Error(ctx, "Failed to update password", output.Error(err))
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	// Save updated {{.DomainName}}
+	if err := s.{{.DomainName}}Repo.Update(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "Failed to save {{.DomainName}} after password reset", output.Error(err))
+		return fmt.Errorf("failed to save {{.DomainName}}: %w", err)
+	}
+
+	// Revoke reset token
+	if err := s.authRepo.RevokePasswordResetToken(ctx, req.Token); err != nil {
+		s.logger.Warn(ctx, "Failed to revoke password reset token", output.Error(err))
+	}
+
+	// Publish password reset completion event
+	event := events.NewPasswordResetCompletedEvent({{.DomainName}}.ID().Value(), {{.DomainName}}.Email().Value(), req.Token, "", "")
+	if err := s.eventPublisher.Publish(ctx, event); err != nil {
+		s.logger.Warn(ctx, "Failed to publish password reset completion event", output.Error(err))
+	}
+
+	s.logger.Info(ctx, "Password reset successful", output.String("{{.DomainName}}_id", {{.DomainName}}.ID().Value()))
+
+	return nil
+}
+
+// Helper methods for token generation
+func (s *AuthService) generateAccessToken(userID, email string) (string, error) {
+	// This is a simplified implementation
+	// In a real application, you would use JWT with proper signing
+	return "access_token_" + userID, nil
+}
+
+func (s *AuthService) generateRefreshToken(userID string) (string, error) {
+	// This is a simplified implementation
+	// In a real application, you would generate a secure random token
+	return "refresh_token_" + userID, nil
+}
+
+func (s *AuthService) generatePasswordResetToken() string {
+	// This is a simplified implementation
+	// In a real application, you would generate a secure random token
+	return "reset_token_" + fmt.Sprintf("%d", time.Now().UnixNano())
+}

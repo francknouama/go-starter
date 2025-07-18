@@ -1,0 +1,170 @@
+package entities
+
+import (
+	"time"
+
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+// {{.DomainName | title}} represents the core {{.DomainName}} entity in the domain
+// This is the heart of the hexagonal architecture - pure domain logic
+type {{.DomainName | title}} struct {
+	id           valueobjects.{{.DomainName | title}}ID
+	email        valueobjects.Email
+	firstName    string
+	lastName     string
+	passwordHash string
+	createdAt    time.Time
+	updatedAt    time.Time
+}
+
+// New{{.DomainName | title}} creates a new {{.DomainName}} entity
+func New{{.DomainName | title}}(
+	id valueobjects.{{.DomainName | title}}ID,
+	email valueobjects.Email,
+	firstName, lastName, password string,
+) (*{{.DomainName | title}}, error) {
+	// Validate input
+	if firstName == "" {
+		return nil, ErrInvalidFirstName
+	}
+	if lastName == "" {
+		return nil, ErrInvalidLastName
+	}
+	if len(password) < 8 {
+		return nil, ErrWeakPassword
+	}
+
+	// Hash password (in real implementation, use bcrypt or similar)
+	passwordHash := hashPassword(password)
+
+	now := time.Now()
+	return &{{.DomainName | title}}{
+		id:           id,
+		email:        email,
+		firstName:    firstName,
+		lastName:     lastName,
+		passwordHash: passwordHash,
+		createdAt:    now,
+		updatedAt:    now,
+	}, nil
+}
+
+// Reconstruct{{.DomainName | title}} reconstructs a {{.DomainName}} entity from persistence
+// This is used by repositories to rebuild entities from stored data
+func Reconstruct{{.DomainName | title}}(
+	id valueobjects.{{.DomainName | title}}ID,
+	email valueobjects.Email,
+	firstName, lastName, passwordHash string,
+	createdAt, updatedAt time.Time,
+) *{{.DomainName | title}} {
+	return &{{.DomainName | title}}{
+		id:           id,
+		email:        email,
+		firstName:    firstName,
+		lastName:     lastName,
+		passwordHash: passwordHash,
+		createdAt:    createdAt,
+		updatedAt:    updatedAt,
+	}
+}
+
+// ID returns the {{.DomainName}} ID
+func (u *{{.DomainName | title}}) ID() valueobjects.{{.DomainName | title}}ID {
+	return u.id
+}
+
+// Email returns the {{.DomainName}} email
+func (u *{{.DomainName | title}}) Email() valueobjects.Email {
+	return u.email
+}
+
+// FirstName returns the {{.DomainName}} first name
+func (u *{{.DomainName | title}}) FirstName() string {
+	return u.firstName
+}
+
+// LastName returns the {{.DomainName}} last name
+func (u *{{.DomainName | title}}) LastName() string {
+	return u.lastName
+}
+
+// PasswordHash returns the {{.DomainName}} password hash
+func (u *{{.DomainName | title}}) PasswordHash() string {
+	return u.passwordHash
+}
+
+// CreatedAt returns the {{.DomainName}} creation time
+func (u *{{.DomainName | title}}) CreatedAt() time.Time {
+	return u.createdAt
+}
+
+// UpdatedAt returns the {{.DomainName}} last update time
+func (u *{{.DomainName | title}}) UpdatedAt() time.Time {
+	return u.updatedAt
+}
+
+// UpdateEmail updates the {{.DomainName}} email
+func (u *{{.DomainName | title}}) UpdateEmail(email valueobjects.Email) {
+	u.email = email
+	u.updatedAt = time.Now()
+}
+
+// UpdateFirstName updates the {{.DomainName}} first name
+func (u *{{.DomainName | title}}) UpdateFirstName(firstName string) error {
+	if firstName == "" {
+		return ErrInvalidFirstName
+	}
+	u.firstName = firstName
+	u.updatedAt = time.Now()
+	return nil
+}
+
+// UpdateLastName updates the {{.DomainName}} last name
+func (u *{{.DomainName | title}}) UpdateLastName(lastName string) error {
+	if lastName == "" {
+		return ErrInvalidLastName
+	}
+	u.lastName = lastName
+	u.updatedAt = time.Now()
+	return nil
+}
+
+// UpdatePassword updates the {{.DomainName}} password
+func (u *{{.DomainName | title}}) UpdatePassword(password string) error {
+	if len(password) < 8 {
+		return ErrWeakPassword
+	}
+	u.passwordHash = hashPassword(password)
+	u.updatedAt = time.Now()
+	return nil
+}
+
+// ValidatePassword validates a password against the stored hash
+func (u *{{.DomainName | title}}) ValidatePassword(password string) bool {
+	return validatePassword(password, u.passwordHash)
+}
+
+// FullName returns the full name of the {{.DomainName}}
+func (u *{{.DomainName | title}}) FullName() string {
+	return u.firstName + " " + u.lastName
+}
+
+// IsEmailVerified checks if the {{.DomainName}} email is verified
+// This is a business rule that might be implemented later
+func (u *{{.DomainName | title}}) IsEmailVerified() bool {
+	// This would be implemented based on business requirements
+	return true
+}
+
+// hashPassword hashes a password (placeholder implementation)
+func hashPassword(password string) string {
+	// In real implementation, use bcrypt.GenerateFromPassword
+	return "hashed_" + password
+}
+
+// validatePassword validates a password against a hash (placeholder implementation)
+func validatePassword(password, hash string) bool {
+	// In real implementation, use bcrypt.CompareHashAndPassword
+	return "hashed_"+password == hash
+}

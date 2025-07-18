@@ -1,0 +1,39 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: {{.GoVersion}}
+    
+    - name: Build
+      run: |
+        CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/{{.ProjectName}} cmd/server/main.go
+    
+    - name: Build Docker image
+      run: |
+        docker build -t {{.ProjectName}}:latest .
+        docker tag {{.ProjectName}}:latest {{.ProjectName}}:${{`{{ github.sha }}`}}
+    
+    - name: Deploy to staging
+      if: github.ref == 'refs/heads/main'
+      run: |
+        echo "Deploy to staging environment"
+        # Add your staging deployment logic here
+    
+    - name: Deploy to production
+      if: startsWith(github.ref, 'refs/tags/v')
+      run: |
+        echo "Deploy to production environment"
+        # Add your production deployment logic here

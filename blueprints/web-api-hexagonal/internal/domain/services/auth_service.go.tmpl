@@ -1,0 +1,187 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"{{.ModulePath}}/internal/domain/entities"
+)
+
+// AuthDomainService defines the interface for authentication domain services
+type AuthDomainService interface {
+	// ValidateLogin validates login credentials
+	ValidateLogin(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}, password string) error
+	
+	// ValidatePasswordStrength validates password strength
+	ValidatePasswordStrength(ctx context.Context, password string) error
+	
+	// CanChangePassword checks if a {{.DomainName}} can change their password
+	CanChangePassword(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error
+	
+	// ValidateSession validates an authentication session
+	ValidateSession(ctx context.Context, session *entities.AuthSession) error
+	
+	// GenerateSessionDuration returns the duration for a new session
+	GenerateSessionDuration(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) time.Duration
+}
+
+// authDomainService implements the AuthDomainService interface
+type authDomainService struct {
+	// No external dependencies - this is pure domain logic
+}
+
+// NewAuthDomainService creates a new authentication domain service
+func NewAuthDomainService() AuthDomainService {
+	return &authDomainService{}
+}
+
+// ValidateLogin validates login credentials
+func (s *authDomainService) ValidateLogin(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}, password string) error {
+	// Domain validation rules for login
+	if {{.DomainName}} == nil {
+		return errors.New("{{.DomainName}} cannot be nil")
+	}
+	
+	if password == "" {
+		return errors.New("password cannot be empty")
+	}
+	
+	// Business rule: Check if {{.DomainName}} is active
+	if !{{.DomainName}}.IsEmailVerified() {
+		return errors.New("email must be verified before login")
+	}
+	
+	// Validate password against the {{.DomainName}}'s stored hash
+	if !{{.DomainName}}.ValidatePassword(password) {
+		return errors.New("invalid password")
+	}
+	
+	// Business rule: Check for account lockout
+	if s.isAccountLocked({{.DomainName}}) {
+		return errors.New("account is locked")
+	}
+	
+	return nil
+}
+
+// ValidatePasswordStrength validates password strength
+func (s *authDomainService) ValidatePasswordStrength(ctx context.Context, password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters long")
+	}
+	
+	// Business rules for password strength
+	hasUpper := false
+	hasLower := false
+	hasDigit := false
+	hasSpecial := false
+	
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasDigit = true
+		case char >= 32 && char <= 126: // ASCII printable characters
+			if !((char >= 'A' && char <= 'Z') || (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9')) {
+				hasSpecial = true
+			}
+		}
+	}
+	
+	if !hasUpper {
+		return errors.New("password must contain at least one uppercase letter")
+	}
+	
+	if !hasLower {
+		return errors.New("password must contain at least one lowercase letter")
+	}
+	
+	if !hasDigit {
+		return errors.New("password must contain at least one digit")
+	}
+	
+	if !hasSpecial {
+		return errors.New("password must contain at least one special character")
+	}
+	
+	return nil
+}
+
+// CanChangePassword checks if a {{.DomainName}} can change their password
+func (s *authDomainService) CanChangePassword(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) error {
+	if {{.DomainName}} == nil {
+		return errors.New("{{.DomainName}} cannot be nil")
+	}
+	
+	// Business rule: Account must be verified
+	if !{{.DomainName}}.IsEmailVerified() {
+		return errors.New("email must be verified before changing password")
+	}
+	
+	// Business rule: Cannot change password too frequently
+	if s.isPasswordChangeToFrequent({{.DomainName}}) {
+		return errors.New("password was changed too recently")
+	}
+	
+	return nil
+}
+
+// ValidateSession validates an authentication session
+func (s *authDomainService) ValidateSession(ctx context.Context, session *entities.AuthSession) error {
+	if session == nil {
+		return errors.New("session cannot be nil")
+	}
+	
+	if session.IsExpired() {
+		return errors.New("session has expired")
+	}
+	
+	if !session.IsValid() {
+		return errors.New("session is invalid")
+	}
+	
+	return nil
+}
+
+// GenerateSessionDuration returns the duration for a new session
+func (s *authDomainService) GenerateSessionDuration(ctx context.Context, {{.DomainName}} *entities.{{.DomainName | title}}) time.Duration {
+	// Business rule: Different session durations based on {{.DomainName}} type
+	if s.isSystemAdmin({{.DomainName}}) {
+		return 4 * time.Hour // Shorter session for admins
+	}
+	
+	if s.isPremium{{.DomainName | title}}({{.DomainName}}) {
+		return 30 * 24 * time.Hour // 30 days for premium {{.DomainName}}s
+	}
+	
+	return 24 * time.Hour // 24 hours for regular {{.DomainName}}s
+}
+
+// isAccountLocked checks if the account is locked
+func (s *authDomainService) isAccountLocked({{.DomainName}} *entities.{{.DomainName | title}}) bool {
+	// Business rule: Check for account lockout
+	// This would typically involve checking failed login attempts
+	return false
+}
+
+// isPasswordChangeToFrequent checks if password changes are too frequent
+func (s *authDomainService) isPasswordChangeToFrequent({{.DomainName}} *entities.{{.DomainName | title}}) bool {
+	// Business rule: Cannot change password more than once per day
+	// This would typically involve checking the last password change time
+	return false
+}
+
+// isSystemAdmin checks if the {{.DomainName}} is a system administrator
+func (s *authDomainService) isSystemAdmin({{.DomainName}} *entities.{{.DomainName | title}}) bool {
+	return {{.DomainName}}.Email().Value() == "admin@system.com"
+}
+
+// isPremium{{.DomainName | title}} checks if the {{.DomainName}} is a premium {{.DomainName}}
+func (s *authDomainService) isPremium{{.DomainName | title}}({{.DomainName}} *entities.{{.DomainName | title}}) bool {
+	// Business rule: Premium {{.DomainName}} identification
+	return false
+}

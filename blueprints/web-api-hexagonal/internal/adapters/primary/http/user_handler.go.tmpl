@@ -1,0 +1,211 @@
+package http
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"{{.ModulePath}}/internal/application/dto"
+	"{{.ModulePath}}/internal/application/ports/input"
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// {{.DomainName | title}}Handler handles {{.DomainName}} HTTP requests
+// This is a primary adapter that implements the HTTP interface
+type {{.DomainName | title}}Handler struct {
+	{{.DomainName}}Port input.{{.DomainName | title}}Port
+	logger     output.LoggerPort
+}
+
+// New{{.DomainName | title}}Handler creates a new {{.DomainName}} handler
+func New{{.DomainName | title}}Handler({{.DomainName}}Port input.{{.DomainName | title}}Port, logger output.LoggerPort) *{{.DomainName | title}}Handler {
+	return &{{.DomainName | title}}Handler{
+		{{.DomainName}}Port: {{.DomainName}}Port,
+		logger:     logger,
+	}
+}
+
+// HandleCreate{{.DomainName | title}} handles {{.DomainName}} creation requests
+func (h *{{.DomainName | title}}Handler) HandleCreate{{.DomainName | title}}(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Create {{.DomainName}} request received")
+	
+	// Parse request body
+	var req dto.Create{{.DomainName | title}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the {{.DomainName}} port to create the {{.DomainName}}
+	{{.DomainName}}Response, err := h.{{.DomainName}}Port.Create{{.DomainName | title}}(ctx, &req)
+	if err != nil {
+		h.logger.Error(ctx, "Failed to create {{.DomainName}}", output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return created {{.DomainName}} as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	
+	if err := json.NewEncoder(w).Encode({{.DomainName}}Response); err != nil {
+		h.logger.Error(ctx, "Failed to encode response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleGet{{.DomainName | title}} handles {{.DomainName}} retrieval requests
+func (h *{{.DomainName | title}}Handler) HandleGet{{.DomainName | title}}(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	// Extract {{.DomainName}} ID from URL path
+	{{.DomainName}}ID := extractIDFromPath(r.URL.Path)
+	if {{.DomainName}}ID == "" {
+		h.logger.Error(ctx, "Missing {{.DomainName}} ID in path")
+		http.Error(w, "Missing {{.DomainName}} ID", http.StatusBadRequest)
+		return
+	}
+	
+	h.logger.Info(ctx, "Get {{.DomainName}} request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	
+	// Use the {{.DomainName}} port to get the {{.DomainName}}
+	{{.DomainName}}Response, err := h.{{.DomainName}}Port.Get{{.DomainName | title}}ByID(ctx, {{.DomainName}}ID)
+	if err != nil {
+		h.logger.Error(ctx, "Failed to get {{.DomainName}}", output.String("{{.DomainName}}_id", {{.DomainName}}ID), output.Error(err))
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	
+	// Return {{.DomainName}} as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode({{.DomainName}}Response); err != nil {
+		h.logger.Error(ctx, "Failed to encode response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleUpdate{{.DomainName | title}} handles {{.DomainName}} update requests
+func (h *{{.DomainName | title}}Handler) HandleUpdate{{.DomainName | title}}(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	// Extract {{.DomainName}} ID from URL path
+	{{.DomainName}}ID := extractIDFromPath(r.URL.Path)
+	if {{.DomainName}}ID == "" {
+		h.logger.Error(ctx, "Missing {{.DomainName}} ID in path")
+		http.Error(w, "Missing {{.DomainName}} ID", http.StatusBadRequest)
+		return
+	}
+	
+	h.logger.Info(ctx, "Update {{.DomainName}} request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	
+	// Parse request body
+	var req dto.Update{{.DomainName | title}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the {{.DomainName}} port to update the {{.DomainName}}
+	{{.DomainName}}Response, err := h.{{.DomainName}}Port.Update{{.DomainName | title}}(ctx, {{.DomainName}}ID, &req)
+	if err != nil {
+		h.logger.Error(ctx, "Failed to update {{.DomainName}}", output.String("{{.DomainName}}_id", {{.DomainName}}ID), output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return updated {{.DomainName}} as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode({{.DomainName}}Response); err != nil {
+		h.logger.Error(ctx, "Failed to encode response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// HandleDelete{{.DomainName | title}} handles {{.DomainName}} deletion requests
+func (h *{{.DomainName | title}}Handler) HandleDelete{{.DomainName | title}}(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	// Extract {{.DomainName}} ID from URL path
+	{{.DomainName}}ID := extractIDFromPath(r.URL.Path)
+	if {{.DomainName}}ID == "" {
+		h.logger.Error(ctx, "Missing {{.DomainName}} ID in path")
+		http.Error(w, "Missing {{.DomainName}} ID", http.StatusBadRequest)
+		return
+	}
+	
+	h.logger.Info(ctx, "Delete {{.DomainName}} request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	
+	// Use the {{.DomainName}} port to delete the {{.DomainName}}
+	if err := h.{{.DomainName}}Port.Delete{{.DomainName | title}}(ctx, {{.DomainName}}ID); err != nil {
+		h.logger.Error(ctx, "Failed to delete {{.DomainName}}", output.String("{{.DomainName}}_id", {{.DomainName}}ID), output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return success
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// HandleList{{.DomainName | title}}s handles {{.DomainName}} listing requests
+func (h *{{.DomainName | title}}Handler) HandleList{{.DomainName | title}}s(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "List {{.DomainName}}s request received")
+	
+	// Parse query parameters
+	query := r.URL.Query()
+	
+	limit := 10
+	if l := query.Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	
+	offset := 0
+	if o := query.Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+	
+	search := query.Get("search")
+	
+	req := &dto.List{{.DomainName | title}}sRequest{
+		Limit:  limit,
+		Offset: offset,
+		Search: search,
+	}
+	
+	// Use the {{.DomainName}} port to list {{.DomainName}}s
+	{{.DomainName}}sResponse, err := h.{{.DomainName}}Port.List{{.DomainName | title}}s(ctx, req)
+	if err != nil {
+		h.logger.Error(ctx, "Failed to list {{.DomainName}}s", output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return {{.DomainName}}s as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode({{.DomainName}}sResponse); err != nil {
+		h.logger.Error(ctx, "Failed to encode response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// extractIDFromPath extracts the ID from the URL path
+func extractIDFromPath(path string) string {
+	// Simple path parsing - in a real implementation, use a proper router
+	// This is a placeholder for path parsing like "/{{.DomainName}}s/123"
+	return "placeholder_id"
+}
