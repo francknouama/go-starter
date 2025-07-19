@@ -29,11 +29,11 @@ func (e *EventPublisher) Publish(ctx context.Context, event events.DomainEvent) 
 	e.mutex.RLock()
 	defer e.mutex.RUnlock()
 	
-	eventType := event.Type()
+	eventType := event.EventType()
 	
 	e.logger.Debug(ctx, "Publishing domain event", 
 		output.String("event_type", eventType),
-		output.String("event_id", event.ID()),
+		output.String("event_id", event.EventID()),
 		output.String("aggregate_id", event.AggregateID()),
 	)
 	
@@ -62,25 +62,45 @@ func (e *EventPublisher) Publish(ctx context.Context, event events.DomainEvent) 
 	
 	e.logger.Info(ctx, "Domain event published successfully", 
 		output.String("event_type", eventType),
-		output.String("event_id", event.ID()),
+		output.String("event_id", event.EventID()),
 		output.Int("subscriber_count", len(subscribers)),
 	)
 	
 	return nil
 }
 
+// PublishBatch publishes multiple domain events in a batch
+func (e *EventPublisher) PublishBatch(ctx context.Context, events []events.DomainEvent) error {
+	for _, event := range events {
+		if err := e.Publish(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Subscribe adds a subscriber for a specific event type
-func (e *EventPublisher) Subscribe(eventType string, handler func(ctx context.Context, event events.DomainEvent)) error {
+func (e *EventPublisher) Subscribe(ctx context.Context, eventType string, handler output.EventHandler) error {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
+	
+	// Convert EventHandler to function
+	handlerFunc := func(ctx context.Context, event events.DomainEvent) {
+		if err := handler.Handle(ctx, event); err != nil {
+			e.logger.Error(ctx, "Event handler error",
+				output.String("event_type", eventType),
+				output.Error(err),
+			)
+		}
+	}
 	
 	if e.subscribers[eventType] == nil {
 		e.subscribers[eventType] = make([]func(ctx context.Context, event events.DomainEvent), 0)
 	}
 	
-	e.subscribers[eventType] = append(e.subscribers[eventType], handler)
+	e.subscribers[eventType] = append(e.subscribers[eventType], handlerFunc)
 	
-	e.logger.Info(context.Background(), "Event subscriber registered", 
+	e.logger.Info(ctx, "Event subscriber registered", 
 		output.String("event_type", eventType),
 		output.Int("total_subscribers", len(e.subscribers[eventType])),
 	)
@@ -88,21 +108,24 @@ func (e *EventPublisher) Subscribe(eventType string, handler func(ctx context.Co
 	return nil
 }
 
-// Unsubscribe removes all subscribers for a specific event type
-func (e *EventPublisher) Unsubscribe(eventType string) error {
+// Unsubscribe removes a subscriber for a specific event type
+func (e *EventPublisher) Unsubscribe(ctx context.Context, eventType string, handler output.EventHandler) error {
 	e.mutex.Lock()
 	defer e.mutex.Unlock()
 	
+	// For simplicity, we'll clear all subscribers for the event type
+	// In a real implementation, you'd want to track and remove specific handlers
 	subscriberCount := len(e.subscribers[eventType])
 	delete(e.subscribers, eventType)
 	
-	e.logger.Info(context.Background(), "Event subscribers unregistered", 
+	e.logger.Info(ctx, "Event subscribers unregistered", 
 		output.String("event_type", eventType),
 		output.Int("removed_subscribers", subscriberCount),
 	)
 	
 	return nil
 }
+
 
 // GetSubscriberCount returns the number of subscribers for a specific event type
 func (e *EventPublisher) GetSubscriberCount(eventType string) int {

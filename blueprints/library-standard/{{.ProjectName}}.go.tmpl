@@ -1,118 +1,124 @@
 // Package {{.ProjectName | replace "-" "_"}} provides {{.ProjectName}} functionality.
+//
+// This library offers a comprehensive solution for processing data with features
+// including configurable options, caching, rate limiting, metrics, and more.
+//
+// For detailed documentation and examples, see:
+// - Basic usage: examples/basic/main.go
+// - Advanced usage: examples/advanced/main.go
+// - Package documentation: https://pkg.go.dev/{{.ModulePath}}
 package {{.ProjectName | replace "-" "_"}}
 
-import (
-	"context"
-	"fmt"
+// Re-export the main types and functions from the pkg directory
+// This allows users to import the library directly without needing to know
+// about the internal package structure.
 
-	"{{.ModulePath}}/internal/logger"
+import (
+	"{{.ModulePath}}/pkg/{{.ProjectName | replace "-" "_"}}"
 )
 
-// Client represents a {{.ProjectName}} client
-type Client struct {
-	logger logger.Logger
-	config *Config
-}
-
-// Config holds configuration for the {{.ProjectName}} client
-type Config struct {
-	// Logger configuration
-	Logger struct {
-		Level  string `json:"level"`
-		Format string `json:"format"`
-	} `json:"logger"`
+// Re-export types
+type (
+	// Client represents a {{.ProjectName}} processor client
+	Client = {{.ProjectName | replace "-" "_"}}.Client
 	
-	// Add your configuration fields here
-	Debug bool `json:"debug"`
-}
-
-// DefaultConfig returns a default configuration
-func DefaultConfig() *Config {
-	return &Config{
-		Debug: false,
-	}
-}
-
-// New creates a new {{.ProjectName}} client with the given configuration
-func New(config *Config) (*Client, error) {
-	if config == nil {
-		config = DefaultConfig()
-	}
-
-	// Initialize internal logger
-	loggerFactory := logger.NewFactory()
-	internalLogger, err := loggerFactory.CreateFromProjectConfig(
-		"{{.Logger}}",
-		getLogLevel(config),
-		getLogFormat(config),
-		true,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create logger: %w", err)
-	}
-
-	client := &Client{
-		logger: internalLogger,
-		config: config,
-	}
-
-	client.logger.InfoWith("{{.ProjectName}} client initialized", logger.Fields{
-		"logger": "{{.Logger}}",
-		"debug":  config.Debug,
-	})
-
-	return client, nil
-}
-
-// Process demonstrates the main functionality of the library
-func (c *Client) Process(ctx context.Context, input string) (string, error) {
-	c.logger.DebugWith("Processing input", logger.Fields{
-		"input_length": len(input),
-	})
-
-	if input == "" {
-		c.logger.Warn("Empty input provided")
-		return "", fmt.Errorf("input cannot be empty")
-	}
-
-	// Add your processing logic here
-	result := fmt.Sprintf("Processed: %s", input)
-
-	c.logger.InfoWith("Processing completed", logger.Fields{
-		"result_length": len(result),
-	})
-
-	return result, nil
-}
-
-// Close gracefully shuts down the client
-func (c *Client) Close() error {
-	c.logger.Info("Closing {{.ProjectName}} client")
+	// Processor defines the interface for processing operations
+	Processor = {{.ProjectName | replace "-" "_"}}.Processor
 	
-	// Sync logger before closing
-	if err := c.logger.Sync(); err != nil {
-		c.logger.ErrorWith("Failed to sync logger", logger.Fields{"error": err})
-		return err
-	}
+	// Input represents input data for processing
+	Input = {{.ProjectName | replace "-" "_"}}.Input
 	
-	return nil
-}
+	// Output represents processed output data
+	Output = {{.ProjectName | replace "-" "_"}}.Output
+	
+	// Config holds configuration for the {{.ProjectName}} client
+	Config = {{.ProjectName | replace "-" "_"}}.Config
+	
+	// Option configures the {{.ProjectName}} client
+	Option = {{.ProjectName | replace "-" "_"}}.Option
+	
+	// Event represents an event that occurs during processing
+	Event = {{.ProjectName | replace "-" "_"}}.Event
+	
+	// HealthStatus represents the health status of the processor
+	HealthStatus = {{.ProjectName | replace "-" "_"}}.HealthStatus
+	
+	// Metrics contains performance and operational metrics
+	Metrics = {{.ProjectName | replace "-" "_"}}.Metrics
+	
+	// Error represents a library-specific error
+	Error = {{.ProjectName | replace "-" "_"}}.Error
+)
 
-// Helper functions
+// Re-export constants
+const (
+	// Version of the library
+	Version = {{.ProjectName | replace "-" "_"}}.Version
+)
 
-func getLogLevel(config *Config) string {
-	if config.Logger.Level != "" {
-		return config.Logger.Level
-	}
-	if config.Debug {
-		return "debug"
-	}
-	return "warn" // Libraries should be quiet by default
-}
+// Re-export status constants
+const (
+	StatusSuccess = {{.ProjectName | replace "-" "_"}}.StatusSuccess
+	StatusError   = {{.ProjectName | replace "-" "_"}}.StatusError
+	StatusPending = {{.ProjectName | replace "-" "_"}}.StatusPending
+	StatusSkipped = {{.ProjectName | replace "-" "_"}}.StatusSkipped
+)
 
-func getLogFormat(config *Config) string {
-	if config.Logger.Format != "" {
-		return config.Logger.Format
-	}
-	return "text" // Human-readable for library debugging
-}
+// Re-export event type constants
+const (
+	EventProcessingStarted   = {{.ProjectName | replace "-" "_"}}.EventProcessingStarted
+	EventProcessingCompleted = {{.ProjectName | replace "-" "_"}}.EventProcessingCompleted
+	EventProcessingFailed    = {{.ProjectName | replace "-" "_"}}.EventProcessingFailed
+	EventValidationFailed    = {{.ProjectName | replace "-" "_"}}.EventValidationFailed
+	EventRateLimitExceeded   = {{.ProjectName | replace "-" "_"}}.EventRateLimitExceeded
+	EventCacheHit           = {{.ProjectName | replace "-" "_"}}.EventCacheHit
+	EventCacheMiss          = {{.ProjectName | replace "-" "_"}}.EventCacheMiss
+)
+
+// Re-export error variables
+var (
+	ErrInvalidInput      = {{.ProjectName | replace "-" "_"}}.ErrInvalidInput
+	ErrProcessingFailed  = {{.ProjectName | replace "-" "_"}}.ErrProcessingFailed
+	ErrTimeout           = {{.ProjectName | replace "-" "_"}}.ErrTimeout
+	ErrRateLimitExceeded = {{.ProjectName | replace "-" "_"}}.ErrRateLimitExceeded
+	ErrClosed            = {{.ProjectName | replace "-" "_"}}.ErrClosed
+)
+
+// Re-export functions
+var (
+	// New creates a new {{.ProjectName}} client with the given options
+	New = {{.ProjectName | replace "-" "_"}}.New
+	
+	// DefaultConfig returns a default configuration
+	DefaultConfig = {{.ProjectName | replace "-" "_"}}.DefaultConfig
+	
+	// NewError creates a new Error
+	NewError = {{.ProjectName | replace "-" "_"}}.NewError
+)
+
+// Re-export option functions
+var (
+	// WithLogger sets a custom logger for the client
+	WithLogger = {{.ProjectName | replace "-" "_"}}.WithLogger
+	
+	// WithTimeout sets the default timeout for operations
+	WithTimeout = {{.ProjectName | replace "-" "_"}}.WithTimeout
+	
+	// WithDebug enables or disables debug mode
+	WithDebug = {{.ProjectName | replace "-" "_"}}.WithDebug
+	
+	// WithRetryPolicy sets the retry policy for operations
+	WithRetryPolicy = {{.ProjectName | replace "-" "_"}}.WithRetryPolicy
+	
+	// WithCaching enables caching with the specified TTL
+	WithCaching = {{.ProjectName | replace "-" "_"}}.WithCaching
+	
+	// WithRateLimit sets rate limiting parameters
+	WithRateLimit = {{.ProjectName | replace "-" "_"}}.WithRateLimit
+	
+	// WithMetrics enables metrics collection
+	WithMetrics = {{.ProjectName | replace "-" "_"}}.WithMetrics
+	
+	// WithCallback sets a callback function for processing events
+	WithCallback = {{.ProjectName | replace "-" "_"}}.WithCallback
+)

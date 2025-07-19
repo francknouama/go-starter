@@ -4,52 +4,186 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	{{.ProjectName | replace "-" "_" | replace "." "_"}} "{{.ModulePath}}"
 )
 
 func main() {
 	fmt.Println("{{.ProjectName}} Advanced Example")
-	fmt.Println("=================================")
+	fmt.Println("===============================")
 
-	// Create a client with custom configuration
-	config := &{{.ProjectName | replace "-" "_" | replace "." "_"}}.Config{
-		Debug: true,
+	// Demonstrate event callbacks
+	var events []{{.ProjectName | replace "-" "_" | replace "." "_"}}.Event
+	eventCallback := func(event {{.ProjectName | replace "-" "_" | replace "." "_"}}.Event) {
+		events = append(events, event)
+		fmt.Printf("📅 Event: %s at %s\n", event.Type, event.Timestamp.Format("15:04:05"))
 	}
-	config.Logger.Level = "debug"
-	config.Logger.Format = "text"
 
-	client, err := {{.ProjectName | replace "-" "_" | replace "." "_"}}.New(config)
+	// Create a client with advanced configuration
+	client, err := {{.ProjectName | replace "-" "_" | replace "." "_"}}.New(
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithDebug(true),
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithTimeout(10*time.Second),
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithCaching(true, 2*time.Minute),
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithRetryPolicy(5, 500*time.Millisecond),
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithRateLimit(50, 10),
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithMetrics(true),
+		{{.ProjectName | replace "-" "_" | replace "." "_"}}.WithCallback(eventCallback),
+	)
 	if err != nil {
 		log.Fatalf("Failed to create client: %v", err)
 	}
 	defer client.Close()
 
-	fmt.Println("Created client with debug logging enabled")
+	fmt.Println("\n🚀 Client created with advanced configuration:")
+	fmt.Println("   - Debug mode enabled")
+	fmt.Println("   - 10 second timeout") 
+	fmt.Println("   - 2 minute cache TTL")
+	fmt.Println("   - 5 retries with 500ms backoff")
+	fmt.Println("   - 50 requests/second rate limit")
+	fmt.Println("   - Metrics collection enabled")
+	fmt.Println("   - Event callbacks configured")
 
-	// Test with various inputs
-	testCases := []struct {
-		name  string
-		input string
-	}{
-		{"Normal input", "hello world"},
-		{"Empty input", ""},
-		{"Long input", "this is a much longer input to test the processing capabilities"},
-		{"Special characters", "input with special chars: !@#$%^&*()"},
+	// Demonstrate different processing scenarios
+	fmt.Println("\n1. Cache Demonstration:")
+	cacheInput := &{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
+		ID:        "cache-demo",
+		Data:      "this will be cached",
+		Timestamp: time.Now(),
 	}
 
-	for _, tc := range testCases {
-		fmt.Printf("\n--- Test Case: %s ---\n", tc.name)
-		fmt.Printf("Input: '%s'\n", tc.input)
-		
-		result, err := client.Process(context.Background(), tc.input)
+	// First call - cache miss
+	fmt.Println("   First call (cache miss):")
+	output1, err := client.Process(context.Background(), cacheInput)
+	if err != nil {
+		log.Printf("Error: %v", err)
+	} else {
+		fmt.Printf("   ✅ Result: %s (took %v)\n", output1.Result, output1.ProcessingTime)
+	}
+
+	// Second call - cache hit
+	fmt.Println("   Second call (cache hit):")
+	output2, err := client.Process(context.Background(), cacheInput)
+	if err != nil {
+		log.Printf("Error: %v", err)
+	} else {
+		fmt.Printf("   ⚡ Result: %s (took %v)\n", output2.Result, output2.ProcessingTime)
+	}
+
+	// Demonstrate retry logic
+	fmt.Println("\n2. Error Handling and Retry:")
+	errorInput := &{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
+		ID:        "error-demo",
+		Data:      "error", // This triggers an error in processing
+		Timestamp: time.Now(),
+	}
+
+	output, err := client.Process(context.Background(), errorInput)
+	if err != nil {
+		fmt.Printf("   ❌ Expected error: %v\n", err)
+	} else {
+		fmt.Printf("   Unexpected success: %s\n", output.Result)
+	}
+
+	// Demonstrate validation errors
+	fmt.Println("\n3. Input Validation:")
+	invalidInputs := []*{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
+		{ID: "", Data: "missing ID", Timestamp: time.Now()},
+		{ID: "test", Data: "", Timestamp: time.Now()},
+		{ID: "test", Data: string(make([]byte, 15000)), Timestamp: time.Now()}, // Too large
+	}
+
+	for i, input := range invalidInputs {
+		fmt.Printf("   Testing invalid input %d:\n", i+1)
+		err := client.Validate(input)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
-			continue
+			fmt.Printf("   ❌ Validation failed (expected): %v\n", err)
+		} else {
+			fmt.Printf("   ✅ Validation passed (unexpected)\n")
 		}
-		
-		fmt.Printf("Result: %s\n", result)
 	}
 
-	fmt.Println("\nAdvanced example completed!")
+	// Demonstrate concurrent processing
+	fmt.Println("\n4. Concurrent Processing:")
+	ctx := context.Background()
+	
+	concurrentInputs := make([]*{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input, 5)
+	for i := 0; i < 5; i++ {
+		concurrentInputs[i] = &{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
+			ID:        fmt.Sprintf("concurrent-%d", i),
+			Data:      fmt.Sprintf("concurrent processing item %d", i),
+			Priority:  i + 1,
+			Timestamp: time.Now(),
+		}
+	}
+
+	startTime := time.Now()
+	outputs, err := client.ProcessBatch(ctx, concurrentInputs)
+	batchTime := time.Since(startTime)
+
+	if err != nil {
+		fmt.Printf("   ⚠️  Batch processing completed with some errors: %v\n", err)
+	} else {
+		fmt.Printf("   ✅ Batch processing completed successfully\n")
+	}
+
+	fmt.Printf("   📊 Processed %d items in %v\n", len(outputs), batchTime)
+	for _, output := range outputs {
+		if output.Status == {{.ProjectName | replace "-" "_" | replace "." "_"}}.StatusSuccess {
+			fmt.Printf("   ✅ %s: %s\n", output.ID, output.Result)
+		} else {
+			fmt.Printf("   ❌ %s: Error\n", output.ID)
+		}
+	}
+
+	// Rate limiting demonstration
+	fmt.Println("\n5. Rate Limiting:")
+	fmt.Println("   Sending requests rapidly to test rate limiting...")
+	
+	for i := 0; i < 15; i++ { // Send more than burst capacity
+		input := &{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
+			ID:        fmt.Sprintf("rate-test-%d", i),
+			Data:      fmt.Sprintf("rate limit test %d", i),
+			Timestamp: time.Now(),
+		}
+
+		output, err := client.Process(ctx, input)
+		if err != nil {
+			if err == {{.ProjectName | replace "-" "_" | replace "." "_"}}.ErrRateLimitExceeded {
+				fmt.Printf("   🚫 Request %d: Rate limited (expected)\n", i+1)
+			} else {
+				fmt.Printf("   ❌ Request %d: Error: %v\n", i+1, err)
+			}
+		} else {
+			fmt.Printf("   ✅ Request %d: Success\n", i+1)
+		}
+	}
+
+	// Final health and metrics check
+	fmt.Println("\n6. Final Health Check and Metrics:")
+	health, err := client.Health(ctx)
+	if err != nil {
+		log.Printf("Health check failed: %v", err)
+	} else {
+		fmt.Printf("   📊 Health Status: %s\n", health.Status)
+		fmt.Printf("   📈 Total Processed: %d\n", health.Metrics.TotalProcessed)
+		fmt.Printf("   ❌ Total Errors: %d\n", health.Metrics.TotalErrors)
+		fmt.Printf("   ⏱️  Average Processing Time: %v\n", health.Metrics.AverageProcessingTime)
+		fmt.Printf("   🎯 Cache Hit Rate: %.2f%%\n", health.Metrics.CacheHitRate*100)
+		fmt.Printf("   ⏰ Uptime: %v\n", health.Uptime)
+	}
+
+	// Show collected events
+	fmt.Printf("\n7. Event Summary:\n")
+	eventCounts := make(map[{{.ProjectName | replace "-" "_" | replace "." "_"}}.EventType]int)
+	for _, event := range events {
+		eventCounts[event.Type]++
+	}
+	
+	for eventType, count := range eventCounts {
+		fmt.Printf("   📅 %s: %d events\n", eventType, count)
+	}
+
+	fmt.Println("\n🎉 Advanced example completed!")
+	fmt.Printf("Total events captured: %d\n", len(events))
 }

@@ -2,7 +2,10 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"math/rand"
+	"strings"
 	"time"
 
 	"{{.ModulePath}}/internal/application/dto"
@@ -11,6 +14,7 @@ import (
 	"{{.ModulePath}}/internal/domain/entities"
 	"{{.ModulePath}}/internal/domain/events"
 	"{{.ModulePath}}/internal/domain/services"
+	"{{.ModulePath}}/internal/domain/valueobjects"
 	"{{.ModulePath}}/internal/infrastructure/config"
 )
 
@@ -84,7 +88,7 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Lo
 		return nil, fmt.Errorf("failed to generate refresh token")
 	}
 
-	// Store refresh token
+	// Store refresh token (allow multiple tokens per user for concurrent sessions)
 	expiresAt := time.Now().Add(30 * 24 * time.Hour) // 30 days
 	if err := s.authRepo.StoreRefreshToken(ctx, {{.DomainName}}.ID().Value(), refreshToken, expiresAt); err != nil {
 		s.logger.Error(ctx, "Failed to store refresh token", output.Error(err))
@@ -119,30 +123,58 @@ func (s *AuthService) Login(ctx context.Context, req *dto.LoginRequest) (*dto.Lo
 func (s *AuthService) Register(ctx context.Context, req *dto.RegisterRequest) (*dto.RegisterResponse, error) {
 	s.logger.Info(ctx, "Registration attempt", output.String("email", req.Email))
 
-	// Create {{.DomainName}} using the {{.DomainName}} service
-	createReq := &dto.Create{{.DomainName | title}}Request{
-		Email:     req.Email,
-		FirstName: req.FirstName,
-		LastName:  req.LastName,
-		Password:  req.Password,
+	// Create value objects
+	email, err := valueobjects.NewEmail(req.Email)
+	if err != nil {
+		s.logger.Error(ctx, "Invalid email format", output.String("email", req.Email), output.Error(err))
+		return nil, fmt.Errorf("invalid email format: %w", err)
 	}
 
-	{{.DomainName}}Response, err := s.{{.DomainName}}Repo.Create(ctx, createReq)
+	{{.DomainName}}ID, err := valueobjects.New{{.DomainName | title}}ID()
 	if err != nil {
-		s.logger.Error(ctx, "Failed to create {{.DomainName}} during registration", output.String("email", req.Email), output.Error(err))
-		return nil, fmt.Errorf("failed to create {{.DomainName}}: %w", err)
+		s.logger.Error(ctx, "Failed to generate {{.DomainName}} ID", output.Error(err))
+		return nil, fmt.Errorf("failed to generate {{.DomainName}} ID: %w", err)
+	}
+
+	// Create {{.DomainName}} entity
+	{{.DomainName}}, err := entities.New{{.DomainName | title}}(
+		{{.DomainName}}ID,
+		email,
+		req.FirstName,
+		req.LastName,
+		req.Password,
+	)
+	if err != nil {
+		s.logger.Error(ctx, "Failed to create {{.DomainName}} entity", output.Error(err))
+		return nil, fmt.Errorf("failed to create {{.DomainName}} entity: %w", err)
+	}
+
+	// Save {{.DomainName}} to repository
+	if err := s.{{.DomainName}}Repo.Create(ctx, {{.DomainName}}); err != nil {
+		s.logger.Error(ctx, "Failed to save {{.DomainName}} during registration", output.String("email", req.Email), output.Error(err))
+		return nil, fmt.Errorf("failed to save {{.DomainName}}: %w", err)
 	}
 
 	// Publish registration event
-	event := events.New{{.DomainName | title}}RegisteredEvent({{.DomainName}}Response.ID, {{.DomainName}}Response.Email, "", "")
+	event := events.New{{.DomainName | title}}RegisteredEvent({{.DomainName}}ID.Value(), email.Value(), "", "")
 	if err := s.eventPublisher.Publish(ctx, event); err != nil {
 		s.logger.Warn(ctx, "Failed to publish registration event", output.Error(err))
+	}
+
+	// Convert domain entity to DTO response
+	{{.DomainName}}Response := dto.{{.DomainName | title}}Response{
+		ID:        {{.DomainName}}.ID().Value(),
+		Email:     {{.DomainName}}.Email().Value(),
+		FirstName: {{.DomainName}}.FirstName(),
+		LastName:  {{.DomainName}}.LastName(),
+		CreatedAt: {{.DomainName}}.CreatedAt(),
+		UpdatedAt: {{.DomainName}}.UpdatedAt(),
 	}
 
 	s.logger.Info(ctx, "Registration successful", output.String("{{.DomainName}}_id", {{.DomainName}}Response.ID))
 
 	return &dto.RegisterResponse{
-		User:    *{{.DomainName}}Response,
+		User:    {{.DomainName}}Response,
 		Message: "Registration successful",
 	}, nil
 }
@@ -211,18 +243,61 @@ func (s *AuthService) ValidateToken(ctx context.Context, token string) (*dto.Tok
 	s.logger.Info(ctx, "Token validation attempt")
 
 	// This is a simplified implementation
-	// In a real application, you would parse and validate the JWT token
+	// In a real application, you would properly parse and validate the JWT token
 	if token == "" {
 		return &dto.TokenValidationResponse{
 			Valid: false,
 		}, nil
 	}
 
-	// Placeholder validation logic
+	// Parse the pseudo-JWT token
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		s.logger.Warn(ctx, "Invalid token format")
+		return &dto.TokenValidationResponse{
+			Valid: false,
+		}, nil
+	}
+
+	// Decode the payload (middle part)
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		s.logger.Warn(ctx, "Failed to decode token payload", output.Error(err))
+		return &dto.TokenValidationResponse{
+			Valid: false,
+		}, nil
+	}
+
+	// Parse the payload to extract user info
+	// In a real implementation, you would use a JSON parser
+	payloadStr := string(payloadBytes)
+	
+	// Extract userID from the payload using simple string parsing
+	// Format: {"sub":"userID","email":"email","iat":timestamp,"exp":timestamp}
+	userIDStart := strings.Index(payloadStr, `"sub":"`) + 7
+	userIDEnd := strings.Index(payloadStr[userIDStart:], `"`)
+	if userIDStart < 7 || userIDEnd < 0 {
+		return &dto.TokenValidationResponse{
+			Valid: false,
+		}, nil
+	}
+	userID := payloadStr[userIDStart : userIDStart+userIDEnd]
+
+	// In a real implementation, you would also parse the email and check expiration time
+	
+	// Get the actual user to validate the token
+	user, err := s.{{.DomainName}}Repo.GetByID(ctx, userID)
+	if err != nil {
+		s.logger.Warn(ctx, "User not found for token validation", output.String("user_id", userID))
+		return &dto.TokenValidationResponse{
+			Valid: false,
+		}, nil
+	}
+
 	return &dto.TokenValidationResponse{
 		Valid:  true,
-		UserID: "placeholder_user_id",
-		Email:  "placeholder@example.com",
+		UserID: user.ID().Value(),
+		Email:  user.Email().Value(),
 	}, nil
 }
 
@@ -380,19 +455,24 @@ func (s *AuthService) ConfirmPasswordReset(ctx context.Context, req *dto.Confirm
 
 // Helper methods for token generation
 func (s *AuthService) generateAccessToken(userID, email string) (string, error) {
-	// This is a simplified implementation
-	// In a real application, you would use JWT with proper signing
-	return "access_token_" + userID, nil
+	// This is a simplified implementation that mimics JWT structure
+	// In a real application, you would use a proper JWT library with signing
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"%s","email":"%s","iat":%d,"exp":%d}`, 
+		userID, email, time.Now().Unix(), time.Now().Add(s.authConfig.TokenDuration).Unix())))
+	signature := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("signature_%s_%d", userID, time.Now().UnixNano())))
+	
+	return fmt.Sprintf("%s.%s.%s", header, payload, signature), nil
 }
 
 func (s *AuthService) generateRefreshToken(userID string) (string, error) {
 	// This is a simplified implementation
 	// In a real application, you would generate a secure random token
-	return "refresh_token_" + userID, nil
+	return fmt.Sprintf("refresh_token_%s_%d_%d", userID, time.Now().UnixNano(), rand.Int63()), nil
 }
 
 func (s *AuthService) generatePasswordResetToken() string {
 	// This is a simplified implementation
 	// In a real application, you would generate a secure random token
-	return "reset_token_" + fmt.Sprintf("%d", time.Now().UnixNano())
+	return fmt.Sprintf("reset_token_%d_%d", time.Now().UnixNano(), rand.Int63())
 }

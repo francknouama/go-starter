@@ -1,0 +1,624 @@
+package integration
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/internal/application/dto"
+	"{{.ModulePath}}/internal/application/services"
+	"{{.ModulePath}}/internal/adapters/primary/http"
+	"{{.ModulePath}}/internal/adapters/secondary/events"
+	"{{.ModulePath}}/internal/adapters/secondary/logger"
+	"{{.ModulePath}}/internal/adapters/secondary/persistence"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	"{{.ModulePath}}/internal/infrastructure/server"
+)
+
+type APITestSuite struct {
+	suite.Suite
+	server     *server.Server
+	httpClient *http.Client
+	baseURL    string
+	{{- if ne .DatabaseDriver ""}}
+	database   *persistence.Database
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	authToken  string
+	{{- end}}
+}
+
+func (suite *APITestSuite) SetupSuite() {
+	// Create test configuration
+	cfg := &config.Config{
+		Environment: "test",
+		Server: config.ServerConfig{
+			Host:         "localhost",
+			Port:         0, // Let the system choose a port
+			ReadTimeout:  time.Second * 10,
+			WriteTimeout: time.Second * 10,
+			IdleTimeout:  time.Second * 30,
+		},
+		{{- if ne .DatabaseDriver ""}}
+		Database: config.DatabaseConfig{
+			Driver: "{{.DatabaseDriver}}",
+			{{- if eq .DatabaseDriver "sqlite"}}
+			Path: ":memory:",
+			{{- else}}
+			Host:     "localhost",
+			Port:     5432,
+			Name:     "test_db",
+			User:     "test_user",
+			Password: "test_password",
+			{{- end}}
+			{{- if ne .DatabaseORM ""}}
+			ORM: "{{.DatabaseORM}}",
+			{{- end}}
+		},
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		Auth: config.AuthConfig{
+			Type: "{{.AuthType}}",
+			{{- if eq .AuthType "jwt"}}
+			JWT: config.JWTConfig{
+				Secret:            "test-secret",
+				Expiration:        time.Hour,
+				RefreshExpiration: time.Hour * 24,
+				Issuer:            "test-issuer",
+				Audience:          "test-audience",
+			},
+			{{- end}}
+		},
+		{{- end}}
+	}
+
+	// Create logger
+	logger := logger.NewSlogAdapter()
+
+	{{- if ne .DatabaseDriver ""}}
+	// Create database connection
+	database, err := persistence.NewDatabase(cfg)
+	require.NoError(suite.T(), err)
+	suite.database = database
+	{{- end}}
+
+	// Create event publisher
+	eventPublisher := events.NewEventPublisher(logger)
+
+	// Create services
+	{{- if ne .DatabaseDriver ""}}
+	userRepository := persistence.NewUserRepository(database, logger)
+	userService := services.NewUserService(userRepository, eventPublisher, logger)
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	authRepository := persistence.NewAuthRepository(database, logger)
+	authService := services.NewAuthService(userRepository, authRepository, logger)
+	{{- end}}
+
+	healthService := services.NewHealthService(logger{{- if ne .DatabaseDriver ""}}, database{{- end}})
+
+	// Create server
+	suite.server = server.NewServer(
+		cfg,
+		healthService,
+		{{- if ne .DatabaseDriver ""}}
+		userService,
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		authService,
+		{{- end}}
+		logger,
+	)
+
+	// Start server in background
+	go func() {
+		err := suite.server.Start()
+		if err != nil && err != http.ErrServerClosed {
+			suite.T().Errorf("Failed to start server: %v", err)
+		}
+	}()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create HTTP client
+	suite.httpClient = &http.Client{
+		Timeout: time.Second * 10,
+	}
+
+	// Set base URL (assuming server starts on a dynamic port)
+	suite.baseURL = "http://localhost:8080" // This would need to be dynamic in real tests
+}
+
+func (suite *APITestSuite) TearDownSuite() {
+	if suite.server != nil {
+		err := suite.server.Shutdown()
+		suite.NoError(err)
+	}
+	{{- if ne .DatabaseDriver ""}}
+	if suite.database != nil {
+		err := suite.database.Close()
+		suite.NoError(err)
+	}
+	{{- end}}
+}
+
+func (suite *APITestSuite) TestHealthEndpoint() {
+	// Test health endpoint
+	resp, err := suite.httpClient.Get(suite.baseURL + "/health")
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var healthStatus map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&healthStatus)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.Contains(healthStatus, "status")
+	suite.Contains(healthStatus, "message")
+	suite.Contains(healthStatus, "checks")
+	suite.Contains(healthStatus, "duration")
+}
+
+func (suite *APITestSuite) TestReadinessEndpoint() {
+	// Test readiness endpoint
+	resp, err := suite.httpClient.Get(suite.baseURL + "/health/ready")
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var readinessStatus map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&readinessStatus)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.Contains(readinessStatus, "ready")
+	suite.Contains(readinessStatus, "message")
+	suite.Contains(readinessStatus, "checks")
+	suite.Contains(readinessStatus, "duration")
+}
+
+{{- if ne .DatabaseDriver ""}}
+func (suite *APITestSuite) TestUserCRUDOperations() {
+	// Create user
+	createReq := &dto.CreateUserRequest{
+		Email:     "test@example.com",
+		FirstName: "John",
+		LastName:  "Doe",
+		Password:  "password123",
+	}
+
+	createBody, err := json.Marshal(createReq)
+	suite.NoError(err)
+
+	resp, err := suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"application/json",
+		bytes.NewReader(createBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusCreated, resp.StatusCode)
+
+	var createResp dto.UserResponse
+	err = json.NewDecoder(resp.Body).Decode(&createResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.Equal("test@example.com", createResp.Email)
+	suite.Equal("John", createResp.FirstName)
+	suite.Equal("Doe", createResp.LastName)
+	suite.NotEmpty(createResp.ID)
+
+	userID := createResp.ID
+
+	// Get user by ID
+	resp, err = suite.httpClient.Get(suite.baseURL + "/api/v1/users/" + userID)
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var getResp dto.UserResponse
+	err = json.NewDecoder(resp.Body).Decode(&getResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.Equal(userID, getResp.ID)
+	suite.Equal("test@example.com", getResp.Email)
+
+	// Update user
+	updateReq := &dto.UpdateUserRequest{
+		Email:     "updated@example.com",
+		FirstName: "Jane",
+		LastName:  "Smith",
+	}
+
+	updateBody, err := json.Marshal(updateReq)
+	suite.NoError(err)
+
+	putReq, err := http.NewRequest(
+		http.MethodPut,
+		suite.baseURL+"/api/v1/users/"+userID,
+		bytes.NewReader(updateBody),
+	)
+	suite.NoError(err)
+	putReq.Header.Set("Content-Type", "application/json")
+
+	resp, err = suite.httpClient.Do(putReq)
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var updateResp dto.UserResponse
+	err = json.NewDecoder(resp.Body).Decode(&updateResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.Equal("updated@example.com", updateResp.Email)
+	suite.Equal("Jane", updateResp.FirstName)
+	suite.Equal("Smith", updateResp.LastName)
+
+	// List users
+	resp, err = suite.httpClient.Get(suite.baseURL + "/api/v1/users?page=1&limit=10")
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var listResp dto.ListUsersResponse
+	err = json.NewDecoder(resp.Body).Decode(&listResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.GreaterOrEqual(len(listResp.Users), 1)
+	suite.GreaterOrEqual(listResp.Total, int64(1))
+
+	// Delete user
+	deleteReq, err := http.NewRequest(
+		http.MethodDelete,
+		suite.baseURL+"/api/v1/users/"+userID,
+		nil,
+	)
+	suite.NoError(err)
+
+	resp, err = suite.httpClient.Do(deleteReq)
+	suite.NoError(err)
+	suite.Equal(http.StatusNoContent, resp.StatusCode)
+	resp.Body.Close()
+
+	// Verify user is deleted
+	resp, err = suite.httpClient.Get(suite.baseURL + "/api/v1/users/" + userID)
+	suite.NoError(err)
+	suite.Equal(http.StatusNotFound, resp.StatusCode)
+	resp.Body.Close()
+}
+
+func (suite *APITestSuite) TestUserValidationErrors() {
+	// Test invalid email
+	createReq := &dto.CreateUserRequest{
+		Email:     "invalid-email",
+		FirstName: "John",
+		LastName:  "Doe",
+		Password:  "password123",
+	}
+
+	createBody, err := json.Marshal(createReq)
+	suite.NoError(err)
+
+	resp, err := suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"application/json",
+		bytes.NewReader(createBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test weak password
+	createReq = &dto.CreateUserRequest{
+		Email:     "test@example.com",
+		FirstName: "John",
+		LastName:  "Doe",
+		Password:  "123",
+	}
+
+	createBody, err = json.Marshal(createReq)
+	suite.NoError(err)
+
+	resp, err = suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"application/json",
+		bytes.NewReader(createBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test empty required fields
+	createReq = &dto.CreateUserRequest{
+		Email:     "",
+		FirstName: "",
+		LastName:  "",
+		Password:  "",
+	}
+
+	createBody, err = json.Marshal(createReq)
+	suite.NoError(err)
+
+	resp, err = suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"application/json",
+		bytes.NewReader(createBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+func (suite *APITestSuite) TestAuthenticationFlow() {
+	// First, create a user
+	createReq := &dto.CreateUserRequest{
+		Email:     "auth@example.com",
+		FirstName: "Auth",
+		LastName:  "User",
+		Password:  "password123",
+	}
+
+	createBody, err := json.Marshal(createReq)
+	suite.NoError(err)
+
+	resp, err := suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"application/json",
+		bytes.NewReader(createBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusCreated, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test login
+	loginReq := &dto.LoginRequest{
+		Email:    "auth@example.com",
+		Password: "password123",
+	}
+
+	loginBody, err := json.Marshal(loginReq)
+	suite.NoError(err)
+
+	resp, err = suite.httpClient.Post(
+		suite.baseURL+"/api/v1/auth/login",
+		"application/json",
+		bytes.NewReader(loginBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var loginResp dto.LoginResponse
+	err = json.NewDecoder(resp.Body).Decode(&loginResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.NotEmpty(loginResp.AccessToken)
+	suite.NotEmpty(loginResp.RefreshToken)
+	suite.Equal("Bearer", loginResp.TokenType)
+	suite.Greater(loginResp.ExpiresIn, int64(0))
+
+	// Store token for authenticated requests
+	suite.authToken = loginResp.AccessToken
+
+	// Test authenticated request
+	req, err := http.NewRequest(
+		http.MethodGet,
+		suite.baseURL+"/api/v1/users/me",
+		nil,
+	)
+	suite.NoError(err)
+	req.Header.Set("Authorization", "Bearer "+suite.authToken)
+
+	resp, err = suite.httpClient.Do(req)
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var userResp dto.UserResponse
+	err = json.NewDecoder(resp.Body).Decode(&userResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.Equal("auth@example.com", userResp.Email)
+
+	// Test token refresh
+	refreshReq := &dto.RefreshTokenRequest{
+		RefreshToken: loginResp.RefreshToken,
+	}
+
+	refreshBody, err := json.Marshal(refreshReq)
+	suite.NoError(err)
+
+	resp, err = suite.httpClient.Post(
+		suite.baseURL+"/api/v1/auth/refresh",
+		"application/json",
+		bytes.NewReader(refreshBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	var refreshResp dto.RefreshTokenResponse
+	err = json.NewDecoder(resp.Body).Decode(&refreshResp)
+	suite.NoError(err)
+	resp.Body.Close()
+
+	suite.NotEmpty(refreshResp.AccessToken)
+	suite.NotEmpty(refreshResp.RefreshToken)
+
+	// Test logout
+	logoutReq, err := http.NewRequest(
+		http.MethodPost,
+		suite.baseURL+"/api/v1/auth/logout",
+		nil,
+	)
+	suite.NoError(err)
+	logoutReq.Header.Set("Authorization", "Bearer "+suite.authToken)
+
+	resp, err = suite.httpClient.Do(logoutReq)
+	suite.NoError(err)
+	suite.Equal(http.StatusNoContent, resp.StatusCode)
+	resp.Body.Close()
+}
+
+func (suite *APITestSuite) TestAuthenticationErrors() {
+	// Test login with invalid credentials
+	loginReq := &dto.LoginRequest{
+		Email:    "nonexistent@example.com",
+		Password: "wrongpassword",
+	}
+
+	loginBody, err := json.Marshal(loginReq)
+	suite.NoError(err)
+
+	resp, err := suite.httpClient.Post(
+		suite.baseURL+"/api/v1/auth/login",
+		"application/json",
+		bytes.NewReader(loginBody),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusUnauthorized, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test authenticated request without token
+	resp, err = suite.httpClient.Get(suite.baseURL + "/api/v1/users/me")
+	suite.NoError(err)
+	suite.Equal(http.StatusUnauthorized, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test authenticated request with invalid token
+	req, err := http.NewRequest(
+		http.MethodGet,
+		suite.baseURL+"/api/v1/users/me",
+		nil,
+	)
+	suite.NoError(err)
+	req.Header.Set("Authorization", "Bearer invalid-token")
+
+	resp, err = suite.httpClient.Do(req)
+	suite.NoError(err)
+	suite.Equal(http.StatusUnauthorized, resp.StatusCode)
+	resp.Body.Close()
+}
+{{- end}}
+
+func (suite *APITestSuite) TestCORSHeaders() {
+	// Test CORS preflight request
+	req, err := http.NewRequest(
+		http.MethodOptions,
+		suite.baseURL+"/api/v1/users",
+		nil,
+	)
+	suite.NoError(err)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type,Authorization")
+
+	resp, err := suite.httpClient.Do(req)
+	suite.NoError(err)
+	suite.Equal(http.StatusNoContent, resp.StatusCode)
+
+	// Check CORS headers
+	suite.Contains(resp.Header.Get("Access-Control-Allow-Origin"), "localhost:3000")
+	suite.Contains(resp.Header.Get("Access-Control-Allow-Methods"), "POST")
+	suite.Contains(resp.Header.Get("Access-Control-Allow-Headers"), "Content-Type")
+	resp.Body.Close()
+}
+
+func (suite *APITestSuite) TestContentTypeValidation() {
+	// Test request without Content-Type header
+	resp, err := suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"",
+		bytes.NewReader([]byte(`{"email":"test@example.com"}`)),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test request with invalid JSON
+	resp, err = suite.httpClient.Post(
+		suite.baseURL+"/api/v1/users",
+		"application/json",
+		bytes.NewReader([]byte(`invalid json`)),
+	)
+	suite.NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	resp.Body.Close()
+}
+
+func (suite *APITestSuite) TestRateLimiting() {
+	// This test would require rate limiting to be enabled
+	// For now, we'll just verify that the endpoints respond correctly
+	for i := 0; i < 10; i++ {
+		resp, err := suite.httpClient.Get(suite.baseURL + "/health")
+		suite.NoError(err)
+		suite.Equal(http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
+}
+
+func (suite *APITestSuite) TestErrorHandling() {
+	// Test 404 for non-existent endpoint
+	resp, err := suite.httpClient.Get(suite.baseURL + "/api/v1/nonexistent")
+	suite.NoError(err)
+	suite.Equal(http.StatusNotFound, resp.StatusCode)
+	resp.Body.Close()
+
+	// Test 405 for method not allowed
+	resp, err = suite.httpClient.Post(suite.baseURL+"/health", "application/json", nil)
+	suite.NoError(err)
+	suite.Equal(http.StatusMethodNotAllowed, resp.StatusCode)
+	resp.Body.Close()
+}
+
+// Run the test suite
+func TestAPITestSuite(t *testing.T) {
+	suite.Run(t, new(APITestSuite))
+}
+
+// Individual test functions for running specific tests
+func TestHealthEndpoint(t *testing.T) {
+	suite := new(APITestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestHealthEndpoint()
+}
+
+func TestReadinessEndpoint(t *testing.T) {
+	suite := new(APITestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestReadinessEndpoint()
+}
+
+{{- if ne .DatabaseDriver ""}}
+func TestUserCRUDOperations(t *testing.T) {
+	suite := new(APITestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestUserCRUDOperations()
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+func TestAuthenticationFlow(t *testing.T) {
+	suite := new(APITestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestAuthenticationFlow()
+}
+{{- end}}

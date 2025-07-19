@@ -22,7 +22,7 @@ func DefaultAuthConfig(authPort input.AuthPort, logger output.LoggerPort) AuthCo
 	return AuthConfig{
 		AuthPort:    authPort,
 		Logger:      logger,
-		SkipPaths:   []string{"/health", "/metrics", "/api/v1/auth/login", "/api/v1/auth/register"},
+		SkipPaths:   []string{"/health", "/health/ready", "/metrics", "/api/auth/login", "/api/auth/register", "/api/auth/refresh"},
 		TokenHeader: "Authorization",
 	}
 }
@@ -50,16 +50,23 @@ func Auth(config AuthConfig) func(http.Handler) http.Handler {
 			}
 			
 			// Validate token using auth port
-			user, err := config.AuthPort.ValidateToken(ctx, token)
+			tokenResponse, err := config.AuthPort.ValidateToken(ctx, token)
 			if err != nil {
 				config.Logger.Warn(ctx, "Invalid authentication token", output.Error(err))
 				http.Error(w, "Unauthorized: invalid authentication token", http.StatusUnauthorized)
 				return
 			}
 			
+			// Check if token is valid
+			if !tokenResponse.Valid {
+				config.Logger.Warn(ctx, "Token validation failed")
+				http.Error(w, "Unauthorized: invalid authentication token", http.StatusUnauthorized)
+				return
+			}
+			
 			// Add user to context
-			ctx = context.WithValue(ctx, "user", user)
-			ctx = context.WithValue(ctx, "user_id", user.ID().Value())
+			ctx = context.WithValue(ctx, "user", tokenResponse)
+			ctx = context.WithValue(ctx, "user_id", tokenResponse.UserID)
 			
 			// Continue to next handler
 			next.ServeHTTP(w, r.WithContext(ctx))
@@ -84,7 +91,7 @@ func OptionalAuth(config AuthConfig) func(http.Handler) http.Handler {
 			}
 			
 			// Validate token using auth port
-			user, err := config.AuthPort.ValidateToken(ctx, token)
+			tokenResponse, err := config.AuthPort.ValidateToken(ctx, token)
 			if err != nil {
 				config.Logger.Warn(ctx, "Invalid authentication token", output.Error(err))
 				// Invalid token, continue without authentication
@@ -92,9 +99,17 @@ func OptionalAuth(config AuthConfig) func(http.Handler) http.Handler {
 				return
 			}
 			
+			// Check if token is valid
+			if !tokenResponse.Valid {
+				config.Logger.Warn(ctx, "Token validation failed")
+				// Invalid token, continue without authentication
+				next.ServeHTTP(w, r)
+				return
+			}
+			
 			// Add user to context
-			ctx = context.WithValue(ctx, "user", user)
-			ctx = context.WithValue(ctx, "user_id", user.ID().Value())
+			ctx = context.WithValue(ctx, "user", tokenResponse)
+			ctx = context.WithValue(ctx, "user_id", tokenResponse.UserID)
 			
 			// Continue to next handler
 			next.ServeHTTP(w, r.WithContext(ctx))

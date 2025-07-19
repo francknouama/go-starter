@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"{{.ModulePath}}/internal/infrastructure/config"
 	"{{.ModulePath}}/internal/infrastructure/container"
@@ -28,8 +26,18 @@ func main() {
 		log.Fatalf("Failed to initialize container: %v", err)
 	}
 
-	// Create and start server
-	srv := server.NewServer(container)
+	// Create and start server with extracted dependencies
+	srv := server.NewServer(
+		cfg,
+		container.HealthPort(),
+		{{- if ne .DatabaseDriver ""}}
+		container.{{.DomainName | title}}Port(),
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		container.AuthPort(),
+		{{- end}}
+		container.Logger(),
+	)
 
 	// Start server in a goroutine
 	go func() {
@@ -44,10 +52,9 @@ func main() {
 	<-quit
 
 	// Graceful shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	// Note: Server handles its own shutdown timeout internally
 
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 

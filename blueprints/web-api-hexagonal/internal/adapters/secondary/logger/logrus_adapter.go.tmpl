@@ -55,61 +55,56 @@ func NewLogrusAdapterWithLevel(level string) output.LoggerPort {
 }
 
 // Debug logs a debug message
-func (l *LogrusAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
-	fields := l.convertArgsToFields(args...)
-	l.logger.WithFields(fields).Debug(msg)
+func (l *LogrusAdapter) Debug(ctx context.Context, msg string, fields ...output.Field) {
+	logrusFields := l.convertFieldsToLogrus(fields...)
+	l.logger.WithFields(logrusFields).Debug(msg)
 }
 
 // Info logs an info message
-func (l *LogrusAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
-	fields := l.convertArgsToFields(args...)
-	l.logger.WithFields(fields).Info(msg)
+func (l *LogrusAdapter) Info(ctx context.Context, msg string, fields ...output.Field) {
+	logrusFields := l.convertFieldsToLogrus(fields...)
+	l.logger.WithFields(logrusFields).Info(msg)
 }
 
 // Warn logs a warning message
-func (l *LogrusAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
-	fields := l.convertArgsToFields(args...)
-	l.logger.WithFields(fields).Warn(msg)
+func (l *LogrusAdapter) Warn(ctx context.Context, msg string, fields ...output.Field) {
+	logrusFields := l.convertFieldsToLogrus(fields...)
+	l.logger.WithFields(logrusFields).Warn(msg)
 }
 
 // Error logs an error message
-func (l *LogrusAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
-	fields := l.convertArgsToFields(args...)
-	l.logger.WithFields(fields).Error(msg)
+func (l *LogrusAdapter) Error(ctx context.Context, msg string, fields ...output.Field) {
+	logrusFields := l.convertFieldsToLogrus(fields...)
+	l.logger.WithFields(logrusFields).Error(msg)
 }
 
-// With creates a new logger with additional fields
-func (l *LogrusAdapter) With(args ...interface{}) output.LoggerPort {
-	fields := l.convertArgsToFields(args...)
-	return &LogrusAdapter{
-		logger: l.logger.WithFields(fields).Logger,
-	}
+// Fatal logs a fatal message and terminates the application
+func (l *LogrusAdapter) Fatal(ctx context.Context, msg string, fields ...output.Field) {
+	logrusFields := l.convertFieldsToLogrus(fields...)
+	l.logger.WithFields(logrusFields).Fatal(msg)
 }
 
-// WithFields creates a new logger with additional fields from a map
-func (l *LogrusAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
-	logrusFields := make(logrus.Fields, len(fields))
-	for k, v := range fields {
-		logrusFields[k] = v
-	}
-	
+// WithFields returns a logger with additional fields
+func (l *LogrusAdapter) WithFields(fields ...output.Field) output.LoggerPort {
+	logrusFields := l.convertFieldsToLogrus(fields...)
 	return &LogrusAdapter{
 		logger: l.logger.WithFields(logrusFields).Logger,
 	}
 }
 
-// convertArgsToFields converts variadic arguments to logrus fields
-func (l *LogrusAdapter) convertArgsToFields(args ...interface{}) logrus.Fields {
-	fields := make(logrus.Fields)
-	
-	for i := 0; i < len(args); i += 2 {
-		if i+1 < len(args) {
-			key, ok := args[i].(string)
-			if ok {
-				fields[key] = args[i+1]
-			}
-		}
+// WithError returns a logger with an error field
+func (l *LogrusAdapter) WithError(err error) output.LoggerPort {
+	logrusFields := logrus.Fields{"error": err}
+	return &LogrusAdapter{
+		logger: l.logger.WithFields(logrusFields).Logger,
 	}
-	
-	return fields
+}
+
+// convertFieldsToLogrus converts output.Field slice to logrus fields
+func (l *LogrusAdapter) convertFieldsToLogrus(fields ...output.Field) logrus.Fields {
+	logrusFields := make(logrus.Fields, len(fields))
+	for _, field := range fields {
+		logrusFields[field.Key] = field.Value
+	}
+	return logrusFields
 }

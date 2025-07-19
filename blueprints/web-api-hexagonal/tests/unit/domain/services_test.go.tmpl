@@ -1,0 +1,443 @@
+package services
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+func TestUserDomainService_ValidateUserCreation(t *testing.T) {
+	service := NewUserDomainService()
+
+	tests := []struct {
+		name        string
+		email       string
+		firstName   string
+		lastName    string
+		password    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "valid user data",
+			email:     "test@example.com",
+			firstName: "John",
+			lastName:  "Doe",
+			password:  "password123",
+			wantErr:   false,
+		},
+		{
+			name:        "duplicate email",
+			email:       "duplicate@example.com",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "email already exists",
+		},
+		{
+			name:        "invalid email format",
+			email:       "invalid-email",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name:        "weak password",
+			email:       "test@example.com",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "123",
+			wantErr:     true,
+			errContains: "password does not meet requirements",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidateUserCreation(tt.email, tt.firstName, tt.lastName, tt.password)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestUserDomainService_ValidateEmailUpdate(t *testing.T) {
+	service := NewUserDomainService()
+
+	// Create a test user
+	user, err := entities.NewUser("original@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		newEmail    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:     "valid email update",
+			newEmail: "newemail@example.com",
+			wantErr:  false,
+		},
+		{
+			name:        "same email",
+			newEmail:    "original@example.com",
+			wantErr:     true,
+			errContains: "email is the same as current",
+		},
+		{
+			name:        "invalid email format",
+			newEmail:    "invalid-email",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name:        "duplicate email",
+			newEmail:    "duplicate@example.com",
+			wantErr:     true,
+			errContains: "email already exists",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidateEmailUpdate(user, tt.newEmail)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestUserDomainService_ValidatePasswordUpdate(t *testing.T) {
+	service := NewUserDomainService()
+
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		oldPassword string
+		newPassword string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "valid password update",
+			oldPassword: "password123",
+			newPassword: "newpassword123",
+			wantErr:     false,
+		},
+		{
+			name:        "incorrect old password",
+			oldPassword: "wrongpassword",
+			newPassword: "newpassword123",
+			wantErr:     true,
+			errContains: "old password is incorrect",
+		},
+		{
+			name:        "weak new password",
+			oldPassword: "password123",
+			newPassword: "123",
+			wantErr:     true,
+			errContains: "new password does not meet requirements",
+		},
+		{
+			name:        "same password",
+			oldPassword: "password123",
+			newPassword: "password123",
+			wantErr:     true,
+			errContains: "new password must be different",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidatePasswordUpdate(user, tt.oldPassword, tt.newPassword)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+{{- if ne .AuthType ""}}
+func TestAuthDomainService_ValidateLogin(t *testing.T) {
+	service := NewAuthDomainService()
+
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		email       string
+		password    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:     "valid login",
+			email:    "test@example.com",
+			password: "password123",
+			wantErr:  false,
+		},
+		{
+			name:        "invalid email",
+			email:       "wrong@example.com",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "invalid credentials",
+		},
+		{
+			name:        "invalid password",
+			email:       "test@example.com",
+			password:    "wrongpassword",
+			wantErr:     true,
+			errContains: "invalid credentials",
+		},
+		{
+			name:        "empty email",
+			email:       "",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "email is required",
+		},
+		{
+			name:        "empty password",
+			email:       "test@example.com",
+			password:    "",
+			wantErr:     true,
+			errContains: "password is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidateLogin(tt.email, tt.password)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAuthDomainService_ValidateSessionCreation(t *testing.T) {
+	service := NewAuthDomainService()
+
+	// Create a test user
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		userID      *valueobjects.UserID
+		expiresAt   time.Time
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "valid session creation",
+			userID:    userID,
+			expiresAt: time.Now().Add(time.Hour),
+			wantErr:   false,
+		},
+		{
+			name:        "nil user ID",
+			userID:      nil,
+			expiresAt:   time.Now().Add(time.Hour),
+			wantErr:     true,
+			errContains: "user ID is required",
+		},
+		{
+			name:        "expired session",
+			userID:      userID,
+			expiresAt:   time.Now().Add(-time.Hour),
+			wantErr:     true,
+			errContains: "session expiration must be in the future",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidateSessionCreation(tt.userID, tt.expiresAt)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestAuthDomainService_ValidateTokenRefresh(t *testing.T) {
+	service := NewAuthDomainService()
+
+	// Create a test refresh token
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	validToken := entities.NewRefreshToken("valid-token", userID, time.Now().Add(time.Hour))
+	expiredToken := entities.NewRefreshToken("expired-token", userID, time.Now().Add(-time.Hour))
+
+	tests := []struct {
+		name        string
+		token       *entities.RefreshToken
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid token refresh",
+			token:   validToken,
+			wantErr: false,
+		},
+		{
+			name:        "expired token",
+			token:       expiredToken,
+			wantErr:     true,
+			errContains: "refresh token is expired",
+		},
+		{
+			name:        "nil token",
+			token:       nil,
+			wantErr:     true,
+			errContains: "refresh token is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidateTokenRefresh(tt.token)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+{{- end}}
+
+func TestUserDomainService_GenerateUserID(t *testing.T) {
+	service := NewUserDomainService()
+
+	// Test multiple generations to ensure uniqueness
+	ids := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		userID, err := service.GenerateUserID()
+		require.NoError(t, err)
+		require.NotNil(t, userID)
+
+		idStr := userID.Value()
+		assert.NotEmpty(t, idStr)
+		assert.False(t, ids[idStr], "Generated duplicate ID: %s", idStr)
+		ids[idStr] = true
+	}
+}
+
+func TestUserDomainService_ValidateUserDeletion(t *testing.T) {
+	service := NewUserDomainService()
+
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		user        *entities.User
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid user deletion",
+			user:    user,
+			wantErr: false,
+		},
+		{
+			name:        "nil user",
+			user:        nil,
+			wantErr:     true,
+			errContains: "user is required",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := service.ValidateUserDeletion(tt.user)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestUserDomainService_ComparePasswords(t *testing.T) {
+	service := NewUserDomainService()
+
+	// Create a test user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		password string
+		want     bool
+	}{
+		{
+			name:     "correct password",
+			password: "password123",
+			want:     true,
+		},
+		{
+			name:     "incorrect password",
+			password: "wrongpassword",
+			want:     false,
+		},
+		{
+			name:     "empty password",
+			password: "",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := service.ComparePasswords(user, tt.password)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}

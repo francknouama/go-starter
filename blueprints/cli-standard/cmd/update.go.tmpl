@@ -1,0 +1,347 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// updateCmd represents the update command
+var updateCmd = &cobra.Command{
+	Use:   "update [resource] [name]",
+	Short: "Update a resource",
+	Long: `Update a resource of the specified type with new values.
+
+Available resource types:
+  • project   - Update project metadata
+  • config    - Update configuration values
+  • task      - Update task properties
+
+Examples:
+  {{.ProjectName}} update project my-project --description "Updated description"
+  {{.ProjectName}} update config --logging-level debug
+  {{.ProjectName}} update task task-001 --priority high --status completed`,
+	
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument (resource type)")
+		}
+		
+		// Validate resource type
+		validResources := []string{"project", "config", "task"}
+		resourceType := args[0]
+		for _, valid := range validResources {
+			if resourceType == valid {
+				return nil
+			}
+		}
+		
+		return fmt.Errorf("invalid resource type '%s'. Valid types: %s", 
+			resourceType, strings.Join(validResources, ", "))
+	},
+	
+	Run: func(cmd *cobra.Command, args []string) {
+		resourceType := args[0]
+		var name string
+		if len(args) > 1 {
+			name = args[1]
+		}
+		
+		// Get flags
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		force, _ := cmd.Flags().GetBool("force")
+		
+		appLogger.InfoWith("Updating resource", logger.Fields{
+			"type":    resourceType,
+			"name":    name,
+			"dry_run": dryRun,
+			"force":   force,
+		})
+		
+		switch resourceType {
+		case "project":
+			updateProject(cmd, name, dryRun, force)
+		case "config":
+			updateConfig(cmd, name, dryRun, force)
+		case "task":
+			updateTask(cmd, name, dryRun, force)
+		default:
+			cmd.PrintErrf("Error: Unknown resource type '%s'\n", resourceType)
+			os.Exit(1)
+		}
+	},
+}
+
+func updateProject(cmd *cobra.Command, name string, dryRun, force bool) {
+	if name == "" {
+		cmd.PrintErr("Error: Project name is required\n")
+		cmd.Printf("Usage: %s update project <name>\n", cmd.Root().Name())
+		os.Exit(1)
+	}
+	
+	// Check if project exists
+	if !projectExists(name) {
+		cmd.PrintErrf("Error: Project '%s' does not exist\n", name)
+		os.Exit(1)
+	}
+	
+	// Get update flags
+	description, _ := cmd.Flags().GetString("description")
+	version, _ := cmd.Flags().GetString("version")
+	maintainer, _ := cmd.Flags().GetString("maintainer")
+	
+	if description == "" && version == "" && maintainer == "" {
+		cmd.PrintErr("Error: At least one update field is required (--description, --version, --maintainer)\n")
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would update project: %s\n", name)
+		if description != "" {
+			cmd.Printf("  - Description: %s\n", description)
+		}
+		if version != "" {
+			cmd.Printf("  - Version: %s\n", version)
+		}
+		if maintainer != "" {
+			cmd.Printf("  - Maintainer: %s\n", maintainer)
+		}
+		return
+	}
+	
+	// Update project metadata (in a real application, this would update actual files)
+	updates := make(map[string]string)
+	if description != "" {
+		updates["description"] = description
+	}
+	if version != "" {
+		updates["version"] = version
+	}
+	if maintainer != "" {
+		updates["maintainer"] = maintainer
+	}
+	
+	cmd.Printf("✅ Updated project: %s\n", name)
+	for field, value := range updates {
+		cmd.Printf("   %s: %s\n", strings.Title(field), value)
+	}
+	
+	appLogger.InfoWith("Project updated successfully", logger.Fields{
+		"name":    name,
+		"updates": updates,
+	})
+}
+
+func updateConfig(cmd *cobra.Command, name string, dryRun, force bool) {
+	configName := name
+	if configName == "" {
+		configName = fmt.Sprintf(".%s.yaml", cmd.Root().Name())
+	}
+	
+	// Check if config file exists
+	if !fileExists(configName) {
+		if !force {
+			cmd.PrintErrf("Error: Config file '%s' does not exist. Use --force to create it.\n", configName)
+			os.Exit(1)
+		}
+	}
+	
+	// Get configuration update flags
+	loggingLevel, _ := cmd.Flags().GetString("logging-level")
+	loggingFormat, _ := cmd.Flags().GetString("logging-format")
+	outputFormat, _ := cmd.Flags().GetString("output-format")
+	
+	if loggingLevel == "" && loggingFormat == "" && outputFormat == "" {
+		cmd.PrintErr("Error: At least one configuration field is required (--logging-level, --logging-format, --output-format)\n")
+		os.Exit(1)
+	}
+	
+	// Validate values
+	validLogLevels := []string{"debug", "info", "warn", "error"}
+	if loggingLevel != "" && !contains(validLogLevels, loggingLevel) {
+		cmd.PrintErrf("Error: Invalid logging level '%s'. Valid levels: %s\n", 
+			loggingLevel, strings.Join(validLogLevels, ", "))
+		os.Exit(1)
+	}
+	
+	validLogFormats := []string{"text", "json", "console"}
+	if loggingFormat != "" && !contains(validLogFormats, loggingFormat) {
+		cmd.PrintErrf("Error: Invalid logging format '%s'. Valid formats: %s\n", 
+			loggingFormat, strings.Join(validLogFormats, ", "))
+		os.Exit(1)
+	}
+	
+	validOutputFormats := []string{"text", "json", "table"}
+	if outputFormat != "" && !contains(validOutputFormats, outputFormat) {
+		cmd.PrintErrf("Error: Invalid output format '%s'. Valid formats: %s\n", 
+			outputFormat, strings.Join(validOutputFormats, ", "))
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would update config file: %s\n", configName)
+		if loggingLevel != "" {
+			cmd.Printf("  - Logging level: %s\n", loggingLevel)
+		}
+		if loggingFormat != "" {
+			cmd.Printf("  - Logging format: %s\n", loggingFormat)
+		}
+		if outputFormat != "" {
+			cmd.Printf("  - Output format: %s\n", outputFormat)
+		}
+		return
+	}
+	
+	// Update configuration (in a real application, this would modify the actual config file)
+	updates := make(map[string]string)
+	if loggingLevel != "" {
+		updates["logging.level"] = loggingLevel
+	}
+	if loggingFormat != "" {
+		updates["logging.format"] = loggingFormat
+	}
+	if outputFormat != "" {
+		updates["cli.output_format"] = outputFormat
+	}
+	
+	cmd.Printf("✅ Updated config file: %s\n", configName)
+	for field, value := range updates {
+		cmd.Printf("   %s: %s\n", field, value)
+	}
+	
+	appLogger.InfoWith("Config file updated successfully", logger.Fields{
+		"name":    configName,
+		"updates": updates,
+	})
+}
+
+func updateTask(cmd *cobra.Command, name string, dryRun, force bool) {
+	if name == "" {
+		cmd.PrintErr("Error: Task name or ID is required\n")
+		cmd.Printf("Usage: %s update task <name_or_id>\n", cmd.Root().Name())
+		os.Exit(1)
+	}
+	
+	// In a real application, you would check if the task exists in your storage
+	taskExists := strings.HasPrefix(name, "task-") || len(name) > 3
+	if !taskExists && !force {
+		cmd.PrintErrf("Error: Task '%s' does not exist. Use --force to create it.\n", name)
+		os.Exit(1)
+	}
+	
+	// Get task update flags
+	priority, _ := cmd.Flags().GetString("priority")
+	status, _ := cmd.Flags().GetString("status")
+	description, _ := cmd.Flags().GetString("description")
+	dueDate, _ := cmd.Flags().GetString("due-date")
+	
+	if priority == "" && status == "" && description == "" && dueDate == "" {
+		cmd.PrintErr("Error: At least one task field is required (--priority, --status, --description, --due-date)\n")
+		os.Exit(1)
+	}
+	
+	// Validate values
+	validPriorities := []string{"low", "normal", "medium", "high", "urgent"}
+	if priority != "" && !contains(validPriorities, priority) {
+		cmd.PrintErrf("Error: Invalid priority '%s'. Valid priorities: %s\n", 
+			priority, strings.Join(validPriorities, ", "))
+		os.Exit(1)
+	}
+	
+	validStatuses := []string{"pending", "in_progress", "on_hold", "completed", "cancelled"}
+	if status != "" && !contains(validStatuses, status) {
+		cmd.PrintErrf("Error: Invalid status '%s'. Valid statuses: %s\n", 
+			status, strings.Join(validStatuses, ", "))
+		os.Exit(1)
+	}
+	
+	// Validate due date format if provided
+	if dueDate != "" {
+		if _, err := time.Parse("2006-01-02", dueDate); err != nil {
+			cmd.PrintErrf("Error: Invalid due date format '%s'. Use YYYY-MM-DD format.\n", dueDate)
+			os.Exit(1)
+		}
+	}
+	
+	if dryRun {
+		cmd.Printf("Would update task: %s\n", name)
+		if priority != "" {
+			cmd.Printf("  - Priority: %s\n", priority)
+		}
+		if status != "" {
+			cmd.Printf("  - Status: %s\n", status)
+		}
+		if description != "" {
+			cmd.Printf("  - Description: %s\n", description)
+		}
+		if dueDate != "" {
+			cmd.Printf("  - Due date: %s\n", dueDate)
+		}
+		return
+	}
+	
+	// Update task (simulate task update)
+	updates := make(map[string]string)
+	if priority != "" {
+		updates["priority"] = priority
+	}
+	if status != "" {
+		updates["status"] = status
+	}
+	if description != "" {
+		updates["description"] = description
+	}
+	if dueDate != "" {
+		updates["due_date"] = dueDate
+	}
+	
+	cmd.Printf("✅ Updated task: %s\n", name)
+	for field, value := range updates {
+		cmd.Printf("   %s: %s\n", strings.Title(strings.ReplaceAll(field, "_", " ")), value)
+	}
+	
+	appLogger.InfoWith("Task updated successfully", logger.Fields{
+		"name":    name,
+		"updates": updates,
+	})
+}
+
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+func init() {
+	rootCmd.AddCommand(updateCmd)
+
+	// Common flags
+	updateCmd.Flags().BoolP("dry-run", "n", false, "Show what would be updated without actually updating")
+	updateCmd.Flags().BoolP("force", "f", false, "Force update or create if resource doesn't exist")
+	
+	// Project-specific flags
+	updateCmd.Flags().String("description", "", "Update project description")
+	updateCmd.Flags().String("version", "", "Update project version")
+	updateCmd.Flags().String("maintainer", "", "Update project maintainer")
+	
+	// Config-specific flags
+	updateCmd.Flags().String("logging-level", "", "Update logging level (debug, info, warn, error)")
+	updateCmd.Flags().String("logging-format", "", "Update logging format (text, json, console)")
+	updateCmd.Flags().String("output-format", "", "Update output format (text, json, table)")
+	
+	// Task-specific flags
+	updateCmd.Flags().StringP("priority", "p", "", "Update task priority (low, normal, medium, high, urgent)")
+	updateCmd.Flags().StringP("status", "s", "", "Update task status (pending, in_progress, on_hold, completed, cancelled)")
+	updateCmd.Flags().StringP("due-date", "d", "", "Update task due date (YYYY-MM-DD format)")
+	
+	// Bind flags to viper for configuration file support
+	viper.BindPFlag("update.force", updateCmd.Flags().Lookup("force"))
+}

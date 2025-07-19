@@ -1,20 +1,23 @@
 package entities
 
 import (
+	"errors"
 	"time"
+	
+	"{{.ModulePath}}/internal/domain/valueobjects"
 )
 
 // AuthSession represents an authentication session in the domain
 type AuthSession struct {
-	sessionID string
-	userID    string
+	sessionID *valueobjects.SessionID
+	userID    *valueobjects.UserID
 	token     string
 	expiresAt time.Time
 	createdAt time.Time
 }
 
 // NewAuthSession creates a new authentication session
-func NewAuthSession(sessionID, userID, token string, expiresAt time.Time) *AuthSession {
+func NewAuthSession(sessionID *valueobjects.SessionID, userID *valueobjects.UserID, token string, expiresAt time.Time) *AuthSession {
 	return &AuthSession{
 		sessionID: sessionID,
 		userID:    userID,
@@ -24,14 +27,25 @@ func NewAuthSession(sessionID, userID, token string, expiresAt time.Time) *AuthS
 	}
 }
 
+// ReconstructAuthSession reconstructs an authentication session from persistence
+func ReconstructAuthSession(sessionID *valueobjects.SessionID, userID *valueobjects.UserID, token string, expiresAt, createdAt time.Time) *AuthSession {
+	return &AuthSession{
+		sessionID: sessionID,
+		userID:    userID,
+		token:     token,
+		expiresAt: expiresAt,
+		createdAt: createdAt,
+	}
+}
+
 // SessionID returns the session ID
 func (s *AuthSession) SessionID() string {
-	return s.sessionID
+	return s.sessionID.Value()
 }
 
 // UserID returns the user ID
 func (s *AuthSession) UserID() string {
-	return s.userID
+	return s.userID.Value()
 }
 
 // Token returns the authentication token
@@ -62,18 +76,28 @@ func (s *AuthSession) IsValid() bool {
 // RefreshToken represents a refresh token in the domain
 type RefreshToken struct {
 	token     string
-	userID    string
+	userID    *valueobjects.UserID
 	expiresAt time.Time
 	createdAt time.Time
 }
 
 // NewRefreshToken creates a new refresh token
-func NewRefreshToken(token, userID string, expiresAt time.Time) *RefreshToken {
+func NewRefreshToken(token string, userID *valueobjects.UserID, expiresAt time.Time) *RefreshToken {
 	return &RefreshToken{
 		token:     token,
 		userID:    userID,
 		expiresAt: expiresAt,
 		createdAt: time.Now(),
+	}
+}
+
+// ReconstructRefreshToken reconstructs a refresh token from persistence
+func ReconstructRefreshToken(token string, userID *valueobjects.UserID, expiresAt, createdAt time.Time) *RefreshToken {
+	return &RefreshToken{
+		token:     token,
+		userID:    userID,
+		expiresAt: expiresAt,
+		createdAt: createdAt,
 	}
 }
 
@@ -84,7 +108,7 @@ func (r *RefreshToken) Token() string {
 
 // UserID returns the user ID
 func (r *RefreshToken) UserID() string {
-	return r.userID
+	return r.userID.Value()
 }
 
 // ExpiresAt returns the expiration time

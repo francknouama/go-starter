@@ -1,0 +1,360 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"time"
+
+	"{{.ModulePath}}/internal/adapters/secondary/persistence"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+	"{{.ModulePath}}/internal/infrastructure/config"
+	"{{.ModulePath}}/tests/fixtures"
+)
+
+var (
+	configPath = flag.String("config", "config.yaml", "Path to configuration file")
+	action     = flag.String("action", "help", "Action to perform: help, seed, clean, reset, health")
+	verbose    = flag.Bool("verbose", false, "Enable verbose logging")
+)
+
+func main() {
+	flag.Parse()
+
+	if *action == "help" {
+		printHelp()
+		return
+	}
+
+	// Load configuration
+	cfg, err := config.LoadConfig(*configPath)
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Create database connection
+	db, err := persistence.NewDatabase(cfg)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	// Create dev helper
+	devHelper := NewDevHelper(db, cfg, *verbose)
+
+	ctx := context.Background()
+
+	switch *action {
+	case "seed":
+		if err := devHelper.SeedDatabase(ctx); err != nil {
+			log.Fatalf("Failed to seed database: %v", err)
+		}
+		fmt.Println("Database seeded successfully")
+	case "clean":
+		if err := devHelper.CleanDatabase(ctx); err != nil {
+			log.Fatalf("Failed to clean database: %v", err)
+		}
+		fmt.Println("Database cleaned successfully")
+	case "reset":
+		if err := devHelper.ResetDatabase(ctx); err != nil {
+			log.Fatalf("Failed to reset database: %v", err)
+		}
+		fmt.Println("Database reset successfully")
+	case "health":
+		if err := devHelper.CheckHealth(ctx); err != nil {
+			log.Fatalf("Health check failed: %v", err)
+		}
+		fmt.Println("Health check passed")
+	default:
+		log.Fatalf("Unknown action: %s", *action)
+	}
+}
+
+// DevHelper provides development utilities
+type DevHelper struct {
+	db      *persistence.Database
+	config  *config.Config
+	verbose bool
+}
+
+// NewDevHelper creates a new development helper
+func NewDevHelper(db *persistence.Database, cfg *config.Config, verbose bool) *DevHelper {
+	return &DevHelper{
+		db:      db,
+		config:  cfg,
+		verbose: verbose,
+	}
+}
+
+// SeedDatabase seeds the database with test data
+func (d *DevHelper) SeedDatabase(ctx context.Context) error {
+	d.log("Seeding database with test data...")
+
+	// Create user repository
+	userRepo := persistence.NewUserRepository(d.db, nil)
+
+	// Seed users
+	if err := d.seedUsers(ctx, userRepo); err != nil {
+		return fmt.Errorf("failed to seed users: %w", err)
+	}
+
+	{{- if ne .AuthType ""}}
+	// Create auth repository
+	authRepo := persistence.NewAuthRepository(d.db, nil)
+
+	// Seed auth sessions
+	if err := d.seedAuthSessions(ctx, authRepo); err != nil {
+		return fmt.Errorf("failed to seed auth sessions: %w", err)
+	}
+
+	// Seed refresh tokens
+	if err := d.seedRefreshTokens(ctx, authRepo); err != nil {
+		return fmt.Errorf("failed to seed refresh tokens: %w", err)
+	}
+	{{- end}}
+
+	return nil
+}
+
+// CleanDatabase removes all test data
+func (d *DevHelper) CleanDatabase(ctx context.Context) error {
+	d.log("Cleaning database...")
+
+	{{- if ne .AuthType ""}}
+	// Clean auth-related tables first due to foreign key constraints
+	tables := []string{
+		"password_reset_tokens",
+		"refresh_tokens",
+		"auth_sessions",
+		"users",
+	}
+	{{- else}}
+	tables := []string{
+		"users",
+	}
+	{{- end}}
+
+	for _, table := range tables {
+		if err := d.cleanTable(ctx, table); err != nil {
+			return fmt.Errorf("failed to clean table %s: %w", table, err)
+		}
+	}
+
+	return nil
+}
+
+// ResetDatabase cleans and then seeds the database
+func (d *DevHelper) ResetDatabase(ctx context.Context) error {
+	d.log("Resetting database...")
+
+	if err := d.CleanDatabase(ctx); err != nil {
+		return fmt.Errorf("failed to clean database: %w", err)
+	}
+
+	if err := d.SeedDatabase(ctx); err != nil {
+		return fmt.Errorf("failed to seed database: %w", err)
+	}
+
+	return nil
+}
+
+// CheckHealth performs a health check on the database
+func (d *DevHelper) CheckHealth(ctx context.Context) error {
+	d.log("Checking database health...")
+
+	// Check database connection
+	if err := d.db.Health(); err != nil {
+		return fmt.Errorf("database health check failed: %w", err)
+	}
+
+	// Check if tables exist
+	tables := []string{"users"}
+	{{- if ne .AuthType ""}}
+	tables = append(tables, "auth_sessions", "refresh_tokens")
+	{{- end}}
+
+	for _, table := range tables {
+		if exists, err := d.tableExists(ctx, table); err != nil {
+			return fmt.Errorf("failed to check table %s: %w", table, err)
+		} else if !exists {
+			return fmt.Errorf("table %s does not exist", table)
+		}
+		d.log(fmt.Sprintf("Table %s exists", table))
+	}
+
+	// Check table counts
+	for _, table := range tables {
+		count, err := d.getTableCount(ctx, table)
+		if err != nil {
+			return fmt.Errorf("failed to get count for table %s: %w", table, err)
+		}
+		d.log(fmt.Sprintf("Table %s has %d records", table, count))
+	}
+
+	return nil
+}
+
+// seedUsers creates test users
+func (d *DevHelper) seedUsers(ctx context.Context, userRepo *persistence.UserRepository) error {
+	d.log("Seeding users...")
+
+	users, err := fixtures.CreateAllTestUsers()
+	if err != nil {
+		return fmt.Errorf("failed to create test users: %w", err)
+	}
+
+	for _, user := range users {
+		// Check if user already exists
+		if exists, err := userRepo.ExistsByEmail(ctx, user.Email().Value()); err != nil {
+			return fmt.Errorf("failed to check if user exists: %w", err)
+		} else if exists {
+			d.log(fmt.Sprintf("User %s already exists, skipping", user.Email().Value()))
+			continue
+		}
+
+		if err := userRepo.Create(ctx, user); err != nil {
+			return fmt.Errorf("failed to create user %s: %w", user.Email().Value(), err)
+		}
+		d.log(fmt.Sprintf("Created user: %s", user.Email().Value()))
+	}
+
+	return nil
+}
+
+{{- if ne .AuthType ""}}
+// seedAuthSessions creates test auth sessions
+func (d *DevHelper) seedAuthSessions(ctx context.Context, authRepo *persistence.AuthRepository) error {
+	d.log("Seeding auth sessions...")
+
+	sessions, err := fixtures.CreateAllTestSessions()
+	if err != nil {
+		return fmt.Errorf("failed to create test sessions: %w", err)
+	}
+
+	for _, session := range sessions {
+		if err := authRepo.CreateSession(ctx, session); err != nil {
+			return fmt.Errorf("failed to create session %s: %w", session.SessionID().Value(), err)
+		}
+		d.log(fmt.Sprintf("Created session: %s", session.SessionID().Value()))
+	}
+
+	return nil
+}
+
+// seedRefreshTokens creates test refresh tokens
+func (d *DevHelper) seedRefreshTokens(ctx context.Context, authRepo *persistence.AuthRepository) error {
+	d.log("Seeding refresh tokens...")
+
+	tokens, err := fixtures.CreateAllTestRefreshTokens()
+	if err != nil {
+		return fmt.Errorf("failed to create test refresh tokens: %w", err)
+	}
+
+	for _, token := range tokens {
+		if err := authRepo.CreateRefreshToken(ctx, token); err != nil {
+			return fmt.Errorf("failed to create refresh token %s: %w", token.Token(), err)
+		}
+		d.log(fmt.Sprintf("Created refresh token: %s", token.Token()))
+	}
+
+	return nil
+}
+{{- end}}
+
+// cleanTable removes all data from a table
+func (d *DevHelper) cleanTable(ctx context.Context, table string) error {
+	d.log(fmt.Sprintf("Cleaning table: %s", table))
+
+	query := fmt.Sprintf("DELETE FROM %s", table)
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	if err := d.db.GORM().Exec(query).Error; err != nil {
+		return err
+	}
+	{{- else}}
+	if _, err := d.db.SQL().ExecContext(ctx, query); err != nil {
+		return err
+	}
+	{{- end}}
+
+	return nil
+}
+
+// tableExists checks if a table exists
+func (d *DevHelper) tableExists(ctx context.Context, table string) (bool, error) {
+	var query string
+	{{- if eq .DatabaseDriver "postgres"}}
+	query = "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1)"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	query = "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	query = "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?"
+	{{- end}}
+
+	{{- if eq .DatabaseORM "gorm"}}
+	var exists bool
+	if err := d.db.GORM().Raw(query, table).Scan(&exists).Error; err != nil {
+		return false, err
+	}
+	return exists, nil
+	{{- else}}
+	var count int
+	if err := d.db.SQL().QueryRowContext(ctx, query, table).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+	{{- end}}
+}
+
+// getTableCount returns the number of records in a table
+func (d *DevHelper) getTableCount(ctx context.Context, table string) (int, error) {
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", table)
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	var count int64
+	if err := d.db.GORM().Raw(query).Scan(&count).Error; err != nil {
+		return 0, err
+	}
+	return int(count), nil
+	{{- else}}
+	var count int
+	if err := d.db.SQL().QueryRowContext(ctx, query).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+	{{- end}}
+}
+
+// log prints a message if verbose mode is enabled
+func (d *DevHelper) log(message string) {
+	if d.verbose {
+		fmt.Printf("[%s] %s\n", time.Now().Format("15:04:05"), message)
+	}
+}
+
+// printHelp prints usage information
+func printHelp() {
+	fmt.Fprintf(os.Stderr, "Usage: %s [options]\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "\nDevelopment utility for {{.ProjectName}}\n\n")
+	fmt.Fprintf(os.Stderr, "Options:\n")
+	flag.PrintDefaults()
+	fmt.Fprintf(os.Stderr, "\nActions:\n")
+	fmt.Fprintf(os.Stderr, "  help    Show this help message\n")
+	fmt.Fprintf(os.Stderr, "  seed    Seed the database with test data\n")
+	fmt.Fprintf(os.Stderr, "  clean   Remove all test data from the database\n")
+	fmt.Fprintf(os.Stderr, "  reset   Clean and then seed the database\n")
+	fmt.Fprintf(os.Stderr, "  health  Check database health and show table statistics\n")
+	fmt.Fprintf(os.Stderr, "\nExamples:\n")
+	fmt.Fprintf(os.Stderr, "  %s -action=seed -verbose        # Seed database with verbose output\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s -action=clean               # Clean all test data\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s -action=reset               # Reset database\n", filepath.Base(os.Args[0]))
+	fmt.Fprintf(os.Stderr, "  %s -action=health              # Check database health\n", filepath.Base(os.Args[0]))
+}
+
+func init() {
+	flag.Usage = printHelp
+}

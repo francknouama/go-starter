@@ -1,0 +1,617 @@
+package valueobjects
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNewUserID(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{
+			name: "generate valid user ID",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID, err := NewUserID()
+			
+			if tt.want {
+				assert.NoError(t, err)
+				assert.NotNil(t, userID)
+				assert.NotEmpty(t, userID.Value())
+				assert.True(t, len(userID.Value()) > 0)
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, userID)
+			}
+		})
+	}
+}
+
+func TestUserIDFromString(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid UUID string",
+			input:   "550e8400-e29b-41d4-a716-446655440000",
+			wantErr: false,
+		},
+		{
+			name:    "valid UUID without hyphens",
+			input:   "550e8400e29b41d4a716446655440000",
+			wantErr: false,
+		},
+		{
+			name:        "empty string",
+			input:       "",
+			wantErr:     true,
+			errContains: "user ID cannot be empty",
+		},
+		{
+			name:        "invalid UUID format",
+			input:       "invalid-uuid",
+			wantErr:     true,
+			errContains: "invalid user ID format",
+		},
+		{
+			name:        "too short",
+			input:       "123",
+			wantErr:     true,
+			errContains: "invalid user ID format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			userID, err := UserIDFromString(tt.input)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Nil(t, userID)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, userID)
+				assert.NotEmpty(t, userID.Value())
+			}
+		})
+	}
+}
+
+func TestUserID_Equals(t *testing.T) {
+	// Create test user IDs
+	userID1, err := NewUserID()
+	require.NoError(t, err)
+
+	userID2, err := NewUserID()
+	require.NoError(t, err)
+
+	userID3, err := UserIDFromString(userID1.Value())
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		id1    *UserID
+		id2    *UserID
+		want   bool
+	}{
+		{
+			name: "same ID values",
+			id1:  userID1,
+			id2:  userID3,
+			want: true,
+		},
+		{
+			name: "different ID values",
+			id1:  userID1,
+			id2:  userID2,
+			want: false,
+		},
+		{
+			name: "same instance",
+			id1:  userID1,
+			id2:  userID1,
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.id1.Equals(tt.id2)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+func TestNewEmail(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid email",
+			input:   "test@example.com",
+			wantErr: false,
+		},
+		{
+			name:    "valid email with subdomain",
+			input:   "user@mail.example.com",
+			wantErr: false,
+		},
+		{
+			name:    "valid email with numbers",
+			input:   "user123@example123.com",
+			wantErr: false,
+		},
+		{
+			name:        "empty email",
+			input:       "",
+			wantErr:     true,
+			errContains: "email cannot be empty",
+		},
+		{
+			name:        "invalid email format - no @",
+			input:       "invalid-email",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name:        "invalid email format - no domain",
+			input:       "user@",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name:        "invalid email format - no local part",
+			input:       "@example.com",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name:        "invalid email format - spaces",
+			input:       "user @example.com",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+		{
+			name:        "invalid email format - multiple @",
+			input:       "user@@example.com",
+			wantErr:     true,
+			errContains: "invalid email format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			email, err := NewEmail(tt.input)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Nil(t, email)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, email)
+				assert.Equal(t, tt.input, email.Value())
+			}
+		})
+	}
+}
+
+func TestEmail_Equals(t *testing.T) {
+	email1, err := NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	email2, err := NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	email3, err := NewEmail("different@example.com")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name   string
+		email1 *Email
+		email2 *Email
+		want   bool
+	}{
+		{
+			name:   "same email values",
+			email1: email1,
+			email2: email2,
+			want:   true,
+		},
+		{
+			name:   "different email values",
+			email1: email1,
+			email2: email3,
+			want:   false,
+		},
+		{
+			name:   "same instance",
+			email1: email1,
+			email2: email1,
+			want:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.email1.Equals(tt.email2)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+func TestEmail_Domain(t *testing.T) {
+	tests := []struct {
+		name     string
+		email    string
+		expected string
+	}{
+		{
+			name:     "simple domain",
+			email:    "user@example.com",
+			expected: "example.com",
+		},
+		{
+			name:     "subdomain",
+			email:    "user@mail.example.com",
+			expected: "mail.example.com",
+		},
+		{
+			name:     "multiple subdomains",
+			email:    "user@mail.test.example.com",
+			expected: "mail.test.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			email, err := NewEmail(tt.email)
+			require.NoError(t, err)
+
+			domain := email.Domain()
+			assert.Equal(t, tt.expected, domain)
+		})
+	}
+}
+
+func TestEmail_LocalPart(t *testing.T) {
+	tests := []struct {
+		name     string
+		email    string
+		expected string
+	}{
+		{
+			name:     "simple local part",
+			email:    "user@example.com",
+			expected: "user",
+		},
+		{
+			name:     "local part with numbers",
+			email:    "user123@example.com",
+			expected: "user123",
+		},
+		{
+			name:     "local part with dots",
+			email:    "first.last@example.com",
+			expected: "first.last",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			email, err := NewEmail(tt.email)
+			require.NoError(t, err)
+
+			localPart := email.LocalPart()
+			assert.Equal(t, tt.expected, localPart)
+		})
+	}
+}
+
+func TestNewPassword(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid strong password",
+			input:   "SecurePassword123!",
+			wantErr: false,
+		},
+		{
+			name:    "valid minimum length password",
+			input:   "password123",
+			wantErr: false,
+		},
+		{
+			name:        "empty password",
+			input:       "",
+			wantErr:     true,
+			errContains: "password cannot be empty",
+		},
+		{
+			name:        "too short password",
+			input:       "123",
+			wantErr:     true,
+			errContains: "password must be at least",
+		},
+		{
+			name:        "too long password",
+			input:       "this-is-a-very-long-password-that-exceeds-the-maximum-allowed-length-for-passwords-in-this-system-and-should-be-rejected-by-the-validation-logic-because-it-is-too-long",
+			wantErr:     true,
+			errContains: "password must be at most",
+		},
+		{
+			name:        "weak password - only numbers",
+			input:       "123456789",
+			wantErr:     true,
+			errContains: "password is too weak",
+		},
+		{
+			name:        "weak password - only lowercase",
+			input:       "password",
+			wantErr:     true,
+			errContains: "password is too weak",
+		},
+		{
+			name:        "weak password - common password",
+			input:       "password123",
+			wantErr:     false, // This might be acceptable depending on requirements
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			password, err := NewPassword(tt.input)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Nil(t, password)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, password)
+				assert.NotEmpty(t, password.Hash())
+				assert.NotEqual(t, tt.input, password.Hash()) // Hash should be different from plaintext
+			}
+		})
+	}
+}
+
+func TestPassword_Verify(t *testing.T) {
+	plaintext := "password123"
+	password, err := NewPassword(plaintext)
+	require.NoError(t, err)
+
+	tests := []struct {
+		name      string
+		plaintext string
+		want      bool
+	}{
+		{
+			name:      "correct password",
+			plaintext: "password123",
+			want:      true,
+		},
+		{
+			name:      "incorrect password",
+			plaintext: "wrongpassword",
+			want:      false,
+		},
+		{
+			name:      "empty password",
+			plaintext: "",
+			want:      false,
+		},
+		{
+			name:      "case sensitive",
+			plaintext: "Password123",
+			want:      false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := password.Verify(tt.plaintext)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+func TestPassword_Strength(t *testing.T) {
+	tests := []struct {
+		name     string
+		password string
+		minScore int
+	}{
+		{
+			name:     "strong password",
+			password: "SecurePassword123!@#",
+			minScore: 4,
+		},
+		{
+			name:     "medium password",
+			password: "password123",
+			minScore: 2,
+		},
+		{
+			name:     "weak password",
+			password: "password",
+			minScore: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			password, err := NewPassword(tt.password)
+			require.NoError(t, err)
+
+			strength := password.Strength()
+			assert.GreaterOrEqual(t, strength, tt.minScore)
+		})
+	}
+}
+
+{{- if ne .AuthType ""}}
+func TestNewSessionID(t *testing.T) {
+	tests := []struct {
+		name string
+		want bool
+	}{
+		{
+			name: "generate valid session ID",
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionID, err := NewSessionID()
+			
+			if tt.want {
+				assert.NoError(t, err)
+				assert.NotNil(t, sessionID)
+				assert.NotEmpty(t, sessionID.Value())
+				assert.True(t, len(sessionID.Value()) > 0)
+			} else {
+				assert.Error(t, err)
+				assert.Nil(t, sessionID)
+			}
+		})
+	}
+}
+
+func TestSessionIDFromString(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:    "valid UUID string",
+			input:   "550e8400-e29b-41d4-a716-446655440000",
+			wantErr: false,
+		},
+		{
+			name:    "valid UUID without hyphens",
+			input:   "550e8400e29b41d4a716446655440000",
+			wantErr: false,
+		},
+		{
+			name:        "empty string",
+			input:       "",
+			wantErr:     true,
+			errContains: "session ID cannot be empty",
+		},
+		{
+			name:        "invalid UUID format",
+			input:       "invalid-uuid",
+			wantErr:     true,
+			errContains: "invalid session ID format",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionID, err := SessionIDFromString(tt.input)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Nil(t, sessionID)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, sessionID)
+				assert.NotEmpty(t, sessionID.Value())
+			}
+		})
+	}
+}
+{{- end}}
+
+func TestValueObjectsUniqueness(t *testing.T) {
+	// Test that generating multiple IDs produces unique values
+	t.Run("UserID uniqueness", func(t *testing.T) {
+		ids := make(map[string]bool)
+		for i := 0; i < 100; i++ {
+			userID, err := NewUserID()
+			require.NoError(t, err)
+			
+			idStr := userID.Value()
+			assert.False(t, ids[idStr], "Generated duplicate UserID: %s", idStr)
+			ids[idStr] = true
+		}
+	})
+
+	{{- if ne .AuthType ""}}
+	t.Run("SessionID uniqueness", func(t *testing.T) {
+		ids := make(map[string]bool)
+		for i := 0; i < 100; i++ {
+			sessionID, err := NewSessionID()
+			require.NoError(t, err)
+			
+			idStr := sessionID.Value()
+			assert.False(t, ids[idStr], "Generated duplicate SessionID: %s", idStr)
+			ids[idStr] = true
+		}
+	})
+	{{- end}}
+}
+
+func TestValueObjectsImmutability(t *testing.T) {
+	// Test that value objects are immutable
+	t.Run("UserID immutability", func(t *testing.T) {
+		userID, err := NewUserID()
+		require.NoError(t, err)
+		
+		originalValue := userID.Value()
+		
+		// Value should always return the same value
+		assert.Equal(t, originalValue, userID.Value())
+		assert.Equal(t, originalValue, userID.Value())
+	})
+
+	t.Run("Email immutability", func(t *testing.T) {
+		email, err := NewEmail("test@example.com")
+		require.NoError(t, err)
+		
+		originalValue := email.Value()
+		originalDomain := email.Domain()
+		originalLocalPart := email.LocalPart()
+		
+		// Values should always return the same values
+		assert.Equal(t, originalValue, email.Value())
+		assert.Equal(t, originalDomain, email.Domain())
+		assert.Equal(t, originalLocalPart, email.LocalPart())
+	})
+
+	t.Run("Password immutability", func(t *testing.T) {
+		password, err := NewPassword("password123")
+		require.NoError(t, err)
+		
+		originalHash := password.Hash()
+		originalStrength := password.Strength()
+		
+		// Values should always return the same values
+		assert.Equal(t, originalHash, password.Hash())
+		assert.Equal(t, originalStrength, password.Strength())
+	})
+}

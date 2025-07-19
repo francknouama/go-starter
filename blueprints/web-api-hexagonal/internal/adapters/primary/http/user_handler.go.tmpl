@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"{{.ModulePath}}/internal/application/dto"
 	"{{.ModulePath}}/internal/application/ports/input"
@@ -203,9 +204,129 @@ func (h *{{.DomainName | title}}Handler) HandleList{{.DomainName | title}}s(w ht
 	}
 }
 
+// Convenience methods for framework adapters
+// These methods provide shorter names that match the framework adapter expectations
+
+// HandleCreate is a convenience method for HandleCreate{{.DomainName | title}}
+func (h *{{.DomainName | title}}Handler) HandleCreate(w http.ResponseWriter, r *http.Request) {
+	h.HandleCreate{{.DomainName | title}}(w, r)
+}
+
+// HandleGetByID is a convenience method for HandleGet{{.DomainName | title}}
+func (h *{{.DomainName | title}}Handler) HandleGetByID(w http.ResponseWriter, r *http.Request) {
+	h.HandleGet{{.DomainName | title}}(w, r)
+}
+
+// HandleUpdate is a convenience method for HandleUpdate{{.DomainName | title}}
+func (h *{{.DomainName | title}}Handler) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	h.HandleUpdate{{.DomainName | title}}(w, r)
+}
+
+// HandleDelete is a convenience method for HandleDelete{{.DomainName | title}}
+func (h *{{.DomainName | title}}Handler) HandleDelete(w http.ResponseWriter, r *http.Request) {
+	h.HandleDelete{{.DomainName | title}}(w, r)
+}
+
+// HandleList is a convenience method for HandleList{{.DomainName | title}}s
+func (h *{{.DomainName | title}}Handler) HandleList(w http.ResponseWriter, r *http.Request) {
+	h.HandleList{{.DomainName | title}}s(w, r)
+}
+
+// HandleGetProfile handles get profile requests (convenience for protected routes)
+func (h *{{.DomainName | title}}Handler) HandleGetProfile(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	// Extract {{.DomainName}} ID from context (set by auth middleware)
+	{{.DomainName}}ID, ok := ctx.Value("user_id").(string)
+	if !ok || {{.DomainName}}ID == "" {
+		h.logger.Error(ctx, "No user ID found in context")
+		http.Error(w, "Unauthorized: no user context", http.StatusUnauthorized)
+		return
+	}
+	
+	h.logger.Info(ctx, "Get {{.DomainName}} profile request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	h.handleGetByID(w, r, {{.DomainName}}ID)
+}
+
+// HandleUpdateProfile handles update profile requests (convenience for protected routes)
+func (h *{{.DomainName | title}}Handler) HandleUpdateProfile(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	
+	// Extract {{.DomainName}} ID from context (set by auth middleware)
+	{{.DomainName}}ID, ok := ctx.Value("user_id").(string)
+	if !ok || {{.DomainName}}ID == "" {
+		h.logger.Error(ctx, "No user ID found in context")
+		http.Error(w, "Unauthorized: no user context", http.StatusUnauthorized)
+		return
+	}
+	
+	h.logger.Info(ctx, "Update {{.DomainName}} profile request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	h.handleUpdate(w, r, {{.DomainName}}ID)
+}
+
+// handleGetByID is a helper method for getting {{.DomainName}} by ID
+func (h *{{.DomainName | title}}Handler) handleGetByID(w http.ResponseWriter, r *http.Request, {{.DomainName}}ID string) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Get {{.DomainName}} by ID request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	
+	// Use the {{.DomainName}} port to get the {{.DomainName}}
+	{{.DomainName}}Response, err := h.{{.DomainName}}Port.Get{{.DomainName | title}}ByID(ctx, {{.DomainName}}ID)
+	if err != nil {
+		h.logger.Error(ctx, "Failed to get {{.DomainName}}", output.String("{{.DomainName}}_id", {{.DomainName}}ID), output.Error(err))
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	
+	// Return {{.DomainName}} as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode({{.DomainName}}Response); err != nil {
+		h.logger.Error(ctx, "Failed to encode response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
+// handleUpdate is a helper method for updating {{.DomainName}}
+func (h *{{.DomainName | title}}Handler) handleUpdate(w http.ResponseWriter, r *http.Request, {{.DomainName}}ID string) {
+	ctx := r.Context()
+	
+	h.logger.Info(ctx, "Update {{.DomainName}} profile request received", output.String("{{.DomainName}}_id", {{.DomainName}}ID))
+	
+	// Parse request body
+	var req dto.Update{{.DomainName | title}}Request
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error(ctx, "Invalid request body", output.Error(err))
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	
+	// Use the {{.DomainName}} port to update the {{.DomainName}}
+	{{.DomainName}}Response, err := h.{{.DomainName}}Port.Update{{.DomainName | title}}(ctx, {{.DomainName}}ID, &req)
+	if err != nil {
+		h.logger.Error(ctx, "Failed to update {{.DomainName}}", output.String("{{.DomainName}}_id", {{.DomainName}}ID), output.Error(err))
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Return updated {{.DomainName}} as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	
+	if err := json.NewEncoder(w).Encode({{.DomainName}}Response); err != nil {
+		h.logger.Error(ctx, "Failed to encode response", output.Error(err))
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
+}
+
 // extractIDFromPath extracts the ID from the URL path
 func extractIDFromPath(path string) string {
-	// Simple path parsing - in a real implementation, use a proper router
-	// This is a placeholder for path parsing like "/{{.DomainName}}s/123"
+	// Simple path parsing - extract the last segment as ID
+	// Example: "/api/users/123" -> "123"
+	parts := strings.Split(strings.TrimSuffix(path, "/"), "/")
+	if len(parts) > 0 {
+		return parts[len(parts)-1]
+	}
 	return "placeholder_id"
 }

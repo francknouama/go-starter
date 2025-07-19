@@ -1,0 +1,54 @@
+package valueobjects
+
+import (
+	"errors"
+	"github.com/google/uuid"
+)
+
+// SessionID represents a unique identifier for a session
+type SessionID struct {
+	value string
+}
+
+// NewSessionID creates a new session ID
+func NewSessionID() (*SessionID, error) {
+	id := uuid.New()
+	return &SessionID{value: id.String()}, nil
+}
+
+// SessionIDFromString creates a session ID from a string
+func SessionIDFromString(value string) (*SessionID, error) {
+	if value == "" {
+		return nil, errors.New("session ID cannot be empty")
+	}
+	
+	// Validate UUID format
+	if _, err := uuid.Parse(value); err != nil {
+		return nil, errors.New("invalid session ID format")
+	}
+	
+	return &SessionID{value: value}, nil
+}
+
+// Value returns the string value of the session ID
+func (id *SessionID) Value() string {
+	return id.value
+}
+
+// IsEmpty checks if the session ID is empty
+func (id *SessionID) IsEmpty() bool {
+	return id.value == ""
+}
+
+// Equals checks if two session IDs are equal
+func (id *SessionID) Equals(other *SessionID) bool {
+	if other == nil {
+		return false
+	}
+	return id.value == other.value
+}
+
+// String returns the string representation of the session ID
+func (id *SessionID) String() string {
+	return id.value
+}

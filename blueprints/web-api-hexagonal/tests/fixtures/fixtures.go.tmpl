@@ -1,0 +1,379 @@
+package fixtures
+
+import (
+	"time"
+
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+	"{{.ModulePath}}/internal/application/dto"
+)
+
+// TestUser represents a test user with known values
+type TestUser struct {
+	ID           string
+	Email        string
+	FirstName    string
+	LastName     string
+	Password     string
+	PasswordHash string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+// Default test users
+var (
+	// TestUser1 is a standard test user
+	TestUser1 = TestUser{
+		ID:           "550e8400-e29b-41d4-a716-446655440000",
+		Email:        "john.doe@example.com",
+		FirstName:    "John",
+		LastName:     "Doe",
+		Password:     "password123",
+		PasswordHash: "$2a$10$rOOjVdXb5MQ8yQOeKHqF8.LVlXgZdFZxEcAUgxO0.vQqYCrJfgSWS", // bcrypt hash of "password123"
+		CreatedAt:    time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:    time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+	}
+
+	// TestUser2 is another standard test user
+	TestUser2 = TestUser{
+		ID:           "550e8400-e29b-41d4-a716-446655440001",
+		Email:        "jane.smith@example.com",
+		FirstName:    "Jane",
+		LastName:     "Smith",
+		Password:     "password456",
+		PasswordHash: "$2a$10$rOOjVdXb5MQ8yQOeKHqF8.LVlXgZdFZxEcAUgxO0.vQqYCrJfgSWT", // bcrypt hash of "password456"
+		CreatedAt:    time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:    time.Date(2023, 1, 2, 0, 0, 0, 0, time.UTC),
+	}
+
+	// TestUser3 is a test user for admin scenarios
+	TestUser3 = TestUser{
+		ID:           "550e8400-e29b-41d4-a716-446655440002",
+		Email:        "admin@example.com",
+		FirstName:    "Admin",
+		LastName:     "User",
+		Password:     "admin123",
+		PasswordHash: "$2a$10$rOOjVdXb5MQ8yQOeKHqF8.LVlXgZdFZxEcAUgxO0.vQqYCrJfgSWU", // bcrypt hash of "admin123"
+		CreatedAt:    time.Date(2023, 1, 3, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:    time.Date(2023, 1, 3, 0, 0, 0, 0, time.UTC),
+	}
+)
+
+// CreateTestUser creates a domain entity from a test user fixture
+func (tu TestUser) CreateTestUser() (*entities.User, error) {
+	userID, err := valueobjects.UserIDFromString(tu.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	email, err := valueobjects.NewEmail(tu.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	return entities.ReconstructUser(
+		userID,
+		email,
+		tu.FirstName,
+		tu.LastName,
+		tu.PasswordHash,
+		tu.CreatedAt,
+		tu.UpdatedAt,
+	), nil
+}
+
+// ToCreateUserRequest converts a test user to a create user request
+func (tu TestUser) ToCreateUserRequest() *dto.CreateUserRequest {
+	return &dto.CreateUserRequest{
+		Email:     tu.Email,
+		FirstName: tu.FirstName,
+		LastName:  tu.LastName,
+		Password:  tu.Password,
+	}
+}
+
+// ToUpdateUserRequest converts a test user to an update user request
+func (tu TestUser) ToUpdateUserRequest() *dto.UpdateUserRequest {
+	return &dto.UpdateUserRequest{
+		Email:     tu.Email,
+		FirstName: tu.FirstName,
+		LastName:  tu.LastName,
+	}
+}
+
+// ToLoginRequest converts a test user to a login request
+func (tu TestUser) ToLoginRequest() *dto.LoginRequest {
+	return &dto.LoginRequest{
+		Email:    tu.Email,
+		Password: tu.Password,
+	}
+}
+
+// ToUserResponse converts a test user to a user response
+func (tu TestUser) ToUserResponse() *dto.UserResponse {
+	return &dto.UserResponse{
+		ID:        tu.ID,
+		Email:     tu.Email,
+		FirstName: tu.FirstName,
+		LastName:  tu.LastName,
+		CreatedAt: tu.CreatedAt,
+		UpdatedAt: tu.UpdatedAt,
+	}
+}
+
+{{- if ne .AuthType ""}}
+// TestSession represents a test auth session
+type TestSession struct {
+	ID        string
+	UserID    string
+	Token     string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// Default test sessions
+var (
+	// TestSession1 is a valid session for TestUser1
+	TestSession1 = TestSession{
+		ID:        "session-550e8400-e29b-41d4-a716-446655440000",
+		UserID:    TestUser1.ID,
+		Token:     "valid-token-123",
+		ExpiresAt: time.Now().Add(time.Hour),
+		CreatedAt: time.Now(),
+	}
+
+	// TestSession2 is an expired session for TestUser1
+	TestSession2 = TestSession{
+		ID:        "session-550e8400-e29b-41d4-a716-446655440001",
+		UserID:    TestUser1.ID,
+		Token:     "expired-token-456",
+		ExpiresAt: time.Now().Add(-time.Hour),
+		CreatedAt: time.Now().Add(-time.Hour * 2),
+	}
+)
+
+// CreateTestSession creates a domain entity from a test session fixture
+func (ts TestSession) CreateTestSession() (*entities.AuthSession, error) {
+	sessionID, err := valueobjects.SessionIDFromString(ts.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	userID, err := valueobjects.UserIDFromString(ts.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	return entities.NewAuthSession(
+		sessionID,
+		userID,
+		ts.Token,
+		ts.ExpiresAt,
+	), nil
+}
+
+// TestRefreshToken represents a test refresh token
+type TestRefreshToken struct {
+	Token     string
+	UserID    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// Default test refresh tokens
+var (
+	// TestRefreshToken1 is a valid refresh token for TestUser1
+	TestRefreshToken1 = TestRefreshToken{
+		Token:     "refresh-token-123",
+		UserID:    TestUser1.ID,
+		ExpiresAt: time.Now().Add(time.Hour * 24),
+		CreatedAt: time.Now(),
+	}
+
+	// TestRefreshToken2 is an expired refresh token for TestUser1
+	TestRefreshToken2 = TestRefreshToken{
+		Token:     "expired-refresh-token-456",
+		UserID:    TestUser1.ID,
+		ExpiresAt: time.Now().Add(-time.Hour),
+		CreatedAt: time.Now().Add(-time.Hour * 2),
+	}
+)
+
+// CreateTestRefreshToken creates a domain entity from a test refresh token fixture
+func (trt TestRefreshToken) CreateTestRefreshToken() (*entities.RefreshToken, error) {
+	userID, err := valueobjects.UserIDFromString(trt.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	return entities.NewRefreshToken(
+		trt.Token,
+		userID,
+		trt.ExpiresAt,
+	), nil
+}
+
+// ToRefreshTokenRequest converts a test refresh token to a refresh token request
+func (trt TestRefreshToken) ToRefreshTokenRequest() *dto.RefreshTokenRequest {
+	return &dto.RefreshTokenRequest{
+		RefreshToken: trt.Token,
+	}
+}
+{{- end}}
+
+// TestData contains collections of test data for different scenarios
+type TestData struct {
+	Users []TestUser
+	{{- if ne .AuthType ""}}
+	Sessions      []TestSession
+	RefreshTokens []TestRefreshToken
+	{{- end}}
+}
+
+// AllTestData returns all test data
+func AllTestData() *TestData {
+	return &TestData{
+		Users: []TestUser{TestUser1, TestUser2, TestUser3},
+		{{- if ne .AuthType ""}}
+		Sessions:      []TestSession{TestSession1, TestSession2},
+		RefreshTokens: []TestRefreshToken{TestRefreshToken1, TestRefreshToken2},
+		{{- end}}
+	}
+}
+
+// CreateAllTestUsers creates domain entities for all test users
+func CreateAllTestUsers() ([]*entities.User, error) {
+	users := make([]*entities.User, 0, 3)
+	
+	for _, testUser := range []TestUser{TestUser1, TestUser2, TestUser3} {
+		user, err := testUser.CreateTestUser()
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	
+	return users, nil
+}
+
+{{- if ne .AuthType ""}}
+// CreateAllTestSessions creates domain entities for all test sessions
+func CreateAllTestSessions() ([]*entities.AuthSession, error) {
+	sessions := make([]*entities.AuthSession, 0, 2)
+	
+	for _, testSession := range []TestSession{TestSession1, TestSession2} {
+		session, err := testSession.CreateTestSession()
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, session)
+	}
+	
+	return sessions, nil
+}
+
+// CreateAllTestRefreshTokens creates domain entities for all test refresh tokens
+func CreateAllTestRefreshTokens() ([]*entities.RefreshToken, error) {
+	tokens := make([]*entities.RefreshToken, 0, 2)
+	
+	for _, testToken := range []TestRefreshToken{TestRefreshToken1, TestRefreshToken2} {
+		token, err := testToken.CreateTestRefreshToken()
+		if err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, token)
+	}
+	
+	return tokens, nil
+}
+{{- end}}
+
+// ValidationTestCases contains test cases for validation scenarios
+type ValidationTestCases struct {
+	ValidEmails   []string
+	InvalidEmails []string
+	ValidUserIDs  []string
+	InvalidUserIDs []string
+	ValidPasswords []string
+	InvalidPasswords []string
+}
+
+// GetValidationTestCases returns test cases for validation scenarios
+func GetValidationTestCases() *ValidationTestCases {
+	return &ValidationTestCases{
+		ValidEmails: []string{
+			"test@example.com",
+			"user.name@example.com",
+			"user+tag@example.com",
+			"user123@example123.com",
+			"test@sub.example.com",
+		},
+		InvalidEmails: []string{
+			"",
+			"invalid-email",
+			"@example.com",
+			"test@",
+			"test@@example.com",
+			"test @example.com",
+			"test@example",
+			"test@.com",
+		},
+		ValidUserIDs: []string{
+			"550e8400-e29b-41d4-a716-446655440000",
+			"550e8400e29b41d4a716446655440000",
+			"123e4567-e89b-12d3-a456-426614174000",
+		},
+		InvalidUserIDs: []string{
+			"",
+			"invalid-id",
+			"123",
+			"550e8400-e29b-41d4-a716",
+			"550e8400-e29b-41d4-a716-446655440000-extra",
+		},
+		ValidPasswords: []string{
+			"password123",
+			"SecurePassword123!",
+			"myPassword456",
+			"P@ssw0rd123",
+		},
+		InvalidPasswords: []string{
+			"",
+			"123",
+			"password",
+			"123456789",
+			"a", // too short
+			"this-is-a-very-long-password-that-exceeds-the-maximum-allowed-length-for-passwords-in-this-system-and-should-be-rejected-by-the-validation-logic-because-it-is-too-long", // too long
+		},
+	}
+}
+
+// ErrorTestCases contains test cases for error scenarios
+type ErrorTestCases struct {
+	DatabaseErrors []string
+	ValidationErrors []string
+	AuthErrors     []string
+}
+
+// GetErrorTestCases returns test cases for error scenarios
+func GetErrorTestCases() *ErrorTestCases {
+	return &ErrorTestCases{
+		DatabaseErrors: []string{
+			"database connection failed",
+			"record not found",
+			"constraint violation",
+			"transaction failed",
+		},
+		ValidationErrors: []string{
+			"invalid email format",
+			"password too weak",
+			"required field missing",
+			"invalid data format",
+		},
+		AuthErrors: []string{
+			"invalid credentials",
+			"token expired",
+			"access denied",
+			"session not found",
+		},
+	}
+}

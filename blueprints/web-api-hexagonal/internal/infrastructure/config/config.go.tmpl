@@ -11,10 +11,11 @@ import (
 
 // Config represents the application configuration
 type Config struct {
-	Server   ServerConfig   `mapstructure:"server"`
-	Database DatabaseConfig `mapstructure:"database"`
-	Logger   LoggerConfig   `mapstructure:"logger"`
-	Auth     AuthConfig     `mapstructure:"auth"`
+	Server      ServerConfig   `mapstructure:"server"`
+	Database    DatabaseConfig `mapstructure:"database"`
+	Logger      LoggerConfig   `mapstructure:"logger"`
+	Auth        AuthConfig     `mapstructure:"auth"`
+	Environment string         `mapstructure:"environment"`
 }
 
 // ServerConfig represents the server configuration
@@ -71,9 +72,18 @@ func Load() (*Config, error) {
 	
 	viper.SetDefault("auth.jwt_secret", "your-secret-key")
 	viper.SetDefault("auth.token_duration", 24*time.Hour)
+	
+	viper.SetDefault("environment", "development")
 
+	// Determine config file based on environment
+	env := os.Getenv("ENV")
+	if env == "" {
+		env = "dev" // default environment
+	}
+	
 	// Set configuration file
-	viper.SetConfigName("config")
+	configName := fmt.Sprintf("config.%s", env)
+	viper.SetConfigName(configName)
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath("./configs")
 	viper.AddConfigPath(".")
@@ -99,9 +109,19 @@ func Load() (*Config, error) {
 		viper.Set("database.url", dbURL)
 	}
 
+	if env := os.Getenv("ENV"); env != "" {
+		viper.Set("environment", env)
+	}
+
 	// Read configuration file
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			// Try fallback to generic config if environment-specific not found
+			viper.SetConfigName("config")
+			if fallbackErr := viper.ReadInConfig(); fallbackErr != nil {
+				return nil, fmt.Errorf("failed to read config file %s or fallback config: %w", configName, fallbackErr)
+			}
+		} else {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 	}

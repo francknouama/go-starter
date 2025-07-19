@@ -1,8 +1,12 @@
 package valueobjects
 
 import (
+	"errors"
 	"github.com/google/uuid"
 )
+
+// ErrInvalid{{.DomainName | title}}ID is returned when a {{.DomainName}} ID is invalid
+var ErrInvalid{{.DomainName | title}}ID = errors.New("invalid {{.DomainName}} ID")
 
 // {{.DomainName | title}}ID represents a unique identifier for a {{.DomainName}}
 type {{.DomainName | title}}ID struct {
@@ -10,41 +14,44 @@ type {{.DomainName | title}}ID struct {
 }
 
 // New{{.DomainName | title}}ID creates a new {{.DomainName}} ID
-func New{{.DomainName | title}}ID() ({{.DomainName | title}}ID, error) {
+func New{{.DomainName | title}}ID() (*{{.DomainName | title}}ID, error) {
 	id := uuid.New()
-	return {{.DomainName | title}}ID{value: id.String()}, nil
+	return &{{.DomainName | title}}ID{value: id.String()}, nil
 }
 
 // {{.DomainName | title}}IDFromString creates a {{.DomainName}} ID from a string
-func {{.DomainName | title}}IDFromString(value string) ({{.DomainName | title}}ID, error) {
+func {{.DomainName | title}}IDFromString(value string) (*{{.DomainName | title}}ID, error) {
 	if value == "" {
-		return {{.DomainName | title}}ID{}, ErrInvalid{{.DomainName | title}}ID
+		return nil, ErrInvalid{{.DomainName | title}}ID
 	}
 	
 	// Validate UUID format
 	if _, err := uuid.Parse(value); err != nil {
-		return {{.DomainName | title}}ID{}, ErrInvalid{{.DomainName | title}}ID
+		return nil, ErrInvalid{{.DomainName | title}}ID
 	}
 	
-	return {{.DomainName | title}}ID{value: value}, nil
+	return &{{.DomainName | title}}ID{value: value}, nil
 }
 
 // Value returns the string value of the {{.DomainName}} ID
-func (id {{.DomainName | title}}ID) Value() string {
+func (id *{{.DomainName | title}}ID) Value() string {
 	return id.value
 }
 
 // IsEmpty checks if the {{.DomainName}} ID is empty
-func (id {{.DomainName | title}}ID) IsEmpty() bool {
+func (id *{{.DomainName | title}}ID) IsEmpty() bool {
 	return id.value == ""
 }
 
 // Equals checks if two {{.DomainName}} IDs are equal
-func (id {{.DomainName | title}}ID) Equals(other {{.DomainName | title}}ID) bool {
+func (id *{{.DomainName | title}}ID) Equals(other *{{.DomainName | title}}ID) bool {
+	if other == nil {
+		return false
+	}
 	return id.value == other.value
 }
 
 // String returns the string representation of the {{.DomainName}} ID
-func (id {{.DomainName | title}}ID) String() string {
+func (id *{{.DomainName | title}}ID) String() string {
 	return id.value
 }

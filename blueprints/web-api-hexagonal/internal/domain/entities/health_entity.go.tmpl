@@ -1,0 +1,83 @@
+package entities
+
+import (
+	"time"
+)
+
+// HealthStatus represents the overall health status of the application
+type HealthStatus struct {
+	Status    string                     `json:"status"`
+	Message   string                     `json:"message"`
+	Timestamp time.Time                  `json:"timestamp"`
+	Duration  time.Duration              `json:"duration"`
+	Checks    map[string]HealthCheck     `json:"checks"`
+}
+
+// HealthCheck represents a specific health check result
+type HealthCheck struct {
+	Status  string                 `json:"status"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+// ReadinessStatus represents the readiness status of the application
+type ReadinessStatus struct {
+	Status    string                      `json:"status"`
+	Message   string                      `json:"message"`
+	Timestamp time.Time                   `json:"timestamp"`
+	Duration  time.Duration               `json:"duration"`
+	Checks    map[string]ReadinessCheck   `json:"checks"`
+}
+
+// ReadinessCheck represents a specific readiness check result
+type ReadinessCheck struct {
+	Ready   bool                   `json:"ready"`
+	Status  string                 `json:"status"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
+}
+
+// Health status constants
+const (
+	HealthStatusHealthy   = "healthy"
+	HealthStatusUnhealthy = "unhealthy"
+	HealthStatusDegraded  = "degraded"
+)
+
+// Readiness status constants
+const (
+	ReadinessStatusReady    = "ready"
+	ReadinessStatusNotReady = "not_ready"
+)
+
+// NewHealthStatus creates a new health status
+func NewHealthStatus(status, message string, duration time.Duration, checks map[string]HealthCheck) *HealthStatus {
+	return &HealthStatus{
+		Status:    status,
+		Message:   message,
+		Timestamp: time.Now(),
+		Duration:  duration,
+		Checks:    checks,
+	}
+}
+
+// NewReadinessStatus creates a new readiness status
+func NewReadinessStatus(status, message string, duration time.Duration, checks map[string]ReadinessCheck) *ReadinessStatus {
+	return &ReadinessStatus{
+		Status:    status,
+		Message:   message,
+		Timestamp: time.Now(),
+		Duration:  duration,
+		Checks:    checks,
+	}
+}
+
+// IsHealthy returns true if the status is healthy
+func (h *HealthStatus) IsHealthy() bool {
+	return h.Status == HealthStatusHealthy
+}
+
+// IsReady returns true if the status is ready
+func (r *ReadinessStatus) IsReady() bool {
+	return r.Status == ReadinessStatusReady
+}

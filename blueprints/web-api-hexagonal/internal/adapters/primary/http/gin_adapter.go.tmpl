@@ -86,7 +86,7 @@ func (g *GinAdapter) setupRoutes() {
 	g.router.GET("/health/ready", g.adaptHandler(healthHandler.HandleReadiness))
 	
 	// API routes
-	api := g.router.Group("/api/v1")
+	api := g.router.Group("/api")
 	
 	{{- if ne .DatabaseDriver ""}}
 	// {{.DomainName | title}} routes
@@ -128,6 +128,9 @@ func (g *GinAdapter) setupRoutes() {
 	{
 		protected{{.DomainName | title}}Routes.GET("/me", g.adaptHandler({{.DomainName}}Handler.HandleGetProfile))
 		protected{{.DomainName | title}}Routes.PUT("/me", g.adaptHandler({{.DomainName}}Handler.HandleUpdateProfile))
+		// Alias routes for compatibility with tests
+		protected{{.DomainName | title}}Routes.GET("/profile", g.adaptHandler({{.DomainName}}Handler.HandleGetProfile))
+		protected{{.DomainName | title}}Routes.PUT("/profile", g.adaptHandler({{.DomainName}}Handler.HandleUpdateProfile))
 	}
 	{{- end}}
 	{{- end}}

@@ -1,0 +1,725 @@
+package application
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/application/dto"
+	"{{.ModulePath}}/internal/application/services"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+	"{{.ModulePath}}/tests/mocks"
+)
+
+func TestUserService_CreateUser(t *testing.T) {
+	tests := []struct {
+		name                string
+		request            *dto.CreateUserRequest
+		setupMocks         func(*mocks.MockUserRepositoryPort, *mocks.MockEventPublisherPort, *mocks.MockLoggerPort)
+		wantErr            bool
+		wantErrContains    string
+		validateResponse   func(*testing.T, *dto.UserResponse)
+	}{
+		{
+			name: "successful user creation",
+			request: &dto.CreateUserRequest{
+				Email:     "test@example.com",
+				FirstName: "John",
+				LastName:  "Doe",
+				Password:  "password123",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("ExistsByEmail", mock.Anything, "test@example.com").Return(false, nil)
+				userRepo.On("Create", mock.Anything, mock.AnythingOfType("*entities.User")).Return(nil)
+				eventPub.On("Publish", mock.Anything, mock.AnythingOfType("*events.UserCreated")).Return(nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, resp *dto.UserResponse) {
+				assert.Equal(t, "test@example.com", resp.Email)
+				assert.Equal(t, "John", resp.FirstName)
+				assert.Equal(t, "Doe", resp.LastName)
+				assert.NotEmpty(t, resp.ID)
+				assert.NotZero(t, resp.CreatedAt)
+				assert.NotZero(t, resp.UpdatedAt)
+			},
+		},
+		{
+			name: "user already exists",
+			request: &dto.CreateUserRequest{
+				Email:     "existing@example.com",
+				FirstName: "Jane",
+				LastName:  "Smith",
+				Password:  "password123",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("ExistsByEmail", mock.Anything, "existing@example.com").Return(true, nil)
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "user already exists",
+		},
+		{
+			name: "invalid email format",
+			request: &dto.CreateUserRequest{
+				Email:     "invalid-email",
+				FirstName: "John",
+				LastName:  "Doe",
+				Password:  "password123",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				logger.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "invalid email",
+		},
+		{
+			name: "repository error",
+			request: &dto.CreateUserRequest{
+				Email:     "test@example.com",
+				FirstName: "John",
+				LastName:  "Doe",
+				Password:  "password123",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("ExistsByEmail", mock.Anything, "test@example.com").Return(false, errors.New("database error"))
+				logger.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "database error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			userRepo := &mocks.MockUserRepositoryPort{}
+			eventPub := &mocks.MockEventPublisherPort{}
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(userRepo, eventPub, logger)
+
+			// Create service
+			userService := services.NewUserService(userRepo, eventPub, logger)
+
+			// Execute
+			ctx := context.Background()
+			response, err := userService.CreateUser(ctx, tt.request)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				assert.Nil(t, response)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, response)
+				if tt.validateResponse != nil {
+					tt.validateResponse(t, response)
+				}
+			}
+
+			// Verify mocks
+			userRepo.AssertExpectations(t)
+			eventPub.AssertExpectations(t)
+			logger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserService_GetUserByID(t *testing.T) {
+	// Create a test user
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	email, err := valueobjects.NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	user := entities.ReconstructUser(
+		userID,
+		email,
+		"John",
+		"Doe",
+		"$2a$10$hashedpassword",
+		time.Now(),
+		time.Now(),
+	)
+
+	tests := []struct {
+		name                string
+		userID              string
+		setupMocks         func(*mocks.MockUserRepositoryPort, *mocks.MockLoggerPort)
+		wantErr            bool
+		wantErrContains    string
+		validateResponse   func(*testing.T, *dto.UserResponse)
+	}{
+		{
+			name:   "successful user retrieval",
+			userID: userID.Value(),
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, userID.Value()).Return(user, nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, resp *dto.UserResponse) {
+				assert.Equal(t, userID.Value(), resp.ID)
+				assert.Equal(t, "test@example.com", resp.Email)
+				assert.Equal(t, "John", resp.FirstName)
+				assert.Equal(t, "Doe", resp.LastName)
+			},
+		},
+		{
+			name:   "user not found",
+			userID: "nonexistent-id",
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, "nonexistent-id").Return(nil, errors.New("user not found"))
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "user not found",
+		},
+		{
+			name:   "invalid user ID format",
+			userID: "invalid-id",
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, logger *mocks.MockLoggerPort) {
+				logger.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "invalid user ID",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			userRepo := &mocks.MockUserRepositoryPort{}
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(userRepo, logger)
+
+			// Create service
+			userService := services.NewUserService(userRepo, nil, logger)
+
+			// Execute
+			ctx := context.Background()
+			response, err := userService.GetUserByID(ctx, tt.userID)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				assert.Nil(t, response)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, response)
+				if tt.validateResponse != nil {
+					tt.validateResponse(t, response)
+				}
+			}
+
+			// Verify mocks
+			userRepo.AssertExpectations(t)
+			logger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserService_UpdateUser(t *testing.T) {
+	// Create a test user
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	email, err := valueobjects.NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	user := entities.ReconstructUser(
+		userID,
+		email,
+		"John",
+		"Doe",
+		"$2a$10$hashedpassword",
+		time.Now(),
+		time.Now(),
+	)
+
+	tests := []struct {
+		name                string
+		userID              string
+		request            *dto.UpdateUserRequest
+		setupMocks         func(*mocks.MockUserRepositoryPort, *mocks.MockEventPublisherPort, *mocks.MockLoggerPort)
+		wantErr            bool
+		wantErrContains    string
+		validateResponse   func(*testing.T, *dto.UserResponse)
+	}{
+		{
+			name:   "successful user update",
+			userID: userID.Value(),
+			request: &dto.UpdateUserRequest{
+				Email:     "newemail@example.com",
+				FirstName: "Jane",
+				LastName:  "Smith",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, userID.Value()).Return(user, nil)
+				userRepo.On("ExistsByEmail", mock.Anything, "newemail@example.com").Return(false, nil)
+				userRepo.On("Update", mock.Anything, mock.AnythingOfType("*entities.User")).Return(nil)
+				eventPub.On("Publish", mock.Anything, mock.AnythingOfType("*events.UserUpdated")).Return(nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, resp *dto.UserResponse) {
+				assert.Equal(t, userID.Value(), resp.ID)
+				assert.Equal(t, "newemail@example.com", resp.Email)
+				assert.Equal(t, "Jane", resp.FirstName)
+				assert.Equal(t, "Smith", resp.LastName)
+			},
+		},
+		{
+			name:   "user not found",
+			userID: "nonexistent-id",
+			request: &dto.UpdateUserRequest{
+				Email:     "newemail@example.com",
+				FirstName: "Jane",
+				LastName:  "Smith",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, "nonexistent-id").Return(nil, errors.New("user not found"))
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "user not found",
+		},
+		{
+			name:   "email already exists",
+			userID: userID.Value(),
+			request: &dto.UpdateUserRequest{
+				Email:     "existing@example.com",
+				FirstName: "Jane",
+				LastName:  "Smith",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, userID.Value()).Return(user, nil)
+				userRepo.On("ExistsByEmail", mock.Anything, "existing@example.com").Return(true, nil)
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "email already exists",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			userRepo := &mocks.MockUserRepositoryPort{}
+			eventPub := &mocks.MockEventPublisherPort{}
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(userRepo, eventPub, logger)
+
+			// Create service
+			userService := services.NewUserService(userRepo, eventPub, logger)
+
+			// Execute
+			ctx := context.Background()
+			response, err := userService.UpdateUser(ctx, tt.userID, tt.request)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				assert.Nil(t, response)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, response)
+				if tt.validateResponse != nil {
+					tt.validateResponse(t, response)
+				}
+			}
+
+			// Verify mocks
+			userRepo.AssertExpectations(t)
+			eventPub.AssertExpectations(t)
+			logger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserService_DeleteUser(t *testing.T) {
+	// Create a test user
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	email, err := valueobjects.NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	user := entities.ReconstructUser(
+		userID,
+		email,
+		"John",
+		"Doe",
+		"$2a$10$hashedpassword",
+		time.Now(),
+		time.Now(),
+	)
+
+	tests := []struct {
+		name            string
+		userID          string
+		setupMocks      func(*mocks.MockUserRepositoryPort, *mocks.MockEventPublisherPort, *mocks.MockLoggerPort)
+		wantErr         bool
+		wantErrContains string
+	}{
+		{
+			name:   "successful user deletion",
+			userID: userID.Value(),
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, userID.Value()).Return(user, nil)
+				userRepo.On("Delete", mock.Anything, userID.Value()).Return(nil)
+				eventPub.On("Publish", mock.Anything, mock.AnythingOfType("*events.UserDeleted")).Return(nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+		},
+		{
+			name:   "user not found",
+			userID: "nonexistent-id",
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, "nonexistent-id").Return(nil, errors.New("user not found"))
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "user not found",
+		},
+		{
+			name:   "repository delete error",
+			userID: userID.Value(),
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, eventPub *mocks.MockEventPublisherPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByID", mock.Anything, userID.Value()).Return(user, nil)
+				userRepo.On("Delete", mock.Anything, userID.Value()).Return(errors.New("delete failed"))
+				logger.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "delete failed",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			userRepo := &mocks.MockUserRepositoryPort{}
+			eventPub := &mocks.MockEventPublisherPort{}
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(userRepo, eventPub, logger)
+
+			// Create service
+			userService := services.NewUserService(userRepo, eventPub, logger)
+
+			// Execute
+			ctx := context.Background()
+			err := userService.DeleteUser(ctx, tt.userID)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Verify mocks
+			userRepo.AssertExpectations(t)
+			eventPub.AssertExpectations(t)
+			logger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserService_ListUsers(t *testing.T) {
+	// Create test users
+	userID1, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+	email1, err := valueobjects.NewEmail("user1@example.com")
+	require.NoError(t, err)
+	user1 := entities.ReconstructUser(userID1, email1, "John", "Doe", "$2a$10$hash1", time.Now(), time.Now())
+
+	userID2, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+	email2, err := valueobjects.NewEmail("user2@example.com")
+	require.NoError(t, err)
+	user2 := entities.ReconstructUser(userID2, email2, "Jane", "Smith", "$2a$10$hash2", time.Now(), time.Now())
+
+	users := []*entities.User{user1, user2}
+
+	tests := []struct {
+		name                string
+		request            *dto.ListUsersRequest
+		setupMocks         func(*mocks.MockUserRepositoryPort, *mocks.MockLoggerPort)
+		wantErr            bool
+		wantErrContains    string
+		validateResponse   func(*testing.T, *dto.ListUsersResponse)
+	}{
+		{
+			name: "successful user listing",
+			request: &dto.ListUsersRequest{
+				Page:  1,
+				Limit: 10,
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("List", mock.Anything, 10, 0).Return(users, nil)
+				userRepo.On("Count", mock.Anything).Return(int64(2), nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, resp *dto.ListUsersResponse) {
+				assert.Len(t, resp.Users, 2)
+				assert.Equal(t, int64(2), resp.Total)
+				assert.Equal(t, 1, resp.Page)
+				assert.Equal(t, 10, resp.Limit)
+				assert.Equal(t, 1, resp.TotalPages)
+			},
+		},
+		{
+			name: "empty result",
+			request: &dto.ListUsersRequest{
+				Page:  1,
+				Limit: 10,
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("List", mock.Anything, 10, 0).Return([]*entities.User{}, nil)
+				userRepo.On("Count", mock.Anything).Return(int64(0), nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, resp *dto.ListUsersResponse) {
+				assert.Len(t, resp.Users, 0)
+				assert.Equal(t, int64(0), resp.Total)
+				assert.Equal(t, 1, resp.Page)
+				assert.Equal(t, 10, resp.Limit)
+				assert.Equal(t, 0, resp.TotalPages)
+			},
+		},
+		{
+			name: "repository error",
+			request: &dto.ListUsersRequest{
+				Page:  1,
+				Limit: 10,
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("List", mock.Anything, 10, 0).Return(nil, errors.New("database error"))
+				logger.On("Error", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "database error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			userRepo := &mocks.MockUserRepositoryPort{}
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(userRepo, logger)
+
+			// Create service
+			userService := services.NewUserService(userRepo, nil, logger)
+
+			// Execute
+			ctx := context.Background()
+			response, err := userService.ListUsers(ctx, tt.request)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				assert.Nil(t, response)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, response)
+				if tt.validateResponse != nil {
+					tt.validateResponse(t, response)
+				}
+			}
+
+			// Verify mocks
+			userRepo.AssertExpectations(t)
+			logger.AssertExpectations(t)
+		})
+	}
+}
+
+{{- if ne .AuthType ""}}
+func TestAuthService_Login(t *testing.T) {
+	// Create a test user
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	email, err := valueobjects.NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	user := entities.ReconstructUser(
+		userID,
+		email,
+		"John",
+		"Doe",
+		"$2a$10$hashedpassword",
+		time.Now(),
+		time.Now(),
+	)
+
+	tests := []struct {
+		name                string
+		request            *dto.LoginRequest
+		setupMocks         func(*mocks.MockUserRepositoryPort, *mocks.MockAuthRepositoryPort, *mocks.MockLoggerPort)
+		wantErr            bool
+		wantErrContains    string
+		validateResponse   func(*testing.T, *dto.LoginResponse)
+	}{
+		{
+			name: "successful login",
+			request: &dto.LoginRequest{
+				Email:    "test@example.com",
+				Password: "password123",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, authRepo *mocks.MockAuthRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByEmail", mock.Anything, "test@example.com").Return(user, nil)
+				authRepo.On("CreateSession", mock.Anything, mock.AnythingOfType("*entities.AuthSession")).Return(nil)
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, resp *dto.LoginResponse) {
+				assert.NotEmpty(t, resp.AccessToken)
+				assert.NotEmpty(t, resp.RefreshToken)
+				assert.Equal(t, "Bearer", resp.TokenType)
+				assert.Greater(t, resp.ExpiresIn, int64(0))
+				assert.NotNil(t, resp.User)
+			},
+		},
+		{
+			name: "invalid email",
+			request: &dto.LoginRequest{
+				Email:    "nonexistent@example.com",
+				Password: "password123",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, authRepo *mocks.MockAuthRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByEmail", mock.Anything, "nonexistent@example.com").Return(nil, errors.New("user not found"))
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "invalid credentials",
+		},
+		{
+			name: "invalid password",
+			request: &dto.LoginRequest{
+				Email:    "test@example.com",
+				Password: "wrongpassword",
+			},
+			setupMocks: func(userRepo *mocks.MockUserRepositoryPort, authRepo *mocks.MockAuthRepositoryPort, logger *mocks.MockLoggerPort) {
+				userRepo.On("GetByEmail", mock.Anything, "test@example.com").Return(user, nil)
+				logger.On("Warn", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr:         true,
+			wantErrContains: "invalid credentials",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			userRepo := &mocks.MockUserRepositoryPort{}
+			authRepo := &mocks.MockAuthRepositoryPort{}
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(userRepo, authRepo, logger)
+
+			// Create service
+			authService := services.NewAuthService(userRepo, authRepo, logger)
+
+			// Execute
+			ctx := context.Background()
+			response, err := authService.Login(ctx, tt.request)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				assert.Nil(t, response)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, response)
+				if tt.validateResponse != nil {
+					tt.validateResponse(t, response)
+				}
+			}
+
+			// Verify mocks
+			userRepo.AssertExpectations(t)
+			authRepo.AssertExpectations(t)
+			logger.AssertExpectations(t)
+		})
+	}
+}
+{{- end}}
+
+func TestHealthService_CheckHealth(t *testing.T) {
+	tests := []struct {
+		name                string
+		setupMocks         func(*mocks.MockLoggerPort)
+		wantErr            bool
+		wantErrContains    string
+		validateResponse   func(*testing.T, *entities.HealthStatus)
+	}{
+		{
+			name: "healthy system",
+			setupMocks: func(logger *mocks.MockLoggerPort) {
+				logger.On("Info", mock.Anything, mock.Anything, mock.Anything).Return()
+			},
+			wantErr: false,
+			validateResponse: func(t *testing.T, status *entities.HealthStatus) {
+				assert.Equal(t, entities.HealthStatusHealthy, status.Status())
+				assert.NotEmpty(t, status.Message())
+				assert.NotEmpty(t, status.Checks())
+				assert.Greater(t, status.Duration(), time.Duration(0))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			logger := &mocks.MockLoggerPort{}
+			
+			tt.setupMocks(logger)
+
+			// Create service
+			healthService := services.NewHealthService(logger)
+
+			// Execute
+			ctx := context.Background()
+			status, err := healthService.CheckHealth(ctx)
+
+			// Verify
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrContains)
+				assert.Nil(t, status)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, status)
+				if tt.validateResponse != nil {
+					tt.validateResponse(t, status)
+				}
+			}
+
+			// Verify mocks
+			logger.AssertExpectations(t)
+		})
+	}
+}

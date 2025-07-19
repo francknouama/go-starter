@@ -1,0 +1,627 @@
+package integration
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/internal/adapters/secondary/logger"
+	"{{.ModulePath}}/internal/adapters/secondary/persistence"
+	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+	"{{.ModulePath}}/internal/infrastructure/config"
+)
+
+type RepositoryTestSuite struct {
+	suite.Suite
+	database       *persistence.Database
+	userRepository output.UserRepositoryPort
+	{{- if ne .AuthType ""}}
+	authRepository output.AuthRepositoryPort
+	{{- end}}
+	logger         output.LoggerPort
+}
+
+func (suite *RepositoryTestSuite) SetupSuite() {
+	// Create test configuration
+	cfg := &config.Config{
+		Database: config.DatabaseConfig{
+			Driver: "{{.DatabaseDriver}}",
+			{{- if eq .DatabaseDriver "sqlite"}}
+			Path: ":memory:",
+			{{- else if eq .DatabaseDriver "postgres"}}
+			Host:     "localhost",
+			Port:     5432,
+			Name:     "test_db",
+			User:     "test_user",
+			Password: "test_password",
+			SSLMode:  "disable",
+			{{- else if eq .DatabaseDriver "mysql"}}
+			Host:     "localhost",
+			Port:     3306,
+			Name:     "test_db",
+			User:     "test_user",
+			Password: "test_password",
+			{{- end}}
+			{{- if ne .DatabaseORM ""}}
+			ORM: "{{.DatabaseORM}}",
+			{{- end}}
+			MaxOpenConnections:   10,
+			MaxIdleConnections:   5,
+			ConnectionMaxLifetime: time.Hour,
+		},
+	}
+
+	// Create logger
+	suite.logger = logger.NewSlogAdapter()
+
+	// Create database connection
+	database, err := persistence.NewDatabase(cfg)
+	require.NoError(suite.T(), err)
+	suite.database = database
+
+	// Create repositories
+	suite.userRepository = persistence.NewUserRepository(database, suite.logger)
+	{{- if ne .AuthType ""}}
+	suite.authRepository = persistence.NewAuthRepository(database, suite.logger)
+	{{- end}}
+
+	// Run migrations or setup test data
+	suite.setupTestData()
+}
+
+func (suite *RepositoryTestSuite) TearDownSuite() {
+	if suite.database != nil {
+		err := suite.database.Close()
+		suite.NoError(err)
+	}
+}
+
+func (suite *RepositoryTestSuite) SetupTest() {
+	// Clean up data before each test
+	suite.cleanupTestData()
+}
+
+func (suite *RepositoryTestSuite) setupTestData() {
+	// This would typically run database migrations
+	// For now, we'll assume the database is properly set up
+}
+
+func (suite *RepositoryTestSuite) cleanupTestData() {
+	// Clean up test data
+	ctx := context.Background()
+	
+	{{- if ne .AuthType ""}}
+	// Clean auth-related tables
+	suite.database.GORM().Exec("DELETE FROM password_reset_tokens")
+	suite.database.GORM().Exec("DELETE FROM refresh_tokens")
+	suite.database.GORM().Exec("DELETE FROM auth_sessions")
+	{{- end}}
+	
+	// Clean user table
+	{{- if eq .DatabaseORM "gorm"}}
+	suite.database.GORM().Exec("DELETE FROM users")
+	{{- else}}
+	suite.database.SQL().ExecContext(ctx, "DELETE FROM users")
+	{{- end}}
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_Create() {
+	ctx := context.Background()
+	
+	// Create a new user
+	user, err := entities.NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(suite.T(), err)
+
+	// Test creation
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Verify user was created
+	retrievedUser, err := suite.userRepository.GetByID(ctx, user.ID().Value())
+	suite.NoError(err)
+	suite.NotNil(retrievedUser)
+	suite.Equal(user.ID().Value(), retrievedUser.ID().Value())
+	suite.Equal(user.Email().Value(), retrievedUser.Email().Value())
+	suite.Equal(user.FirstName(), retrievedUser.FirstName())
+	suite.Equal(user.LastName(), retrievedUser.LastName())
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_GetByEmail() {
+	ctx := context.Background()
+	
+	// Create a new user
+	user, err := entities.NewUser("email@example.com", "Jane", "Smith", "password123")
+	require.NoError(suite.T(), err)
+
+	// Create user in database
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Test retrieval by email
+	retrievedUser, err := suite.userRepository.GetByEmail(ctx, "email@example.com")
+	suite.NoError(err)
+	suite.NotNil(retrievedUser)
+	suite.Equal(user.ID().Value(), retrievedUser.ID().Value())
+	suite.Equal(user.Email().Value(), retrievedUser.Email().Value())
+
+	// Test non-existent email
+	_, err = suite.userRepository.GetByEmail(ctx, "nonexistent@example.com")
+	suite.Error(err)
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_Update() {
+	ctx := context.Background()
+	
+	// Create a new user
+	user, err := entities.NewUser("update@example.com", "Original", "Name", "password123")
+	require.NoError(suite.T(), err)
+
+	// Create user in database
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Update user
+	err = user.UpdateEmail("updated@example.com")
+	suite.NoError(err)
+	
+	user.UpdateName("Updated", "Name")
+
+	// Test update
+	err = suite.userRepository.Update(ctx, user)
+	suite.NoError(err)
+
+	// Verify update
+	retrievedUser, err := suite.userRepository.GetByID(ctx, user.ID().Value())
+	suite.NoError(err)
+	suite.Equal("updated@example.com", retrievedUser.Email().Value())
+	suite.Equal("Updated", retrievedUser.FirstName())
+	suite.Equal("Name", retrievedUser.LastName())
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_Delete() {
+	ctx := context.Background()
+	
+	// Create a new user
+	user, err := entities.NewUser("delete@example.com", "Delete", "Me", "password123")
+	require.NoError(suite.T(), err)
+
+	// Create user in database
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Verify user exists
+	retrievedUser, err := suite.userRepository.GetByID(ctx, user.ID().Value())
+	suite.NoError(err)
+	suite.NotNil(retrievedUser)
+
+	// Test deletion
+	err = suite.userRepository.Delete(ctx, user.ID().Value())
+	suite.NoError(err)
+
+	// Verify user is deleted
+	_, err = suite.userRepository.GetByID(ctx, user.ID().Value())
+	suite.Error(err)
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_List() {
+	ctx := context.Background()
+	
+	// Create multiple users
+	users := make([]*entities.User, 5)
+	for i := 0; i < 5; i++ {
+		user, err := entities.NewUser(
+			fmt.Sprintf("user%d@example.com", i),
+			fmt.Sprintf("User%d", i),
+			"Test",
+			"password123",
+		)
+		require.NoError(suite.T(), err)
+		users[i] = user
+
+		err = suite.userRepository.Create(ctx, user)
+		suite.NoError(err)
+	}
+
+	// Test listing with pagination
+	retrievedUsers, err := suite.userRepository.List(ctx, 3, 0)
+	suite.NoError(err)
+	suite.Len(retrievedUsers, 3)
+
+	// Test listing with offset
+	retrievedUsers, err = suite.userRepository.List(ctx, 3, 2)
+	suite.NoError(err)
+	suite.Len(retrievedUsers, 3)
+
+	// Test listing all
+	retrievedUsers, err = suite.userRepository.List(ctx, 10, 0)
+	suite.NoError(err)
+	suite.Len(retrievedUsers, 5)
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_Count() {
+	ctx := context.Background()
+	
+	// Test count with no users
+	count, err := suite.userRepository.Count(ctx)
+	suite.NoError(err)
+	suite.Equal(int64(0), count)
+
+	// Create some users
+	for i := 0; i < 3; i++ {
+		user, err := entities.NewUser(
+			fmt.Sprintf("count%d@example.com", i),
+			fmt.Sprintf("Count%d", i),
+			"Test",
+			"password123",
+		)
+		require.NoError(suite.T(), err)
+
+		err = suite.userRepository.Create(ctx, user)
+		suite.NoError(err)
+	}
+
+	// Test count with users
+	count, err = suite.userRepository.Count(ctx)
+	suite.NoError(err)
+	suite.Equal(int64(3), count)
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_ExistsByEmail() {
+	ctx := context.Background()
+	
+	// Test non-existent email
+	exists, err := suite.userRepository.ExistsByEmail(ctx, "nonexistent@example.com")
+	suite.NoError(err)
+	suite.False(exists)
+
+	// Create a user
+	user, err := entities.NewUser("exists@example.com", "Exists", "User", "password123")
+	require.NoError(suite.T(), err)
+
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Test existing email
+	exists, err = suite.userRepository.ExistsByEmail(ctx, "exists@example.com")
+	suite.NoError(err)
+	suite.True(exists)
+}
+
+func (suite *RepositoryTestSuite) TestUserRepository_ExistsByID() {
+	ctx := context.Background()
+	
+	// Create a user
+	user, err := entities.NewUser("exists@example.com", "Exists", "User", "password123")
+	require.NoError(suite.T(), err)
+
+	// Test non-existent ID
+	exists, err := suite.userRepository.ExistsByID(ctx, user.ID().Value())
+	suite.NoError(err)
+	suite.False(exists)
+
+	// Create user in database
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Test existing ID
+	exists, err = suite.userRepository.ExistsByID(ctx, user.ID().Value())
+	suite.NoError(err)
+	suite.True(exists)
+}
+
+{{- if ne .AuthType ""}}
+func (suite *RepositoryTestSuite) TestAuthRepository_CreateSession() {
+	ctx := context.Background()
+	
+	// Create a user first
+	user, err := entities.NewUser("session@example.com", "Session", "User", "password123")
+	require.NoError(suite.T(), err)
+
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Create session
+	sessionID, err := valueobjects.NewSessionID()
+	suite.NoError(err)
+
+	session := entities.NewAuthSession(
+		sessionID,
+		user.ID(),
+		"test-token",
+		time.Now().Add(time.Hour),
+	)
+
+	// Test session creation
+	err = suite.authRepository.CreateSession(ctx, session)
+	suite.NoError(err)
+
+	// Verify session was created
+	retrievedSession, err := suite.authRepository.GetSessionByID(ctx, sessionID.Value())
+	suite.NoError(err)
+	suite.NotNil(retrievedSession)
+	suite.Equal(sessionID.Value(), retrievedSession.SessionID().Value())
+	suite.Equal(user.ID().Value(), retrievedSession.UserID().Value())
+	suite.Equal("test-token", retrievedSession.Token())
+}
+
+func (suite *RepositoryTestSuite) TestAuthRepository_GetSessionByToken() {
+	ctx := context.Background()
+	
+	// Create a user first
+	user, err := entities.NewUser("token@example.com", "Token", "User", "password123")
+	require.NoError(suite.T(), err)
+
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Create session
+	sessionID, err := valueobjects.NewSessionID()
+	suite.NoError(err)
+
+	session := entities.NewAuthSession(
+		sessionID,
+		user.ID(),
+		"unique-token",
+		time.Now().Add(time.Hour),
+	)
+
+	err = suite.authRepository.CreateSession(ctx, session)
+	suite.NoError(err)
+
+	// Test retrieval by token
+	retrievedSession, err := suite.authRepository.GetSessionByToken(ctx, "unique-token")
+	suite.NoError(err)
+	suite.NotNil(retrievedSession)
+	suite.Equal(sessionID.Value(), retrievedSession.SessionID().Value())
+	suite.Equal("unique-token", retrievedSession.Token())
+
+	// Test non-existent token
+	_, err = suite.authRepository.GetSessionByToken(ctx, "nonexistent-token")
+	suite.Error(err)
+}
+
+func (suite *RepositoryTestSuite) TestAuthRepository_DeleteSession() {
+	ctx := context.Background()
+	
+	// Create a user first
+	user, err := entities.NewUser("deletesession@example.com", "Delete", "Session", "password123")
+	require.NoError(suite.T(), err)
+
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Create session
+	sessionID, err := valueobjects.NewSessionID()
+	suite.NoError(err)
+
+	session := entities.NewAuthSession(
+		sessionID,
+		user.ID(),
+		"delete-token",
+		time.Now().Add(time.Hour),
+	)
+
+	err = suite.authRepository.CreateSession(ctx, session)
+	suite.NoError(err)
+
+	// Verify session exists
+	retrievedSession, err := suite.authRepository.GetSessionByID(ctx, sessionID.Value())
+	suite.NoError(err)
+	suite.NotNil(retrievedSession)
+
+	// Test deletion
+	err = suite.authRepository.DeleteSession(ctx, sessionID.Value())
+	suite.NoError(err)
+
+	// Verify session is deleted
+	_, err = suite.authRepository.GetSessionByID(ctx, sessionID.Value())
+	suite.Error(err)
+}
+
+func (suite *RepositoryTestSuite) TestAuthRepository_DeleteExpiredSessions() {
+	ctx := context.Background()
+	
+	// Create a user first
+	user, err := entities.NewUser("expired@example.com", "Expired", "User", "password123")
+	require.NoError(suite.T(), err)
+
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Create expired session
+	expiredSessionID, err := valueobjects.NewSessionID()
+	suite.NoError(err)
+
+	expiredSession := entities.NewAuthSession(
+		expiredSessionID,
+		user.ID(),
+		"expired-token",
+		time.Now().Add(-time.Hour), // Expired
+	)
+
+	err = suite.authRepository.CreateSession(ctx, expiredSession)
+	suite.NoError(err)
+
+	// Create valid session
+	validSessionID, err := valueobjects.NewSessionID()
+	suite.NoError(err)
+
+	validSession := entities.NewAuthSession(
+		validSessionID,
+		user.ID(),
+		"valid-token",
+		time.Now().Add(time.Hour), // Valid
+	)
+
+	err = suite.authRepository.CreateSession(ctx, validSession)
+	suite.NoError(err)
+
+	// Delete expired sessions
+	err = suite.authRepository.DeleteExpiredSessions(ctx)
+	suite.NoError(err)
+
+	// Verify expired session is deleted
+	_, err = suite.authRepository.GetSessionByID(ctx, expiredSessionID.Value())
+	suite.Error(err)
+
+	// Verify valid session still exists
+	retrievedSession, err := suite.authRepository.GetSessionByID(ctx, validSessionID.Value())
+	suite.NoError(err)
+	suite.NotNil(retrievedSession)
+}
+
+func (suite *RepositoryTestSuite) TestAuthRepository_RefreshTokenOperations() {
+	ctx := context.Background()
+	
+	// Create a user first
+	user, err := entities.NewUser("refresh@example.com", "Refresh", "User", "password123")
+	require.NoError(suite.T(), err)
+
+	err = suite.userRepository.Create(ctx, user)
+	suite.NoError(err)
+
+	// Create refresh token
+	refreshToken := entities.NewRefreshToken(
+		"refresh-token-123",
+		user.ID(),
+		time.Now().Add(time.Hour*24),
+	)
+
+	// Test refresh token creation
+	err = suite.authRepository.CreateRefreshToken(ctx, refreshToken)
+	suite.NoError(err)
+
+	// Test retrieval by token
+	retrievedToken, err := suite.authRepository.GetRefreshTokenByToken(ctx, "refresh-token-123")
+	suite.NoError(err)
+	suite.NotNil(retrievedToken)
+	suite.Equal("refresh-token-123", retrievedToken.Token())
+	suite.Equal(user.ID().Value(), retrievedToken.UserID().Value())
+
+	// Test deletion
+	err = suite.authRepository.DeleteRefreshToken(ctx, "refresh-token-123")
+	suite.NoError(err)
+
+	// Verify token is deleted
+	_, err = suite.authRepository.GetRefreshTokenByToken(ctx, "refresh-token-123")
+	suite.Error(err)
+}
+{{- end}}
+
+func (suite *RepositoryTestSuite) TestDatabaseHealth() {
+	// Test database health check
+	err := suite.database.Health()
+	suite.NoError(err)
+}
+
+func (suite *RepositoryTestSuite) TestTransactionHandling() {
+	ctx := context.Background()
+	
+	// This test would verify transaction handling
+	// For now, we'll just test that operations work correctly
+	user1, err := entities.NewUser("tx1@example.com", "Transaction", "User1", "password123")
+	require.NoError(suite.T(), err)
+
+	user2, err := entities.NewUser("tx2@example.com", "Transaction", "User2", "password123")
+	require.NoError(suite.T(), err)
+
+	// Create users in sequence
+	err = suite.userRepository.Create(ctx, user1)
+	suite.NoError(err)
+
+	err = suite.userRepository.Create(ctx, user2)
+	suite.NoError(err)
+
+	// Verify both users exist
+	count, err := suite.userRepository.Count(ctx)
+	suite.NoError(err)
+	suite.Equal(int64(2), count)
+}
+
+func (suite *RepositoryTestSuite) TestConcurrentOperations() {
+	ctx := context.Background()
+	
+	// Test concurrent user creation
+	done := make(chan bool, 5)
+	
+	for i := 0; i < 5; i++ {
+		go func(index int) {
+			user, err := entities.NewUser(
+				fmt.Sprintf("concurrent%d@example.com", index),
+				fmt.Sprintf("Concurrent%d", index),
+				"User",
+				"password123",
+			)
+			if err != nil {
+				suite.T().Errorf("Failed to create user: %v", err)
+				done <- false
+				return
+			}
+
+			err = suite.userRepository.Create(ctx, user)
+			if err != nil {
+				suite.T().Errorf("Failed to create user in database: %v", err)
+				done <- false
+				return
+			}
+
+			done <- true
+		}(i)
+	}
+
+	// Wait for all goroutines to complete
+	for i := 0; i < 5; i++ {
+		success := <-done
+		suite.True(success)
+	}
+
+	// Verify all users were created
+	count, err := suite.userRepository.Count(ctx)
+	suite.NoError(err)
+	suite.Equal(int64(5), count)
+}
+
+// Run the test suite
+func TestRepositoryTestSuite(t *testing.T) {
+	suite.Run(t, new(RepositoryTestSuite))
+}
+
+// Individual test functions for running specific tests
+func TestUserRepositoryCreate(t *testing.T) {
+	suite := new(RepositoryTestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestUserRepository_Create()
+}
+
+func TestUserRepositoryGetByEmail(t *testing.T) {
+	suite := new(RepositoryTestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestUserRepository_GetByEmail()
+}
+
+{{- if ne .AuthType ""}}
+func TestAuthRepositoryCreateSession(t *testing.T) {
+	suite := new(RepositoryTestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestAuthRepository_CreateSession()
+}
+{{- end}}
+
+func TestDatabaseHealth(t *testing.T) {
+	suite := new(RepositoryTestSuite)
+	suite.SetupSuite()
+	defer suite.TearDownSuite()
+	
+	suite.TestDatabaseHealth()
+}

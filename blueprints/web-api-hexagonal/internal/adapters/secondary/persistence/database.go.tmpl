@@ -1,7 +1,9 @@
 package persistence
 
 import (
+	{{- if ne .DatabaseORM "gorm"}}
 	"database/sql"
+	{{- end}}
 	"fmt"
 
 	"{{.ModulePath}}/internal/infrastructure/config"
@@ -223,6 +225,86 @@ type PasswordResetTokenModel struct {
 // TableName returns the table name for PasswordResetTokenModel
 func (PasswordResetTokenModel) TableName() string {
 	return "password_reset_tokens"
+}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+
+// {{.DomainName | title}}Model represents the {{.DomainName}} model for SQLx
+type {{.DomainName | title}}Model struct {
+	ID           string `db:"id"`
+	Email        string `db:"email"`
+	FirstName    string `db:"first_name"`
+	LastName     string `db:"last_name"`
+	PasswordHash string `db:"password_hash"`
+	CreatedAt    int64  `db:"created_at"`
+	UpdatedAt    int64  `db:"updated_at"`
+}
+
+// AuthSessionModel represents the auth session model for SQLx
+type AuthSessionModel struct {
+	ID        string `db:"id"`
+	UserID    string `db:"user_id"`
+	Token     string `db:"token"`
+	ExpiresAt int64  `db:"expires_at"`
+	CreatedAt int64  `db:"created_at"`
+}
+
+// RefreshTokenModel represents the refresh token model for SQLx
+type RefreshTokenModel struct {
+	ID        string `db:"id"`
+	UserID    string `db:"user_id"`
+	Token     string `db:"token"`
+	ExpiresAt int64  `db:"expires_at"`
+	CreatedAt int64  `db:"created_at"`
+}
+
+// PasswordResetTokenModel represents the password reset token model for SQLx
+type PasswordResetTokenModel struct {
+	ID        string `db:"id"`
+	Token     string `db:"token"`
+	UserID    string `db:"user_id"`
+	ExpiresAt int64  `db:"expires_at"`
+	CreatedAt int64  `db:"created_at"`
+}
+
+{{- else}}
+
+// {{.DomainName | title}}Model represents the {{.DomainName}} model for standard SQL
+type {{.DomainName | title}}Model struct {
+	ID           string
+	Email        string
+	FirstName    string
+	LastName     string
+	PasswordHash string
+	CreatedAt    int64
+	UpdatedAt    int64
+}
+
+// AuthSessionModel represents the auth session model for standard SQL
+type AuthSessionModel struct {
+	ID        string
+	UserID    string
+	Token     string
+	ExpiresAt int64
+	CreatedAt int64
+}
+
+// RefreshTokenModel represents the refresh token model for standard SQL
+type RefreshTokenModel struct {
+	ID        string
+	UserID    string
+	Token     string
+	ExpiresAt int64
+	CreatedAt int64
+}
+
+// PasswordResetTokenModel represents the password reset token model for standard SQL
+type PasswordResetTokenModel struct {
+	ID        string
+	Token     string
+	UserID    string
+	ExpiresAt int64
+	CreatedAt int64
 }
 
 {{- end}}

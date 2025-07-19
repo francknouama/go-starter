@@ -1,0 +1,478 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// listCmd represents the list command
+var listCmd = &cobra.Command{
+	Use:   "list [resource]",
+	Short: "List resources of the specified type",
+	Long: `List resources of the specified type with various output formats.
+
+Available resource types:
+  • projects   - List all projects
+  • configs    - List configuration files
+  • tasks      - List all tasks
+
+Examples:
+  {{.ProjectName}} list projects
+  {{.ProjectName}} list projects --format json
+  {{.ProjectName}} list tasks --sort priority
+  {{.ProjectName}} list configs --all`,
+	
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument (resource type)")
+		}
+		
+		// Validate resource type
+		validResources := []string{"projects", "configs", "tasks"}
+		resourceType := args[0]
+		for _, valid := range validResources {
+			if resourceType == valid {
+				return nil
+			}
+		}
+		
+		return fmt.Errorf("invalid resource type '%s'. Valid types: %s", 
+			resourceType, strings.Join(validResources, ", "))
+	},
+	
+	Run: func(cmd *cobra.Command, args []string) {
+		resourceType := args[0]
+		
+		// Get flags
+		format, _ := cmd.Flags().GetString("format")
+		sortBy, _ := cmd.Flags().GetString("sort")
+		all, _ := cmd.Flags().GetBool("all")
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		
+		appLogger.InfoWith("Listing resources", logger.Fields{
+			"type":    resourceType,
+			"format":  format,
+			"sort":    sortBy,
+			"all":     all,
+			"verbose": verbose,
+		})
+		
+		switch resourceType {
+		case "projects":
+			listProjects(cmd, format, sortBy, all, verbose)
+		case "configs":
+			listConfigs(cmd, format, sortBy, all, verbose)
+		case "tasks":
+			listTasks(cmd, format, sortBy, all, verbose)
+		default:
+			cmd.PrintErrf("Error: Unknown resource type '%s'\n", resourceType)
+			os.Exit(1)
+		}
+	},
+}
+
+type ProjectInfo struct {
+	Name         string    `json:"name"`
+	Path         string    `json:"path"`
+	ModifiedTime time.Time `json:"modified_time"`
+	Size         int64     `json:"size"`
+	IsGitRepo    bool      `json:"is_git_repo"`
+}
+
+type ConfigInfo struct {
+	Name     string    `json:"name"`
+	Path     string    `json:"path"`
+	Type     string    `json:"type"`
+	Size     int64     `json:"size"`
+	Modified time.Time `json:"modified"`
+}
+
+type TaskInfo struct {
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Priority    string    `json:"priority"`
+	Status      string    `json:"status"`
+	CreatedTime time.Time `json:"created_time"`
+	DueDate     *time.Time `json:"due_date,omitempty"`
+}
+
+func listProjects(cmd *cobra.Command, format, sortBy string, all, verbose bool) {
+	var projects []ProjectInfo
+	
+	// Find projects in current directory and subdirectories
+	err := filepath.Walk(".", func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil // Skip errors and continue
+		}
+		
+		// Skip hidden directories unless --all is specified
+		if !all && strings.HasPrefix(info.Name(), ".") && path != "." {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		
+		// Look for Go projects (directories with go.mod)
+		if info.IsDir() {
+			goModPath := filepath.Join(path, "go.mod")
+			if _, err := os.Stat(goModPath); err == nil {
+				// Check if it's a git repository
+				gitPath := filepath.Join(path, ".git")
+				isGitRepo := false
+				if _, err := os.Stat(gitPath); err == nil {
+					isGitRepo = true
+				}
+				
+				projects = append(projects, ProjectInfo{
+					Name:         info.Name(),
+					Path:         path,
+					ModifiedTime: info.ModTime(),
+					Size:         info.Size(),
+					IsGitRepo:    isGitRepo,
+				})
+			}
+		}
+		
+		return nil
+	})
+	
+	if err != nil {
+		cmd.PrintErrf("Error scanning for projects: %v\n", err)
+		os.Exit(1)
+	}
+	
+	// Sort projects
+	switch sortBy {
+	case "name":
+		sort.Slice(projects, func(i, j int) bool {
+			return projects[i].Name < projects[j].Name
+		})
+	case "modified", "time":
+		sort.Slice(projects, func(i, j int) bool {
+			return projects[i].ModifiedTime.After(projects[j].ModifiedTime)
+		})
+	case "size":
+		sort.Slice(projects, func(i, j int) bool {
+			return projects[i].Size > projects[j].Size
+		})
+	default:
+		// Default sort by name
+		sort.Slice(projects, func(i, j int) bool {
+			return projects[i].Name < projects[j].Name
+		})
+	}
+	
+	// Output in requested format
+	switch format {
+	case "json":
+		outputJSON(cmd, projects)
+	case "table", "":
+		outputProjectsTable(cmd, projects, verbose)
+	default:
+		cmd.PrintErrf("Error: Unknown format '%s'. Valid formats: table, json\n", format)
+		os.Exit(1)
+	}
+	
+	appLogger.InfoWith("Projects listed successfully", logger.Fields{
+		"count":  len(projects),
+		"format": format,
+	})
+}
+
+func listConfigs(cmd *cobra.Command, format, sortBy string, all, verbose bool) {
+	var configs []ConfigInfo
+	
+	// Common config locations
+	configPaths := []string{
+		".",
+		"./configs",
+		"./config",
+	}
+	
+	// Add home directory if --all is specified
+	if all {
+		if home, err := os.UserHomeDir(); err == nil {
+			configPaths = append(configPaths, home)
+		}
+	}
+	
+	// Common config file patterns
+	configPatterns := []string{
+		fmt.Sprintf(".%s.yaml", "{{.ProjectName}}"),
+		fmt.Sprintf(".%s.yml", "{{.ProjectName}}"),
+		fmt.Sprintf("%s.yaml", "{{.ProjectName}}"),
+		fmt.Sprintf("%s.yml", "{{.ProjectName}}"),
+		"config.yaml",
+		"config.yml",
+		"config.json",
+		"config.toml",
+	}
+	
+	for _, dir := range configPaths {
+		for _, pattern := range configPatterns {
+			configPath := filepath.Join(dir, pattern)
+			if info, err := os.Stat(configPath); err == nil && !info.IsDir() {
+				ext := filepath.Ext(pattern)
+				configType := strings.TrimPrefix(ext, ".")
+				if configType == "" {
+					configType = "unknown"
+				}
+				
+				configs = append(configs, ConfigInfo{
+					Name:     info.Name(),
+					Path:     configPath,
+					Type:     configType,
+					Size:     info.Size(),
+					Modified: info.ModTime(),
+				})
+			}
+		}
+	}
+	
+	// Sort configs
+	switch sortBy {
+	case "name":
+		sort.Slice(configs, func(i, j int) bool {
+			return configs[i].Name < configs[j].Name
+		})
+	case "modified", "time":
+		sort.Slice(configs, func(i, j int) bool {
+			return configs[i].Modified.After(configs[j].Modified)
+		})
+	case "type":
+		sort.Slice(configs, func(i, j int) bool {
+			return configs[i].Type < configs[j].Type
+		})
+	default:
+		sort.Slice(configs, func(i, j int) bool {
+			return configs[i].Name < configs[j].Name
+		})
+	}
+	
+	// Output in requested format
+	switch format {
+	case "json":
+		outputJSON(cmd, configs)
+	case "table", "":
+		outputConfigsTable(cmd, configs, verbose)
+	default:
+		cmd.PrintErrf("Error: Unknown format '%s'. Valid formats: table, json\n", format)
+		os.Exit(1)
+	}
+	
+	appLogger.InfoWith("Configs listed successfully", logger.Fields{
+		"count":  len(configs),
+		"format": format,
+	})
+}
+
+func listTasks(cmd *cobra.Command, format, sortBy string, all, verbose bool) {
+	// Mock task data - in a real application, this would come from a database or file
+	tasks := []TaskInfo{
+		{
+			ID:          "task-001",
+			Name:        "Implement user authentication",
+			Priority:    "high",
+			Status:      "in_progress",
+			CreatedTime: time.Now().Add(-48 * time.Hour),
+		},
+		{
+			ID:          "task-002", 
+			Name:        "Add API documentation",
+			Priority:    "medium",
+			Status:      "pending",
+			CreatedTime: time.Now().Add(-24 * time.Hour),
+		},
+		{
+			ID:          "task-003",
+			Name:        "Fix logging configuration",
+			Priority:    "low",
+			Status:      "completed",
+			CreatedTime: time.Now().Add(-72 * time.Hour),
+		},
+	}
+	
+	// Filter tasks if not showing all
+	if !all {
+		var filteredTasks []TaskInfo
+		for _, task := range tasks {
+			if task.Status != "completed" {
+				filteredTasks = append(filteredTasks, task)
+			}
+		}
+		tasks = filteredTasks
+	}
+	
+	// Sort tasks
+	switch sortBy {
+	case "priority":
+		priorityOrder := map[string]int{"urgent": 0, "high": 1, "medium": 2, "low": 3}
+		sort.Slice(tasks, func(i, j int) bool {
+			return priorityOrder[tasks[i].Priority] < priorityOrder[tasks[j].Priority]
+		})
+	case "status":
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].Status < tasks[j].Status
+		})
+	case "created", "time":
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].CreatedTime.After(tasks[j].CreatedTime)
+		})
+	default:
+		sort.Slice(tasks, func(i, j int) bool {
+			return tasks[i].Name < tasks[j].Name
+		})
+	}
+	
+	// Output in requested format
+	switch format {
+	case "json":
+		outputJSON(cmd, tasks)
+	case "table", "":
+		outputTasksTable(cmd, tasks, verbose)
+	default:
+		cmd.PrintErrf("Error: Unknown format '%s'. Valid formats: table, json\n", format)
+		os.Exit(1)
+	}
+	
+	appLogger.InfoWith("Tasks listed successfully", logger.Fields{
+		"count":  len(tasks),
+		"format": format,
+	})
+}
+
+func outputJSON(cmd *cobra.Command, data interface{}) {
+	output, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		cmd.PrintErrf("Error formatting JSON output: %v\n", err)
+		os.Exit(1)
+	}
+	cmd.Print(string(output))
+}
+
+func outputProjectsTable(cmd *cobra.Command, projects []ProjectInfo, verbose bool) {
+	if len(projects) == 0 {
+		cmd.Println("No projects found.")
+		return
+	}
+	
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	
+	if verbose {
+		fmt.Fprintln(w, "NAME\tPATH\tGIT\tMODIFIED\tSIZE")
+		fmt.Fprintln(w, "----\t----\t---\t--------\t----")
+		for _, project := range projects {
+			gitStatus := "No"
+			if project.IsGitRepo {
+				gitStatus = "Yes"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\n",
+				project.Name,
+				project.Path,
+				gitStatus,
+				project.ModifiedTime.Format("2006-01-02 15:04"),
+				project.Size,
+			)
+		}
+	} else {
+		fmt.Fprintln(w, "NAME\tPATH\tGIT")
+		fmt.Fprintln(w, "----\t----\t---")
+		for _, project := range projects {
+			gitStatus := "No"
+			if project.IsGitRepo {
+				gitStatus = "Yes"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\n", project.Name, project.Path, gitStatus)
+		}
+	}
+	
+	w.Flush()
+}
+
+func outputConfigsTable(cmd *cobra.Command, configs []ConfigInfo, verbose bool) {
+	if len(configs) == 0 {
+		cmd.Println("No configuration files found.")
+		return
+	}
+	
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	
+	if verbose {
+		fmt.Fprintln(w, "NAME\tTYPE\tPATH\tSIZE\tMODIFIED")
+		fmt.Fprintln(w, "----\t----\t----\t----\t--------")
+		for _, config := range configs {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n",
+				config.Name,
+				config.Type,
+				config.Path,
+				config.Size,
+				config.Modified.Format("2006-01-02 15:04"),
+			)
+		}
+	} else {
+		fmt.Fprintln(w, "NAME\tTYPE\tPATH")
+		fmt.Fprintln(w, "----\t----\t----")
+		for _, config := range configs {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", config.Name, config.Type, config.Path)
+		}
+	}
+	
+	w.Flush()
+}
+
+func outputTasksTable(cmd *cobra.Command, tasks []TaskInfo, verbose bool) {
+	if len(tasks) == 0 {
+		cmd.Println("No tasks found.")
+		return
+	}
+	
+	w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+	
+	if verbose {
+		fmt.Fprintln(w, "ID\tNAME\tPRIORITY\tSTATUS\tCREATED")
+		fmt.Fprintln(w, "--\t----\t--------\t------\t-------")
+		for _, task := range tasks {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+				task.ID,
+				task.Name,
+				task.Priority,
+				task.Status,
+				task.CreatedTime.Format("2006-01-02 15:04"),
+			)
+		}
+	} else {
+		fmt.Fprintln(w, "NAME\tPRIORITY\tSTATUS")
+		fmt.Fprintln(w, "----\t--------\t------")
+		for _, task := range tasks {
+			fmt.Fprintf(w, "%s\t%s\t%s\n", task.Name, task.Priority, task.Status)
+		}
+	}
+	
+	w.Flush()
+}
+
+func init() {
+	rootCmd.AddCommand(listCmd)
+
+	// Flags
+	listCmd.Flags().StringP("format", "f", "table", "Output format (table, json)")
+	listCmd.Flags().StringP("sort", "s", "name", "Sort by field (name, time, priority, status, type)")
+	listCmd.Flags().BoolP("all", "a", false, "Show all resources including hidden ones")
+	listCmd.Flags().BoolP("verbose", "v", false, "Show detailed information")
+	
+	// Bind flags to viper for configuration file support
+	viper.BindPFlag("list.format", listCmd.Flags().Lookup("format"))
+	viper.BindPFlag("list.sort", listCmd.Flags().Lookup("sort"))
+	viper.BindPFlag("list.all", listCmd.Flags().Lookup("all"))
+}

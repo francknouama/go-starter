@@ -1,0 +1,286 @@
+package cmd
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// deleteCmd represents the delete command
+var deleteCmd = &cobra.Command{
+	Use:   "delete [resource] [name]",
+	Short: "Delete a resource",
+	Long: `Delete a resource of the specified type.
+
+Available resource types:
+  • project   - Delete a project directory
+  • config    - Delete a configuration file
+  • task      - Delete a task
+
+Examples:
+  {{.ProjectName}} delete project my-old-project
+  {{.ProjectName}} delete config .{{.ProjectName}}.yaml
+  {{.ProjectName}} delete task task-001 --force`,
+	
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument (resource type)")
+		}
+		
+		// Validate resource type
+		validResources := []string{"project", "config", "task"}
+		resourceType := args[0]
+		for _, valid := range validResources {
+			if resourceType == valid {
+				return nil
+			}
+		}
+		
+		return fmt.Errorf("invalid resource type '%s'. Valid types: %s", 
+			resourceType, strings.Join(validResources, ", "))
+	},
+	
+	Run: func(cmd *cobra.Command, args []string) {
+		resourceType := args[0]
+		var name string
+		if len(args) > 1 {
+			name = args[1]
+		}
+		
+		// Get flags
+		force, _ := cmd.Flags().GetBool("force")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		recursive, _ := cmd.Flags().GetBool("recursive")
+		
+		appLogger.InfoWith("Deleting resource", logger.Fields{
+			"type":      resourceType,
+			"name":      name,
+			"force":     force,
+			"dry_run":   dryRun,
+			"recursive": recursive,
+		})
+		
+		switch resourceType {
+		case "project":
+			deleteProject(cmd, name, force, dryRun, recursive)
+		case "config":
+			deleteConfig(cmd, name, force, dryRun)
+		case "task":
+			deleteTask(cmd, name, force, dryRun)
+		default:
+			cmd.PrintErrf("Error: Unknown resource type '%s'\n", resourceType)
+			os.Exit(1)
+		}
+	},
+}
+
+func deleteProject(cmd *cobra.Command, name string, force, dryRun, recursive bool) {
+	if name == "" {
+		cmd.PrintErr("Error: Project name is required\n")
+		cmd.Printf("Usage: %s delete project <name>\n", cmd.Root().Name())
+		os.Exit(1)
+	}
+	
+	// Check if project exists
+	if !projectExists(name) {
+		cmd.PrintErrf("Error: Project '%s' does not exist\n", name)
+		os.Exit(1)
+	}
+	
+	// Get project info
+	info, err := os.Stat(name)
+	if err != nil {
+		cmd.PrintErrf("Error: Cannot access project '%s': %v\n", name, err)
+		os.Exit(1)
+	}
+	
+	if !info.IsDir() {
+		cmd.PrintErrf("Error: '%s' is not a directory\n", name)
+		os.Exit(1)
+	}
+	
+	// Check if it's a Git repository
+	gitDir := filepath.Join(name, ".git")
+	isGitRepo := false
+	if _, err := os.Stat(gitDir); err == nil {
+		isGitRepo = true
+	}
+	
+	// Warn about Git repository
+	if isGitRepo && !force {
+		cmd.Printf("⚠️  Warning: '%s' is a Git repository.\n", name)
+		cmd.Println("This will permanently delete the project and all its history.")
+		if !confirmDeletion(cmd, name) {
+			cmd.Println("❌ Deletion cancelled")
+			return
+		}
+	}
+	
+	// Check for non-empty directory
+	if !recursive {
+		isEmpty, err := isDirEmpty(name)
+		if err != nil {
+			cmd.PrintErrf("Error: Cannot check if directory is empty: %v\n", err)
+			os.Exit(1)
+		}
+		if !isEmpty {
+			cmd.PrintErrf("Error: Directory '%s' is not empty. Use --recursive to delete non-empty directories\n", name)
+			os.Exit(1)
+		}
+	}
+	
+	if dryRun {
+		cmd.Printf("Would delete project: %s\n", name)
+		if isGitRepo {
+			cmd.Println("  - Git repository will be deleted")
+		}
+		return
+	}
+	
+	// Confirm deletion if not forced
+	if !force && !confirmDeletion(cmd, name) {
+		cmd.Println("❌ Deletion cancelled")
+		return
+	}
+	
+	// Delete project
+	if recursive {
+		err = os.RemoveAll(name)
+	} else {
+		err = os.Remove(name)
+	}
+	
+	if err != nil {
+		cmd.PrintErrf("Error deleting project: %v\n", err)
+		os.Exit(1)
+	}
+	
+	cmd.Printf("✅ Deleted project: %s\n", name)
+	
+	appLogger.InfoWith("Project deleted successfully", logger.Fields{
+		"name":        name,
+		"was_git_repo": isGitRepo,
+		"recursive":   recursive,
+	})
+}
+
+func deleteConfig(cmd *cobra.Command, name string, force, dryRun bool) {
+	configName := name
+	if configName == "" {
+		configName = fmt.Sprintf(".%s.yaml", cmd.Root().Name())
+	}
+	
+	// Check if config file exists
+	if !fileExists(configName) {
+		cmd.PrintErrf("Error: Config file '%s' does not exist\n", configName)
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would delete config file: %s\n", configName)
+		return
+	}
+	
+	// Confirm deletion if not forced
+	if !force && !confirmDeletion(cmd, configName) {
+		cmd.Println("❌ Deletion cancelled")
+		return
+	}
+	
+	// Delete config file
+	if err := os.Remove(configName); err != nil {
+		cmd.PrintErrf("Error deleting config file: %v\n", err)
+		os.Exit(1)
+	}
+	
+	cmd.Printf("✅ Deleted config file: %s\n", configName)
+	
+	appLogger.InfoWith("Config file deleted successfully", logger.Fields{
+		"name": configName,
+	})
+}
+
+func deleteTask(cmd *cobra.Command, name string, force, dryRun bool) {
+	if name == "" {
+		cmd.PrintErr("Error: Task name or ID is required\n")
+		cmd.Printf("Usage: %s delete task <name_or_id>\n", cmd.Root().Name())
+		os.Exit(1)
+	}
+	
+	// In a real application, you would check if the task exists in your storage
+	// For this example, we'll simulate task existence
+	taskExists := strings.HasPrefix(name, "task-") || len(name) > 3
+	
+	if !taskExists {
+		cmd.PrintErrf("Error: Task '%s' does not exist\n", name)
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would delete task: %s\n", name)
+		return
+	}
+	
+	// Confirm deletion if not forced
+	if !force && !confirmDeletion(cmd, name) {
+		cmd.Println("❌ Deletion cancelled")
+		return
+	}
+	
+	// Delete task (simulate task deletion)
+	cmd.Printf("✅ Deleted task: %s\n", name)
+	
+	appLogger.InfoWith("Task deleted successfully", logger.Fields{
+		"name": name,
+	})
+}
+
+func confirmDeletion(cmd *cobra.Command, name string) bool {
+	cmd.Printf("Are you sure you want to delete '%s'? [y/N]: ", name)
+	
+	reader := bufio.NewReader(os.Stdin)
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+	
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
+}
+
+func isDirEmpty(dirname string) (bool, error) {
+	dir, err := os.Open(dirname)
+	if err != nil {
+		return false, err
+	}
+	defer dir.Close()
+	
+	_, err = dir.Readdirnames(1)
+	if err != nil {
+		if err.Error() == "EOF" {
+			return true, nil
+		}
+		return false, err
+	}
+	
+	return false, nil
+}
+
+func init() {
+	rootCmd.AddCommand(deleteCmd)
+
+	// Flags
+	deleteCmd.Flags().BoolP("force", "f", false, "Force deletion without confirmation")
+	deleteCmd.Flags().BoolP("dry-run", "n", false, "Show what would be deleted without actually deleting")
+	deleteCmd.Flags().BoolP("recursive", "r", false, "Delete directories and their contents recursively")
+	
+	// Bind flags to viper for configuration file support
+	viper.BindPFlag("delete.force", deleteCmd.Flags().Lookup("force"))
+	viper.BindPFlag("delete.recursive", deleteCmd.Flags().Lookup("recursive"))
+}

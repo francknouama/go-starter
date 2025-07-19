@@ -1,0 +1,545 @@
+// Package {{.ProjectName | replace "-" "_"}} provides {{.ProjectName}} functionality.
+//
+// This library offers a comprehensive solution for processing data with features
+// including configurable options, caching, rate limiting, metrics, and more.
+//
+// Basic usage:
+//
+//	client, err := {{.ProjectName | replace "-" "_"}}.New()
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//	defer client.Close()
+//
+//	input := &{{.ProjectName | replace "-" "_"}}.Input{
+//		ID:   "example-1",
+//		Data: "hello world",
+//	}
+//
+//	output, err := client.Process(context.Background(), input)
+//	if err != nil {
+//		log.Fatal(err)
+//	}
+//
+//	fmt.Println("Result:", output.Result)
+//
+// Advanced usage with options:
+//
+//	client, err := {{.ProjectName | replace "-" "_"}}.New(
+//		{{.ProjectName | replace "-" "_"}}.WithTimeout(30*time.Second),
+//		{{.ProjectName | replace "-" "_"}}.WithCaching(true, 5*time.Minute),
+//		{{.ProjectName | replace "-" "_"}}.WithRetryPolicy(3, time.Second),
+//	)
+package {{.ProjectName | replace "-" "_"}}
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/cache"
+	"{{.ModulePath}}/internal/ratelimiter"
+)
+
+// Version of the library
+const Version = "1.0.0"
+
+// Client represents a {{.ProjectName}} client that implements the Processor interface
+type Client struct {
+	logger      logger.Logger
+	config      *Config
+	cache       cache.Cache
+	rateLimiter ratelimiter.RateLimiter
+	metrics     *metricsCollector
+	startTime   time.Time
+	closed      int64 // atomic
+	mu          sync.RWMutex
+}
+
+// metricsCollector collects performance metrics
+type metricsCollector struct {
+	totalProcessed        int64
+	totalErrors          int64
+	totalProcessingTime  int64 // nanoseconds
+	cacheHits           int64
+	cacheMisses         int64
+	mu                  sync.RWMutex
+}
+
+// DefaultConfig returns a default configuration
+func DefaultConfig() *Config {
+	return &Config{
+		Debug:   false,
+		Timeout: 30 * time.Second,
+		Logger: LoggerConfig{
+			Level:  "warn", // Libraries should be quiet by default
+			Format: "text",
+		},
+		Retry: RetryConfig{
+			MaxRetries: 3,
+			Backoff:    time.Second,
+		},
+		Cache: CacheConfig{
+			Enabled: false,
+			TTL:     5 * time.Minute,
+		},
+		RateLimit: RateLimitConfig{
+			RequestsPerSecond: 100,
+			Burst:             10,
+		},
+		Metrics: MetricsConfig{
+			Enabled: true,
+		},
+	}
+}
+
+// New creates a new {{.ProjectName}} client with the given options
+func New(opts ...Option) (*Client, error) {
+	config := DefaultConfig()
+	
+	// Initialize internal logger
+	loggerFactory := logger.NewFactory()
+	internalLogger, err := loggerFactory.CreateFromProjectConfig(
+		"{{.Logger}}",
+		getLogLevel(config),
+		getLogFormat(config),
+		true,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %w", err)
+	}
+
+	client := &Client{
+		logger:    internalLogger,
+		config:    config,
+		metrics:   &metricsCollector{},
+		startTime: time.Now(),
+	}
+
+	// Apply options
+	for _, opt := range opts {
+		if err := opt(client); err != nil {
+			return nil, fmt.Errorf("failed to apply option: %w", err)
+		}
+	}
+
+	// Initialize cache if enabled
+	if config.Cache.Enabled {
+		client.cache = cache.NewMemoryCache(config.Cache.TTL)
+	}
+
+	// Initialize rate limiter
+	client.rateLimiter = ratelimiter.NewTokenBucket(
+		config.RateLimit.RequestsPerSecond,
+		config.RateLimit.Burst,
+	)
+
+	client.logger.InfoWith("{{.ProjectName}} client initialized", logger.Fields{
+		"version": Version,
+		"logger":  "{{.Logger}}",
+		"debug":   config.Debug,
+		"cache":   config.Cache.Enabled,
+	})
+
+	return client, nil
+}
+
+// Process handles input and returns processed output
+func (c *Client) Process(ctx context.Context, input *Input) (*Output, error) {
+	if atomic.LoadInt64(&c.closed) == 1 {
+		return nil, ErrClosed
+	}
+
+	startTime := time.Now()
+	
+	// Check rate limit
+	if !c.rateLimiter.Allow() {
+		c.emitEvent(Event{
+			Type:      EventRateLimitExceeded,
+			Timestamp: time.Now(),
+			Data:      map[string]interface{}{"input_id": input.ID},
+		})
+		return nil, ErrRateLimitExceeded
+	}
+
+	// Validate input
+	if err := c.Validate(input); err != nil {
+		c.metrics.incrementErrors()
+		c.emitEvent(Event{
+			Type:      EventValidationFailed,
+			Timestamp: time.Now(),
+			Data:      map[string]interface{}{"input_id": input.ID},
+			Error:     err,
+		})
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Emit processing started event
+	c.emitEvent(Event{
+		Type:      EventProcessingStarted,
+		Timestamp: time.Now(),
+		Data:      map[string]interface{}{"input_id": input.ID},
+	})
+
+	// Check cache if enabled
+	if c.config.Cache.Enabled && c.cache != nil {
+		if cached, found := c.cache.Get(input.ID); found {
+			c.metrics.incrementCacheHits()
+			c.emitEvent(Event{
+				Type:      EventCacheHit,
+				Timestamp: time.Now(),
+				Data:      map[string]interface{}{"input_id": input.ID},
+			})
+			
+			output := cached.(*Output)
+			output.ProcessingTime = time.Since(startTime)
+			return output, nil
+		}
+		c.metrics.incrementCacheMisses()
+		c.emitEvent(Event{
+			Type:      EventCacheMiss,
+			Timestamp: time.Now(),
+			Data:      map[string]interface{}{"input_id": input.ID},
+		})
+	}
+
+	// Process with timeout
+	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
+
+	result, err := c.processWithRetry(ctx, input)
+	processingTime := time.Since(startTime)
+
+	if err != nil {
+		c.metrics.incrementErrors()
+		c.emitEvent(Event{
+			Type:      EventProcessingFailed,
+			Timestamp: time.Now(),
+			Data:      map[string]interface{}{"input_id": input.ID},
+			Error:     err,
+		})
+		return nil, err
+	}
+
+	output := &Output{
+		ID:             input.ID,
+		Result:         result,
+		Status:         StatusSuccess,
+		ProcessingTime: processingTime,
+		Timestamp:      time.Now(),
+		Metadata:       make(map[string]interface{}),
+	}
+
+	// Store in cache if enabled
+	if c.config.Cache.Enabled && c.cache != nil {
+		c.cache.Set(input.ID, output)
+	}
+
+	c.metrics.incrementProcessed(processingTime)
+	
+	c.emitEvent(Event{
+		Type:      EventProcessingCompleted,
+		Timestamp: time.Now(),
+		Data: map[string]interface{}{
+			"input_id":        input.ID,
+			"processing_time": processingTime,
+		},
+	})
+
+	c.logger.DebugWith("Processing completed", logger.Fields{
+		"input_id":        input.ID,
+		"processing_time": processingTime,
+		"result_length":   len(result),
+	})
+
+	return output, nil
+}
+
+// ProcessBatch handles multiple inputs efficiently
+func (c *Client) ProcessBatch(ctx context.Context, inputs []*Input) ([]*Output, error) {
+	if atomic.LoadInt64(&c.closed) == 1 {
+		return nil, ErrClosed
+	}
+
+	if len(inputs) == 0 {
+		return []*Output{}, nil
+	}
+
+	c.logger.InfoWith("Processing batch", logger.Fields{
+		"batch_size": len(inputs),
+	})
+
+	outputs := make([]*Output, len(inputs))
+	errChan := make(chan error, len(inputs))
+	
+	// Process inputs concurrently
+	var wg sync.WaitGroup
+	for i, input := range inputs {
+		wg.Add(1)
+		go func(idx int, inp *Input) {
+			defer wg.Done()
+			
+			output, err := c.Process(ctx, inp)
+			if err != nil {
+				outputs[idx] = &Output{
+					ID:        inp.ID,
+					Status:    StatusError,
+					Timestamp: time.Now(),
+					Metadata:  map[string]interface{}{"error": err.Error()},
+				}
+				errChan <- err
+				return
+			}
+			outputs[idx] = output
+		}(i, input)
+	}
+
+	wg.Wait()
+	close(errChan)
+
+	// Collect any errors
+	var errors []error
+	for err := range errChan {
+		errors = append(errors, err)
+	}
+
+	if len(errors) > 0 {
+		c.logger.WarnWith("Batch processing completed with errors", logger.Fields{
+			"batch_size":  len(inputs),
+			"error_count": len(errors),
+		})
+		// Return partial results with error information
+		return outputs, fmt.Errorf("batch processing failed for %d/%d items", len(errors), len(inputs))
+	}
+
+	c.logger.InfoWith("Batch processing completed successfully", logger.Fields{
+		"batch_size": len(inputs),
+	})
+
+	return outputs, nil
+}
+
+// Validate checks if the input is valid for processing
+func (c *Client) Validate(input *Input) error {
+	if input == nil {
+		return ErrInvalidInput.WithDetails(map[string]interface{}{
+			"reason": "input is nil",
+		})
+	}
+
+	if input.ID == "" {
+		return ErrInvalidInput.WithDetails(map[string]interface{}{
+			"reason": "input ID is empty",
+		})
+	}
+
+	if input.Data == "" {
+		return ErrInvalidInput.WithDetails(map[string]interface{}{
+			"reason": "input data is empty",
+		})
+	}
+
+	if len(input.Data) > 10000 { // Example limit
+		return ErrInvalidInput.WithDetails(map[string]interface{}{
+			"reason":     "input data too large",
+			"max_length": 10000,
+			"actual":     len(input.Data),
+		})
+	}
+
+	return nil
+}
+
+// Health returns the health status of the processor
+func (c *Client) Health(ctx context.Context) (*HealthStatus, error) {
+	if atomic.LoadInt64(&c.closed) == 1 {
+		return &HealthStatus{
+			Status:  "unhealthy",
+			Version: Version,
+			Details: map[string]interface{}{"reason": "client is closed"},
+		}, nil
+	}
+
+	uptime := time.Since(c.startTime)
+	metrics := c.metrics.getMetrics()
+
+	status := &HealthStatus{
+		Status:  "healthy",
+		Version: Version,
+		Uptime:  uptime,
+		Metrics: metrics,
+		Details: map[string]interface{}{
+			"cache_enabled":       c.config.Cache.Enabled,
+			"rate_limit_enabled":  true,
+			"metrics_enabled":     c.config.Metrics.Enabled,
+		},
+	}
+
+	return status, nil
+}
+
+// Close gracefully shuts down the client
+func (c *Client) Close() error {
+	if !atomic.CompareAndSwapInt64(&c.closed, 0, 1) {
+		return nil // Already closed
+	}
+
+	c.logger.Info("Closing {{.ProjectName}} client")
+
+	// Close cache if enabled
+	if c.cache != nil {
+		if err := c.cache.Close(); err != nil {
+			c.logger.ErrorWith("Failed to close cache", logger.Fields{"error": err})
+		}
+	}
+
+	// Sync logger before closing
+	if err := c.logger.Sync(); err != nil {
+		c.logger.ErrorWith("Failed to sync logger", logger.Fields{"error": err})
+		return err
+	}
+
+	return nil
+}
+
+// processWithRetry processes input with retry logic
+func (c *Client) processWithRetry(ctx context.Context, input *Input) (string, error) {
+	var lastErr error
+	
+	for attempt := 0; attempt <= c.config.Retry.MaxRetries; attempt++ {
+		if attempt > 0 {
+			// Wait before retrying
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(c.config.Retry.Backoff * time.Duration(attempt)):
+			}
+		}
+
+		result, err := c.doProcess(ctx, input)
+		if err == nil {
+			if attempt > 0 {
+				c.logger.InfoWith("Processing succeeded after retry", logger.Fields{
+					"input_id": input.ID,
+					"attempt":  attempt + 1,
+				})
+			}
+			return result, nil
+		}
+
+		lastErr = err
+		c.logger.WarnWith("Processing attempt failed", logger.Fields{
+			"input_id": input.ID,
+			"attempt":  attempt + 1,
+			"error":    err,
+		})
+	}
+
+	return "", fmt.Errorf("processing failed after %d attempts: %w", c.config.Retry.MaxRetries+1, lastErr)
+}
+
+// doProcess performs the actual processing logic
+func (c *Client) doProcess(ctx context.Context, input *Input) (string, error) {
+	c.logger.DebugWith("Processing input", logger.Fields{
+		"input_id":     input.ID,
+		"input_length": len(input.Data),
+		"priority":     input.Priority,
+	})
+
+	// Simulate processing time based on input length
+	processingTime := time.Duration(len(input.Data)) * time.Microsecond
+	
+	select {
+	case <-ctx.Done():
+		return "", ErrTimeout
+	case <-time.After(processingTime):
+	}
+
+	// Example processing logic - transform the input
+	result := fmt.Sprintf("Processed[%s]: %s", input.ID, input.Data)
+	
+	// Simulate occasional failures for testing
+	if input.Data == "error" {
+		return "", ErrProcessingFailed.WithDetails(map[string]interface{}{
+			"input_id": input.ID,
+			"reason":   "test error triggered",
+		})
+	}
+
+	return result, nil
+}
+
+// emitEvent emits an event if a callback is configured
+func (c *Client) emitEvent(event Event) {
+	if c.config.Callback != nil {
+		go c.config.Callback(event)
+	}
+}
+
+// Helper functions
+
+func getLogLevel(config *Config) string {
+	if config.Logger.Level != "" {
+		return config.Logger.Level
+	}
+	if config.Debug {
+		return "debug"
+	}
+	return "warn" // Libraries should be quiet by default
+}
+
+func getLogFormat(config *Config) string {
+	if config.Logger.Format != "" {
+		return config.Logger.Format
+	}
+	return "text" // Human-readable for library debugging
+}
+
+// Metrics collector methods
+
+func (m *metricsCollector) incrementProcessed(processingTime time.Duration) {
+	atomic.AddInt64(&m.totalProcessed, 1)
+	atomic.AddInt64(&m.totalProcessingTime, int64(processingTime))
+}
+
+func (m *metricsCollector) incrementErrors() {
+	atomic.AddInt64(&m.totalErrors, 1)
+}
+
+func (m *metricsCollector) incrementCacheHits() {
+	atomic.AddInt64(&m.cacheHits, 1)
+}
+
+func (m *metricsCollector) incrementCacheMisses() {
+	atomic.AddInt64(&m.cacheMisses, 1)
+}
+
+func (m *metricsCollector) getMetrics() *Metrics {
+	totalProcessed := atomic.LoadInt64(&m.totalProcessed)
+	totalErrors := atomic.LoadInt64(&m.totalErrors)
+	totalTime := atomic.LoadInt64(&m.totalProcessingTime)
+	cacheHits := atomic.LoadInt64(&m.cacheHits)
+	cacheMisses := atomic.LoadInt64(&m.cacheMisses)
+
+	var avgProcessingTime time.Duration
+	if totalProcessed > 0 {
+		avgProcessingTime = time.Duration(totalTime / totalProcessed)
+	}
+
+	var cacheHitRate float64
+	totalCacheRequests := cacheHits + cacheMisses
+	if totalCacheRequests > 0 {
+		cacheHitRate = float64(cacheHits) / float64(totalCacheRequests)
+	}
+
+	return &Metrics{
+		TotalProcessed:        totalProcessed,
+		TotalErrors:          totalErrors,
+		AverageProcessingTime: avgProcessingTime,
+		RequestsPerSecond:    0, // Would need more sophisticated tracking
+		CacheHitRate:         cacheHitRate,
+	}
+}

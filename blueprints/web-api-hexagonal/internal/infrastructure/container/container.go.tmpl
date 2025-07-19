@@ -7,8 +7,8 @@ import (
 	"{{.ModulePath}}/internal/adapters/secondary/persistence"
 	"{{.ModulePath}}/internal/application/ports/input"
 	"{{.ModulePath}}/internal/application/ports/output"
-	"{{.ModulePath}}/internal/application/services"
-	"{{.ModulePath}}/internal/domain/services"
+	appServices "{{.ModulePath}}/internal/application/services"
+	domainServices "{{.ModulePath}}/internal/domain/services"
 	"{{.ModulePath}}/internal/infrastructure/config"
 )
 
@@ -21,6 +21,7 @@ type Container struct {
 	logger          output.LoggerPort
 	eventPublisher  output.EventPublisherPort
 	{{- if ne .DatabaseDriver ""}}
+	db              *persistence.Database
 	{{.DomainName}}Repository output.{{.DomainName | title}}RepositoryPort
 	{{- end}}
 	{{- if ne .AuthType ""}}
@@ -29,10 +30,10 @@ type Container struct {
 
 	// Domain services
 	{{- if ne .DatabaseDriver ""}}
-	{{.DomainName}}DomainService services.{{.DomainName | title}}DomainService
+	{{.DomainName}}DomainService domainServices.{{.DomainName | title}}DomainService
 	{{- end}}
 	{{- if ne .AuthType ""}}
-	authDomainService services.AuthDomainService
+	authDomainService domainServices.AuthDomainService
 	{{- end}}
 
 	// Application services (input ports)
@@ -90,15 +91,15 @@ func (c *Container) Initialize() error {
 func (c *Container) initializeSecondaryAdapters() error {
 	// Initialize logger adapter
 	{{- if eq .Logger "slog"}}
-	c.logger = logger.NewSlogAdapter(c.config.Logger)
+	c.logger = logger.NewSlogAdapterWithLevel(c.config.Logger.Level)
 	{{- else if eq .Logger "zap"}}
-	c.logger = logger.NewZapAdapter(c.config.Logger)
+	c.logger = logger.NewZapAdapterWithLevel(c.config.Logger.Level)
 	{{- else if eq .Logger "logrus"}}
-	c.logger = logger.NewLogrusAdapter(c.config.Logger)
+	c.logger = logger.NewLogrusAdapterWithLevel(c.config.Logger.Level)
 	{{- else if eq .Logger "zerolog"}}
-	c.logger = logger.NewZerologAdapter(c.config.Logger)
+	c.logger = logger.NewZerologAdapterWithLevel(c.config.Logger.Level)
 	{{- else}}
-	c.logger = logger.NewSlogAdapter(c.config.Logger)
+	c.logger = logger.NewSlogAdapterWithLevel(c.config.Logger.Level)
 	{{- end}}
 
 	// Initialize event publisher
@@ -106,17 +107,18 @@ func (c *Container) initializeSecondaryAdapters() error {
 
 	{{- if ne .DatabaseDriver ""}}
 	// Initialize database and repository
-	db, err := persistence.NewDatabase(c.config)
+	var err error
+	c.db, err = persistence.NewDatabase(c.config)
 	if err != nil {
 		return err
 	}
 
-	c.{{.DomainName}}Repository = persistence.New{{.DomainName | title}}Repository(db, c.logger)
+	c.{{.DomainName}}Repository = persistence.New{{.DomainName | title}}Repository(c.db, c.logger)
 	{{- end}}
 
 	{{- if ne .AuthType ""}}
 	// Initialize auth repository
-	c.authRepository = persistence.NewAuthRepository(db, c.logger)
+	c.authRepository = persistence.NewAuthRepository(c.db, c.logger)
 	{{- end}}
 
 	return nil
@@ -126,12 +128,12 @@ func (c *Container) initializeSecondaryAdapters() error {
 func (c *Container) initializeDomainServices() error {
 	{{- if ne .DatabaseDriver ""}}
 	// Initialize {{.DomainName}} domain service
-	c.{{.DomainName}}DomainService = services.New{{.DomainName | title}}DomainService()
+	c.{{.DomainName}}DomainService = domainServices.New{{.DomainName | title}}DomainService()
 	{{- end}}
 
 	{{- if ne .AuthType ""}}
 	// Initialize auth domain service
-	c.authDomainService = services.NewAuthDomainService()
+	c.authDomainService = domainServices.NewAuthDomainService()
 	{{- end}}
 
 	return nil
@@ -140,11 +142,15 @@ func (c *Container) initializeDomainServices() error {
 // initializeApplicationServices initializes all application services
 func (c *Container) initializeApplicationServices() error {
 	// Initialize health service
-	c.healthPort = services.NewHealthService(c.logger)
+	{{- if ne .DatabaseDriver ""}}
+	c.healthPort = appServices.NewHealthService(c.logger, c.db)
+	{{- else}}
+	c.healthPort = appServices.NewHealthService(c.logger)
+	{{- end}}
 
 	{{- if ne .DatabaseDriver ""}}
 	// Initialize {{.DomainName}} service
-	c.{{.DomainName}}Port = services.New{{.DomainName | title}}Service(
+	c.{{.DomainName}}Port = appServices.New{{.DomainName | title}}Service(
 		c.{{.DomainName}}Repository,
 		c.{{.DomainName}}DomainService,
 		c.eventPublisher,
@@ -154,7 +160,7 @@ func (c *Container) initializeApplicationServices() error {
 
 	{{- if ne .AuthType ""}}
 	// Initialize auth service
-	c.authPort = services.NewAuthService(
+	c.authPort = appServices.NewAuthService(
 		c.{{.DomainName}}Repository,
 		c.authRepository,
 		c.authDomainService,
@@ -212,4 +218,28 @@ func (c *Container) GetLogger() output.LoggerPort {
 // GetConfig returns the configuration
 func (c *Container) GetConfig() *config.Config {
 	return c.config
+}
+
+// HealthPort returns the health port
+func (c *Container) HealthPort() input.HealthPort {
+	return c.healthPort
+}
+
+{{- if ne .DatabaseDriver ""}}
+// {{.DomainName | title}}Port returns the {{.DomainName}} port
+func (c *Container) {{.DomainName | title}}Port() input.{{.DomainName | title}}Port {
+	return c.{{.DomainName}}Port
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+// AuthPort returns the auth port
+func (c *Container) AuthPort() input.AuthPort {
+	return c.authPort
+}
+{{- end}}
+
+// Logger returns the logger
+func (c *Container) Logger() output.LoggerPort {
+	return c.logger
 }

@@ -52,61 +52,55 @@ func NewZapAdapterWithLevel(level string) output.LoggerPort {
 }
 
 // Debug logs a debug message
-func (z *ZapAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
-	fields := z.convertArgsToFields(args...)
-	z.logger.Debug(msg, fields...)
+func (z *ZapAdapter) Debug(ctx context.Context, msg string, fields ...output.Field) {
+	zapFields := z.convertFieldsToZap(fields...)
+	z.logger.Debug(msg, zapFields...)
 }
 
 // Info logs an info message
-func (z *ZapAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
-	fields := z.convertArgsToFields(args...)
-	z.logger.Info(msg, fields...)
+func (z *ZapAdapter) Info(ctx context.Context, msg string, fields ...output.Field) {
+	zapFields := z.convertFieldsToZap(fields...)
+	z.logger.Info(msg, zapFields...)
 }
 
 // Warn logs a warning message
-func (z *ZapAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
-	fields := z.convertArgsToFields(args...)
-	z.logger.Warn(msg, fields...)
+func (z *ZapAdapter) Warn(ctx context.Context, msg string, fields ...output.Field) {
+	zapFields := z.convertFieldsToZap(fields...)
+	z.logger.Warn(msg, zapFields...)
 }
 
 // Error logs an error message
-func (z *ZapAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
-	fields := z.convertArgsToFields(args...)
-	z.logger.Error(msg, fields...)
+func (z *ZapAdapter) Error(ctx context.Context, msg string, fields ...output.Field) {
+	zapFields := z.convertFieldsToZap(fields...)
+	z.logger.Error(msg, zapFields...)
 }
 
-// With creates a new logger with additional fields
-func (z *ZapAdapter) With(args ...interface{}) output.LoggerPort {
-	fields := z.convertArgsToFields(args...)
-	return &ZapAdapter{
-		logger: z.logger.With(fields...),
-	}
+// Fatal logs a fatal message and terminates the application
+func (z *ZapAdapter) Fatal(ctx context.Context, msg string, fields ...output.Field) {
+	zapFields := z.convertFieldsToZap(fields...)
+	z.logger.Fatal(msg, zapFields...)
 }
 
-// WithFields creates a new logger with additional fields from a map
-func (z *ZapAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
-	zapFields := make([]zap.Field, 0, len(fields))
-	for k, v := range fields {
-		zapFields = append(zapFields, zap.Any(k, v))
-	}
-	
+// WithFields returns a logger with additional fields
+func (z *ZapAdapter) WithFields(fields ...output.Field) output.LoggerPort {
+	zapFields := z.convertFieldsToZap(fields...)
 	return &ZapAdapter{
 		logger: z.logger.With(zapFields...),
 	}
 }
 
-// convertArgsToFields converts variadic arguments to zap fields
-func (z *ZapAdapter) convertArgsToFields(args ...interface{}) []zap.Field {
-	fields := make([]zap.Field, 0, len(args)/2)
-	
-	for i := 0; i < len(args); i += 2 {
-		if i+1 < len(args) {
-			key, ok := args[i].(string)
-			if ok {
-				fields = append(fields, zap.Any(key, args[i+1]))
-			}
-		}
+// WithError returns a logger with an error field
+func (z *ZapAdapter) WithError(err error) output.LoggerPort {
+	return &ZapAdapter{
+		logger: z.logger.With(zap.Error(err)),
 	}
-	
-	return fields
+}
+
+// convertFieldsToZap converts output.Field slice to zap fields
+func (z *ZapAdapter) convertFieldsToZap(fields ...output.Field) []zap.Field {
+	zapFields := make([]zap.Field, len(fields))
+	for i, field := range fields {
+		zapFields[i] = zap.Any(field.Key, field.Value)
+	}
+	return zapFields
 }

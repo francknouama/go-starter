@@ -1,0 +1,124 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '{{.GoVersion}}'
+
+      - name: Run tests
+        run: |
+          go test -v ./...
+          go test -bench=. -benchmem ./...
+
+      - name: Check code coverage
+        run: |
+          go test -coverprofile=coverage.out ./...
+          go tool cover -html=coverage.out -o coverage.html
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${COVERAGE}%"
+          if [ "${COVERAGE%.*}" -lt 80 ]; then
+            echo "❌ Coverage ${COVERAGE}% is below 80% minimum"
+            exit 1
+          fi
+
+      - name: Run security scan
+        uses: securecodewarrior/github-action-add-sarif@v1
+        with:
+          sarif-file: 'gosec.sarif'
+        continue-on-error: true
+
+      - name: Generate changelog
+        run: |
+          # Extract changes for this version from CHANGELOG.md if it exists
+          if [ -f CHANGELOG.md ]; then
+            VERSION=${GITHUB_REF#refs/tags/}
+            awk "/^## \[${VERSION}\]/{flag=1; next} /^## /{flag=0} flag" CHANGELOG.md > RELEASE_NOTES.md
+          else
+            echo "Release ${GITHUB_REF#refs/tags/}" > RELEASE_NOTES.md
+            echo "" >> RELEASE_NOTES.md
+            echo "For details, see the commit history." >> RELEASE_NOTES.md
+          fi
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          body_path: RELEASE_NOTES.md
+          files: |
+            coverage.html
+          draft: false
+          prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update pkg.go.dev
+        run: |
+          # Trigger pkg.go.dev to update the documentation
+          VERSION=${GITHUB_REF#refs/tags/}
+          curl -X POST "https://proxy.golang.org/{{.ModulePath}}/@v/${VERSION}.info"
+        continue-on-error: true
+
+  publish-examples:
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '{{.GoVersion}}'
+
+      - name: Test examples
+        run: |
+          cd examples/basic
+          go mod init example
+          go mod edit -replace {{.ModulePath}}=../..
+          go mod tidy
+          go run main.go
+          
+          cd ../advanced
+          go mod init example
+          go mod edit -replace {{.ModulePath}}=../..
+          go mod tidy
+          go run main.go
+
+      - name: Publish to pkg.go.dev
+        run: |
+          # Ensure the module is available on pkg.go.dev
+          go list -m {{.ModulePath}}@${GITHUB_REF#refs/tags/}
+
+  notify:
+    needs: [release, publish-examples]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Notify on success
+        if: needs.release.result == 'success' && needs.publish-examples.result == 'success'
+        run: |
+          echo "✅ Release ${GITHUB_REF#refs/tags/} completed successfully!"
+          echo "📦 Package available at https://pkg.go.dev/{{.ModulePath}}"
+
+      - name: Notify on failure
+        if: needs.release.result == 'failure' || needs.publish-examples.result == 'failure'
+        run: |
+          echo "❌ Release ${GITHUB_REF#refs/tags/} failed!"
+          exit 1

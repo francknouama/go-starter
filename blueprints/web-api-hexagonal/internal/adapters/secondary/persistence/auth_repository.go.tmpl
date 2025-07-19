@@ -27,13 +27,13 @@ func NewAuthRepository(db *Database, logger output.LoggerPort) output.AuthReposi
 
 // CreateSession creates a new authentication session
 func (r *AuthRepository) CreateSession(ctx context.Context, session *entities.AuthSession) error {
-	r.logger.Info(ctx, "Creating auth session in repository", output.String("session_id", session.SessionID().Value()))
+	r.logger.Info(ctx, "Creating auth session in repository", output.String("session_id", session.SessionID()))
 
 	{{- if eq .DatabaseORM "gorm"}}
 	// GORM implementation
 	model := &AuthSessionModel{
-		SessionID: session.SessionID().Value(),
-		UserID:    session.UserID().Value(),
+		SessionID: session.SessionID(),
+		UserID:    session.UserID(),
 		Token:     session.Token(),
 		ExpiresAt: session.ExpiresAt().Unix(),
 		CreatedAt: session.CreatedAt().Unix(),
@@ -50,8 +50,8 @@ func (r *AuthRepository) CreateSession(ctx context.Context, session *entities.Au
 			  VALUES ($1, $2, $3, $4, $5)`
 	
 	_, err := r.db.sqlx.ExecContext(ctx, query,
-		session.SessionID().Value(),
-		session.UserID().Value(),
+		session.SessionID(),
+		session.UserID(),
 		session.Token(),
 		session.ExpiresAt().Unix(),
 		session.CreatedAt().Unix(),
@@ -67,8 +67,8 @@ func (r *AuthRepository) CreateSession(ctx context.Context, session *entities.Au
 			  VALUES ($1, $2, $3, $4, $5)`
 	
 	_, err := r.db.sql.ExecContext(ctx, query,
-		session.SessionID().Value(),
-		session.UserID().Value(),
+		session.SessionID(),
+		session.UserID(),
 		session.Token(),
 		session.ExpiresAt().Unix(),
 		session.CreatedAt().Unix(),
@@ -79,7 +79,7 @@ func (r *AuthRepository) CreateSession(ctx context.Context, session *entities.Au
 	}
 	{{- end}}
 
-	r.logger.Info(ctx, "Auth session created successfully in repository", output.String("session_id", session.SessionID().Value()))
+	r.logger.Info(ctx, "Auth session created successfully in repository", output.String("session_id", session.SessionID()))
 	return nil
 }
 
@@ -245,13 +245,13 @@ func (r *AuthRepository) DeleteExpiredSessions(ctx context.Context) error {
 
 // CreateRefreshToken creates a new refresh token
 func (r *AuthRepository) CreateRefreshToken(ctx context.Context, refreshToken *entities.RefreshToken) error {
-	r.logger.Info(ctx, "Creating refresh token in repository", output.String("user_id", refreshToken.UserID().Value()))
+	r.logger.Info(ctx, "Creating refresh token in repository", output.String("user_id", refreshToken.UserID()))
 
 	{{- if eq .DatabaseORM "gorm"}}
 	// GORM implementation
 	model := &RefreshTokenModel{
 		Token:     refreshToken.Token(),
-		UserID:    refreshToken.UserID().Value(),
+		UserID:    refreshToken.UserID(),
 		ExpiresAt: refreshToken.ExpiresAt().Unix(),
 		CreatedAt: refreshToken.CreatedAt().Unix(),
 	}
@@ -268,7 +268,7 @@ func (r *AuthRepository) CreateRefreshToken(ctx context.Context, refreshToken *e
 	
 	_, err := r.db.sqlx.ExecContext(ctx, query,
 		refreshToken.Token(),
-		refreshToken.UserID().Value(),
+		refreshToken.UserID(),
 		refreshToken.ExpiresAt().Unix(),
 		refreshToken.CreatedAt().Unix(),
 	)
@@ -284,7 +284,7 @@ func (r *AuthRepository) CreateRefreshToken(ctx context.Context, refreshToken *e
 	
 	_, err := r.db.sql.ExecContext(ctx, query,
 		refreshToken.Token(),
-		refreshToken.UserID().Value(),
+		refreshToken.UserID(),
 		refreshToken.ExpiresAt().Unix(),
 		refreshToken.CreatedAt().Unix(),
 	)
@@ -373,6 +373,52 @@ func (r *AuthRepository) DeleteRefreshToken(ctx context.Context, token string) e
 	return nil
 }
 
+// CleanupExpiredTokens removes all expired refresh tokens
+func (r *AuthRepository) CleanupExpiredTokens(ctx context.Context) error {
+	r.logger.Info(ctx, "Cleaning up expired refresh tokens from repository")
+
+	now := time.Now().Unix()
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	result := r.db.gorm.WithContext(ctx).Where("expires_at < ?", now).Delete(&RefreshTokenModel{})
+	if result.Error != nil {
+		r.logger.Error(ctx, "Failed to cleanup expired refresh tokens from database", output.Error(result.Error))
+		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", result.Error)
+	}
+
+	r.logger.Info(ctx, "Expired refresh tokens cleaned up successfully", output.Int64("count", result.RowsAffected))
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `DELETE FROM refresh_tokens WHERE expires_at < $1`
+	
+	result, err := r.db.sqlx.ExecContext(ctx, query, now)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to cleanup expired refresh tokens from database", output.Error(err))
+		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	r.logger.Info(ctx, "Expired refresh tokens cleaned up successfully", output.Int64("count", rowsAffected))
+
+	{{- else}}
+	// Standard database/sql implementation
+	query := `DELETE FROM refresh_tokens WHERE expires_at < $1`
+	
+	result, err := r.db.sql.ExecContext(ctx, query, now)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to cleanup expired refresh tokens from database", output.Error(err))
+		return fmt.Errorf("failed to cleanup expired refresh tokens: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	r.logger.Info(ctx, "Expired refresh tokens cleaned up successfully", output.Int64("count", rowsAffected))
+	{{- end}}
+
+	return nil
+}
+
 // sessionModelToEntity converts a session database model to a domain entity
 func (r *AuthRepository) sessionModelToEntity(model *AuthSessionModel) (*entities.AuthSession, error) {
 	// Create value objects
@@ -417,48 +463,255 @@ func (r *AuthRepository) refreshTokenModelToEntity(model *RefreshTokenModel) (*e
 	return entity, nil
 }
 
-{{- if eq .DatabaseORM "gorm"}}
-// AuthSessionModel represents the auth session database model
-type AuthSessionModel struct {
-	SessionID string `gorm:"primaryKey"`
-	UserID    string `gorm:"not null"`
-	Token     string `gorm:"not null"`
-	ExpiresAt int64  `gorm:"not null"`
-	CreatedAt int64  `gorm:"autoCreateTime"`
+// Interface-compliant methods for AuthRepositoryPort
+
+// StoreRefreshToken stores a refresh token
+func (r *AuthRepository) StoreRefreshToken(ctx context.Context, userID, token string, expiresAt time.Time) error {
+	r.logger.Info(ctx, "Storing refresh token in repository", output.String("user_id", userID))
+	
+	// Create value objects
+	userIDObj, err := valueobjects.UserIDFromString(userID)
+	if err != nil {
+		return fmt.Errorf("invalid user ID: %w", err)
+	}
+	
+	// Create refresh token entity
+	refreshToken := entities.NewRefreshToken(token, userIDObj, expiresAt)
+	
+	// Store using existing method
+	return r.CreateRefreshToken(ctx, refreshToken)
 }
 
-// TableName returns the table name for AuthSessionModel
-func (AuthSessionModel) TableName() string {
-	return "auth_sessions"
+// GetRefreshToken retrieves a refresh token
+func (r *AuthRepository) GetRefreshToken(ctx context.Context, token string) (*output.RefreshToken, error) {
+	r.logger.Info(ctx, "Getting refresh token from repository", output.String("token", token))
+	
+	// Get using existing method
+	entity, err := r.GetRefreshTokenByToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert to output type
+	return &output.RefreshToken{
+		Token:     entity.Token(),
+		UserID:    entity.UserID(),
+		ExpiresAt: entity.ExpiresAt(),
+		CreatedAt: entity.CreatedAt(),
+	}, nil
 }
 
-// RefreshTokenModel represents the refresh token database model
-type RefreshTokenModel struct {
-	Token     string `gorm:"primaryKey"`
-	UserID    string `gorm:"not null"`
-	ExpiresAt int64  `gorm:"not null"`
-	CreatedAt int64  `gorm:"autoCreateTime"`
+// RevokeRefreshToken revokes a refresh token
+func (r *AuthRepository) RevokeRefreshToken(ctx context.Context, token string) error {
+	r.logger.Info(ctx, "Revoking refresh token in repository", output.String("token", token))
+	
+	// Use existing method
+	return r.DeleteRefreshToken(ctx, token)
 }
 
-// TableName returns the table name for RefreshTokenModel
-func (RefreshTokenModel) TableName() string {
-	return "refresh_tokens"
-}
-{{- else}}
-// AuthSessionModel represents the auth session database model for SQL operations
-type AuthSessionModel struct {
-	SessionID string `db:"session_id"`
-	UserID    string `db:"user_id"`
-	Token     string `db:"token"`
-	ExpiresAt int64  `db:"expires_at"`
-	CreatedAt int64  `db:"created_at"`
+// RevokeAllUserTokens revokes all refresh tokens for a user
+func (r *AuthRepository) RevokeAllUserTokens(ctx context.Context, userID string) error {
+	r.logger.Info(ctx, "Revoking all user tokens in repository", output.String("user_id", userID))
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	result := r.db.gorm.WithContext(ctx).Where("user_id = ?", userID).Delete(&RefreshTokenModel{})
+	if result.Error != nil {
+		r.logger.Error(ctx, "Failed to revoke all user tokens from database", output.Error(result.Error))
+		return fmt.Errorf("failed to revoke all user tokens: %w", result.Error)
+	}
+	
+	r.logger.Info(ctx, "All user tokens revoked successfully", output.String("user_id", userID))
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
+	
+	_, err := r.db.sqlx.ExecContext(ctx, query, userID)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to revoke all user tokens from database", output.Error(err))
+		return fmt.Errorf("failed to revoke all user tokens: %w", err)
+	}
+	
+	r.logger.Info(ctx, "All user tokens revoked successfully", output.String("user_id", userID))
+	{{- else}}
+	// Standard database/sql implementation
+	query := `DELETE FROM refresh_tokens WHERE user_id = $1`
+	
+	_, err := r.db.sql.ExecContext(ctx, query, userID)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to revoke all user tokens from database", output.Error(err))
+		return fmt.Errorf("failed to revoke all user tokens: %w", err)
+	}
+	
+	r.logger.Info(ctx, "All user tokens revoked successfully", output.String("user_id", userID))
+	{{- end}}
+	
+	return nil
 }
 
-// RefreshTokenModel represents the refresh token database model for SQL operations
-type RefreshTokenModel struct {
-	Token     string `db:"token"`
-	UserID    string `db:"user_id"`
-	ExpiresAt int64  `db:"expires_at"`
-	CreatedAt int64  `db:"created_at"`
+// GetPasswordResetToken retrieves a password reset token
+func (r *AuthRepository) GetPasswordResetToken(ctx context.Context, token string) (*output.PasswordResetToken, error) {
+	r.logger.Info(ctx, "Getting password reset token from repository", output.String("token", token))
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	var model PasswordResetTokenModel
+	// GORM implementation
+	if err := r.db.gorm.WithContext(ctx).Where("token = ?", token).First(&model).Error; err != nil {
+		r.logger.Error(ctx, "Failed to get password reset token from database", output.Error(err))
+		return nil, fmt.Errorf("failed to get password reset token: %w", err)
+	}
+	{{- else if eq .DatabaseORM "sqlx"}}
+	var model PasswordResetTokenModel
+	// SQLx implementation
+	query := `SELECT token, user_id, expires_at, created_at FROM password_reset_tokens WHERE token = $1`
+	
+	if err := r.db.sqlx.GetContext(ctx, &model, query, token); err != nil {
+		r.logger.Error(ctx, "Failed to get password reset token from database", output.Error(err))
+		return nil, fmt.Errorf("failed to get password reset token: %w", err)
+	}
+	{{- else}}
+	var model PasswordResetTokenModel
+	// Standard database/sql implementation
+	query := `SELECT token, user_id, expires_at, created_at FROM password_reset_tokens WHERE token = $1`
+	
+	row := r.db.sql.QueryRowContext(ctx, query, token)
+	if err := row.Scan(&model.Token, &model.UserID, &model.ExpiresAt, &model.CreatedAt); err != nil {
+		r.logger.Error(ctx, "Failed to get password reset token from database", output.Error(err))
+		return nil, fmt.Errorf("failed to get password reset token: %w", err)
+	}
+	{{- end}}
+	
+	// Convert to output type
+	return &output.PasswordResetToken{
+		Token:     model.Token,
+		UserID:    model.UserID,
+		ExpiresAt: time.Unix(model.ExpiresAt, 0),
+		CreatedAt: time.Unix(model.CreatedAt, 0),
+	}, nil
 }
-{{- end}}
+
+// StorePasswordResetToken stores a password reset token
+func (r *AuthRepository) StorePasswordResetToken(ctx context.Context, userID, token string, expiresAt time.Time) error {
+	r.logger.Info(ctx, "Storing password reset token in repository", output.String("user_id", userID))
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	model := &PasswordResetTokenModel{
+		Token:     token,
+		UserID:    userID,
+		ExpiresAt: expiresAt.Unix(),
+		CreatedAt: time.Now().Unix(),
+	}
+	
+	if err := r.db.gorm.WithContext(ctx).Create(model).Error; err != nil {
+		r.logger.Error(ctx, "Failed to store password reset token in database", output.Error(err))
+		return fmt.Errorf("failed to store password reset token: %w", err)
+	}
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `INSERT INTO password_reset_tokens (token, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4)`
+	
+	_, err := r.db.sqlx.ExecContext(ctx, query, token, userID, expiresAt.Unix(), time.Now().Unix())
+	if err != nil {
+		r.logger.Error(ctx, "Failed to store password reset token in database", output.Error(err))
+		return fmt.Errorf("failed to store password reset token: %w", err)
+	}
+	{{- else}}
+	// Standard database/sql implementation
+	query := `INSERT INTO password_reset_tokens (token, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4)`
+	
+	_, err := r.db.sql.ExecContext(ctx, query, token, userID, expiresAt.Unix(), time.Now().Unix())
+	if err != nil {
+		r.logger.Error(ctx, "Failed to store password reset token in database", output.Error(err))
+		return fmt.Errorf("failed to store password reset token: %w", err)
+	}
+	{{- end}}
+	
+	r.logger.Info(ctx, "Password reset token stored successfully", output.String("user_id", userID))
+	return nil
+}
+
+// RevokePasswordResetToken revokes a password reset token
+func (r *AuthRepository) RevokePasswordResetToken(ctx context.Context, token string) error {
+	r.logger.Info(ctx, "Revoking password reset token in repository", output.String("token", token))
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	// GORM implementation
+	result := r.db.gorm.WithContext(ctx).Where("token = ?", token).Delete(&PasswordResetTokenModel{})
+	if result.Error != nil {
+		r.logger.Error(ctx, "Failed to revoke password reset token from database", output.Error(result.Error))
+		return fmt.Errorf("failed to revoke password reset token: %w", result.Error)
+	}
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLx implementation
+	query := `DELETE FROM password_reset_tokens WHERE token = $1`
+	
+	_, err := r.db.sqlx.ExecContext(ctx, query, token)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to revoke password reset token from database", output.Error(err))
+		return fmt.Errorf("failed to revoke password reset token: %w", err)
+	}
+	{{- else}}
+	// Standard database/sql implementation
+	query := `DELETE FROM password_reset_tokens WHERE token = $1`
+	
+	_, err := r.db.sql.ExecContext(ctx, query, token)
+	if err != nil {
+		r.logger.Error(ctx, "Failed to revoke password reset token from database", output.Error(err))
+		return fmt.Errorf("failed to revoke password reset token: %w", err)
+	}
+	{{- end}}
+	
+	r.logger.Info(ctx, "Password reset token revoked successfully", output.String("token", token))
+	return nil
+}
+
+// StoreSession stores a user session
+func (r *AuthRepository) StoreSession(ctx context.Context, sessionID, userID string, expiresAt time.Time) error {
+	r.logger.Info(ctx, "Storing session in repository", output.String("session_id", sessionID))
+	
+	// Create value objects
+	sessionIDObj, err := valueobjects.SessionIDFromString(sessionID)
+	if err != nil {
+		return fmt.Errorf("invalid session ID: %w", err)
+	}
+	
+	userIDObj, err := valueobjects.UserIDFromString(userID)
+	if err != nil {
+		return fmt.Errorf("invalid user ID: %w", err)
+	}
+	
+	// Create session entity
+	session := entities.NewAuthSession(sessionIDObj, userIDObj, "session_token", expiresAt)
+	
+	// Store using existing method
+	return r.CreateSession(ctx, session)
+}
+
+// GetSession retrieves a user session
+func (r *AuthRepository) GetSession(ctx context.Context, sessionID string) (*output.Session, error) {
+	r.logger.Info(ctx, "Getting session from repository", output.String("session_id", sessionID))
+	
+	// Get using existing method
+	entity, err := r.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert to output type
+	return &output.Session{
+		SessionID: entity.SessionID(),
+		UserID:    entity.UserID(),
+		ExpiresAt: entity.ExpiresAt(),
+		CreatedAt: entity.CreatedAt(),
+	}, nil
+}
+
+// RevokeSession revokes a user session
+func (r *AuthRepository) RevokeSession(ctx context.Context, sessionID string) error {
+	r.logger.Info(ctx, "Revoking session in repository", output.String("session_id", sessionID))
+	
+	// Use existing method
+	return r.DeleteSession(ctx, sessionID)
+}
+

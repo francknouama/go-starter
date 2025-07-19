@@ -37,7 +37,7 @@ func NewHealthService(
 }
 
 // CheckHealth performs a comprehensive health check
-func (h *HealthService) CheckHealth(ctx context.Context) (*entities.HealthStatus, error) {
+func (h *HealthService) CheckHealth(ctx context.Context) (*input.HealthStatus, error) {
 	h.logger.Info(ctx, "Performing health check")
 	
 	startTime := time.Now()
@@ -67,15 +67,21 @@ func (h *HealthService) CheckHealth(ctx context.Context) (*entities.HealthStatus
 	
 	duration := time.Since(startTime)
 	
-	healthStatus := entities.NewHealthStatus(
-		overallStatus,
-		"Health check completed",
-		checks,
-		duration,
-	)
+	// Convert domain entities to port types
+	details := make(map[string]string)
+	for name, check := range checks {
+		details[name] = check.Status
+	}
+	
+	healthStatus := &input.HealthStatus{
+		Status:    overallStatus,
+		Timestamp: time.Now().Unix(),
+		Version:   "1.0.0",
+		Details:   details,
+	}
 	
 	h.logger.Info(ctx, "Health check completed", 
-		output.String("status", string(overallStatus)),
+		output.String("status", overallStatus),
 		output.Duration("duration", duration),
 		output.Int("checks_count", len(checks)),
 	)
@@ -84,7 +90,7 @@ func (h *HealthService) CheckHealth(ctx context.Context) (*entities.HealthStatus
 }
 
 // CheckReadiness performs a readiness check
-func (h *HealthService) CheckReadiness(ctx context.Context) (*entities.ReadinessStatus, error) {
+func (h *HealthService) CheckReadiness(ctx context.Context) (*input.ReadinessStatus, error) {
 	h.logger.Info(ctx, "Performing readiness check")
 	
 	startTime := time.Now()
@@ -112,12 +118,17 @@ func (h *HealthService) CheckReadiness(ctx context.Context) (*entities.Readiness
 	
 	duration := time.Since(startTime)
 	
-	readinessStatus := entities.NewReadinessStatus(
-		ready,
-		"Readiness check completed",
-		checks,
-		duration,
-	)
+	// Convert domain entities to port types
+	checkStatuses := make(map[string]bool)
+	for name, check := range checks {
+		checkStatuses[name] = check.Ready
+	}
+	
+	readinessStatus := &input.ReadinessStatus{
+		Ready:     ready,
+		Timestamp: time.Now().Unix(),
+		Checks:    checkStatuses,
+	}
 	
 	h.logger.Info(ctx, "Readiness check completed", 
 		output.Bool("ready", ready),
@@ -198,6 +209,7 @@ func (h *HealthService) checkApplicationReadiness(ctx context.Context) entities.
 	// Check if the application is fully initialized and ready
 	return entities.ReadinessCheck{
 		Ready:   true,
+		Status:  entities.ReadinessStatusReady,
 		Message: "Application is ready to serve requests",
 		Details: map[string]interface{}{
 			"initialized": true,
@@ -212,6 +224,7 @@ func (h *HealthService) checkDatabaseReadiness(ctx context.Context) entities.Rea
 	if h.db == nil {
 		return entities.ReadinessCheck{
 			Ready:   false,
+			Status:  entities.ReadinessStatusNotReady,
 			Message: "Database not configured",
 			Details: map[string]interface{}{
 				"error": "database instance is nil",
@@ -233,6 +246,7 @@ func (h *HealthService) checkDatabaseReadiness(ctx context.Context) entities.Rea
 	
 	return entities.ReadinessCheck{
 		Ready:   true,
+		Status:  entities.ReadinessStatusReady,
 		Message: "Database is ready",
 		Details: map[string]interface{}{
 			"driver": "{{.DatabaseDriver}}",
@@ -248,6 +262,7 @@ func (h *HealthService) checkExternalDependenciesReadiness(ctx context.Context) 
 	// For now, we'll just return ready
 	return entities.ReadinessCheck{
 		Ready:   true,
+		Status:  entities.ReadinessStatusReady,
 		Message: "External dependencies are ready",
 		Details: map[string]interface{}{
 			"checked_services": []string{

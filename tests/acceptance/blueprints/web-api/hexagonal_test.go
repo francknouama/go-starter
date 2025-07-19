@@ -92,7 +92,7 @@ func TestHexagonal_WebAPI_ArchitectureValidation(t *testing.T) {
 	projectPath := helpers.GenerateProject(t, config)
 
 	// Then the project should have hexagonal architecture structure
-	validator := NewWebAPIValidator(projectPath, "hexagonal")
+	validator := NewHexagonalValidator(projectPath)
 	validator.ValidateHexagonalArchitecture(t)
 
 	// And dependencies should only point inward
@@ -140,7 +140,7 @@ func TestHexagonal_WebAPI_PortsAndAdapters(t *testing.T) {
 	projectPath := helpers.GenerateProject(t, config)
 
 	// Then the project should have ports and adapters
-	validator := NewWebAPIValidator(projectPath, "hexagonal")
+	validator := NewHexagonalValidator(projectPath)
 	validator.ValidatePortsStructure(t)
 	validator.ValidateAdaptersStructure(t)
 
@@ -172,12 +172,21 @@ func TestHexagonal_WebAPI_MultiFrameworkSupport(t *testing.T) {
 				GoVersion: "1.21",
 				Framework: framework,
 				Logger:    "slog",
+				Features: &types.Features{
+					Database: types.DatabaseConfig{
+						Driver: "postgres",
+						ORM:    "gorm",
+					},
+					Authentication: types.AuthConfig{
+						Type: "jwt",
+					},
+				},
 			}
 
 			projectPath := helpers.GenerateProject(t, config)
 
 			// Then the framework should have its own primary adapter
-			validator := NewWebAPIValidator(projectPath, "hexagonal")
+			validator := NewHexagonalValidator(projectPath)
 			validator.ValidateFrameworkAdapter(t, framework)
 
 			// And all frameworks should implement the same HTTP port interface
@@ -221,7 +230,7 @@ func TestHexagonal_WebAPI_DomainIsolation(t *testing.T) {
 	projectPath := helpers.GenerateProject(t, config)
 
 	// Then the domain layer should have no external dependencies
-	validator := NewWebAPIValidator(projectPath, "hexagonal")
+	validator := NewHexagonalValidator(projectPath)
 	validator.ValidateDomainPurity(t)
 
 	// And the domain should not import infrastructure code
@@ -260,7 +269,7 @@ func TestHexagonal_WebAPI_ApplicationServices(t *testing.T) {
 	projectPath := helpers.GenerateProject(t, config)
 
 	// Then application services should orchestrate domain operations
-	validator := NewWebAPIValidator(projectPath, "hexagonal")
+	validator := NewHexagonalValidator(projectPath)
 	validator.ValidateApplicationServices(t)
 
 	// And application services should use ports for external communication
@@ -302,7 +311,7 @@ func TestHexagonal_WebAPI_TestingCapabilities(t *testing.T) {
 	projectPath := helpers.GenerateProject(t, config)
 
 	// Then the project should include adapter mocks
-	validator := NewWebAPIValidator(projectPath, "hexagonal")
+	validator := NewHexagonalValidator(projectPath)
 	validator.ValidateAdapterMocks(t)
 
 	// And the project should include port test implementations
@@ -315,22 +324,20 @@ func TestHexagonal_WebAPI_TestingCapabilities(t *testing.T) {
 	validator.ValidateDomainUnitTesting(t)
 }
 
-// WebAPIValidator provides validation methods for web API architectures
-type WebAPIValidator struct {
-	ProjectPath  string
-	Architecture string
+// HexagonalValidator provides validation methods for hexagonal architecture
+type HexagonalValidator struct {
+	ProjectPath string
 }
 
-// NewWebAPIValidator creates a new WebAPIValidator
-func NewWebAPIValidator(projectPath, architecture string) *WebAPIValidator {
-	return &WebAPIValidator{
-		ProjectPath:  projectPath,
-		Architecture: architecture,
+// NewHexagonalValidator creates a new HexagonalValidator
+func NewHexagonalValidator(projectPath string) *HexagonalValidator {
+	return &HexagonalValidator{
+		ProjectPath: projectPath,
 	}
 }
 
 // Additional validation methods for hexagonal architecture
-func (v *WebAPIValidator) ValidateHexagonalArchitecture(t *testing.T) {
+func (v *HexagonalValidator) ValidateHexagonalArchitecture(t *testing.T) {
 	t.Helper()
 
 	// Validate hexagonal directory structure
@@ -348,7 +355,7 @@ func (v *WebAPIValidator) ValidateHexagonalArchitecture(t *testing.T) {
 	helpers.AssertDirectoryExists(t, filepath.Join(v.ProjectPath, "internal", "adapters", "secondary"))
 }
 
-func (v *WebAPIValidator) ValidateHexagonalDependencies(t *testing.T) {
+func (v *HexagonalValidator) ValidateHexagonalDependencies(t *testing.T) {
 	t.Helper()
 
 	// Check that domain layer doesn't import from outer layers
@@ -368,7 +375,7 @@ func (v *WebAPIValidator) ValidateHexagonalDependencies(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateDomainIsolation(t *testing.T) {
+func (v *HexagonalValidator) ValidateDomainIsolation(t *testing.T) {
 	t.Helper()
 
 	// Check that domain layer exists and is isolated
@@ -388,7 +395,7 @@ func (v *WebAPIValidator) ValidateDomainIsolation(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidatePortContracts(t *testing.T) {
+func (v *HexagonalValidator) ValidatePortContracts(t *testing.T) {
 	t.Helper()
 
 	// Check that ports define clear interfaces
@@ -409,7 +416,7 @@ func (v *WebAPIValidator) ValidatePortContracts(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidatePortsStructure(t *testing.T) {
+func (v *HexagonalValidator) ValidatePortsStructure(t *testing.T) {
 	t.Helper()
 
 	// Validate ports directory structure
@@ -427,7 +434,7 @@ func (v *WebAPIValidator) ValidatePortsStructure(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateAdaptersStructure(t *testing.T) {
+func (v *HexagonalValidator) ValidateAdaptersStructure(t *testing.T) {
 	t.Helper()
 
 	// Validate adapters directory structure
@@ -441,7 +448,7 @@ func (v *WebAPIValidator) ValidateAdaptersStructure(t *testing.T) {
 	helpers.AssertDirectoryExists(t, secondaryPath)
 }
 
-func (v *WebAPIValidator) ValidateAdapterImplementation(t *testing.T) {
+func (v *HexagonalValidator) ValidateAdapterImplementation(t *testing.T) {
 	t.Helper()
 
 	// Check that adapters implement port interfaces
@@ -458,7 +465,7 @@ func (v *WebAPIValidator) ValidateAdapterImplementation(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateAdapterSwappability(t *testing.T) {
+func (v *HexagonalValidator) ValidateAdapterSwappability(t *testing.T) {
 	t.Helper()
 
 	// Check that adapters are decoupled and swappable
@@ -469,7 +476,7 @@ func (v *WebAPIValidator) ValidateAdapterSwappability(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateFrameworkAdapter(t *testing.T, framework string) {
+func (v *HexagonalValidator) ValidateFrameworkAdapter(t *testing.T, framework string) {
 	t.Helper()
 
 	// Check that the framework has its own adapter
@@ -480,7 +487,7 @@ func (v *WebAPIValidator) ValidateFrameworkAdapter(t *testing.T, framework strin
 	}
 }
 
-func (v *WebAPIValidator) ValidateHTTPPortInterface(t *testing.T, framework string) {
+func (v *HexagonalValidator) ValidateHTTPPortInterface(t *testing.T, framework string) {
 	t.Helper()
 
 	// Check that HTTP port interface exists
@@ -491,7 +498,7 @@ func (v *WebAPIValidator) ValidateHTTPPortInterface(t *testing.T, framework stri
 	}
 }
 
-func (v *WebAPIValidator) ValidateDomainPurity(t *testing.T) {
+func (v *HexagonalValidator) ValidateDomainPurity(t *testing.T) {
 	t.Helper()
 
 	// Check that domain layer has minimal imports
@@ -510,7 +517,7 @@ func (v *WebAPIValidator) ValidateDomainPurity(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateDomainImports(t *testing.T) {
+func (v *HexagonalValidator) ValidateDomainImports(t *testing.T) {
 	t.Helper()
 
 	// Check that domain doesn't import infrastructure
@@ -527,7 +534,7 @@ func (v *WebAPIValidator) ValidateDomainImports(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateDomainTestability(t *testing.T) {
+func (v *HexagonalValidator) ValidateDomainTestability(t *testing.T) {
 	t.Helper()
 
 	// Check that domain has test files
@@ -540,7 +547,7 @@ func (v *WebAPIValidator) ValidateDomainTestability(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateApplicationServices(t *testing.T) {
+func (v *HexagonalValidator) ValidateApplicationServices(t *testing.T) {
 	t.Helper()
 
 	// Check that application services exist
@@ -554,7 +561,7 @@ func (v *WebAPIValidator) ValidateApplicationServices(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateApplicationPortUsage(t *testing.T) {
+func (v *HexagonalValidator) ValidateApplicationPortUsage(t *testing.T) {
 	t.Helper()
 
 	// Check that application services use ports
@@ -571,7 +578,7 @@ func (v *WebAPIValidator) ValidateApplicationPortUsage(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateBusinessUseCases(t *testing.T) {
+func (v *HexagonalValidator) ValidateBusinessUseCases(t *testing.T) {
 	t.Helper()
 
 	// Check that application services implement business use cases
@@ -588,7 +595,7 @@ func (v *WebAPIValidator) ValidateBusinessUseCases(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateApplicationIndependence(t *testing.T) {
+func (v *HexagonalValidator) ValidateApplicationIndependence(t *testing.T) {
 	t.Helper()
 
 	// Check that application layer is framework-independent
@@ -606,7 +613,7 @@ func (v *WebAPIValidator) ValidateApplicationIndependence(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateAdapterMocks(t *testing.T) {
+func (v *HexagonalValidator) ValidateAdapterMocks(t *testing.T) {
 	t.Helper()
 
 	// Check that adapter mocks exist
@@ -620,7 +627,7 @@ func (v *WebAPIValidator) ValidateAdapterMocks(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidatePortTestImplementations(t *testing.T) {
+func (v *HexagonalValidator) ValidatePortTestImplementations(t *testing.T) {
 	t.Helper()
 
 	// Check that port test implementations exist
@@ -633,7 +640,7 @@ func (v *WebAPIValidator) ValidatePortTestImplementations(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateIntegrationTestCapabilities(t *testing.T) {
+func (v *HexagonalValidator) ValidateIntegrationTestCapabilities(t *testing.T) {
 	t.Helper()
 
 	// Check that integration tests exist
@@ -647,7 +654,7 @@ func (v *WebAPIValidator) ValidateIntegrationTestCapabilities(t *testing.T) {
 	}
 }
 
-func (v *WebAPIValidator) ValidateDomainUnitTesting(t *testing.T) {
+func (v *HexagonalValidator) ValidateDomainUnitTesting(t *testing.T) {
 	t.Helper()
 
 	// Check that domain unit tests exist
@@ -658,4 +665,49 @@ func (v *WebAPIValidator) ValidateDomainUnitTesting(t *testing.T) {
 			t.Error("Domain unit tests should exist")
 		}
 	}
+}
+
+// IsHexagonalImplemented checks if the hexagonal architecture is implemented
+func (v *HexagonalValidator) IsHexagonalImplemented() bool {
+	// Check if the basic hexagonal structure exists
+	domainPath := filepath.Join(v.ProjectPath, "internal", "domain")
+	applicationPath := filepath.Join(v.ProjectPath, "internal", "application")
+	adaptersPath := filepath.Join(v.ProjectPath, "internal", "adapters")
+	
+	return helpers.DirExists(domainPath) && 
+		   helpers.DirExists(applicationPath) && 
+		   helpers.DirExists(adaptersPath)
+}
+
+// ValidateHexagonalPrinciples validates the main hexagonal architecture principles
+func (v *HexagonalValidator) ValidateHexagonalPrinciples(t *testing.T) {
+	t.Helper()
+	
+	// Validate the core principles of hexagonal architecture
+	v.ValidateHexagonalArchitecture(t)
+	v.ValidateHexagonalDependencies(t)
+	v.ValidatePortsStructure(t)
+	v.ValidateAdaptersStructure(t)
+}
+
+// ValidateDependencyInversion validates dependency inversion principle
+func (v *HexagonalValidator) ValidateDependencyInversion(t *testing.T) {
+	t.Helper()
+	
+	// Check that dependencies point inward
+	v.ValidateDomainPurity(t)
+	v.ValidateDomainImports(t)
+	v.ValidateApplicationIndependence(t)
+	v.ValidateApplicationPortUsage(t)
+}
+
+// ValidateHexagonDefinition validates the hexagonal definition and structure
+func (v *HexagonalValidator) ValidateHexagonDefinition(t *testing.T) {
+	t.Helper()
+	
+	// Validate that the hexagonal architecture is properly defined
+	v.ValidatePortContracts(t)
+	v.ValidateAdapterImplementation(t)
+	v.ValidateAdapterSwappability(t)
+	v.ValidateBusinessUseCases(t)
 }

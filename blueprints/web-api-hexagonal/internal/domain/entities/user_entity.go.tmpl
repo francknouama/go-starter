@@ -1,6 +1,7 @@
 package entities
 
 import (
+	"strings"
 	"time"
 
 	"{{.ModulePath}}/internal/domain/valueobjects"
@@ -9,7 +10,7 @@ import (
 // {{.DomainName | title}} represents the core {{.DomainName}} entity in the domain
 // This is the heart of the hexagonal architecture - pure domain logic
 type {{.DomainName | title}} struct {
-	id           valueobjects.{{.DomainName | title}}ID
+	id           *valueobjects.{{.DomainName | title}}ID
 	email        valueobjects.Email
 	firstName    string
 	lastName     string
@@ -20,19 +21,21 @@ type {{.DomainName | title}} struct {
 
 // New{{.DomainName | title}} creates a new {{.DomainName}} entity
 func New{{.DomainName | title}}(
-	id valueobjects.{{.DomainName | title}}ID,
+	id *valueobjects.{{.DomainName | title}}ID,
 	email valueobjects.Email,
 	firstName, lastName, password string,
 ) (*{{.DomainName | title}}, error) {
 	// Validate input
-	if firstName == "" {
-		return nil, ErrInvalidFirstName
+	if err := validateName(firstName, "first"); err != nil {
+		return nil, err
 	}
-	if lastName == "" {
-		return nil, ErrInvalidLastName
+	if err := validateName(lastName, "last"); err != nil {
+		return nil, err
 	}
-	if len(password) < 8 {
-		return nil, ErrWeakPassword
+	
+	// Validate password
+	if err := validatePassword(password); err != nil {
+		return nil, err
 	}
 
 	// Hash password (in real implementation, use bcrypt or similar)
@@ -53,7 +56,7 @@ func New{{.DomainName | title}}(
 // Reconstruct{{.DomainName | title}} reconstructs a {{.DomainName}} entity from persistence
 // This is used by repositories to rebuild entities from stored data
 func Reconstruct{{.DomainName | title}}(
-	id valueobjects.{{.DomainName | title}}ID,
+	id *valueobjects.{{.DomainName | title}}ID,
 	email valueobjects.Email,
 	firstName, lastName, passwordHash string,
 	createdAt, updatedAt time.Time,
@@ -70,7 +73,7 @@ func Reconstruct{{.DomainName | title}}(
 }
 
 // ID returns the {{.DomainName}} ID
-func (u *{{.DomainName | title}}) ID() valueobjects.{{.DomainName | title}}ID {
+func (u *{{.DomainName | title}}) ID() *valueobjects.{{.DomainName | title}}ID {
 	return u.id
 }
 
@@ -132,8 +135,8 @@ func (u *{{.DomainName | title}}) UpdateLastName(lastName string) error {
 
 // UpdatePassword updates the {{.DomainName}} password
 func (u *{{.DomainName | title}}) UpdatePassword(password string) error {
-	if len(password) < 8 {
-		return ErrWeakPassword
+	if err := validatePassword(password); err != nil {
+		return err
 	}
 	u.passwordHash = hashPassword(password)
 	u.updatedAt = time.Now()
@@ -142,7 +145,7 @@ func (u *{{.DomainName | title}}) UpdatePassword(password string) error {
 
 // ValidatePassword validates a password against the stored hash
 func (u *{{.DomainName | title}}) ValidatePassword(password string) bool {
-	return validatePassword(password, u.passwordHash)
+	return verifyPasswordHash(password, u.passwordHash)
 }
 
 // FullName returns the full name of the {{.DomainName}}
@@ -157,14 +160,55 @@ func (u *{{.DomainName | title}}) IsEmailVerified() bool {
 	return true
 }
 
+// validateName validates a name field
+func validateName(name, nameType string) error {
+	if name == "" {
+		if nameType == "first" {
+			return ErrInvalidFirstName
+		}
+		return ErrInvalidLastName
+	}
+	
+	if len(name) > 99 {
+		return ErrNameTooLong
+	}
+	
+	if strings.TrimSpace(name) == "" {
+		return ErrNameOnlySpaces
+	}
+	
+	return nil
+}
+
+// validatePassword validates a password for creation/updates
+func validatePassword(password string) error {
+	if password == "" {
+		return ErrEmptyPassword
+	}
+	
+	if len(password) < 8 {
+		return ErrWeakPassword
+	}
+	
+	if len(password) > 255 {
+		return ErrPasswordTooLong
+	}
+	
+	if strings.TrimSpace(password) == "" {
+		return ErrPasswordOnlySpaces
+	}
+	
+	return nil
+}
+
 // hashPassword hashes a password (placeholder implementation)
 func hashPassword(password string) string {
 	// In real implementation, use bcrypt.GenerateFromPassword
 	return "hashed_" + password
 }
 
-// validatePassword validates a password against a hash (placeholder implementation)
-func validatePassword(password, hash string) bool {
+// verifyPasswordHash validates a password against a hash (placeholder implementation)
+func verifyPasswordHash(password, hash string) bool {
 	// In real implementation, use bcrypt.CompareHashAndPassword
 	return "hashed_"+password == hash
 }

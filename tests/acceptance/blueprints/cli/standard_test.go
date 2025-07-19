@@ -250,14 +250,15 @@ func NewCLIValidator(projectPath, architecture string) *CLIValidator {
 func (v *CLIValidator) ValidateCobraSetup(t *testing.T) {
 	t.Helper()
 
-	// Check if main.go exists and contains Cobra imports
+	// Check if main.go exists and imports cmd package
 	mainFile := filepath.Join(v.projectPath, "main.go")
 	helpers.AssertFileExists(t, mainFile)
-	helpers.AssertFileContains(t, mainFile, "github.com/spf13/cobra")
+	helpers.AssertFileContains(t, mainFile, "/cmd")
 
-	// Check if cmd/root.go exists
+	// Check if cmd/root.go exists and contains Cobra imports
 	rootFile := filepath.Join(v.projectPath, "cmd", "root.go")
 	helpers.AssertFileExists(t, rootFile)
+	helpers.AssertFileContains(t, rootFile, "github.com/spf13/cobra")
 	helpers.AssertFileContains(t, rootFile, "cobra.Command")
 }
 

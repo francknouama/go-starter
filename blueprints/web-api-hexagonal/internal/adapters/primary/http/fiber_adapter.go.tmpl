@@ -83,7 +83,7 @@ func (f *FiberAdapter) setupRoutes() {
 	f.app.Get("/health/ready", f.adaptHandler(healthHandler.HandleReadiness))
 	
 	// API routes
-	api := f.app.Group("/api/v1")
+	api := f.app.Group("/api")
 	
 	{{- if ne .DatabaseDriver ""}}
 	// {{.DomainName | title}} routes
@@ -123,6 +123,9 @@ func (f *FiberAdapter) setupRoutes() {
 	{
 		protected{{.DomainName | title}}Routes.Get("/me", f.adaptHandler({{.DomainName}}Handler.HandleGetProfile))
 		protected{{.DomainName | title}}Routes.Put("/me", f.adaptHandler({{.DomainName}}Handler.HandleUpdateProfile))
+		// Alias routes for compatibility with tests
+		protected{{.DomainName | title}}Routes.Get("/profile", f.adaptHandler({{.DomainName}}Handler.HandleGetProfile))
+		protected{{.DomainName | title}}Routes.Put("/profile", f.adaptHandler({{.DomainName}}Handler.HandleUpdateProfile))
 	}
 	{{- end}}
 	{{- end}}

@@ -146,6 +146,9 @@ files:
     destination: "internal/domain/entities/auth_entity.go"
     condition: "{{ne .AuthType \"\"}}"
 
+  - source: "internal/domain/entities/health_entity.go.tmpl"
+    destination: "internal/domain/entities/health_entity.go"
+
   # Domain value objects
   - source: "internal/domain/valueobjects/user_id.go.tmpl"
     destination: "internal/domain/valueobjects/{{.DomainName}}_id.go"
@@ -157,6 +160,10 @@ files:
 
   - source: "internal/domain/valueobjects/password.go.tmpl"
     destination: "internal/domain/valueobjects/password.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  - source: "internal/domain/valueobjects/session_id.go.tmpl"
+    destination: "internal/domain/valueobjects/session_id.go"
     condition: "{{ne .AuthType \"\"}}"
 
   # Domain services - business logic that doesn't belong to entities
@@ -179,6 +186,9 @@ files:
 
   # === APPLICATION LAYER (Use Cases and Application Services) ===
   # Application services - orchestrate domain operations
+  - source: "internal/application/services/health_service.go.tmpl"
+    destination: "internal/application/services/health_service.go"
+
   - source: "internal/application/services/user_service.go.tmpl"
     destination: "internal/application/services/{{.DomainName}}_service.go"
     condition: "{{ne .DatabaseDriver \"\"}}"
@@ -359,7 +369,20 @@ files:
     condition: "{{ne .DatabaseDriver \"\"}}"
 
   # === TESTS ===
-  # Unit tests for domain layer
+  # Unit tests for domain layer (collocated with domain code)
+  - source: "tests/unit/domain/entities_test.go.tmpl"
+    destination: "internal/domain/entities/entities_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "tests/unit/domain/services_test.go.tmpl"
+    destination: "internal/domain/services/services_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "tests/unit/domain/valueobjects_test.go.tmpl"
+    destination: "internal/domain/valueobjects/valueobjects_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  # Unit tests for domain layer (separate tests directory)
   - source: "tests/unit/domain/entities_test.go.tmpl"
     destination: "tests/unit/domain/entities_test.go"
     condition: "{{ne .DatabaseDriver \"\"}}"
@@ -425,9 +448,6 @@ dependencies:
     version: "v4.11.3"
     condition: "{{eq .Framework \"echo\"}}"
   - module: "github.com/gofiber/fiber/v2"
-    version: "v2.51.0"
-    condition: "{{eq .Framework \"fiber\"}}"
-  - module: "github.com/gofiber/fiber/v2/middleware/cors"
     version: "v2.51.0"
     condition: "{{eq .Framework \"fiber\"}}"
   - module: "github.com/go-chi/chi/v5"
@@ -515,7 +535,7 @@ post_hooks:
     work_dir: "{{.OutputPath}}"
 
   - name: "make_scripts_executable" 
-    command: "chmod +x scripts/*.sh"
+    command: "find scripts -name '*.sh' -type f -exec chmod +x {} \\; 2>/dev/null || true"
     work_dir: "{{.OutputPath}}"
 
 features:

@@ -56,40 +56,56 @@ func NewSlogAdapterWithLevel(level string) output.LoggerPort {
 }
 
 // Debug logs a debug message
-func (s *SlogAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
+func (s *SlogAdapter) Debug(ctx context.Context, msg string, fields ...output.Field) {
+	args := fieldsToArgs(fields)
 	s.logger.DebugContext(ctx, msg, args...)
 }
 
 // Info logs an info message
-func (s *SlogAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
+func (s *SlogAdapter) Info(ctx context.Context, msg string, fields ...output.Field) {
+	args := fieldsToArgs(fields)
 	s.logger.InfoContext(ctx, msg, args...)
 }
 
 // Warn logs a warning message
-func (s *SlogAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
+func (s *SlogAdapter) Warn(ctx context.Context, msg string, fields ...output.Field) {
+	args := fieldsToArgs(fields)
 	s.logger.WarnContext(ctx, msg, args...)
 }
 
 // Error logs an error message
-func (s *SlogAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
+func (s *SlogAdapter) Error(ctx context.Context, msg string, fields ...output.Field) {
+	args := fieldsToArgs(fields)
 	s.logger.ErrorContext(ctx, msg, args...)
 }
 
-// With creates a new logger with additional fields
-func (s *SlogAdapter) With(args ...interface{}) output.LoggerPort {
+// Fatal logs a fatal message and terminates the application
+func (s *SlogAdapter) Fatal(ctx context.Context, msg string, fields ...output.Field) {
+	args := fieldsToArgs(fields)
+	s.logger.ErrorContext(ctx, msg, args...)
+	os.Exit(1)
+}
+
+// WithFields returns a logger with additional fields
+func (s *SlogAdapter) WithFields(fields ...output.Field) output.LoggerPort {
+	args := fieldsToArgs(fields)
 	return &SlogAdapter{
 		logger: s.logger.With(args...),
 	}
 }
 
-// WithFields creates a new logger with additional fields from a map
-func (s *SlogAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
-	args := make([]interface{}, 0, len(fields)*2)
-	for k, v := range fields {
-		args = append(args, k, v)
-	}
-	
+// WithError returns a logger with an error field
+func (s *SlogAdapter) WithError(err error) output.LoggerPort {
 	return &SlogAdapter{
-		logger: s.logger.With(args...),
+		logger: s.logger.With("error", err),
 	}
+}
+
+// fieldsToArgs converts Field structs to slog arguments
+func fieldsToArgs(fields []output.Field) []interface{} {
+	args := make([]interface{}, 0, len(fields)*2)
+	for _, field := range fields {
+		args = append(args, field.Key, field.Value)
+	}
+	return args
 }

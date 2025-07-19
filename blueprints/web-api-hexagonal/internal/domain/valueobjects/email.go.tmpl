@@ -11,8 +11,8 @@ type Email struct {
 	value string
 }
 
-// emailRegex is a basic email validation regex
-var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+// emailRegex is a comprehensive email validation regex that follows RFC standards
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?@[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?\.([a-zA-Z]{2,})$`)
 
 // NewEmail creates a new Email value object
 func NewEmail(value string) (Email, error) {
@@ -20,8 +20,53 @@ func NewEmail(value string) (Email, error) {
 		return Email{}, ErrEmptyEmail
 	}
 	
+	original := value
 	value = strings.ToLower(strings.TrimSpace(value))
 	
+	// Additional validation checks
+	if len(value) > 254 {
+		return Email{}, ErrEmailTooLong
+	}
+	
+	// Check for basic structure
+	parts := strings.Split(value, "@")
+	if len(parts) != 2 {
+		return Email{}, ErrInvalidEmailFormat
+	}
+	
+	localPart, domain := parts[0], parts[1]
+	
+	// Validate local part
+	if len(localPart) == 0 || len(localPart) > 64 {
+		return Email{}, ErrInvalidLocalPart
+	}
+	
+	// Validate domain part
+	if len(domain) == 0 || len(domain) > 253 {
+		return Email{}, ErrInvalidDomain
+	}
+	
+	// Check for consecutive dots
+	if strings.Contains(value, "..") {
+		return Email{}, ErrInvalidEmailFormat
+	}
+	
+	// Check for starting/ending dots in local part
+	if strings.HasPrefix(localPart, ".") || strings.HasSuffix(localPart, ".") {
+		return Email{}, ErrInvalidLocalPart
+	}
+	
+	// Check for starting/ending hyphens in domain
+	if strings.HasPrefix(domain, "-") || strings.HasSuffix(domain, "-") {
+		return Email{}, ErrInvalidDomain
+	}
+	
+	// Check for spaces in the email
+	if strings.Contains(original, " ") && strings.TrimSpace(original) != original {
+		return Email{}, ErrInvalidEmailFormat
+	}
+	
+	// Use regex for final validation
 	if !emailRegex.MatchString(value) {
 		return Email{}, ErrInvalidEmailFormat
 	}
@@ -75,6 +120,12 @@ var (
 	// ErrInvalidEmailFormat is returned when the email format is invalid
 	ErrInvalidEmailFormat = errors.New("invalid email format")
 	
-	// ErrInvalid{{.DomainName | title}}ID is returned when the {{.DomainName}} ID is invalid
-	ErrInvalid{{.DomainName | title}}ID = errors.New("invalid {{.DomainName}} ID")
+	// ErrEmailTooLong is returned when the email is too long
+	ErrEmailTooLong = errors.New("email address is too long")
+	
+	// ErrInvalidLocalPart is returned when the local part is invalid
+	ErrInvalidLocalPart = errors.New("invalid email local part")
+	
+	// ErrInvalidDomain is returned when the domain part is invalid
+	ErrInvalidDomain = errors.New("invalid email domain")
 )

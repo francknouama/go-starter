@@ -1,0 +1,261 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// createCmd represents the create command
+var createCmd = &cobra.Command{
+	Use:   "create [resource] [name]",
+	Short: "Create a new resource",
+	Long: `Create a new resource of the specified type.
+
+Available resource types:
+  • project   - Create a new project
+  • config    - Create a configuration file
+  • task      - Create a new task
+
+Examples:
+  {{.ProjectName}} create project my-new-project
+  {{.ProjectName}} create config --template basic
+  {{.ProjectName}} create task "Important task" --priority high`,
+	
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) < 1 {
+			return fmt.Errorf("requires at least 1 argument (resource type)")
+		}
+		
+		// Validate resource type
+		validResources := []string{"project", "config", "task"}
+		resourceType := args[0]
+		for _, valid := range validResources {
+			if resourceType == valid {
+				return nil
+			}
+		}
+		
+		return fmt.Errorf("invalid resource type '%s'. Valid types: %s", 
+			resourceType, strings.Join(validResources, ", "))
+	},
+	
+	Run: func(cmd *cobra.Command, args []string) {
+		resourceType := args[0]
+		var name string
+		if len(args) > 1 {
+			name = args[1]
+		}
+		
+		// Get flags
+		template, _ := cmd.Flags().GetString("template")
+		priority, _ := cmd.Flags().GetString("priority")
+		force, _ := cmd.Flags().GetBool("force")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		
+		appLogger.InfoWith("Creating resource", logger.Fields{
+			"type":     resourceType,
+			"name":     name,
+			"template": template,
+			"priority": priority,
+			"force":    force,
+			"dry_run":  dryRun,
+		})
+		
+		switch resourceType {
+		case "project":
+			createProject(cmd, name, template, force, dryRun)
+		case "config":
+			createConfig(cmd, name, template, force, dryRun)
+		case "task":
+			createTask(cmd, name, priority, force, dryRun)
+		default:
+			cmd.PrintErrf("Error: Unknown resource type '%s'\n", resourceType)
+			os.Exit(1)
+		}
+	},
+}
+
+func createProject(cmd *cobra.Command, name, template string, force, dryRun bool) {
+	if name == "" {
+		cmd.PrintErr("Error: Project name is required\n")
+		cmd.Printf("Usage: %s create project <name>\n", cmd.Root().Name())
+		os.Exit(1)
+	}
+	
+	// Check if project already exists
+	if !force && projectExists(name) {
+		cmd.PrintErrf("Error: Project '%s' already exists. Use --force to overwrite.\n", name)
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would create project: %s (template: %s)\n", name, template)
+		return
+	}
+	
+	// Create project logic here
+	cmd.Printf("✅ Created project: %s\n", name)
+	if template != "" {
+		cmd.Printf("   Template: %s\n", template)
+	}
+	
+	appLogger.InfoWith("Project created successfully", logger.Fields{
+		"name":     name,
+		"template": template,
+	})
+}
+
+func createConfig(cmd *cobra.Command, name, template string, force, dryRun bool) {
+	configName := name
+	if configName == "" {
+		configName = fmt.Sprintf(".%s.yaml", cmd.Root().Name())
+	}
+	
+	if !force && fileExists(configName) {
+		cmd.PrintErrf("Error: Config file '%s' already exists. Use --force to overwrite.\n", configName)
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would create config file: %s (template: %s)\n", configName, template)
+		return
+	}
+	
+	// Create config file
+	configContent := generateConfigContent(template)
+	if err := writeFile(configName, configContent); err != nil {
+		cmd.PrintErrf("Error creating config file: %v\n", err)
+		os.Exit(1)
+	}
+	
+	cmd.Printf("✅ Created config file: %s\n", configName)
+	if template != "" {
+		cmd.Printf("   Template: %s\n", template)
+	}
+	
+	appLogger.InfoWith("Config file created successfully", logger.Fields{
+		"name":     configName,
+		"template": template,
+	})
+}
+
+func createTask(cmd *cobra.Command, name, priority string, force, dryRun bool) {
+	if name == "" {
+		cmd.PrintErr("Error: Task name is required\n")
+		cmd.Printf("Usage: %s create task <name>\n", cmd.Root().Name())
+		os.Exit(1)
+	}
+	
+	if dryRun {
+		cmd.Printf("Would create task: %s (priority: %s)\n", name, priority)
+		return
+	}
+	
+	// Create task logic here
+	cmd.Printf("✅ Created task: %s\n", name)
+	if priority != "" {
+		cmd.Printf("   Priority: %s\n", priority)
+	}
+	
+	appLogger.InfoWith("Task created successfully", logger.Fields{
+		"name":     name,
+		"priority": priority,
+	})
+}
+
+// Helper functions
+func projectExists(name string) bool {
+	_, err := os.Stat(name)
+	return err == nil
+}
+
+func fileExists(filename string) bool {
+	_, err := os.Stat(filename)
+	return err == nil
+}
+
+func writeFile(filename, content string) error {
+	return os.WriteFile(filename, []byte(content), 0644)
+}
+
+func generateConfigContent(template string) string {
+	switch template {
+	case "basic":
+		return `# {{.ProjectName}} Configuration
+app:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+  debug: false
+
+logging:
+  level: "info"
+  format: "json"
+  
+# Add your configuration here
+`
+	case "advanced":
+		return `# {{.ProjectName}} Advanced Configuration
+app:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+  debug: false
+  environment: "development"
+
+server:
+  host: "localhost"
+  port: 8080
+  timeout: "30s"
+
+database:
+  host: "localhost"
+  port: 5432
+  name: "{{.ProjectName}}"
+  user: "user"
+  password: "password"
+  ssl_mode: "disable"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+features:
+  metrics: true
+  tracing: false
+  profiling: false
+
+# Add your configuration here
+`
+	default:
+		return `# {{.ProjectName}} Configuration
+app:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+
+logging:
+  level: "info"
+
+# Add your configuration here
+`
+	}
+}
+
+func init() {
+	rootCmd.AddCommand(createCmd)
+
+	// Flags
+	createCmd.Flags().StringP("template", "t", "", "Template to use (basic, advanced)")
+	createCmd.Flags().StringP("priority", "p", "normal", "Priority level (low, normal, high, urgent)")
+	createCmd.Flags().BoolP("force", "f", false, "Overwrite existing resources")
+	createCmd.Flags().BoolP("dry-run", "n", false, "Show what would be created without actually creating")
+	
+	// Bind flags to viper for configuration file support
+	viper.BindPFlag("create.template", createCmd.Flags().Lookup("template"))
+	viper.BindPFlag("create.priority", createCmd.Flags().Lookup("priority"))
+	viper.BindPFlag("create.force", createCmd.Flags().Lookup("force"))
+}

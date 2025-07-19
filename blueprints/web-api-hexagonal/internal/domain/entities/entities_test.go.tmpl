@@ -1,0 +1,347 @@
+package entities
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+func TestNewUser(t *testing.T) {
+	tests := []struct {
+		name        string
+		email       string
+		firstName   string
+		lastName    string
+		password    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "valid user creation",
+			email:     "test@example.com",
+			firstName: "John",
+			lastName:  "Doe",
+			password:  "password123",
+			wantErr:   false,
+		},
+		{
+			name:        "invalid email",
+			email:       "invalid-email",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "invalid email",
+		},
+		{
+			name:        "empty first name",
+			email:       "test@example.com",
+			firstName:   "",
+			lastName:    "Doe",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "first name cannot be empty",
+		},
+		{
+			name:        "empty last name",
+			email:       "test@example.com",
+			firstName:   "John",
+			lastName:    "",
+			password:    "password123",
+			wantErr:     true,
+			errContains: "last name cannot be empty",
+		},
+		{
+			name:        "weak password",
+			email:       "test@example.com",
+			firstName:   "John",
+			lastName:    "Doe",
+			password:    "123",
+			wantErr:     true,
+			errContains: "password",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			user, err := NewUser(tt.email, tt.firstName, tt.lastName, tt.password)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				assert.Nil(t, user)
+			} else {
+				assert.NoError(t, err)
+				assert.NotNil(t, user)
+				assert.Equal(t, tt.email, user.Email().Value())
+				assert.Equal(t, tt.firstName, user.FirstName())
+				assert.Equal(t, tt.lastName, user.LastName())
+				assert.True(t, user.VerifyPassword(tt.password))
+				assert.NotZero(t, user.CreatedAt())
+				assert.NotZero(t, user.UpdatedAt())
+			}
+		})
+	}
+}
+
+func TestUser_UpdateEmail(t *testing.T) {
+	// Create a test user
+	user, err := NewUser("original@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		newEmail    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:     "valid email update",
+			newEmail: "newemail@example.com",
+			wantErr:  false,
+		},
+		{
+			name:        "invalid email format",
+			newEmail:    "invalid-email",
+			wantErr:     true,
+			errContains: "invalid email",
+		},
+		{
+			name:        "empty email",
+			newEmail:    "",
+			wantErr:     true,
+			errContains: "email cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalUpdatedAt := user.UpdatedAt()
+			err := user.UpdateEmail(tt.newEmail)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				// Email should not have changed
+				assert.Equal(t, "original@example.com", user.Email().Value())
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.newEmail, user.Email().Value())
+				// UpdatedAt should be updated
+				assert.True(t, user.UpdatedAt().After(originalUpdatedAt))
+			}
+		})
+	}
+}
+
+func TestUser_UpdateName(t *testing.T) {
+	// Create a test user
+	user, err := NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		firstName   string
+		lastName    string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:      "valid name update",
+			firstName: "Jane",
+			lastName:  "Smith",
+			wantErr:   false,
+		},
+		{
+			name:        "empty first name",
+			firstName:   "",
+			lastName:    "Smith",
+			wantErr:     true,
+			errContains: "first name cannot be empty",
+		},
+		{
+			name:        "empty last name",
+			firstName:   "Jane",
+			lastName:    "",
+			wantErr:     true,
+			errContains: "last name cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalUpdatedAt := user.UpdatedAt()
+			err := user.UpdateName(tt.firstName, tt.lastName)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				// Name should not have changed
+				assert.Equal(t, "John", user.FirstName())
+				assert.Equal(t, "Doe", user.LastName())
+			} else {
+				assert.NoError(t, err)
+				assert.Equal(t, tt.firstName, user.FirstName())
+				assert.Equal(t, tt.lastName, user.LastName())
+				// UpdatedAt should be updated
+				assert.True(t, user.UpdatedAt().After(originalUpdatedAt))
+			}
+		})
+	}
+}
+
+func TestUser_UpdatePassword(t *testing.T) {
+	// Create a test user
+	user, err := NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		newPassword string
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name:        "valid password update",
+			newPassword: "newpassword123",
+			wantErr:     false,
+		},
+		{
+			name:        "weak password",
+			newPassword: "123",
+			wantErr:     true,
+			errContains: "password",
+		},
+		{
+			name:        "empty password",
+			newPassword: "",
+			wantErr:     true,
+			errContains: "password cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			originalUpdatedAt := user.UpdatedAt()
+			err := user.UpdatePassword(tt.newPassword)
+
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				// Password should not have changed
+				assert.True(t, user.VerifyPassword("password123"))
+			} else {
+				assert.NoError(t, err)
+				assert.True(t, user.VerifyPassword(tt.newPassword))
+				assert.False(t, user.VerifyPassword("password123"))
+				// UpdatedAt should be updated
+				assert.True(t, user.UpdatedAt().After(originalUpdatedAt))
+			}
+		})
+	}
+}
+
+func TestUser_VerifyPassword(t *testing.T) {
+	// Create a test user
+	user, err := NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name     string
+		password string
+		want     bool
+	}{
+		{
+			name:     "correct password",
+			password: "password123",
+			want:     true,
+		},
+		{
+			name:     "incorrect password",
+			password: "wrongpassword",
+			want:     false,
+		},
+		{
+			name:     "empty password",
+			password: "",
+			want:     false,
+		},
+		{
+			name:     "case sensitive",
+			password: "Password123",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := user.VerifyPassword(tt.password)
+			assert.Equal(t, tt.want, result)
+		})
+	}
+}
+
+func TestReconstructUser(t *testing.T) {
+	// Create test data
+	userID, err := valueobjects.NewUserID()
+	require.NoError(t, err)
+
+	email, err := valueobjects.NewEmail("test@example.com")
+	require.NoError(t, err)
+
+	createdAt := time.Now().Add(-time.Hour)
+	updatedAt := time.Now()
+
+	// Test reconstruction
+	user := ReconstructUser(
+		userID,
+		email,
+		"John",
+		"Doe",
+		"$2a$10$hashedpassword",
+		createdAt,
+		updatedAt,
+	)
+
+	assert.NotNil(t, user)
+	assert.Equal(t, userID.Value(), user.ID().Value())
+	assert.Equal(t, email.Value(), user.Email().Value())
+	assert.Equal(t, "John", user.FirstName())
+	assert.Equal(t, "Doe", user.LastName())
+	assert.Equal(t, createdAt, user.CreatedAt())
+	assert.Equal(t, updatedAt, user.UpdatedAt())
+}
+
+func TestUser_EntityInvariants(t *testing.T) {
+	// Create a test user
+	user, err := NewUser("test@example.com", "John", "Doe", "password123")
+	require.NoError(t, err)
+
+	// Test that ID is immutable
+	originalID := user.ID().Value()
+	
+	// Update other fields
+	err = user.UpdateEmail("newemail@example.com")
+	assert.NoError(t, err)
+	
+	user.UpdateName("Jane", "Smith")
+	
+	// ID should remain the same
+	assert.Equal(t, originalID, user.ID().Value())
+	
+	// CreatedAt should be immutable
+	originalCreatedAt := user.CreatedAt()
+	time.Sleep(1 * time.Millisecond) // Ensure time difference
+	
+	err = user.UpdateEmail("another@example.com")
+	assert.NoError(t, err)
+	
+	assert.Equal(t, originalCreatedAt, user.CreatedAt())
+	
+	// UpdatedAt should change when entity is modified
+	assert.True(t, user.UpdatedAt().After(originalCreatedAt))
+}
