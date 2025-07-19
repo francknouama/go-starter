@@ -947,3 +947,167 @@ func TestGenerator_runGitCommand(t *testing.T) {
 		})
 	}
 }
+
+func TestGenerator_checkOutputDirectory(t *testing.T) {
+	setupTestTemplates(t)
+
+	generator := New()
+
+	// Create temporary directory for testing
+	tempDir, err := os.MkdirTemp("", "go-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Warning: failed to remove temp dir: %v", err)
+		}
+	}()
+
+	tests := []struct {
+		name    string
+		setup   func() string
+		wantErr bool
+		errType string
+	}{
+		{
+			name: "directory does not exist",
+			setup: func() string {
+				return filepath.Join(tempDir, "non-existent")
+			},
+			wantErr: false,
+		},
+		{
+			name: "empty directory exists",
+			setup: func() string {
+				emptyDir := filepath.Join(tempDir, "empty")
+				if err := os.Mkdir(emptyDir, 0755); err != nil {
+					t.Fatalf("Failed to create empty dir: %v", err)
+				}
+				return emptyDir
+			},
+			wantErr: false,
+		},
+		{
+			name: "non-empty directory exists",
+			setup: func() string {
+				nonEmptyDir := filepath.Join(tempDir, "non-empty")
+				if err := os.Mkdir(nonEmptyDir, 0755); err != nil {
+					t.Fatalf("Failed to create non-empty dir: %v", err)
+				}
+				// Add a file to make it non-empty
+				testFile := filepath.Join(nonEmptyDir, "test.txt")
+				if err := os.WriteFile(testFile, []byte("test"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				return nonEmptyDir
+			},
+			wantErr: true,
+			errType: "validation",
+		},
+		{
+			name: "path exists but is not a directory",
+			setup: func() string {
+				filePath := filepath.Join(tempDir, "test-file.txt")
+				if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {
+					t.Fatalf("Failed to create test file: %v", err)
+				}
+				return filePath
+			},
+			wantErr: true,
+			errType: "validation",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			outputPath := tt.setup()
+			err := generator.checkOutputDirectory(outputPath)
+			
+			if (err != nil) != tt.wantErr {
+				t.Errorf("checkOutputDirectory() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			
+			if tt.wantErr && tt.errType != "" {
+				switch tt.errType {
+				case "validation":
+					if _, ok := err.(*types.ValidationError); !ok {
+						t.Errorf("checkOutputDirectory() error type = %T, want ValidationError", err)
+					}
+				case "filesystem":
+					if _, ok := err.(*types.FileSystemError); !ok {
+						t.Errorf("checkOutputDirectory() error type = %T, want FileSystemError", err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestGenerator_Generate_ExistingDirectory(t *testing.T) {
+	setupTestTemplates(t)
+
+	generator := New()
+
+	// Create temporary directory for testing
+	tempDir, err := os.MkdirTemp("", "go-starter-test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Warning: failed to remove temp dir: %v", err)
+		}
+	}()
+
+	// Create a non-empty directory
+	projectDir := filepath.Join(tempDir, "my-project")
+	if err := os.Mkdir(projectDir, 0755); err != nil {
+		t.Fatalf("Failed to create project dir: %v", err)
+	}
+
+	// Add a file to make it non-empty
+	existingFile := filepath.Join(projectDir, "existing.txt")
+	if err := os.WriteFile(existingFile, []byte("existing content"), 0644); err != nil {
+		t.Fatalf("Failed to create existing file: %v", err)
+	}
+
+	// Try to generate a project in the existing non-empty directory
+	config := types.ProjectConfig{
+		Name:   "my-project",
+		Module: "github.com/test/my-project",
+		Type:   "web-api-standard",
+	}
+
+	options := types.GenerationOptions{
+		OutputPath: projectDir,
+		DryRun:     false,
+		NoGit:      true,
+	}
+
+	result, err := generator.Generate(config, options)
+
+	// Should return an error
+	if err == nil {
+		t.Error("Generate() should have returned an error for existing non-empty directory")
+		return
+	}
+
+	// Should be a validation error
+	if _, ok := err.(*types.ValidationError); !ok {
+		t.Errorf("Generate() error type = %T, want ValidationError", err)
+	}
+
+	// Should not be successful
+	if result.Success {
+		t.Error("Generate() result.Success should be false for existing non-empty directory")
+	}
+
+	// Verify existing file is still there and not modified
+	if content, err := os.ReadFile(existingFile); err != nil {
+		t.Errorf("Existing file should still be readable: %v", err)
+	} else if string(content) != "existing content" {
+		t.Error("Existing file content should not be modified")
+	}
+}

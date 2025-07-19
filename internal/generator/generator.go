@@ -147,6 +147,12 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 		return result, nil
 	}
 
+	// Check if output directory already exists and validate it
+	if err := g.checkOutputDirectory(options.OutputPath); err != nil {
+		result.Error = err
+		return result, err
+	}
+
 	// Create output directory
 	if err := os.MkdirAll(options.OutputPath, 0755); err != nil {
 		result.Error = types.NewFileSystemError("failed to create output directory", err)
@@ -927,6 +933,36 @@ temp/
 	// Track file creation for rollback if transaction is active
 	if g.currentTransaction != nil {
 		g.currentTransaction.AddFile(gitignorePath)
+	}
+
+	return nil
+}
+
+// checkOutputDirectory validates the output directory before generation
+func (g *Generator) checkOutputDirectory(outputPath string) error {
+	// Check if the path exists
+	info, err := os.Stat(outputPath)
+	if os.IsNotExist(err) {
+		// Directory doesn't exist, this is fine
+		return nil
+	}
+	if err != nil {
+		return types.NewFileSystemError("failed to check output directory", err)
+	}
+
+	// Check if it's a directory
+	if !info.IsDir() {
+		return types.NewValidationError(fmt.Sprintf("output path '%s' exists but is not a directory", outputPath), nil)
+	}
+
+	// Check if directory is empty
+	entries, err := os.ReadDir(outputPath)
+	if err != nil {
+		return types.NewFileSystemError("failed to read output directory", err)
+	}
+
+	if len(entries) > 0 {
+		return types.NewValidationError(fmt.Sprintf("directory '%s' already exists and is not empty. Please choose a different name or remove the existing directory", filepath.Base(outputPath)), nil)
 	}
 
 	return nil
