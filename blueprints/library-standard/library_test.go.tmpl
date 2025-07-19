@@ -1,0 +1,178 @@
+package {{.ProjectName | replace "-" "_"}}
+
+import (
+	"context"
+	"testing"
+	"time"
+)
+
+// mockLogger implements the Logger interface for testing
+type mockLogger struct {
+	infoCalls  []logCall
+	errorCalls []logCall
+}
+
+type logCall struct {
+	msg    string
+	fields []any
+}
+
+func (m *mockLogger) Info(msg string, fields ...any) {
+	m.infoCalls = append(m.infoCalls, logCall{msg: msg, fields: fields})
+}
+
+func (m *mockLogger) Error(msg string, fields ...any) {
+	m.errorCalls = append(m.errorCalls, logCall{msg: msg, fields: fields})
+}
+
+func TestNew(t *testing.T) {
+	client := New()
+	if client == nil {
+		t.Fatal("New() returned nil")
+	}
+	if client.logger != nil {
+		t.Error("Expected logger to be nil by default")
+	}
+	defer client.Close()
+}
+
+func TestNewWithOptions(t *testing.T) {
+	logger := &mockLogger{}
+	client := New(
+		WithLogger(logger),
+		WithTimeout(10*time.Second),
+	)
+	if client == nil {
+		t.Fatal("New() returned nil")
+	}
+	if client.logger != logger {
+		t.Error("Expected logger to be set")
+	}
+	if client.config.Timeout != 10*time.Second {
+		t.Errorf("Expected timeout to be 10s, got %v", client.config.Timeout)
+	}
+	defer client.Close()
+}
+
+func TestProcess(t *testing.T) {
+	client := New()
+	defer client.Close()
+
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:    "valid input",
+			input:   "hello",
+			want:    "Processed: hello",
+			wantErr: false,
+		},
+		{
+			name:    "empty input",
+			input:   "",
+			want:    "",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := client.Process(context.Background(), tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Process() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("Process() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestDefaultConfig(t *testing.T) {
+	config := DefaultConfig()
+	if config.Timeout != 30*time.Second {
+		t.Errorf("Expected default timeout to be 30s, got %v", config.Timeout)
+	}
+}
+
+func TestProcessWithLogger(t *testing.T) {
+	logger := &mockLogger{}
+	client := New(WithLogger(logger))
+	defer client.Close()
+
+	result, err := client.Process(context.Background(), "test input")
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result != "Processed: test input" {
+		t.Errorf("Process() = %v, want 'Processed: test input'", result)
+	}
+
+	// Verify logging calls were made
+	if len(logger.infoCalls) != 2 {
+		t.Errorf("Expected 2 info log calls, got %d", len(logger.infoCalls))
+	}
+	
+	// Check first log call
+	if logger.infoCalls[0].msg != "processing input" {
+		t.Errorf("Expected first log message 'processing input', got '%s'", logger.infoCalls[0].msg)
+	}
+	
+	// Check second log call
+	if logger.infoCalls[1].msg != "processing completed" {
+		t.Errorf("Expected second log message 'processing completed', got '%s'", logger.infoCalls[1].msg)
+	}
+}
+
+func TestProcessWithoutLogger(t *testing.T) {
+	client := New() // No logger provided
+	defer client.Close()
+
+	result, err := client.Process(context.Background(), "test input")
+	if err != nil {
+		t.Fatalf("Process() error = %v", err)
+	}
+	if result != "Processed: test input" {
+		t.Errorf("Process() = %v, want 'Processed: test input'", result)
+	}
+	// Should work fine without any logging
+}
+
+func TestCloseWithLogger(t *testing.T) {
+	logger := &mockLogger{}
+	client := New(WithLogger(logger))
+	
+	err := client.Close()
+	if err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	
+	// Verify close logging call was made
+	if len(logger.infoCalls) != 1 {
+		t.Errorf("Expected 1 info log call for close, got %d", len(logger.infoCalls))
+	}
+	
+	if logger.infoCalls[0].msg != "closing client" {
+		t.Errorf("Expected close log message 'closing client', got '%s'", logger.infoCalls[0].msg)
+	}
+}
+
+func BenchmarkProcess(b *testing.B) {
+	client := New()
+	defer client.Close()
+	
+	ctx := context.Background()
+	input := "benchmark test"
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := client.Process(ctx, input)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

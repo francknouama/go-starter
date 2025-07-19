@@ -4,95 +4,26 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
-	{{.ProjectName | replace "-" "_" | replace "." "_"}} "{{.ModulePath}}"
+	{{.ProjectName | replace "-" "_"}} "{{.ModulePath}}"
 )
 
 func main() {
 	fmt.Println("{{.ProjectName}} Basic Example")
-	fmt.Println("==============================")
+	fmt.Println("=============================")
 
 	// Create a client with default configuration
-	client, err := {{.ProjectName | replace "-" "_" | replace "." "_"}}.New()
-	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
-	}
+	client := {{.ProjectName | replace "-" "_"}}.New()
 	defer client.Close()
 
-	// Check health status
-	fmt.Println("\n1. Health Check:")
-	health, err := client.Health(context.Background())
+	fmt.Println("Created client with default configuration")
+
+	// Process some data
+	result, err := client.Process(context.Background(), "hello world")
 	if err != nil {
-		log.Printf("Health check failed: %v", err)
-	} else {
-		fmt.Printf("   Status: %s\n", health.Status)
-		fmt.Printf("   Version: %s\n", health.Version)
-		fmt.Printf("   Uptime: %v\n", health.Uptime)
+		log.Fatalf("Failed to process: %v", err)
 	}
 
-	// Process some input
-	fmt.Println("\n2. Single Processing:")
-	inputs := []*{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
-		{
-			ID:        "example-1",
-			Data:      "hello world",
-			Timestamp: time.Now(),
-		},
-		{
-			ID:        "example-2", 
-			Data:      "go library example",
-			Timestamp: time.Now(),
-		},
-		{
-			ID:        "example-3",
-			Data:      "{{.ProjectName}} is awesome",
-			Timestamp: time.Now(),
-		},
-	}
-
-	for i, input := range inputs {
-		fmt.Printf("\nExample %d: Processing '%s'\n", i+1, input.Data)
-		
-		output, err := client.Process(context.Background(), input)
-		if err != nil {
-			log.Printf("Error processing input: %v", err)
-			continue
-		}
-		
-		fmt.Printf("   Result: %s\n", output.Result)
-		fmt.Printf("   Status: %s\n", output.Status)
-		fmt.Printf("   Processing Time: %v\n", output.ProcessingTime)
-	}
-
-	// Demonstrate batch processing
-	fmt.Println("\n3. Batch Processing:")
-	batchInputs := []*{{.ProjectName | replace "-" "_" | replace "." "_"}}.Input{
-		{ID: "batch-1", Data: "first item", Timestamp: time.Now()},
-		{ID: "batch-2", Data: "second item", Timestamp: time.Now()},
-		{ID: "batch-3", Data: "third item", Timestamp: time.Now()},
-	}
-
-	outputs, err := client.ProcessBatch(context.Background(), batchInputs)
-	if err != nil {
-		log.Printf("Batch processing failed: %v", err)
-	} else {
-		fmt.Printf("   Processed %d items successfully\n", len(outputs))
-		for _, output := range outputs {
-			fmt.Printf("   - %s: %s\n", output.ID, output.Result)
-		}
-	}
-
-	// Final health check to see metrics
-	fmt.Println("\n4. Final Health Check:")
-	health, err = client.Health(context.Background())
-	if err != nil {
-		log.Printf("Health check failed: %v", err)
-	} else {
-		fmt.Printf("   Total Processed: %d\n", health.Metrics.TotalProcessed)
-		fmt.Printf("   Total Errors: %d\n", health.Metrics.TotalErrors)
-		fmt.Printf("   Average Processing Time: %v\n", health.Metrics.AverageProcessingTime)
-	}
-
+	fmt.Printf("Result: %s\n", result)
 	fmt.Println("\nBasic example completed!")
 }

@@ -1,0 +1,128 @@
+// Package {{.ProjectName | replace "-" "_"}} provides {{.ProjectName}} functionality.
+//
+// This library offers a simple and clean API for {{.ProjectName}} operations.
+// It follows Go best practices and provides a focused, composable interface.
+//
+// Basic usage:
+//
+//	client := {{.ProjectName | replace "-" "_"}}.New()
+//	result, err := client.Process(context.Background(), "hello world")
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Println(result)
+//
+// With optional logging:
+//
+//	client := {{.ProjectName | replace "-" "_"}}.New({{.ProjectName | replace "-" "_"}}.WithLogger(myLogger))
+//	result, err := client.Process(context.Background(), "hello world")
+//	if err != nil {
+//		return err
+//	}
+//	fmt.Println(result)
+//
+// For more examples, see the examples/ directory.
+package {{.ProjectName | replace "-" "_"}}
+
+import (
+	"context"
+	"fmt"
+	"time"
+)
+
+// Version of the library
+const Version = "1.0.0"
+
+// Logger defines the logging interface that can be optionally provided to the library.
+// Libraries should not log directly but can accept a logger through dependency injection.
+// This allows the consuming application to control logging behavior.
+type Logger interface {
+	// Info logs informational messages for library users
+	Info(msg string, fields ...any)
+	// Error logs error messages for library users  
+	Error(msg string, fields ...any)
+}
+
+// Client provides the main interface for {{.ProjectName}} operations
+type Client struct {
+	config *Config
+	logger Logger // optional logger injected by user
+}
+
+// Config holds configuration for the {{.ProjectName}} client
+type Config struct {
+	// Timeout for operations
+	Timeout time.Duration
+}
+
+// Option configures a Client
+type Option func(*Client)
+
+// New creates a new {{.ProjectName}} client with the given options
+func New(opts ...Option) *Client {
+	client := &Client{
+		config: DefaultConfig(),
+		logger: nil, // no logging by default
+	}
+	
+	// Apply options to configure the client
+	for _, opt := range opts {
+		opt(client)
+	}
+	
+	return client
+}
+
+// DefaultConfig returns a default configuration
+func DefaultConfig() *Config {
+	return &Config{
+		Timeout: 30 * time.Second,
+	}
+}
+
+// Process performs the main {{.ProjectName}} operation
+func (c *Client) Process(ctx context.Context, input string) (string, error) {
+	if input == "" {
+		return "", fmt.Errorf("input cannot be empty")
+	}
+	
+	// Optional logging for library users (if logger is provided)
+	if c.logger != nil {
+		c.logger.Info("processing input", "input_length", len(input))
+	}
+	
+	// Simulate processing - in a real library this would do actual work
+	result := fmt.Sprintf("Processed: %s", input)
+	
+	// Optional logging for successful operations
+	if c.logger != nil {
+		c.logger.Info("processing completed", "result_length", len(result))
+	}
+	
+	return result, nil
+}
+
+// Close cleans up any resources held by the client
+func (c *Client) Close() error {
+	if c.logger != nil {
+		c.logger.Info("closing client")
+	}
+	// Clean up resources if needed
+	return nil
+}
+
+// WithLogger sets an optional logger for the client.
+// The logger will receive informational messages about library operations.
+// If no logger is provided, the library operates silently.
+func WithLogger(logger Logger) Option {
+	return func(c *Client) {
+		c.logger = logger
+	}
+}
+
+// WithTimeout sets the timeout for operations
+func WithTimeout(timeout time.Duration) Option {
+	return func(c *Client) {
+		c.config.Timeout = timeout
+	}
+}

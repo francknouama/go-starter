@@ -1,5 +1,5 @@
 name: "library-standard"
-description: "Go library template with minimal logging"
+description: "Go library template with clean, simple API"
 type: "library"
 architecture: "standard"
 version: "1.0.0"
@@ -48,21 +48,14 @@ variables:
     required: false
     default: "1.21"
 
-  - name: "Logger"
-    description: "Logging library (for internal library logging)"
-    type: "string"
-    required: false
-    default: "slog"
-    choices:
-      - "slog"
-      - "zap"
-      - "logrus"
-      - "zerolog"
 
 files:
   # Core library files
-  - source: "{{.ProjectName}}.go.tmpl"
+  - source: "library.go.tmpl"
     destination: "{{.ProjectName}}.go"
+
+  - source: "library_test.go.tmpl"
+    destination: "{{.ProjectName}}_test.go"
 
   - source: "go.mod.tmpl"
     destination: "go.mod"
@@ -73,26 +66,15 @@ files:
   - source: "README.md.tmpl"
     destination: "README.md"
 
-  # Main package implementation
-  - source: "pkg/{{.ProjectName}}/client.go.tmpl"
-    destination: "pkg/{{.ProjectName}}/client.go"
+  - source: "LICENSE.tmpl"
+    destination: "LICENSE"
 
-  - source: "pkg/{{.ProjectName}}/types.go.tmpl"
-    destination: "pkg/{{.ProjectName}}/types.go"
+  - source: "gitignore.tmpl"
+    destination: ".gitignore"
 
-  - source: "pkg/{{.ProjectName}}/options.go.tmpl"
-    destination: "pkg/{{.ProjectName}}/options.go"
-
-  # Internal utilities
-  - source: "internal/cache/cache.go.tmpl"
-    destination: "internal/cache/cache.go"
-
-  - source: "internal/ratelimiter/ratelimiter.go.tmpl"
-    destination: "internal/ratelimiter/ratelimiter.go"
-
-  # Internal logger (minimal for libraries)
-  - source: "internal/logger/logger.go.tmpl"
-    destination: "internal/logger/logger.go"
+  # Documentation
+  - source: "doc.go.tmpl"
+    destination: "doc.go"
 
   # Examples
   - source: "examples/basic/main.go.tmpl"
@@ -101,44 +83,12 @@ files:
   - source: "examples/advanced/main.go.tmpl"
     destination: "examples/advanced/main.go"
 
-  # Documentation
-  - source: "doc.go.tmpl"
-    destination: "doc.go"
-
-  # Tests
-  - source: "{{.ProjectName}}_test.go.tmpl"
-    destination: "{{.ProjectName}}_test.go"
-
-  - source: "pkg/{{.ProjectName}}/client_test.go.tmpl"
-    destination: "pkg/{{.ProjectName}}/client_test.go"
-
-  - source: "pkg/{{.ProjectName}}/benchmark_test.go.tmpl"
-    destination: "pkg/{{.ProjectName}}/benchmark_test.go"
-
+  # Example tests
   - source: "examples_test.go.tmpl"
     destination: "examples_test.go"
 
-  # Environment and Git
-  - source: ".gitignore.tmpl"
-    destination: ".gitignore"
-
-  # GitHub workflows
-  - source: ".github/workflows/ci.yml.tmpl"
-    destination: ".github/workflows/ci.yml"
-
-  - source: ".github/workflows/release.yml.tmpl"
-    destination: ".github/workflows/release.yml"
 
 dependencies:
-  - module: "go.uber.org/zap"
-    version: "v1.26.0"
-    condition: "{{eq .Logger \"zap\"}}"
-  - module: "github.com/sirupsen/logrus"
-    version: "v1.9.3"
-    condition: "{{eq .Logger \"logrus\"}}"
-  - module: "github.com/rs/zerolog"
-    version: "v1.31.0"
-    condition: "{{eq .Logger \"zerolog\"}}"
   - module: "github.com/stretchr/testify"
     version: "v1.8.4"
 
@@ -151,11 +101,11 @@ post_hooks:
     command: "go fmt ./..."
     work_dir: "{{.OutputPath}}"
 
+  - name: "generate_docs"
+    command: "go doc ./..."
+    work_dir: "{{.OutputPath}}"
+
 features:
-  - name: "logging"
-    description: "Minimal internal logging for library debugging"
-    enabled_when: "true"
-    
   - name: "examples"
     description: "Usage examples for library consumers"
     enabled_when: "true"
