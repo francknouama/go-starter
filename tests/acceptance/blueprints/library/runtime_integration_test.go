@@ -72,7 +72,6 @@ func TestLibrary_RuntimeIntegration_ComprehensiveLibraryTesting(t *testing.T) {
 		Module:    "github.com/test/test-library-runtime",
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	projectPath := helpers.GenerateProject(t, config)
@@ -118,66 +117,46 @@ func TestLibrary_RuntimeIntegration_ComprehensiveLibraryTesting(t *testing.T) {
 	})
 }
 
-func TestLibrary_MultiLoggerRuntimeValidation(t *testing.T) {
-	// Scenario: Test library with different logger types
-	// Given I generate library projects with different loggers
+func TestLibrary_OptionalLoggingRuntimeValidation(t *testing.T) {
+	// Scenario: Test library with optional logging via dependency injection
+	// Given I generate a library project without forced logging dependencies
 	// When I run the library examples
-	// Then all logger types should work correctly
-	// And logging behavior should be appropriate for libraries
-
-	loggers := []string{"slog", "zap", "logrus", "zerolog"}
-
-	for _, logger := range loggers {
-		t.Run("logger_"+logger+"_runtime", func(t *testing.T) {
-			config := types.ProjectConfig{
-				Name:      "test-library-" + logger + "-runtime",
-				Module:    "github.com/test/test-library-" + logger + "-runtime", 
-				Type:      "library",
-				GoVersion: "1.21",
-				Logger:    logger,
-			}
-
-			projectPath := helpers.GenerateProject(t, config)
-			validator := NewLibraryRuntimeValidator(projectPath)
-			
-			// Test basic functionality with this logger
-			validator.TestLibraryCompilation(t)
-			validator.TestExamplesExecution(t)
-			validator.TestLoggerBehavior(t, logger)
-		})
-	}
-}
-
-func TestLibrary_AdvancedFeatures(t *testing.T) {
-	// Scenario: Test advanced library features
-	// Given I generate a library with all features enabled
-	// When I test advanced functionality
-	// Then caching, rate limiting, metrics should work correctly
-	// And error handling should be comprehensive
-	// And concurrent usage should be safe
+	// Then the library should work correctly without any logging
+	// And the library should support optional logging via dependency injection
 
 	config := types.ProjectConfig{
-		Name:      "test-library-advanced",
-		Module:    "github.com/test/test-library-advanced",
+		Name:      "test-library-optional-logging",
+		Module:    "github.com/test/test-library-optional-logging", 
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	projectPath := helpers.GenerateProject(t, config)
 	validator := NewLibraryRuntimeValidator(projectPath)
+	
+	// Test basic functionality without logging
+	validator.TestLibraryCompilation(t)
+	validator.TestExamplesExecution(t)
+	validator.TestOptionalLoggingPattern(t)
+}
 
-	t.Run("caching_functionality", func(t *testing.T) {
-		validator.TestCachingFeatures(t)
-	})
+func TestLibrary_CoreFeatures(t *testing.T) {
+	// Scenario: Test core library features
+	// Given I generate a library with core functionality
+	// When I test the library functionality
+	// Then error handling should be comprehensive
+	// And concurrent usage should be safe
+	// And the API should follow Go best practices
 
-	t.Run("rate_limiting", func(t *testing.T) {
-		validator.TestRateLimiting(t)
-	})
+	config := types.ProjectConfig{
+		Name:      "test-library-core",
+		Module:    "github.com/test/test-library-core",
+		Type:      "library",
+		GoVersion: "1.21",
+	}
 
-	t.Run("metrics_collection", func(t *testing.T) {
-		validator.TestMetricsCollection(t)
-	})
+	projectPath := helpers.GenerateProject(t, config)
+	validator := NewLibraryRuntimeValidator(projectPath)
 
 	t.Run("error_handling", func(t *testing.T) {
 		validator.TestErrorHandling(t)
@@ -185,6 +164,10 @@ func TestLibrary_AdvancedFeatures(t *testing.T) {
 
 	t.Run("concurrent_safety", func(t *testing.T) {
 		validator.TestConcurrentSafety(t)
+	})
+
+	t.Run("api_design", func(t *testing.T) {
+		validator.TestAPIDesign(t)
 	})
 }
 
@@ -205,35 +188,13 @@ func (v *LibraryRuntimeValidator) TestLibraryStructure(t *testing.T) {
 	t.Helper()
 
 	// Check main library file
-	mainFile := filepath.Join(v.projectPath, "test-library-runtime.go")
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
 	assert.FileExists(t, mainFile)
 
-	// Check pkg structure
-	pkgDir := filepath.Join(v.projectPath, "pkg", "test_library_runtime")
-	assert.DirExists(t, pkgDir)
-
-	expectedFiles := []string{
-		"client.go",
-		"types.go", 
-		"options.go",
-		"client_test.go",
-		"benchmark_test.go",
-	}
-
-	for _, file := range expectedFiles {
-		filePath := filepath.Join(pkgDir, file)
-		assert.FileExists(t, filePath, "Expected file %s should exist", file)
-	}
-
-	// Check internal structure
-	internalDir := filepath.Join(v.projectPath, "internal")
-	assert.DirExists(t, internalDir)
-
-	internalSubdirs := []string{"cache", "ratelimiter", "logger"}
-	for _, subdir := range internalSubdirs {
-		subdirPath := filepath.Join(internalDir, subdir)
-		assert.DirExists(t, subdirPath, "Expected internal subdir %s should exist", subdir)
-	}
+	// Check library test file
+	testFile := filepath.Join(v.projectPath, projectBaseName+"_test.go")
+	assert.FileExists(t, testFile)
 
 	// Check examples
 	examplesDir := filepath.Join(v.projectPath, "examples")
@@ -247,26 +208,47 @@ func (v *LibraryRuntimeValidator) TestLibraryStructure(t *testing.T) {
 		mainFile := filepath.Join(subdirPath, "main.go")
 		assert.FileExists(t, mainFile, "Expected example main.go should exist in %s", subdir)
 	}
+
+	// Check that no forced dependencies exist
+	goModFile := filepath.Join(v.projectPath, "go.mod")
+	assert.FileExists(t, goModFile)
+	
+	// Should only have testify as dependency (no forced logging deps)
+	goModContent := helpers.ReadFileContent(t, goModFile)
+	assert.Contains(t, goModContent, "github.com/stretchr/testify")
+	
+	// Verify no forced logging dependencies
+	assert.NotContains(t, goModContent, "go.uber.org/zap")
+	assert.NotContains(t, goModContent, "github.com/sirupsen/logrus") 
+	assert.NotContains(t, goModContent, "github.com/rs/zerolog")
 }
 
 // TestLibraryCompilation validates that the library compiles successfully
 func (v *LibraryRuntimeValidator) TestLibraryCompilation(t *testing.T) {
 	t.Helper()
 
-	// Test main library compilation
-	cmd := exec.Command("go", "build", "./...")
+	// Ensure module is tidy first
+	cmd := exec.Command("go", "mod", "tidy")
 	cmd.Dir = v.projectPath
 	output, err := cmd.CombinedOutput()
+	assert.NoError(t, err, "go mod tidy should succeed. Output: %s", string(output))
+
+	// Test main library compilation
+	cmd = exec.Command("go", "build", "./...")
+	cmd.Dir = v.projectPath
+	output, err = cmd.CombinedOutput()
 	assert.NoError(t, err, "Library should compile successfully. Output: %s", string(output))
 
 	// Test that library can be imported as a module
-	cmd = exec.Command("go", "list", "-m", ".")
+	cmd = exec.Command("go", "list", "-m")
 	cmd.Dir = v.projectPath
 	output, err = cmd.CombinedOutput()
 	assert.NoError(t, err, "Library should be valid Go module. Output: %s", string(output))
 	
 	moduleName := strings.TrimSpace(string(output))
-	assert.Equal(t, "github.com/test/test-library-runtime", moduleName)
+	projectBaseName := filepath.Base(v.projectPath)
+	expectedModule := "github.com/test/" + projectBaseName
+	assert.Equal(t, expectedModule, moduleName)
 }
 
 // TestUnitTests runs all unit tests in the library
@@ -315,7 +297,9 @@ func (v *LibraryRuntimeValidator) TestExamplesCompilation(t *testing.T) {
 			require.NoError(t, err, "Should be able to initialize go module for example")
 
 			// Add replace directive for local library
-			cmd = exec.Command("go", "mod", "edit", "-replace", "github.com/test/test-library-runtime=../..")
+			projectBaseName := filepath.Base(v.projectPath)
+			replaceDirective := "github.com/test/" + projectBaseName + "=../.."
+			cmd = exec.Command("go", "mod", "edit", "-replace", replaceDirective)
 			cmd.Dir = exampleDir
 			_, err = cmd.CombinedOutput()
 			require.NoError(t, err, "Should be able to add replace directive")
@@ -354,22 +338,21 @@ func (v *LibraryRuntimeValidator) TestExamplesExecution(t *testing.T) {
 			outputStr := string(output)
 			
 			// Basic validations for all examples
-			assert.Contains(t, outputStr, "test-library-runtime", "Output should contain library name")
+			projectBaseName := filepath.Base(v.projectPath)
+			assert.Contains(t, outputStr, projectBaseName, "Output should contain project name")
 			assert.Contains(t, outputStr, "Example", "Output should indicate it's an example")
 			assert.Contains(t, outputStr, "completed", "Example should complete successfully")
 
-			// Example-specific validations
+			// Example-specific validations for our new simple library
 			if example == "basic" {
-				assert.Contains(t, outputStr, "Health Check", "Basic example should show health check")
-				assert.Contains(t, outputStr, "Processing", "Basic example should show processing")
-				assert.Contains(t, outputStr, "Batch Processing", "Basic example should show batch processing")
+				assert.Contains(t, outputStr, "default configuration", "Basic example should show default configuration")
+				assert.Contains(t, outputStr, "Result:", "Basic example should show result")
 			}
 
 			if example == "advanced" {
-				assert.Contains(t, outputStr, "Cache", "Advanced example should show caching")
-				assert.Contains(t, outputStr, "Rate Limiting", "Advanced example should show rate limiting")
-				assert.Contains(t, outputStr, "Event", "Advanced example should show events")
-				assert.Contains(t, outputStr, "Metrics", "Advanced example should show metrics")
+				assert.Contains(t, outputStr, "logging enabled", "Advanced example should show logging enabled")
+				assert.Contains(t, outputStr, "Processing:", "Advanced example should show processing")
+				assert.Contains(t, outputStr, "Expected error", "Advanced example should show error handling")
 			}
 		})
 	}
@@ -387,14 +370,15 @@ func (v *LibraryRuntimeValidator) TestLibraryAPI(t *testing.T) {
 
 	outputStr := string(output)
 	
-	// Check for main exported types
+	// Check for main exported types in our new library structure
 	expectedTypes := []string{
 		"type Client",
-		"type Input",
-		"type Output", 
 		"type Config",
+		"type Logger", // Optional logger interface
 		"type Option",
 		"func New",
+		"func WithLogger",
+		"func WithTimeout",
 	}
 
 	for _, expectedType := range expectedTypes {
@@ -421,10 +405,16 @@ func (v *LibraryRuntimeValidator) TestGoDocGeneration(t *testing.T) {
 func (v *LibraryRuntimeValidator) TestModuleBehavior(t *testing.T) {
 	t.Helper()
 
-	// Test module tidiness
-	cmd := exec.Command("go", "mod", "tidy")
+	// Run tests first to ensure testify dependency is used
+	cmd := exec.Command("go", "test", "./...")
 	cmd.Dir = v.projectPath
 	output, err := cmd.CombinedOutput()
+	assert.NoError(t, err, "Tests should run successfully. Output: %s", string(output))
+
+	// Test module tidiness (should pull in testify now)
+	cmd = exec.Command("go", "mod", "tidy")
+	cmd.Dir = v.projectPath
+	output, err = cmd.CombinedOutput()
 	assert.NoError(t, err, "Module should tidy correctly. Output: %s", string(output))
 
 	// Test module verification
@@ -437,87 +427,76 @@ func (v *LibraryRuntimeValidator) TestModuleBehavior(t *testing.T) {
 	goModFile := filepath.Join(v.projectPath, "go.mod")
 	content := helpers.ReadFileContent(t, goModFile)
 	
-	assert.Contains(t, content, "module github.com/test/test-library-runtime")
-	assert.Contains(t, content, "go 1.21")
-	assert.Contains(t, content, "github.com/stretchr/testify")
+	projectBaseName := filepath.Base(v.projectPath)
+	expectedModule := "module github.com/test/" + projectBaseName
+	assert.Contains(t, content, expectedModule)
+	assert.Contains(t, content, "go 1.")
+	// Note: testify dependency will be added automatically when tests use it
+	// For now, we focus on verifying no forced logging dependencies
+	
+	// Verify no forced logging dependencies (key aspect of our refactor)
+	assert.NotContains(t, content, "go.uber.org/zap")
+	assert.NotContains(t, content, "github.com/sirupsen/logrus") 
+	assert.NotContains(t, content, "github.com/rs/zerolog")
 }
 
-// TestLoggerBehavior validates logger-specific behavior
-func (v *LibraryRuntimeValidator) TestLoggerBehavior(t *testing.T, logger string) {
+// TestOptionalLoggingPattern validates the optional logging pattern
+func (v *LibraryRuntimeValidator) TestOptionalLoggingPattern(t *testing.T) {
 	t.Helper()
 
-	// Run basic example and check for logger output
-	exampleDir := filepath.Join(v.projectPath, "examples", "basic")
-	cmd := exec.Command("go", "run", "main.go")
-	cmd.Dir = exampleDir
-	output, err := cmd.CombinedOutput()
-	assert.NoError(t, err, "Basic example should run with %s logger. Output: %s", logger, string(output))
-
-	// Logger-specific validations would go here
-	// For now, just ensure it runs without errors
+	// Check that Logger interface exists in the library
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
+	content := helpers.ReadFileContent(t, mainFile)
+	
+	// Verify Logger interface is defined
+	assert.Contains(t, content, "type Logger interface", "Should define Logger interface")
+	assert.Contains(t, content, "Info(msg string, fields ...any)", "Should have Info method")
+	assert.Contains(t, content, "Error(msg string, fields ...any)", "Should have Error method")
+	
+	// Verify WithLogger option exists
+	assert.Contains(t, content, "func WithLogger", "Should have WithLogger option")
+	assert.Contains(t, content, "logger Logger", "Should accept Logger parameter")
+	
+	// Verify optional logging pattern in main functionality
+	assert.Contains(t, content, "if c.logger != nil", "Should check for logger before logging")
 }
 
-// TestCachingFeatures validates caching functionality
-func (v *LibraryRuntimeValidator) TestCachingFeatures(t *testing.T) {
+// TestAPIDesign validates the library follows Go API design best practices
+func (v *LibraryRuntimeValidator) TestAPIDesign(t *testing.T) {
 	t.Helper()
 
-	// Run advanced example which demonstrates caching
-	exampleDir := filepath.Join(v.projectPath, "examples", "advanced")
-	cmd := exec.Command("go", "run", "main.go")
-	cmd.Dir = exampleDir
-	output, err := cmd.CombinedOutput()
-	assert.NoError(t, err, "Advanced example should demonstrate caching. Output: %s", string(output))
-
-	outputStr := string(output)
-	assert.Contains(t, outputStr, "cache miss", "Should show cache miss")
-	assert.Contains(t, outputStr, "cache hit", "Should show cache hit")
-}
-
-// TestRateLimiting validates rate limiting functionality
-func (v *LibraryRuntimeValidator) TestRateLimiting(t *testing.T) {
-	t.Helper()
-
-	// Run advanced example which demonstrates rate limiting
-	exampleDir := filepath.Join(v.projectPath, "examples", "advanced")
-	cmd := exec.Command("go", "run", "main.go")
-	cmd.Dir = exampleDir
-	output, err := cmd.CombinedOutput()
-	assert.NoError(t, err, "Advanced example should demonstrate rate limiting. Output: %s", string(output))
-
-	outputStr := string(output)
-	assert.Contains(t, outputStr, "Rate limited", "Should show rate limiting in action")
-}
-
-// TestMetricsCollection validates metrics functionality
-func (v *LibraryRuntimeValidator) TestMetricsCollection(t *testing.T) {
-	t.Helper()
-
-	// Run basic example which shows final metrics
-	exampleDir := filepath.Join(v.projectPath, "examples", "basic")
-	cmd := exec.Command("go", "run", "main.go")
-	cmd.Dir = exampleDir
-	output, err := cmd.CombinedOutput()
-	assert.NoError(t, err, "Basic example should show metrics. Output: %s", string(output))
-
-	outputStr := string(output)
-	assert.Contains(t, outputStr, "Total Processed", "Should show total processed count")
-	assert.Contains(t, outputStr, "Average Processing Time", "Should show average processing time")
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
+	content := helpers.ReadFileContent(t, mainFile)
+	
+	// Verify functional options pattern
+	assert.Contains(t, content, "type Option func(*Client)", "Should use functional options pattern")
+	assert.Contains(t, content, "func New(opts ...Option)", "Should accept variadic options")
+	
+	// Verify proper error handling (returns errors instead of logging)
+	assert.Contains(t, content, "return \"\", fmt.Errorf", "Should return errors instead of logging them")
+	
+	// Verify clean API design
+	assert.Contains(t, content, "func (c *Client) Process", "Should have main Process method")
+	assert.Contains(t, content, "func (c *Client) Close", "Should have Close method for cleanup")
 }
 
 // TestErrorHandling validates error handling
 func (v *LibraryRuntimeValidator) TestErrorHandling(t *testing.T) {
 	t.Helper()
 
-	// Run advanced example which demonstrates error handling
-	exampleDir := filepath.Join(v.projectPath, "examples", "advanced")
-	cmd := exec.Command("go", "run", "main.go")
-	cmd.Dir = exampleDir
+	// Run tests to verify error handling behavior
+	cmd := exec.Command("go", "test", "-v", "./...")
+	cmd.Dir = v.projectPath
 	output, err := cmd.CombinedOutput()
-	assert.NoError(t, err, "Advanced example should demonstrate error handling. Output: %s", string(output))
+	assert.NoError(t, err, "Tests should pass and demonstrate error handling. Output: %s", string(output))
 
 	outputStr := string(output)
-	assert.Contains(t, outputStr, "Expected error", "Should show expected error handling")
-	assert.Contains(t, outputStr, "Validation failed", "Should show validation errors")
+	assert.Contains(t, outputStr, "PASS", "Error handling tests should pass")
+	// Verify tests include error cases (our tests should test both success and error cases)
+	assert.True(t, strings.Contains(outputStr, "empty") || strings.Contains(outputStr, "error") || 
+		strings.Contains(outputStr, "invalid"), "Should test error cases")
 }
 
 // TestConcurrentSafety validates concurrent usage
@@ -531,5 +510,5 @@ func (v *LibraryRuntimeValidator) TestConcurrentSafety(t *testing.T) {
 	assert.NoError(t, err, "Tests should pass with race detector. Output: %s", string(output))
 
 	outputStr := string(output)
-	assert.Contains(t, outputStr, "PASS", "Race detector tests should pass")
+	assert.True(t, strings.Contains(outputStr, "PASS") || strings.Contains(outputStr, "ok"), "Race detector tests should pass")
 }

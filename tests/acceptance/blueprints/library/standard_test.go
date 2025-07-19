@@ -75,7 +75,6 @@ func TestStandard_Library_BasicGeneration(t *testing.T) {
 		Module:    "github.com/test/test-standard-library",
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	// When I generate the project
@@ -95,41 +94,34 @@ func TestStandard_Library_BasicGeneration(t *testing.T) {
 	validator.ValidateExamples(t)
 }
 
-func TestStandard_Library_WithDifferentLoggers(t *testing.T) {
-	// Scenario: Generate library with different logging libraries
-	// Given I want a library with configurable logging
-	// When I generate with different loggers
-	// Then the project should include the selected logger
-	// And the project should compile successfully
-	// And logging should work as expected
+func TestStandard_Library_WithOptionalLogging(t *testing.T) {
+	// Scenario: Generate library with optional logging via dependency injection
+	// Given I want a library with optional logging capabilities
+	// When I generate the library
+	// Then the project should define a Logger interface
+	// And the project should support optional logging via dependency injection
+	// And the project should compile successfully without any logging dependencies
 
-	loggers := []string{"slog", "zap", "logrus", "zerolog"}
-
-	for _, logger := range loggers {
-		t.Run("logger_"+logger, func(t *testing.T) {
-			// Given I want a library with configurable logging
-			config := types.ProjectConfig{
-				Name:      "test-library-" + logger,
-				Module:    "github.com/test/test-library-" + logger,
-				Type:      "library",
-				GoVersion: "1.21",
-				Logger:    logger,
-			}
-
-			// When I generate with different loggers
-			projectPath := helpers.GenerateProject(t, config)
-
-			// Then the project should include the selected logger
-			validator := NewLibraryValidator(projectPath, "standard")
-			validator.ValidateLogger(t, logger)
-
-			// And the project should compile successfully
-			validator.ValidateCompilation(t)
-
-			// And logging should work as expected
-			validator.ValidateLoggerFunctionality(t, logger)
-		})
+	// Given I want a library with optional logging capabilities
+	config := types.ProjectConfig{
+		Name:      "test-library-optional",
+		Module:    "github.com/test/test-library-optional",
+		Type:      "library",
+		GoVersion: "1.21",
 	}
+
+	// When I generate the library
+	projectPath := helpers.GenerateProject(t, config)
+
+	// Then the project should define a Logger interface
+	validator := NewLibraryValidator(projectPath, "standard")
+	validator.ValidateLoggerInterface(t)
+
+	// And the project should compile successfully
+	validator.ValidateCompilation(t)
+
+	// And the project should support dependency injection
+	validator.ValidateOptionalLoggingPattern(t)
 }
 
 func TestStandard_Library_Documentation(t *testing.T) {
@@ -146,7 +138,6 @@ func TestStandard_Library_Documentation(t *testing.T) {
 		Module:    "github.com/test/test-library-docs",
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	// When I generate the project
@@ -177,7 +168,6 @@ func TestStandard_Library_ExampleUsage(t *testing.T) {
 		Module:    "github.com/test/test-library-examples",
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	// When I generate the project
@@ -209,7 +199,6 @@ func TestStandard_Library_TestSupport(t *testing.T) {
 		Module:    "github.com/test/test-library-tests",
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	// When I generate the project
@@ -243,7 +232,6 @@ func TestStandard_Library_PublicAPI(t *testing.T) {
 		Module:    "github.com/test/test-library-api",
 		Type:      "library",
 		GoVersion: "1.21",
-		Logger:    "slog",
 	}
 
 	// When I generate the project
@@ -279,26 +267,39 @@ func (v *LibraryValidator) ValidateLibraryStructure(t *testing.T) {
 	t.Helper()
 
 	// Check main library file exists
-	mainFile := filepath.Join(v.projectPath, "test-standard-library.go")
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
 	helpers.AssertFileExists(t, mainFile)
+
+	// Check library test file exists  
+	testFile := filepath.Join(v.projectPath, projectBaseName+"_test.go")
+	helpers.AssertFileExists(t, testFile)
 
 	// Check go.mod exists
 	goModFile := filepath.Join(v.projectPath, "go.mod")
 	helpers.AssertFileExists(t, goModFile)
 
-	// Check internal directory exists
-	internalDir := filepath.Join(v.projectPath, "internal")
-	helpers.AssertDirectoryExists(t, internalDir)
+	// Check examples directory exists
+	examplesDir := filepath.Join(v.projectPath, "examples")
+	helpers.AssertDirectoryExists(t, examplesDir)
 }
 
 // ValidatePublicAPI validates public API
 func (v *LibraryValidator) ValidatePublicAPI(t *testing.T) {
 	t.Helper()
 
-	// Check main library file contains exported functions
-	mainFile := filepath.Join(v.projectPath, "test-standard-library.go")
+	// Check main library file contains exported functions and types
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
 	helpers.AssertFileExists(t, mainFile)
-	helpers.AssertFileContains(t, mainFile, "func ")
+	
+	// Verify key exported types and functions
+	helpers.AssertFileContains(t, mainFile, "type Client")
+	helpers.AssertFileContains(t, mainFile, "type Config")
+	helpers.AssertFileContains(t, mainFile, "type Logger interface")
+	helpers.AssertFileContains(t, mainFile, "func New")
+	helpers.AssertFileContains(t, mainFile, "func WithLogger")
+	helpers.AssertFileContains(t, mainFile, "func WithTimeout")
 }
 
 // ValidateCompilation validates that the project compiles successfully
@@ -324,32 +325,40 @@ func (v *LibraryValidator) ValidateExamples(t *testing.T) {
 	helpers.AssertFileExists(t, advancedExample)
 }
 
-// ValidateLogger validates logger implementation
-func (v *LibraryValidator) ValidateLogger(t *testing.T, logger string) {
+// ValidateLoggerInterface validates the Logger interface definition
+func (v *LibraryValidator) ValidateLoggerInterface(t *testing.T) {
 	t.Helper()
 
-	// Check logger file exists
-	loggerFile := filepath.Join(v.projectPath, "internal", "logger", "logger.go")
-	helpers.AssertFileExists(t, loggerFile)
-
-	// Check logger specific dependencies in go.mod
-	goModFile := filepath.Join(v.projectPath, "go.mod")
-	helpers.AssertFileExists(t, goModFile)
-
-	switch logger {
-	case "zap":
-		helpers.AssertFileContains(t, goModFile, "go.uber.org/zap")
-	case "logrus":
-		helpers.AssertFileContains(t, goModFile, "github.com/sirupsen/logrus")
-	case "zerolog":
-		helpers.AssertFileContains(t, goModFile, "github.com/rs/zerolog")
-	}
+	// Check main library file contains Logger interface
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
+	helpers.AssertFileExists(t, mainFile)
+	
+	// Verify Logger interface definition
+	helpers.AssertFileContains(t, mainFile, "type Logger interface")
+	helpers.AssertFileContains(t, mainFile, "Info(msg string, fields ...any)")
+	helpers.AssertFileContains(t, mainFile, "Error(msg string, fields ...any)")
 }
 
-// ValidateLoggerFunctionality validates logger functionality
-func (v *LibraryValidator) ValidateLoggerFunctionality(t *testing.T, logger string) {
+// ValidateOptionalLoggingPattern validates optional logging pattern
+func (v *LibraryValidator) ValidateOptionalLoggingPattern(t *testing.T) {
 	t.Helper()
-	helpers.AssertLoggerFunctionality(t, v.projectPath, logger)
+
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
+	helpers.AssertFileExists(t, mainFile)
+	
+	// Verify optional logging pattern
+	helpers.AssertFileContains(t, mainFile, "logger Logger // optional")
+	helpers.AssertFileContains(t, mainFile, "if c.logger != nil")
+	helpers.AssertFileContains(t, mainFile, "func WithLogger(logger Logger)")
+	
+	// Verify no forced logging dependencies
+	goModFile := filepath.Join(v.projectPath, "go.mod")
+	content := helpers.ReadFileContent(t, goModFile)
+	helpers.AssertNotContains(t, content, "go.uber.org/zap")
+	helpers.AssertNotContains(t, content, "github.com/sirupsen/logrus")
+	helpers.AssertNotContains(t, content, "github.com/rs/zerolog")
 }
 
 // ValidateDocumentation validates documentation
@@ -369,7 +378,7 @@ func (v *LibraryValidator) ValidateREADME(t *testing.T) {
 	readmeFile := filepath.Join(v.projectPath, "README.md")
 	helpers.AssertFileExists(t, readmeFile)
 	helpers.AssertFileContains(t, readmeFile, "# test-library-docs")
-	helpers.AssertFileContains(t, readmeFile, "## Usage")
+	helpers.AssertFileContains(t, readmeFile, "## Quick Start")
 }
 
 // ValidateDocFile validates doc.go file
@@ -417,7 +426,8 @@ func (v *LibraryValidator) ValidateTestFiles(t *testing.T) {
 	t.Helper()
 
 	// Check main test file exists
-	mainTestFile := filepath.Join(v.projectPath, "test-library-tests_test.go")
+	projectBaseName := filepath.Base(v.projectPath)
+	mainTestFile := filepath.Join(v.projectPath, projectBaseName+"_test.go")
 	helpers.AssertFileExists(t, mainTestFile)
 }
 
@@ -446,17 +456,17 @@ func (v *LibraryValidator) ValidateTestExecution(t *testing.T) {
 	helpers.AssertTestsRun(t, v.projectPath)
 }
 
-// ValidateInternalPackages validates internal packages
+// ValidateInternalPackages validates that internal packages are not exposed
 func (v *LibraryValidator) ValidateInternalPackages(t *testing.T) {
 	t.Helper()
 
-	// Check internal directory exists
-	internalDir := filepath.Join(v.projectPath, "internal")
-	helpers.AssertDirectoryExists(t, internalDir)
-
-	// Check internal logger exists
-	internalLogger := filepath.Join(internalDir, "logger", "logger.go")
-	helpers.AssertFileExists(t, internalLogger)
+	// Verify that the public API does not expose internal implementation details
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
+	content := helpers.ReadFileContent(t, mainFile)
+	
+	// Should not expose internal implementation details in public API
+	helpers.AssertNotContains(t, content, "internal/")
 }
 
 // ValidateNamingConventions validates Go naming conventions
@@ -464,7 +474,8 @@ func (v *LibraryValidator) ValidateNamingConventions(t *testing.T) {
 	t.Helper()
 
 	// Check main library file follows naming convention
-	mainFile := filepath.Join(v.projectPath, "test-library-api.go")
+	projectBaseName := filepath.Base(v.projectPath)
+	mainFile := filepath.Join(v.projectPath, projectBaseName+".go")
 	helpers.AssertFileExists(t, mainFile)
 
 	// Check that exported functions start with uppercase

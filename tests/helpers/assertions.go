@@ -59,6 +59,13 @@ func AssertFileContains(t *testing.T, filePath string, expectedContent string) {
 	assert.Contains(t, string(content), expectedContent)
 }
 
+// AssertNotContains validates that content does not contain specific text
+func AssertNotContains(t *testing.T, content string, unwantedText string) {
+	t.Helper()
+	assert.NotContains(t, content, unwantedText,
+		"Content should not contain '%s'", unwantedText)
+}
+
 // AssertDirExists validates directory exists
 func AssertDirExists(t *testing.T, dirPath string) {
 	t.Helper()
