@@ -1032,12 +1032,16 @@ func TestGenerator_checkOutputDirectory(t *testing.T) {
 			if tt.wantErr && tt.errType != "" {
 				switch tt.errType {
 				case "validation":
-					if _, ok := err.(*types.ValidationError); !ok {
-						t.Errorf("checkOutputDirectory() error type = %T, want ValidationError", err)
+					if goStarterErr, ok := err.(*types.GoStarterError); !ok {
+						t.Errorf("checkOutputDirectory() error type = %T, want GoStarterError", err)
+					} else if goStarterErr.Code != types.ErrCodeValidation {
+						t.Errorf("checkOutputDirectory() error code = %s, want %s", goStarterErr.Code, types.ErrCodeValidation)
 					}
 				case "filesystem":
-					if _, ok := err.(*types.FileSystemError); !ok {
-						t.Errorf("checkOutputDirectory() error type = %T, want FileSystemError", err)
+					if goStarterErr, ok := err.(*types.GoStarterError); !ok {
+						t.Errorf("checkOutputDirectory() error type = %T, want GoStarterError", err)
+					} else if goStarterErr.Code != types.ErrCodeFileSystem {
+						t.Errorf("checkOutputDirectory() error code = %s, want %s", goStarterErr.Code, types.ErrCodeFileSystem)
 					}
 				}
 			}
@@ -1075,9 +1079,10 @@ func TestGenerator_Generate_ExistingDirectory(t *testing.T) {
 
 	// Try to generate a project in the existing non-empty directory
 	config := types.ProjectConfig{
-		Name:   "my-project",
-		Module: "github.com/test/my-project",
-		Type:   "web-api-standard",
+		Name:         "my-project",
+		Module:       "github.com/test/my-project",
+		Type:         "web-api",
+		Architecture: "standard",
 	}
 
 	options := types.GenerationOptions{
@@ -1095,8 +1100,10 @@ func TestGenerator_Generate_ExistingDirectory(t *testing.T) {
 	}
 
 	// Should be a validation error
-	if _, ok := err.(*types.ValidationError); !ok {
-		t.Errorf("Generate() error type = %T, want ValidationError", err)
+	if goStarterErr, ok := err.(*types.GoStarterError); !ok {
+		t.Errorf("Generate() error type = %T, want GoStarterError", err)
+	} else if goStarterErr.Code != types.ErrCodeValidation {
+		t.Errorf("Generate() error code = %s, want %s", goStarterErr.Code, types.ErrCodeValidation)
 	}
 
 	// Should not be successful

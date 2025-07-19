@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/francknouama/go-starter/pkg/types"

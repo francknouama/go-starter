@@ -13,9 +13,9 @@ import (
 // setupTemplatesForTesting initializes the templates filesystem for integration tests
 func setupTemplatesForTesting(t *testing.T) {
 	t.Helper()
-	templatesDir := "../../templates"
+	templatesDir := "../../blueprints"
 	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
-		t.Fatalf("Templates directory not found: %s", templatesDir)
+		t.Fatalf("Blueprints directory not found: %s", templatesDir)
 	}
 	templates.SetTemplatesFS(os.DirFS(templatesDir))
 }

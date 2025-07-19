@@ -512,11 +512,22 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 	}
 
 	// Add convenience variables for common patterns
-	// Check Features struct first, then fall back to Variables map
+	// Check Features struct first, then fall back to Variables map, then template defaults
 	dbDriver := g.getFeatureValue(config, "database", "driver", "")
 	if dbDriver == "" && config.Variables != nil {
 		if val, exists := config.Variables["DatabaseDriver"]; exists {
 			dbDriver = val
+		}
+	}
+	
+	// Apply template default for DatabaseDriver if still empty
+	if dbDriver == "" {
+		for _, variable := range tmpl.Variables {
+			if variable.Name == "DatabaseDriver" && variable.Default != nil {
+				if defaultVal, ok := variable.Default.(string); ok {
+					dbDriver = defaultVal
+				}
+			}
 		}
 	}
 	context["DatabaseDriver"] = dbDriver
@@ -579,6 +590,17 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 	if authType == "" && config.Variables != nil {
 		if val, exists := config.Variables["AuthType"]; exists {
 			authType = val
+		}
+	}
+	
+	// Apply template default for AuthType if still empty
+	if authType == "" {
+		for _, variable := range tmpl.Variables {
+			if variable.Name == "AuthType" && variable.Default != nil {
+				if defaultVal, ok := variable.Default.(string); ok {
+					authType = defaultVal
+				}
+			}
 		}
 	}
 	context["AuthType"] = authType
