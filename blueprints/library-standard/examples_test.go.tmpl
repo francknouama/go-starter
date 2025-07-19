@@ -1,3 +1,11 @@
+// Package {{.ProjectName | replace "-" "_"}}_test provides executable examples for the {{.ProjectName}} library.
+//
+// These examples appear in the godoc documentation and demonstrate common usage patterns.
+// For more comprehensive examples, see the examples/ directory:
+//
+//   - examples/basic/main.go - Simple usage with default configuration
+//   - examples/advanced/main.go - Advanced usage with logging and error handling
+//
 package {{.ProjectName | replace "-" "_"}}_test
 
 import (
@@ -9,6 +17,8 @@ import (
 	{{.ProjectName | replace "-" "_"}} "{{.ModulePath}}"
 )
 
+// ExampleNew demonstrates creating a new client with default configuration.
+// This is the simplest way to get started with the library.
 func ExampleNew() {
 	// Create a new client with default configuration
 	client := {{.ProjectName | replace "-" "_"}}.New()
@@ -24,6 +34,8 @@ func ExampleNew() {
 	// Output: Processed: hello
 }
 
+// ExampleNew_withOptions shows how to create a client with custom configuration.
+// You can customize timeout, add logging, and modify other behaviors.
 func ExampleNew_withOptions() {
 	// Create a client with custom timeout
 	client := {{.ProjectName | replace "-" "_"}}.New(
@@ -31,7 +43,7 @@ func ExampleNew_withOptions() {
 	)
 	defer client.Close()
 
-	// Process input
+	// Process input with the configured timeout
 	result, err := client.Process(context.Background(), "world")
 	if err != nil {
 		log.Fatal(err)
@@ -41,22 +53,78 @@ func ExampleNew_withOptions() {
 	// Output: Processed: world
 }
 
+// ExampleNew_withLogger demonstrates how to add optional logging to the client.
+// The library accepts any logger that implements the simple Logger interface.
+func ExampleNew_withLogger() {
+	// Create a simple logger adapter (see examples/advanced for full implementation)
+	logger := &mockLogger{}
+
+	// Create client with logging
+	client := {{.ProjectName | replace "-" "_"}}.New(
+		{{.ProjectName | replace "-" "_"}}.WithLogger(logger),
+	)
+	defer client.Close()
+
+	// The client will now log operations
+	fmt.Println("Client created with logging enabled")
+	// Output: Client created with logging enabled
+}
+
+// mockLogger is a simple logger for example purposes
+type mockLogger struct{}
+
+func (m *mockLogger) Info(msg string, fields ...any)  {}
+func (m *mockLogger) Error(msg string, fields ...any) {}
+
+// ExampleClient_Process shows the main Process method in action.
+// This is the primary method for interacting with the library.
 func ExampleClient_Process() {
 	client := {{.ProjectName | replace "-" "_"}}.New()
 	defer client.Close()
 
-	// Process different types of input
-	inputs := []string{"hello", "world", "go library"}
+	// Process a single input
+	result, err := client.Process(context.Background(), "test input")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println(result)
+	// Output: Processed: test input
+}
+
+// ExampleClient_Process_batch demonstrates processing multiple inputs.
+// This pattern is useful for batch operations.
+func ExampleClient_Process_batch() {
+	client := {{.ProjectName | replace "-" "_"}}.New()
+	defer client.Close()
+
+	// Process multiple inputs
+	inputs := []string{"first", "second", "third"}
 
 	for _, input := range inputs {
 		result, err := client.Process(context.Background(), input)
 		if err != nil {
-			log.Fatal(err)
+			log.Printf("Failed to process %s: %v", input, err)
+			continue
 		}
 		fmt.Println(result)
 	}
 	// Output:
-	// Processed: hello
-	// Processed: world
-	// Processed: go library
+	// Processed: first
+	// Processed: second
+	// Processed: third
+}
+
+// ExampleClient_Process_errorHandling shows proper error handling.
+// The library returns errors for invalid inputs rather than logging them.
+func ExampleClient_Process_errorHandling() {
+	client := {{.ProjectName | replace "-" "_"}}.New()
+	defer client.Close()
+
+	// Try to process empty input (will return an error)
+	_, err := client.Process(context.Background(), "")
+	if err != nil {
+		fmt.Println("Error:", err)
+	}
+	// Output: Error: input cannot be empty
 }
