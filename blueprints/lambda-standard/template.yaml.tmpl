@@ -20,18 +20,172 @@ Resources:
     Properties:
       CodeUri: ./
       Handler: bootstrap
+      Timeout: 30
+      MemorySize: 512
+      Tracing: Active
+      ReservedConcurrencyLimit: 100
       Environment:
         Variables:
           LOG_LEVEL: info
           ENVIRONMENT: !Ref Environment
+          SERVICE_NAME: {{.ProjectName}}
+          METRICS_NAMESPACE: !Sub "{{.ProjectName}}/Lambda/${Environment}"
+          AWS_XRAY_TRACING_NAME: {{.ProjectName}}
+          AWS_XRAY_CONTEXT_MISSING: LOG_ERROR
+          _LAMBDA_TELEMETRY_LOG_FD: 2
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - xray:PutTraceSegments
+                - xray:PutTelemetryRecords
+                - cloudwatch:PutMetricData
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: "*"
       Events:
         ApiEvent:
           Type: Api
           Properties:
+            Path: /{proxy+}
+            Method: ANY
+        RootApi:
+          Type: Api
+          Properties:
             Path: /
-            Method: any
+            Method: ANY
+        DirectInvoke:
+          Type: Api
+          Properties:
+            Path: /invoke
+            Method: POST
+
+  # CloudWatch Dashboard for monitoring
+  {{.ProjectName | replace "-" ""}}Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub "{{.ProjectName}}-${Environment}-Dashboard"
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${{{.ProjectName | replace "-" ""}}Function}" ],
+                  [ ".", "Invocations", ".", "." ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Throttles", ".", "." ],
+                  [ ".", "ConcurrentExecutions", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Average",
+                "region": "${AWS::Region}",
+                "title": "Lambda Function Metrics",
+                "yAxis": {
+                  "left": {
+                    "min": 0
+                  }
+                }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "{{.ProjectName}}/Lambda/${Environment}", "Invocations", "FunctionName", "${{{.ProjectName | replace "-" ""}}Function}" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "ColdStarts", ".", "." ],
+                  [ ".", "Duration", ".", "." ]
+                ],
+                "period": 300,
+                "stat": "Sum",
+                "region": "${AWS::Region}",
+                "title": "Custom Application Metrics"
+              }
+            },
+            {
+              "type": "log",
+              "x": 0,
+              "y": 12,
+              "width": 24,
+              "height": 6,
+              "properties": {
+                "query": "SOURCE '/aws/lambda/${{{.ProjectName | replace "-" ""}}Function}'\n| fields @timestamp, level, message, lambda.requestId, performance.duration\n| filter level = \"ERROR\"\n| sort @timestamp desc\n| limit 20",
+                "region": "${AWS::Region}",
+                "title": "Recent Errors",
+                "view": "table"
+              }
+            }
+          ]
+        }
+
+  # CloudWatch Alarms
+  HighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "{{.ProjectName}}-${Environment}-HighErrorRate"
+      AlarmDescription: "Lambda function error rate is too high"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref {{.ProjectName | replace "-" ""}}Function
+      TreatMissingData: notBreaching
+
+  HighDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "{{.ProjectName}}-${Environment}-HighDuration"
+      AlarmDescription: "Lambda function duration is too high"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 3
+      Threshold: 25000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref {{.ProjectName | replace "-" ""}}Function
+      TreatMissingData: notBreaching
 
 Outputs:
   {{.ProjectName | replace "-" ""}}Api:
     Description: "API Gateway endpoint URL"
     Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  {{.ProjectName | replace "-" ""}}FunctionArn:
+    Description: "Lambda Function ARN"
+    Value: !GetAtt {{.ProjectName | replace "-" ""}}Function.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionArn"
+
+  {{.ProjectName | replace "-" ""}}Dashboard:
+    Description: "CloudWatch Dashboard URL"
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name={{.ProjectName}}-${Environment}-Dashboard"
+    Export:
+      Name: !Sub "${AWS::StackName}-DashboardUrl"
+
+  XRayTraceMap:
+    Description: "X-Ray Service Map URL"
+    Value: !Sub "https://${AWS::Region}.console.aws.amazon.com/xray/home?region=${AWS::Region}#service-map"
+    Export:
+      Name: !Sub "${AWS::StackName}-XRayUrl"

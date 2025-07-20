@@ -1,0 +1,156 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  GO_VERSION: "{{.GoVersion}}"
+
+jobs:
+  test:
+    name: Test Before Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run tests
+      run: go test -v -race ./...
+    
+    - name: Run linter
+      uses: golangci/golangci-lint-action@v3
+      with:
+        version: latest
+        args: --timeout=5m
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Get version from tag
+      id: get_version
+      run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+    
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || echo "")
+        
+        # Generate changelog
+        if [ -n "$PREV_TAG" ]; then
+          echo "## Changes since $PREV_TAG" > RELEASE_CHANGELOG.md
+          echo "" >> RELEASE_CHANGELOG.md
+          git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD >> RELEASE_CHANGELOG.md
+        else
+          echo "## Initial Release" > RELEASE_CHANGELOG.md
+          echo "" >> RELEASE_CHANGELOG.md
+          echo "- Initial release of {{.ProjectName}}" >> RELEASE_CHANGELOG.md
+        fi
+        
+        echo "" >> RELEASE_CHANGELOG.md
+        echo "## Installation" >> RELEASE_CHANGELOG.md
+        echo "" >> RELEASE_CHANGELOG.md
+        echo "\`\`\`bash" >> RELEASE_CHANGELOG.md
+        echo "go get {{.ModulePath}}@${{ steps.get_version.outputs.VERSION }}" >> RELEASE_CHANGELOG.md
+        echo "\`\`\`" >> RELEASE_CHANGELOG.md
+    
+    - name: Create GitHub Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        release_name: Release ${{ steps.get_version.outputs.VERSION }}
+        body_path: RELEASE_CHANGELOG.md
+        draft: false
+        prerelease: ${{ contains(steps.get_version.outputs.VERSION, '-') }}
+
+  go-proxy-warmup:
+    name: Warm up Go Proxy
+    runs-on: ubuntu-latest
+    needs: create-release
+    
+    steps:
+    - name: Warm up go proxy
+      run: |
+        # Wait a bit for the tag to be available
+        sleep 30
+        
+        # Warm up the go proxy by fetching the module
+        curl -f "https://proxy.golang.org/{{.ModulePath}}/@v/${{ github.ref_name }}.info" || true
+        curl -f "https://proxy.golang.org/{{.ModulePath}}/@v/${{ github.ref_name }}.mod" || true
+        curl -f "https://proxy.golang.org/{{.ModulePath}}/@v/${{ github.ref_name }}.zip" || true
+
+  update-pkg-go-dev:
+    name: Update pkg.go.dev
+    runs-on: ubuntu-latest
+    needs: go-proxy-warmup
+    
+    steps:
+    - name: Update pkg.go.dev
+      run: |
+        # Wait a bit more for the proxy to be updated
+        sleep 60
+        
+        # Trigger pkg.go.dev update
+        curl -f "https://pkg.go.dev/{{.ModulePath}}@${{ github.ref_name }}" || true
+
+  notify-success:
+    name: Notify Success
+    runs-on: ubuntu-latest
+    needs: [create-release, go-proxy-warmup, update-pkg-go-dev]
+    if: success()
+    
+    steps:
+    - name: Success notification
+      run: |
+        echo "🎉 Release ${{ github.ref_name }} has been successfully published!"
+        echo "📦 Module: {{.ModulePath}}"
+        echo "🔗 Documentation: https://pkg.go.dev/{{.ModulePath}}@${{ github.ref_name }}"
+        echo "📥 Install with: go get {{.ModulePath}}@${{ github.ref_name }}"
+
+  notify-failure:
+    name: Notify Failure
+    runs-on: ubuntu-latest
+    needs: [test, create-release]
+    if: failure()
+    
+    steps:
+    - name: Failure notification
+      run: |
+        echo "❌ Release ${{ github.ref_name }} failed!"
+        echo "Please check the workflow logs for details."

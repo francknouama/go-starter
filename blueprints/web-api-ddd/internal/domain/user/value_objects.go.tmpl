@@ -2,6 +2,7 @@ package {{.DomainName}}
 
 import (
 	"strings"
+	"time"
 	"{{.ModulePath}}/internal/shared/errors"
 )
 
@@ -65,9 +66,481 @@ func (s *Status) UnmarshalText(text []byte) error {
 	return nil
 }
 
-// Add other generic value objects here as needed for your domain
-// Examples:
-// - Priority (High, Medium, Low)
-// - Type/Category
-// - Size (Small, Medium, Large)
-// - etc.
+// UserName represents a validated user name value object
+type UserName struct {
+	value string
+}
+
+// NewUserName creates a new validated UserName
+func NewUserName(name string) (UserName, error) {
+	name = strings.TrimSpace(name)
+	
+	if name == "" {
+		return UserName{}, errors.ErrInvalidValueObject.WithDetails("field", "name").WithDetails("reason", "name cannot be empty")
+	}
+	
+	if len(name) < 2 {
+		return UserName{}, errors.ErrInvalidValueObject.WithDetails("field", "name").WithDetails("reason", "name must be at least 2 characters")
+	}
+	
+	if len(name) > 100 {
+		return UserName{}, errors.ErrInvalidValueObject.WithDetails("field", "name").WithDetails("reason", "name cannot exceed 100 characters")
+	}
+	
+	// Business rule: No profanity or inappropriate content
+	if containsProfanity(name) {
+		return UserName{}, errors.ErrInvalidValueObject.WithDetails("field", "name").WithDetails("reason", "name contains inappropriate content")
+	}
+	
+	return UserName{value: name}, nil
+}
+
+// Value returns the name value
+func (n UserName) Value() string {
+	return n.value
+}
+
+// DisplayName returns a formatted display name
+func (n UserName) DisplayName() string {
+	// Proper case formatting for display
+	words := strings.Fields(n.value)
+	for i, word := range words {
+		if len(word) > 0 {
+			words[i] = strings.ToUpper(word[:1]) + strings.ToLower(word[1:])
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// InitialsLike returns initials from the name
+func (n UserName) Initials() string {
+	words := strings.Fields(n.value)
+	var initials strings.Builder
+	for _, word := range words {
+		if len(word) > 0 {
+			initials.WriteString(strings.ToUpper(word[:1]))
+		}
+	}
+	return initials.String()
+}
+
+// Equals checks if two names are equal
+func (n UserName) Equals(other UserName) bool {
+	return strings.EqualFold(n.value, other.value)
+}
+
+// String implements fmt.Stringer
+func (n UserName) String() string {
+	return n.value
+}
+
+// EmailAddress represents a validated email address value object
+type EmailAddress struct {
+	value string
+	localPart string
+	domain string
+}
+
+// NewEmailAddress creates a new validated EmailAddress
+func NewEmailAddress(email string) (EmailAddress, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	
+	if email == "" {
+		return EmailAddress{}, errors.ErrInvalidValueObject.WithDetails("field", "email").WithDetails("reason", "email cannot be empty")
+	}
+	
+	// Basic email format validation
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return EmailAddress{}, errors.ErrInvalidValueObject.WithDetails("field", "email").WithDetails("reason", "invalid email format")
+	}
+	
+	localPart, domain := parts[0], parts[1]
+	
+	if localPart == "" || domain == "" {
+		return EmailAddress{}, errors.ErrInvalidValueObject.WithDetails("field", "email").WithDetails("reason", "invalid email format")
+	}
+	
+	if len(localPart) > 64 || len(domain) > 253 {
+		return EmailAddress{}, errors.ErrInvalidValueObject.WithDetails("field", "email").WithDetails("reason", "email too long")
+	}
+	
+	// Domain must contain at least one dot
+	if !strings.Contains(domain, ".") {
+		return EmailAddress{}, errors.ErrInvalidValueObject.WithDetails("field", "email").WithDetails("reason", "invalid domain format")
+	}
+	
+	// Business rule: Block disposable email domains
+	if isDisposableEmailDomain(domain) {
+		return EmailAddress{}, errors.ErrInvalidValueObject.WithDetails("field", "email").WithDetails("reason", "disposable email addresses not allowed")
+	}
+	
+	return EmailAddress{
+		value: email,
+		localPart: localPart,
+		domain: domain,
+	}, nil
+}
+
+// Value returns the email value
+func (e EmailAddress) Value() string {
+	return e.value
+}
+
+// LocalPart returns the local part of the email
+func (e EmailAddress) LocalPart() string {
+	return e.localPart
+}
+
+// Domain returns the domain part of the email
+func (e EmailAddress) Domain() string {
+	return e.domain
+}
+
+// IsBusinessEmail checks if the email is from a business domain
+func (e EmailAddress) IsBusinessEmail() bool {
+	// Common personal email domains
+	personalDomains := []string{"gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "icloud.com"}
+	for _, domain := range personalDomains {
+		if e.domain == domain {
+			return false
+		}
+	}
+	return true
+}
+
+// GetProviderType returns the email provider type
+func (e EmailAddress) GetProviderType() string {
+	switch e.domain {
+	case "gmail.com":
+		return "Google"
+	case "outlook.com", "hotmail.com", "live.com":
+		return "Microsoft"
+	case "yahoo.com":
+		return "Yahoo"
+	case "icloud.com", "me.com", "mac.com":
+		return "Apple"
+	default:
+		if e.IsBusinessEmail() {
+			return "Business"
+		}
+		return "Other"
+	}
+}
+
+// Equals checks if two email addresses are equal
+func (e EmailAddress) Equals(other EmailAddress) bool {
+	return e.value == other.value
+}
+
+// String implements fmt.Stringer
+func (e EmailAddress) String() string {
+	return e.value
+}
+
+// UserDescription represents a user description with business rules
+type UserDescription struct {
+	value string
+	wordCount int
+}
+
+// NewUserDescription creates a new validated UserDescription
+func NewUserDescription(description string) (UserDescription, error) {
+	description = strings.TrimSpace(description)
+	
+	if len(description) > 1000 {
+		return UserDescription{}, errors.ErrInvalidValueObject.WithDetails("field", "description").WithDetails("reason", "description cannot exceed 1000 characters")
+	}
+	
+	// Count words
+	wordCount := len(strings.Fields(description))
+	
+	// Business rule: Descriptions should be meaningful
+	if description != "" && wordCount < 2 {
+		return UserDescription{}, errors.ErrInvalidValueObject.WithDetails("field", "description").WithDetails("reason", "description should contain at least 2 words")
+	}
+	
+	return UserDescription{
+		value: description,
+		wordCount: wordCount,
+	}, nil
+}
+
+// Value returns the description value
+func (d UserDescription) Value() string {
+	return d.value
+}
+
+// WordCount returns the number of words
+func (d UserDescription) WordCount() int {
+	return d.wordCount
+}
+
+// Summary returns a truncated summary
+func (d UserDescription) Summary(maxWords int) string {
+	if d.wordCount <= maxWords {
+		return d.value
+	}
+	
+	words := strings.Fields(d.value)
+	return strings.Join(words[:maxWords], " ") + "..."
+}
+
+// IsEmpty checks if the description is empty
+func (d UserDescription) IsEmpty() bool {
+	return d.value == ""
+}
+
+// HasKeyword checks if the description contains a keyword
+func (d UserDescription) HasKeyword(keyword string) bool {
+	return strings.Contains(strings.ToLower(d.value), strings.ToLower(keyword))
+}
+
+// String implements fmt.Stringer
+func (d UserDescription) String() string {
+	return d.value
+}
+
+// Helper functions
+
+func containsProfanity(text string) bool {
+	// Implement profanity checking logic
+	// This is a simplified example
+	profanityWords := []string{"spam", "fake", "test123"} // Add actual profanity list
+	lowerText := strings.ToLower(text)
+	for _, word := range profanityWords {
+		if strings.Contains(lowerText, word) {
+			return true
+		}
+	}
+	return false
+}
+
+func isDisposableEmailDomain(domain string) bool {
+	// Common disposable email domains
+	disposableDomains := []string{
+		"10minutemail.com",
+		"temp-mail.org",
+		"guerrillamail.com",
+		"mailinator.com",
+	}
+	for _, disposable := range disposableDomains {
+		if domain == disposable {
+			return true
+		}
+	}
+	return false
+}
+
+// UserProfile represents user profile information with business logic
+type UserProfile struct {
+	completionScore    int
+	emailProvider      string
+	lastNameChange     *time.Time
+	lastLoginActivity  *time.Time
+	onboardingComplete bool
+}
+
+// NewUserProfile creates a new user profile
+func NewUserProfile(emailProvider string) UserProfile {
+	return UserProfile{
+		completionScore:    30, // Base score for having email
+		emailProvider:      emailProvider,
+		lastNameChange:     nil,
+		lastLoginActivity:  nil,
+		onboardingComplete: false,
+	}
+}
+
+// IsComplete checks if the profile is considered complete
+func (p UserProfile) IsComplete() bool {
+	return p.completionScore >= 80 // 80% completion threshold
+}
+
+// CompletionScore returns the profile completion score
+func (p UserProfile) CompletionScore() int {
+	return p.completionScore
+}
+
+// EmailProvider returns the email provider
+func (p UserProfile) EmailProvider() string {
+	return p.emailProvider
+}
+
+// WithNameChange returns a profile updated with name change
+func (p UserProfile) WithNameChange() UserProfile {
+	now := time.Now().UTC()
+	p.lastNameChange = &now
+	p.completionScore = p.calculateCompletionScore()
+	return p
+}
+
+// WithLoginActivity returns a profile updated with login activity
+func (p UserProfile) WithLoginActivity() UserProfile {
+	now := time.Now().UTC()
+	p.lastLoginActivity = &now
+	if !p.onboardingComplete {
+		p.onboardingComplete = true
+		p.completionScore += 20 // Bonus for first login
+	}
+	return p
+}
+
+// WithDescriptionUpdate returns a profile updated with description
+func (p UserProfile) WithDescriptionUpdate(description UserDescription) UserProfile {
+	if !description.IsEmpty() {
+		p.completionScore += 20 // Bonus for having description
+	} else {
+		p.completionScore -= 10 // Penalty for removing description
+	}
+	
+	// Ensure score stays within bounds
+	if p.completionScore > 100 {
+		p.completionScore = 100
+	}
+	if p.completionScore < 0 {
+		p.completionScore = 0
+	}
+	
+	return p
+}
+
+// calculateCompletionScore calculates the profile completion score
+func (p UserProfile) calculateCompletionScore() int {
+	score := 30 // Base score for email
+	
+	if p.lastNameChange != nil {
+		score += 10 // Bonus for having a name
+	}
+	
+	if p.onboardingComplete {
+		score += 20 // Bonus for completing onboarding
+	}
+	
+	// Add more scoring logic based on business rules
+	
+	return score
+}
+
+// UserPreferences represents user preferences and settings
+type UserPreferences struct {
+	notifications NotificationPreferences
+	privacy       PrivacyPreferences
+	display       DisplayPreferences
+	communication CommunicationPreferences
+}
+
+// NotificationPreferences represents notification settings
+type NotificationPreferences struct {
+	Email     bool `json:"email"`
+	Push      bool `json:"push"`
+	SMS       bool `json:"sms"`
+	Marketing bool `json:"marketing"`
+}
+
+// PrivacyPreferences represents privacy settings
+type PrivacyPreferences struct {
+	ProfilePublic     bool `json:"profilePublic"`
+	AllowDataSharing  bool `json:"allowDataSharing"`
+	ShowOnlineStatus  bool `json:"showOnlineStatus"`
+}
+
+// DisplayPreferences represents display settings
+type DisplayPreferences struct {
+	Theme     string `json:"theme"` // light, dark, auto
+	Language  string `json:"language"`
+	Timezone  string `json:"timezone"`
+}
+
+// CommunicationPreferences represents communication settings
+type CommunicationPreferences struct {
+	PreferredContact string `json:"preferredContact"` // email, phone, app
+	BusinessHours    bool   `json:"businessHours"`
+}
+
+// NewDefaultUserPreferences creates default preferences for personal users
+func NewDefaultUserPreferences() UserPreferences {
+	return UserPreferences{
+		notifications: NotificationPreferences{
+			Email:     true,
+			Push:      true,
+			SMS:       false,
+			Marketing: false,
+		},
+		privacy: PrivacyPreferences{
+			ProfilePublic:     false,
+			AllowDataSharing:  false,
+			ShowOnlineStatus:  true,
+		},
+		display: DisplayPreferences{
+			Theme:    "auto",
+			Language: "en",
+			Timezone: "UTC",
+		},
+		communication: CommunicationPreferences{
+			PreferredContact: "email",
+			BusinessHours:    false,
+		},
+	}
+}
+
+// NewBusinessUserPreferences creates default preferences for business users
+func NewBusinessUserPreferences() UserPreferences {
+	prefs := NewDefaultUserPreferences()
+	
+	// Business users have different defaults
+	prefs.notifications.Marketing = false // No marketing for business
+	prefs.privacy.ProfilePublic = true    // Business profiles often public
+	prefs.privacy.ShowOnlineStatus = true // Important for business communication
+	prefs.communication.BusinessHours = true
+	
+	return prefs
+}
+
+// ValidateCompatibility validates preferences against user type
+func (p UserPreferences) ValidateCompatibility(isBusinessEmail bool) error {
+	// Business rule: Business emails should not opt into personal marketing
+	if isBusinessEmail && p.notifications.Marketing {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "business accounts cannot opt into personal marketing")
+	}
+	
+	// Add more validation rules as needed
+	
+	return nil
+}
+
+// ToBusinessDefaults converts preferences to business defaults
+func (p UserPreferences) ToBusinessDefaults() UserPreferences {
+	p.notifications.Marketing = false
+	p.privacy.ProfilePublic = true
+	p.communication.BusinessHours = true
+	return p
+}
+
+// ToPersonalDefaults converts preferences to personal defaults
+func (p UserPreferences) ToPersonalDefaults() UserPreferences {
+	p.notifications.Marketing = false // Conservative default
+	p.privacy.ProfilePublic = false
+	p.communication.BusinessHours = false
+	return p
+}
+
+// GetNotificationPreferences returns notification preferences
+func (p UserPreferences) GetNotificationPreferences() NotificationPreferences {
+	return p.notifications
+}
+
+// GetPrivacyPreferences returns privacy preferences
+func (p UserPreferences) GetPrivacyPreferences() PrivacyPreferences {
+	return p.privacy
+}
+
+// GetDisplayPreferences returns display preferences
+func (p UserPreferences) GetDisplayPreferences() DisplayPreferences {
+	return p.display
+}
+
+// GetCommunicationPreferences returns communication preferences
+func (p UserPreferences) GetCommunicationPreferences() CommunicationPreferences {
+	return p.communication
+}

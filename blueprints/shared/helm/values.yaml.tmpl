@@ -1,0 +1,459 @@
+# Default values for {{.ProjectName}}
+# This is a YAML-formatted file with production-ready defaults
+
+# Global configuration
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# Application configuration
+image:
+  registry: ghcr.io
+  repository: {{.ModulePath}}
+  tag: "latest"
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# Application name override
+nameOverride: ""
+fullnameOverride: ""
+
+# Application deployment configuration
+replicaCount: 3
+
+# Deployment strategy
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 25%
+    maxSurge: 25%
+
+# Pod configuration
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 2000
+  runAsNonRoot: true
+  runAsUser: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+    - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  annotations: {}
+  # For LoadBalancer service type
+  # loadBalancerIP: ""
+  # loadBalancerSourceRanges: []
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Rate limiting
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+  hosts:
+    - host: {{.ProjectName}}.{{.DomainName | default "example.com"}}
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: {{.ProjectName}}-tls
+      hosts:
+        - {{.ProjectName}}.{{.DomainName | default "example.com"}}
+
+# Resource configuration
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+# Horizontal Pod Autoscaling
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+  # Custom metrics (example)
+  # customMetrics:
+  #   - type: Pods
+  #     pods:
+  #       metric:
+  #         name: http_requests_per_second
+  #       target:
+  #         type: AverageValue
+  #         averageValue: 100
+
+# Vertical Pod Autoscaling
+verticalPodAutoscaler:
+  enabled: false
+  updateMode: "Auto" # Off, Initial, Recreation, Auto
+
+# Node selection
+nodeSelector: {}
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - {{.ProjectName}}
+        topologyKey: kubernetes.io/hostname
+
+# Environment variables
+env:
+  - name: PORT
+    value: "8080"
+  - name: LOG_LEVEL
+    value: "info"
+  - name: ENVIRONMENT
+    value: "production"
+  {{- if eq .LoggerType "zap" }}
+  - name: LOG_ENCODING
+    value: "json"
+  {{- else if eq .LoggerType "logrus" }}
+  - name: LOG_FORMAT
+    value: "json"
+  {{- end }}
+
+# Environment variables from secrets/configmaps
+envFrom:
+  - secretRef:
+      name: {{.ProjectName}}-secrets
+  - configMapRef:
+      name: {{.ProjectName}}-config
+
+# Configuration
+config:
+  {{- if eq .Type "web-api" "microservice" }}
+  server:
+    port: 8080
+    readTimeout: 30s
+    writeTimeout: 30s
+    idleTimeout: 120s
+    shutdownTimeout: 30s
+  {{- end }}
+  {{- if .Features.Database.Driver }}
+  database:
+    driver: {{.Features.Database.Driver}}
+    maxOpenConns: 25
+    maxIdleConns: 5
+    connMaxLifetime: 300s
+  {{- end }}
+  {{- if .Features.Logger }}
+  logging:
+    level: info
+    format: json
+    output: stdout
+  {{- end }}
+
+# Secrets (will be populated by external secret management)
+secrets: {}
+  # database_url: ""
+  # redis_url: ""
+  # jwt_secret: ""
+
+# Health checks
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# Startup probe (for slow-starting containers)
+startupProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+
+# Pod Disruption Budget
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  # maxUnavailable: 1
+
+# Service Account
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+# RBAC
+rbac:
+  create: true
+  rules: []
+
+# Network Policies
+networkPolicy:
+  enabled: true
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+    # Allow HTTPS to external services
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- if .Features.Database.Driver }}
+    # Allow database connection
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: database
+      ports:
+        - protocol: TCP
+          port: 5432
+    {{- end }}
+
+# Storage
+persistence:
+  enabled: false
+  storageClass: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  annotations: {}
+
+# Monitoring
+monitoring:
+  enabled: true
+  
+  # Service Monitor for Prometheus
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    annotations: {}
+    
+  # Prometheus rules
+  prometheusRule:
+    enabled: true
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 10% for 5 minutes"
+      
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency detected"
+          description: "95th percentile latency is above 500ms for 5 minutes"
+      
+      - alert: PodCrashLooping
+        expr: rate(kube_pod_container_status_restarts_total[15m]) * 60 * 15 > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pod is crash looping"
+          description: "Pod {{ $labels.pod }} is crash looping"
+
+  # Grafana dashboard
+  grafana:
+    enabled: true
+    dashboard:
+      enabled: true
+      annotations:
+        grafana_folder: "{{.ProjectName}}"
+      labels:
+        grafana_dashboard: "1"
+
+# External dependencies
+postgresql:
+  enabled: {{if eq .Features.Database.Driver "postgres"}}true{{else}}false{{end}}
+  auth:
+    postgresPassword: "changeme"
+    database: "{{.ProjectName | replace "-" "_"}}"
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+redis:
+  enabled: false
+  auth:
+    enabled: true
+    password: "changeme"
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+
+# Backup configuration
+backup:
+  enabled: false
+  schedule: "0 2 * * *" # Daily at 2 AM
+  retention: "30d"
+  storage:
+    type: s3
+    bucket: "{{.ProjectName}}-backups"
+    region: "us-east-1"
+
+# Migrations (for database schemas)
+migrations:
+  enabled: {{if .Features.Database.Driver}}true{{else}}false{{end}}
+  image:
+    repository: migrate/migrate
+    tag: v4.16.2
+  # Run migrations as init container
+  initContainer: true
+
+# Testing
+testing:
+  enabled: false
+  image:
+    repository: postman/newman
+    tag: latest
+  tests:
+    - name: api-tests
+      collection: /tests/api-tests.json
+      environment: /tests/environment.json
+
+# Debugging
+debug:
+  enabled: false
+  # Enable debug endpoints
+  pprof: false
+  # Enable verbose logging
+  verbose: false
+
+# Feature flags
+features:
+  # Enable metrics endpoint
+  metrics: true
+  # Enable tracing
+  tracing: {{if .Features.Tracing}}true{{else}}false{{end}}
+  # Enable profiling
+  profiling: false
+
+# Security
+security:
+  # Pod Security Standards
+  podSecurityStandards: "restricted"
+  
+  # Security Context Constraints (OpenShift)
+  securityContextConstraints:
+    enabled: false
+    name: "restricted"
+  
+  # Falco rules
+  falco:
+    enabled: false
+    rules:
+      - rule: Unexpected network traffic
+        condition: outbound and not allowed_outbound_destinations
+        output: "Unexpected network traffic (user=%ka.user.name command=%proc.cmdline)"
+        priority: WARNING
+
+# Chaos Engineering
+chaosEngineering:
+  enabled: false
+  # Chaos Mesh experiments
+  experiments:
+    - name: pod-failure
+      schedule: "0 2 * * 1" # Monday at 2 AM
+      duration: "30s"
+
+# Development overrides
+development:
+  # Override for development environment
+  replicaCount: 1
+  autoscaling:
+    enabled: false
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  ingress:
+    hosts:
+      - host: {{.ProjectName}}-dev.{{.DomainName | default "example.com"}}
+        paths:
+          - path: /
+            pathType: Prefix
+
+# Staging overrides
+staging:
+  # Override for staging environment
+  replicaCount: 2
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 5
+  ingress:
+    hosts:
+      - host: {{.ProjectName}}-staging.{{.DomainName | default "example.com"}}
+        paths:
+          - path: /
+            pathType: Prefix

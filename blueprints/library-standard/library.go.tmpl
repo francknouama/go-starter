@@ -30,8 +30,26 @@ import (
 	"time"
 )
 
-// Version of the library
-const Version = "1.0.0"
+// Version information follows semantic versioning (https://semver.org/)
+const (
+	// Version is the current version of the library
+	Version = "1.0.0"
+	
+	// Major version number
+	Major = 1
+	
+	// Minor version number
+	Minor = 0
+	
+	// Patch version number
+	Patch = 0
+	
+	// PreRelease identifier (empty for stable releases)
+	PreRelease = ""
+	
+	// BuildMetadata provides additional build information
+	BuildMetadata = ""
+)
 
 // Logger defines the logging interface that can be optionally provided to the library.
 // Libraries should not log directly but can accept a logger through dependency injection.
@@ -51,8 +69,45 @@ type Client struct {
 
 // Config holds configuration for the {{.ProjectName}} client
 type Config struct {
-	// Timeout for operations
+	// Timeout for operations (default: 30s)
 	Timeout time.Duration
+	
+	// MaxRetries for failed operations (default: 3)
+	MaxRetries int
+	
+	// RetryBackoff is the backoff strategy for retries (default: exponential)
+	RetryBackoff BackoffStrategy
+	
+	// UserAgent string for HTTP operations (if applicable)
+	UserAgent string
+	
+	// Debug mode enables additional logging and validation
+	Debug bool
+	
+	// Metrics enables optional metrics collection
+	Metrics MetricsCollector
+}
+
+// BackoffStrategy defines retry backoff behavior
+type BackoffStrategy int
+
+const (
+	// LinearBackoff increases delay linearly
+	LinearBackoff BackoffStrategy = iota
+	// ExponentialBackoff doubles delay each retry
+	ExponentialBackoff
+	// FixedBackoff uses constant delay
+	FixedBackoff
+)
+
+// MetricsCollector defines an interface for collecting library metrics
+type MetricsCollector interface {
+	// IncrementCounter increments a named counter
+	IncrementCounter(name string, tags map[string]string)
+	// RecordDuration records a duration metric
+	RecordDuration(name string, duration time.Duration, tags map[string]string)
+	// SetGauge sets a gauge value
+	SetGauge(name string, value float64, tags map[string]string)
 }
 
 // Option configures a Client
@@ -73,33 +128,169 @@ func New(opts ...Option) *Client {
 	return client
 }
 
-// DefaultConfig returns a default configuration
+// DefaultConfig returns a default configuration with sensible defaults
 func DefaultConfig() *Config {
 	return &Config{
-		Timeout: 30 * time.Second,
+		Timeout:      30 * time.Second,
+		MaxRetries:   3,
+		RetryBackoff: ExponentialBackoff,
+		UserAgent:    fmt.Sprintf("{{.ProjectName}}/%s (go)", Version),
+		Debug:        false,
+		Metrics:      nil, // no metrics by default
 	}
 }
 
-// Process performs the main {{.ProjectName}} operation
+// Process performs the main {{.ProjectName}} operation with comprehensive error handling and metrics
 func (c *Client) Process(ctx context.Context, input string) (string, error) {
-	if input == "" {
-		return "", fmt.Errorf("input cannot be empty")
+	start := time.Now()
+	
+	// Record metrics if available
+	if c.config.Metrics != nil {
+		defer func(start time.Time) {
+			c.config.Metrics.RecordDuration("{{.ProjectName}}.process.duration", time.Since(start), nil)
+		}(start)
+		c.config.Metrics.IncrementCounter("{{.ProjectName}}.process.attempts", nil)
 	}
 	
-	// Optional logging for library users (if logger is provided)
-	if c.logger != nil {
-		c.logger.Info("processing input", "input_length", len(input))
+	// Input validation
+	if err := c.validateInput(input); err != nil {
+		if c.config.Metrics != nil {
+			c.config.Metrics.IncrementCounter("{{.ProjectName}}.process.validation_errors", nil)
+		}
+		return "", fmt.Errorf("input validation failed: %w", err)
 	}
 	
-	// Simulate processing - in a real library this would do actual work
-	result := fmt.Sprintf("Processed: %s", input)
-	
-	// Optional logging for successful operations
+	// Optional debug logging
 	if c.logger != nil {
-		c.logger.Info("processing completed", "result_length", len(result))
+		c.logger.Info("processing input", "input_length", len(input), "debug", c.config.Debug)
+	}
+	
+	// Process with retry logic
+	result, err := c.processWithRetry(ctx, input)
+	if err != nil {
+		if c.config.Metrics != nil {
+			c.config.Metrics.IncrementCounter("{{.ProjectName}}.process.errors", map[string]string{"error_type": "processing"})
+		}
+		return "", fmt.Errorf("processing failed: %w", err)
+	}
+	
+	// Success metrics and logging
+	if c.config.Metrics != nil {
+		c.config.Metrics.IncrementCounter("{{.ProjectName}}.process.successes", nil)
+	}
+	
+	if c.logger != nil {
+		c.logger.Info("processing completed", "result_length", len(result), "duration", time.Since(start))
 	}
 	
 	return result, nil
+}
+
+// validateInput performs comprehensive input validation
+func (c *Client) validateInput(input string) error {
+	if input == "" {
+		return NewValidationError("input cannot be empty")
+	}
+	
+	if len(input) > 10000 { // reasonable limit
+		return NewValidationError("input too large (max 10000 characters)")
+	}
+	
+	// Add more validation rules as needed
+	return nil
+}
+
+// processWithRetry implements retry logic with backoff
+func (c *Client) processWithRetry(ctx context.Context, input string) (string, error) {
+	var lastErr error
+	
+	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			// Apply backoff delay
+			delay := c.calculateBackoff(attempt)
+			if c.logger != nil {
+				c.logger.Info("retrying after delay", "attempt", attempt, "delay", delay)
+			}
+			
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(delay):
+				// Continue with retry
+			}
+		}
+		
+		// Simulate processing - in a real library this would do actual work
+		result, err := c.doProcess(ctx, input)
+		if err == nil {
+			return result, nil
+		}
+		
+		lastErr = err
+		
+		// Check if error is retryable
+		if !isRetryableError(err) {
+			break
+		}
+	}
+	
+	return "", lastErr
+}
+
+// doProcess performs the actual processing logic
+func (c *Client) doProcess(ctx context.Context, input string) (string, error) {
+	// Check context cancellation
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	default:
+	}
+	
+	// Simulate processing work
+	result := fmt.Sprintf("Processed: %s", input)
+	
+	// Apply timeout
+	processCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
+	
+	select {
+	case <-processCtx.Done():
+		return "", NewTimeoutError("processing timeout exceeded")
+	default:
+		return result, nil
+	}
+}
+
+// calculateBackoff calculates retry delay based on strategy
+func (c *Client) calculateBackoff(attempt int) time.Duration {
+	baseDelay := 100 * time.Millisecond
+	
+	switch c.config.RetryBackoff {
+	case LinearBackoff:
+		return time.Duration(attempt) * baseDelay
+	case ExponentialBackoff:
+		return time.Duration(1<<uint(attempt-1)) * baseDelay
+	case FixedBackoff:
+		return baseDelay
+	default:
+		return baseDelay
+	}
+}
+
+// isRetryableError determines if an error should trigger a retry
+func isRetryableError(err error) bool {
+	// Don't retry validation errors
+	if IsValidationError(err) {
+		return false
+	}
+	
+	// Don't retry context cancellation
+	if err == context.Canceled {
+		return false
+	}
+	
+	// Retry timeouts and other transient errors
+	return true
 }
 
 // Close cleans up any resources held by the client
@@ -125,4 +316,158 @@ func WithTimeout(timeout time.Duration) Option {
 	return func(c *Client) {
 		c.config.Timeout = timeout
 	}
+}
+
+// WithRetries configures retry behavior
+func WithRetries(maxRetries int, strategy BackoffStrategy) Option {
+	return func(c *Client) {
+		c.config.MaxRetries = maxRetries
+		c.config.RetryBackoff = strategy
+	}
+}
+
+// WithUserAgent sets a custom user agent string
+func WithUserAgent(userAgent string) Option {
+	return func(c *Client) {
+		c.config.UserAgent = userAgent
+	}
+}
+
+// WithDebug enables debug mode for additional logging and validation
+func WithDebug(debug bool) Option {
+	return func(c *Client) {
+		c.config.Debug = debug
+	}
+}
+
+// WithMetrics enables metrics collection
+func WithMetrics(metrics MetricsCollector) Option {
+	return func(c *Client) {
+		c.config.Metrics = metrics
+	}
+}
+
+// WithConfig applies a complete configuration
+func WithConfig(config *Config) Option {
+	return func(c *Client) {
+		if config != nil {
+			c.config = config
+		}
+	}
+}
+
+// GetVersion returns detailed version information
+func GetVersion() VersionInfo {
+	return VersionInfo{
+		Version:       Version,
+		Major:         Major,
+		Minor:         Minor,
+		Patch:         Patch,
+		PreRelease:    PreRelease,
+		BuildMetadata: BuildMetadata,
+		GoVersion:     "{{.GoVersion}}",
+	}
+}
+
+// VersionInfo provides detailed version information
+type VersionInfo struct {
+	Version       string `json:"version"`
+	Major         int    `json:"major"`
+	Minor         int    `json:"minor"`
+	Patch         int    `json:"patch"`
+	PreRelease    string `json:"preRelease,omitempty"`
+	BuildMetadata string `json:"buildMetadata,omitempty"`
+	GoVersion     string `json:"goVersion"`
+}
+
+// String returns a formatted version string
+func (v VersionInfo) String() string {
+	version := fmt.Sprintf("%d.%d.%d", v.Major, v.Minor, v.Patch)
+	if v.PreRelease != "" {
+		version += "-" + v.PreRelease
+	}
+	if v.BuildMetadata != "" {
+		version += "+" + v.BuildMetadata
+	}
+	return version
+}
+
+// IsCompatible checks if this version is compatible with the given version
+func (v VersionInfo) IsCompatible(other VersionInfo) bool {
+	// Semantic versioning compatibility rules:
+	// - Major version must match
+	// - Minor version can be greater or equal
+	// - Patch version can be any
+	return v.Major == other.Major && v.Minor >= other.Minor
+}
+
+// Custom error types for better error handling
+
+// ValidationError represents input validation errors
+type ValidationError struct {
+	Message string
+}
+
+func (e ValidationError) Error() string {
+	return fmt.Sprintf("validation error: %s", e.Message)
+}
+
+// NewValidationError creates a new validation error
+func NewValidationError(message string) ValidationError {
+	return ValidationError{Message: message}
+}
+
+// IsValidationError checks if an error is a validation error
+func IsValidationError(err error) bool {
+	_, ok := err.(ValidationError)
+	return ok
+}
+
+// TimeoutError represents timeout errors
+type TimeoutError struct {
+	Message string
+}
+
+func (e TimeoutError) Error() string {
+	return fmt.Sprintf("timeout error: %s", e.Message)
+}
+
+// NewTimeoutError creates a new timeout error
+func NewTimeoutError(message string) TimeoutError {
+	return TimeoutError{Message: message}
+}
+
+// IsTimeoutError checks if an error is a timeout error
+func IsTimeoutError(err error) bool {
+	_, ok := err.(TimeoutError)
+	return ok
+}
+
+// ProcessingError represents processing errors
+type ProcessingError struct {
+	Message string
+	Cause   error
+}
+
+func (e ProcessingError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("processing error: %s (caused by: %v)", e.Message, e.Cause)
+	}
+	return fmt.Sprintf("processing error: %s", e.Message)
+}
+
+// Unwrap supports error unwrapping
+func (e ProcessingError) Unwrap() error {
+	return e.Cause
+}
+
+// NewProcessingError creates a new processing error
+func NewProcessingError(message string, cause error) ProcessingError {
+	return ProcessingError{Message: message, Cause: cause}
+}
+
+// IsProcessingError checks if an error is a processing error
+func IsProcessingError(err error) bool {
+	_, ok := err.(ProcessingError)
+	return ok
 }

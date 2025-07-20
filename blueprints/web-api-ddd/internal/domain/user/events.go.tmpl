@@ -1,27 +1,37 @@
 package {{.DomainName}}
 
 import (
+	"time"
 	"{{.ModulePath}}/internal/shared/events"
 	"{{.ModulePath}}/internal/shared/valueobjects"
 )
 
 // Event types
 const (
-	{{.DomainName | title}}CreatedEventType      = "{{.DomainName}}.created"
-	{{.DomainName | title}}UpdatedEventType      = "{{.DomainName}}.updated"
-	{{.DomainName | title}}StatusChangedEventType = "{{.DomainName}}.status_changed"
+	{{.DomainName | title}}CreatedEventType              = "{{.DomainName}}.created"
+	{{.DomainName | title}}UpdatedEventType              = "{{.DomainName}}.updated"
+	{{.DomainName | title}}StatusChangedEventType        = "{{.DomainName}}.status_changed"
+	{{.DomainName | title}}NameChangedEventType          = "{{.DomainName}}.name_changed"
+	{{.DomainName | title}}EmailChangedEventType         = "{{.DomainName}}.email_changed"
+	{{.DomainName | title}}DescriptionUpdatedEventType   = "{{.DomainName}}.description_updated"
+	{{.DomainName | title}}LoggedInEventType             = "{{.DomainName}}.logged_in"
+	{{.DomainName | title}}PreferencesUpdatedEventType   = "{{.DomainName}}.preferences_updated"
 )
 
 // {{.DomainName | title}}CreatedEvent represents the event when a {{.DomainName}} is created
 type {{.DomainName | title}}CreatedEvent struct {
 	events.BaseDomainEvent
-	Name string
+	Name          string
+	Email         string
+	EmailProvider string
 }
 
 // New{{.DomainName | title}}CreatedEvent creates a new {{.DomainName}} created event
-func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, name string) {{.DomainName | title}}CreatedEvent {
+func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, name, email, emailProvider string) {{.DomainName | title}}CreatedEvent {
 	data := map[string]interface{}{
-		"name": name,
+		"name":           name,
+		"email":          email,
+		"email_provider": emailProvider,
 	}
 	
 	return {{.DomainName | title}}CreatedEvent{
@@ -31,7 +41,9 @@ func New{{.DomainName | title}}CreatedEvent({{.DomainName}}ID valueobjects.ID, n
 			"{{.DomainName}}",
 			data,
 		),
-		Name: name,
+		Name:          name,
+		Email:         email,
+		EmailProvider: emailProvider,
 	}
 }
 
@@ -87,5 +99,138 @@ func New{{.DomainName | title}}StatusChangedEvent({{.DomainName}}ID valueobjects
 		),
 		OldStatus: oldStatus,
 		NewStatus: newStatus,
+	}
+}
+
+// {{.DomainName | title}}NameChangedEvent represents the event when a {{.DomainName}}'s name changes
+type {{.DomainName | title}}NameChangedEvent struct {
+	events.BaseDomainEvent
+	OldName string
+	NewName string
+}
+
+// New{{.DomainName | title}}NameChangedEvent creates a new {{.DomainName}} name changed event
+func New{{.DomainName | title}}NameChangedEvent({{.DomainName}}ID valueobjects.ID, oldName, newName string) {{.DomainName | title}}NameChangedEvent {
+	data := map[string]interface{}{
+		"old_name": oldName,
+		"new_name": newName,
+	}
+	
+	return {{.DomainName | title}}NameChangedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}NameChangedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		OldName: oldName,
+		NewName: newName,
+	}
+}
+
+// {{.DomainName | title}}EmailChangedEvent represents the event when a {{.DomainName}}'s email changes
+type {{.DomainName | title}}EmailChangedEvent struct {
+	events.BaseDomainEvent
+	OldEmail      string
+	NewEmail      string
+	EmailProvider string
+}
+
+// New{{.DomainName | title}}EmailChangedEvent creates a new {{.DomainName}} email changed event
+func New{{.DomainName | title}}EmailChangedEvent({{.DomainName}}ID valueobjects.ID, oldEmail, newEmail, emailProvider string) {{.DomainName | title}}EmailChangedEvent {
+	data := map[string]interface{}{
+		"old_email":      oldEmail,
+		"new_email":      newEmail,
+		"email_provider": emailProvider,
+	}
+	
+	return {{.DomainName | title}}EmailChangedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}EmailChangedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		OldEmail:      oldEmail,
+		NewEmail:      newEmail,
+		EmailProvider: emailProvider,
+	}
+}
+
+// {{.DomainName | title}}DescriptionUpdatedEvent represents the event when a {{.DomainName}}'s description is updated
+type {{.DomainName | title}}DescriptionUpdatedEvent struct {
+	events.BaseDomainEvent
+	OldDescription string
+	NewDescription string
+}
+
+// New{{.DomainName | title}}DescriptionUpdatedEvent creates a new {{.DomainName}} description updated event
+func New{{.DomainName | title}}DescriptionUpdatedEvent({{.DomainName}}ID valueobjects.ID, oldDescription, newDescription string) {{.DomainName | title}}DescriptionUpdatedEvent {
+	data := map[string]interface{}{
+		"old_description": oldDescription,
+		"new_description": newDescription,
+	}
+	
+	return {{.DomainName | title}}DescriptionUpdatedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}DescriptionUpdatedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		OldDescription: oldDescription,
+		NewDescription: newDescription,
+	}
+}
+
+// {{.DomainName | title}}LoggedInEvent represents the event when a {{.DomainName}} logs in
+type {{.DomainName | title}}LoggedInEvent struct {
+	events.BaseDomainEvent
+	Email     string
+	LoginTime time.Time
+}
+
+// New{{.DomainName | title}}LoggedInEvent creates a new {{.DomainName}} logged in event
+func New{{.DomainName | title}}LoggedInEvent({{.DomainName}}ID valueobjects.ID, email string, loginTime time.Time) {{.DomainName | title}}LoggedInEvent {
+	data := map[string]interface{}{
+		"email":      email,
+		"login_time": loginTime,
+	}
+	
+	return {{.DomainName | title}}LoggedInEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}LoggedInEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		Email:     email,
+		LoginTime: loginTime,
+	}
+}
+
+// {{.DomainName | title}}PreferencesUpdatedEvent represents the event when a {{.DomainName}}'s preferences are updated
+type {{.DomainName | title}}PreferencesUpdatedEvent struct {
+	events.BaseDomainEvent
+	OldPreferences UserPreferences
+	NewPreferences UserPreferences
+}
+
+// New{{.DomainName | title}}PreferencesUpdatedEvent creates a new {{.DomainName}} preferences updated event
+func New{{.DomainName | title}}PreferencesUpdatedEvent({{.DomainName}}ID valueobjects.ID, oldPreferences, newPreferences UserPreferences) {{.DomainName | title}}PreferencesUpdatedEvent {
+	data := map[string]interface{}{
+		"old_preferences": oldPreferences,
+		"new_preferences": newPreferences,
+	}
+	
+	return {{.DomainName | title}}PreferencesUpdatedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}PreferencesUpdatedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		OldPreferences: oldPreferences,
+		NewPreferences: newPreferences,
 	}
 }

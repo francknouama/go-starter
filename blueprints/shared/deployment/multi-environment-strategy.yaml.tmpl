@@ -1,0 +1,568 @@
+# Multi-Environment Deployment Strategy for {{.ProjectName}}
+# Supports: Development, Staging, Production with Blue-Green and Canary deployments
+
+# Environment-specific configurations
+---
+# Development Environment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-env-dev
+  namespace: development
+  labels:
+    app: {{.ProjectName}}
+    environment: development
+data:
+  environment: "development"
+  log_level: "debug"
+  replicas: "1"
+  resources_cpu_request: "100m"
+  resources_cpu_limit: "200m"
+  resources_memory_request: "128Mi"
+  resources_memory_limit: "256Mi"
+  autoscaling_enabled: "false"
+  monitoring_enabled: "true"
+  backup_enabled: "false"
+  
+---
+# Staging Environment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-env-staging
+  namespace: staging
+  labels:
+    app: {{.ProjectName}}
+    environment: staging
+data:
+  environment: "staging"
+  log_level: "info"
+  replicas: "2"
+  resources_cpu_request: "250m"
+  resources_cpu_limit: "500m"
+  resources_memory_request: "256Mi"
+  resources_memory_limit: "512Mi"
+  autoscaling_enabled: "true"
+  autoscaling_min_replicas: "2"
+  autoscaling_max_replicas: "5"
+  monitoring_enabled: "true"
+  backup_enabled: "true"
+  
+---
+# Production Environment
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-env-production
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+    environment: production
+data:
+  environment: "production"
+  log_level: "warn"
+  replicas: "3"
+  resources_cpu_request: "500m"
+  resources_cpu_limit: "1000m"
+  resources_memory_request: "512Mi"
+  resources_memory_limit: "1Gi"
+  autoscaling_enabled: "true"
+  autoscaling_min_replicas: "3"
+  autoscaling_max_replicas: "20"
+  monitoring_enabled: "true"
+  backup_enabled: "true"
+  disaster_recovery_enabled: "true"
+
+---
+# Blue-Green Deployment Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-blue-green-config
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+    deployment-strategy: blue-green
+data:
+  blue_green_enabled: "true"
+  switch_delay_seconds: "300"  # 5 minutes
+  health_check_timeout: "60"
+  rollback_on_failure: "true"
+  traffic_split_percentage: "100"  # All traffic to active version
+  
+---
+# Canary Deployment Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-canary-config
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+    deployment-strategy: canary
+data:
+  canary_enabled: "false"  # Set to true when doing canary deployment
+  canary_percentage: "10"   # Start with 10% traffic
+  canary_increment: "10"    # Increase by 10% each step
+  canary_interval: "300"    # 5 minutes between increments
+  canary_max_percentage: "50"  # Maximum canary traffic before full rollout
+  success_threshold: "99.9"    # Success rate threshold
+  error_threshold: "0.1"       # Maximum error rate
+
+---
+# Deployment Scripts ConfigMap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-deployment-scripts
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+data:
+  blue-green-deploy.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    
+    NAMESPACE=${NAMESPACE:-production}
+    APP_NAME={{.ProjectName}}
+    NEW_VERSION=${NEW_VERSION:-latest}
+    
+    # Function to check deployment health
+    check_health() {
+        local deployment=$1
+        local timeout=60
+        local count=0
+        
+        echo "Checking health of deployment: $deployment"
+        while [ $count -lt $timeout ]; do
+            if kubectl get deployment $deployment -n $NAMESPACE -o jsonpath='{.status.readyReplicas}' | grep -q "$(kubectl get deployment $deployment -n $NAMESPACE -o jsonpath='{.spec.replicas}')"; then
+                echo "Deployment $deployment is healthy"
+                return 0
+            fi
+            sleep 5
+            count=$((count + 5))
+        done
+        
+        echo "Deployment $deployment failed health check"
+        return 1
+    }
+    
+    # Function to run smoke tests
+    run_smoke_tests() {
+        local service_url=$1
+        echo "Running smoke tests against: $service_url"
+        
+        # Basic health check
+        if ! curl -f "$service_url/health" > /dev/null 2>&1; then
+            echo "Health check failed"
+            return 1
+        fi
+        
+        # API functionality test
+        if ! curl -f "$service_url/api/v1/status" > /dev/null 2>&1; then
+            echo "API test failed"
+            return 1
+        fi
+        
+        echo "Smoke tests passed"
+        return 0
+    }
+    
+    # Determine current active deployment (blue or green)
+    CURRENT_ACTIVE=$(kubectl get service $APP_NAME -n $NAMESPACE -o jsonpath='{.spec.selector.version}' 2>/dev/null || echo "blue")
+    
+    if [ "$CURRENT_ACTIVE" = "blue" ]; then
+        NEW_ACTIVE="green"
+        OLD_ACTIVE="blue"
+    else
+        NEW_ACTIVE="blue"
+        OLD_ACTIVE="green"
+    fi
+    
+    echo "Current active deployment: $OLD_ACTIVE"
+    echo "Deploying new version to: $NEW_ACTIVE"
+    
+    # Deploy new version to inactive slot
+    kubectl set image deployment/$APP_NAME-$NEW_ACTIVE $APP_NAME=ghcr.io/{{.ModulePath}}:$NEW_VERSION -n $NAMESPACE
+    
+    # Wait for deployment to be ready
+    kubectl rollout status deployment/$APP_NAME-$NEW_ACTIVE -n $NAMESPACE --timeout=600s
+    
+    # Check deployment health
+    if ! check_health "$APP_NAME-$NEW_ACTIVE"; then
+        echo "New deployment failed health check, aborting"
+        exit 1
+    fi
+    
+    # Get service URL for testing
+    SERVICE_URL="http://$APP_NAME-$NEW_ACTIVE.$NAMESPACE.svc.cluster.local"
+    
+    # Run smoke tests
+    if ! run_smoke_tests "$SERVICE_URL"; then
+        echo "Smoke tests failed, aborting deployment"
+        exit 1
+    fi
+    
+    # Switch traffic to new deployment
+    echo "Switching traffic from $OLD_ACTIVE to $NEW_ACTIVE"
+    kubectl patch service $APP_NAME -n $NAMESPACE -p '{"spec":{"selector":{"version":"'$NEW_ACTIVE'"}}}'
+    
+    # Wait before cleanup
+    echo "Waiting 5 minutes before cleanup..."
+    sleep 300
+    
+    # Scale down old deployment
+    echo "Scaling down old deployment: $OLD_ACTIVE"
+    kubectl scale deployment $APP_NAME-$OLD_ACTIVE --replicas=0 -n $NAMESPACE
+    
+    echo "Blue-green deployment completed successfully"
+    
+  canary-deploy.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    
+    NAMESPACE=${NAMESPACE:-production}
+    APP_NAME={{.ProjectName}}
+    NEW_VERSION=${NEW_VERSION:-latest}
+    
+    # Load canary configuration
+    CANARY_PERCENTAGE=$(kubectl get configmap $APP_NAME-canary-config -n $NAMESPACE -o jsonpath='{.data.canary_percentage}')
+    CANARY_INCREMENT=$(kubectl get configmap $APP_NAME-canary-config -n $NAMESPACE -o jsonpath='{.data.canary_increment}')
+    CANARY_INTERVAL=$(kubectl get configmap $APP_NAME-canary-config -n $NAMESPACE -o jsonpath='{.data.canary_interval}')
+    SUCCESS_THRESHOLD=$(kubectl get configmap $APP_NAME-canary-config -n $NAMESPACE -o jsonpath='{.data.success_threshold}')
+    
+    echo "Starting canary deployment with $CANARY_PERCENTAGE% traffic"
+    
+    # Deploy canary version
+    kubectl set image deployment/$APP_NAME-canary $APP_NAME=ghcr.io/{{.ModulePath}}:$NEW_VERSION -n $NAMESPACE
+    kubectl rollout status deployment/$APP_NAME-canary -n $NAMESPACE --timeout=600s
+    
+    # Set initial traffic split
+    kubectl patch virtualservice $APP_NAME -n $NAMESPACE --type='merge' -p='{
+      "spec": {
+        "http": [{
+          "match": [{"headers": {"x-canary": {"exact": "true"}}}],
+          "route": [{"destination": {"host": "'$APP_NAME'-canary"}, "weight": 100}]
+        }, {
+          "route": [
+            {"destination": {"host": "'$APP_NAME'"}, "weight": '$((100 - CANARY_PERCENTAGE))'},
+            {"destination": {"host": "'$APP_NAME'-canary"}, "weight": '$CANARY_PERCENTAGE'}
+          ]
+        }]
+      }
+    }'
+    
+    # Monitor canary metrics
+    CURRENT_PERCENTAGE=$CANARY_PERCENTAGE
+    while [ $CURRENT_PERCENTAGE -lt 100 ]; do
+        echo "Monitoring canary at $CURRENT_PERCENTAGE% traffic for $CANARY_INTERVAL seconds"
+        sleep $CANARY_INTERVAL
+        
+        # Check error rate and success rate
+        ERROR_RATE=$(kubectl exec -n monitoring deployment/prometheus -- promtool query instant 'rate(http_requests_total{job="'$APP_NAME'-canary",status=~"5.."}[5m]) / rate(http_requests_total{job="'$APP_NAME'-canary"}[5m]) * 100' | grep -oP '\d+\.\d+' || echo "0")
+        
+        if (( $(echo "$ERROR_RATE > 1.0" | bc -l) )); then
+            echo "Error rate too high ($ERROR_RATE%), rolling back canary"
+            kubectl patch virtualservice $APP_NAME -n $NAMESPACE --type='merge' -p='{"spec": {"http": [{"route": [{"destination": {"host": "'$APP_NAME'"}, "weight": 100}]}]}}'
+            kubectl scale deployment $APP_NAME-canary --replicas=0 -n $NAMESPACE
+            exit 1
+        fi
+        
+        # Increase canary percentage
+        CURRENT_PERCENTAGE=$((CURRENT_PERCENTAGE + CANARY_INCREMENT))
+        if [ $CURRENT_PERCENTAGE -gt 100 ]; then
+            CURRENT_PERCENTAGE=100
+        fi
+        
+        NEW_CANARY_WEIGHT=$CURRENT_PERCENTAGE
+        NEW_STABLE_WEIGHT=$((100 - CURRENT_PERCENTAGE))
+        
+        kubectl patch virtualservice $APP_NAME -n $NAMESPACE --type='merge' -p='{
+          "spec": {
+            "http": [{
+              "route": [
+                {"destination": {"host": "'$APP_NAME'"}, "weight": '$NEW_STABLE_WEIGHT'},
+                {"destination": {"host": "'$APP_NAME'-canary"}, "weight": '$NEW_CANARY_WEIGHT'}
+              ]
+            }]
+          }
+        }'
+    done
+    
+    # Promote canary to stable
+    echo "Promoting canary to stable"
+    kubectl set image deployment/$APP_NAME $APP_NAME=ghcr.io/{{.ModulePath}}:$NEW_VERSION -n $NAMESPACE
+    kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=600s
+    
+    # Switch all traffic back to stable
+    kubectl patch virtualservice $APP_NAME -n $NAMESPACE --type='merge' -p='{"spec": {"http": [{"route": [{"destination": {"host": "'$APP_NAME'"}, "weight": 100}]}]}}'
+    
+    # Scale down canary
+    kubectl scale deployment $APP_NAME-canary --replicas=0 -n $NAMESPACE
+    
+    echo "Canary deployment completed successfully"
+    
+  rollback.sh: |
+    #!/bin/bash
+    set -euo pipefail
+    
+    NAMESPACE=${NAMESPACE:-production}
+    APP_NAME={{.ProjectName}}
+    STRATEGY=${STRATEGY:-blue-green}
+    
+    echo "Rolling back $APP_NAME using $STRATEGY strategy"
+    
+    if [ "$STRATEGY" = "blue-green" ]; then
+        # Get current active deployment
+        CURRENT_ACTIVE=$(kubectl get service $APP_NAME -n $NAMESPACE -o jsonpath='{.spec.selector.version}')
+        
+        if [ "$CURRENT_ACTIVE" = "blue" ]; then
+            ROLLBACK_TO="green"
+        else
+            ROLLBACK_TO="blue"
+        fi
+        
+        echo "Rolling back from $CURRENT_ACTIVE to $ROLLBACK_TO"
+        
+        # Check if rollback target is available
+        if ! kubectl get deployment $APP_NAME-$ROLLBACK_TO -n $NAMESPACE > /dev/null 2>&1; then
+            echo "Rollback target deployment not found: $APP_NAME-$ROLLBACK_TO"
+            exit 1
+        fi
+        
+        # Scale up rollback target if needed
+        kubectl scale deployment $APP_NAME-$ROLLBACK_TO --replicas=3 -n $NAMESPACE
+        kubectl rollout status deployment/$APP_NAME-$ROLLBACK_TO -n $NAMESPACE --timeout=300s
+        
+        # Switch traffic
+        kubectl patch service $APP_NAME -n $NAMESPACE -p '{"spec":{"selector":{"version":"'$ROLLBACK_TO'"}}}'
+        
+        echo "Rollback completed to $ROLLBACK_TO"
+        
+    elif [ "$STRATEGY" = "canary" ]; then
+        echo "Rolling back canary deployment"
+        
+        # Route all traffic to stable
+        kubectl patch virtualservice $APP_NAME -n $NAMESPACE --type='merge' -p='{"spec": {"http": [{"route": [{"destination": {"host": "'$APP_NAME'"}, "weight": 100}]}]}}'
+        
+        # Scale down canary
+        kubectl scale deployment $APP_NAME-canary --replicas=0 -n $NAMESPACE
+        
+        echo "Canary rollback completed"
+        
+    else
+        echo "Standard rollback using Kubernetes rollout"
+        kubectl rollout undo deployment/$APP_NAME -n $NAMESPACE
+        kubectl rollout status deployment/$APP_NAME -n $NAMESPACE --timeout=300s
+        
+        echo "Standard rollback completed"
+    fi
+
+---
+# Job for running deployment scripts
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{.ProjectName}}-blue-green-deploy
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+    deployment-type: blue-green
+spec:
+  template:
+    spec:
+      serviceAccountName: {{.ProjectName}}-deployer
+      restartPolicy: Never
+      containers:
+      - name: deployer
+        image: bitnami/kubectl:latest
+        command: ["/bin/bash"]
+        args: ["/scripts/blue-green-deploy.sh"]
+        env:
+        - name: NAMESPACE
+          value: "production"
+        - name: NEW_VERSION
+          value: "{{ .Values.image.tag }}"
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+        - name: kubeconfig
+          mountPath: /root/.kube
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1000
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: scripts
+        configMap:
+          name: {{.ProjectName}}-deployment-scripts
+          defaultMode: 0755
+      - name: kubeconfig
+        secret:
+          secretName: deployer-kubeconfig
+
+---
+# Service Account for deployment operations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{.ProjectName}}-deployer
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+
+---
+# RBAC for deployment operations
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{.ProjectName}}-deployer
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "patch", "update"]
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "patch", "update"]
+- apiGroups: ["networking.istio.io"]
+  resources: ["virtualservices"]
+  verbs: ["get", "patch", "update"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{.ProjectName}}-deployer
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+subjects:
+- kind: ServiceAccount
+  name: {{.ProjectName}}-deployer
+  namespace: production
+roleRef:
+  kind: Role
+  name: {{.ProjectName}}-deployer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Istio Virtual Service for traffic management
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{.ProjectName}}
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+spec:
+  hosts:
+  - {{.ProjectName}}.{{.DomainName | default "example.com"}}
+  - {{.ProjectName}}.production.svc.cluster.local
+  gateways:
+  - {{.ProjectName}}-gateway
+  http:
+  - match:
+    - headers:
+        x-canary:
+          exact: "true"
+    route:
+    - destination:
+        host: {{.ProjectName}}-canary
+      weight: 100
+  - route:
+    - destination:
+        host: {{.ProjectName}}
+      weight: 100
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 5s
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+
+---
+# Istio Gateway
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: {{.ProjectName}}-gateway
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: {{.ProjectName}}-tls
+    hosts:
+    - {{.ProjectName}}.{{.DomainName | default "example.com"}}
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - {{.ProjectName}}.{{.DomainName | default "example.com"}}
+    tls:
+      httpsRedirect: true
+
+---
+# Destination Rules for circuit breaking and load balancing
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{.ProjectName}}
+  namespace: production
+  labels:
+    app: {{.ProjectName}}
+spec:
+  host: {{.ProjectName}}
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+        consecutiveGatewayErrors: 5
+        interval: 30s
+        baseEjectionTime: 30s
+        maxEjectionPercent: 50
+    loadBalancer:
+      simple: LEAST_CONN
+    outlierDetection:
+      consecutiveGatewayErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50

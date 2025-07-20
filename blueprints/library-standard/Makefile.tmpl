@@ -1,50 +1,212 @@
 # {{.ProjectName}} Library Makefile
+# Professional Go library build automation with semantic versioning and release management
 
-.PHONY: test lint bench example clean help
+# Variables
+GO_VERSION ?= {{.GoVersion}}
+MODULE_NAME = {{.ModulePath}}
+BINARY_NAME = {{.ProjectName}}
+VERSION ?= $(shell git describe --tags --always --dirty)
+BUILD_TIME = $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+GIT_COMMIT = $(shell git rev-parse HEAD)
+GO_LDFLAGS = -X '$(MODULE_NAME).Version=$(VERSION)' \
+             -X '$(MODULE_NAME).BuildTime=$(BUILD_TIME)' \
+             -X '$(MODULE_NAME).GitCommit=$(GIT_COMMIT)'
+
+# Colors for output
+RED = \033[0;31m
+GREEN = \033[0;32m
+YELLOW = \033[0;33m
+BLUE = \033[0;34m
+NC = \033[0m # No Color
+
+.PHONY: help test test-coverage test-race lint bench examples clean deps check \
+        version validate-version tag-release prepare-release publish-release \
+        security-scan docs serve-docs quality-gate ci-test
 
 ## help: Show this help message
 help:
-	@echo "Available commands:"
-	@sed -n 's/^##//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/ /'
+	@echo "$(BLUE){{.ProjectName}} Library Build System$(NC)"
+	@echo ""
+	@echo "$(GREEN)Development Commands:$(NC)"
+	@sed -n 's/^## dev-//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/  /'
+	@echo ""
+	@echo "$(GREEN)Testing Commands:$(NC)"
+	@sed -n 's/^## test-//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/  /'
+	@echo ""
+	@echo "$(GREEN)Quality Commands:$(NC)"
+	@sed -n 's/^## quality-//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/  /'
+	@echo ""
+	@echo "$(GREEN)Release Commands:$(NC)"
+	@sed -n 's/^## release-//p' $(MAKEFILE_LIST) | column -t -s ':' | sed -e 's/^/  /'
+	@echo ""
 
-## test: Run tests
-test:
-	go test -v ./...
-
-## test-coverage: Run tests with coverage
-test-coverage:
-	go test -v -race -coverprofile=coverage.out ./...
-	go tool cover -html=coverage.out -o coverage.html
-
-## bench: Run benchmarks
-bench:
-	go test -bench=. -benchmem ./...
-
-## lint: Run linter
-lint:
-	golangci-lint run
-
-## example-basic: Run basic example
-example-basic:
-	go run ./examples/basic
-
-## example-advanced: Run advanced example
-example-advanced:
-	go run ./examples/advanced
-
-## examples: Run all examples
-examples: example-basic example-advanced
-
-## clean: Clean build artifacts
-clean:
-	rm -f coverage.out coverage.html
-
-## deps: Install dependencies
-deps:
+## dev-deps: Install development dependencies
+dev-deps:
+	@echo "$(BLUE)Installing development dependencies...$(NC)"
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install golang.org/x/tools/cmd/godoc@latest
+	go install github.com/securecodewarrior/sast-scan@latest
 	go mod download
 	go mod tidy
 
-## check: Run all checks (test, lint)
-check: test lint
+## test-all: Run all tests
+test:
+	@echo "$(BLUE)Running tests...$(NC)"
+	go test -v ./...
+
+## test-coverage: Run tests with coverage analysis
+test-coverage:
+	@echo "$(BLUE)Running tests with coverage...$(NC)"
+	go test -v -race -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "$(GREEN)Coverage report generated: coverage.html$(NC)"
+
+## test-race: Run tests with race detection
+test-race:
+	@echo "$(BLUE)Running tests with race detection...$(NC)"
+	go test -v -race ./...
+
+## test-ci: Run tests for CI/CD (with race detection and coverage)
+ci-test:
+	@echo "$(BLUE)Running CI tests...$(NC)"
+	go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+	go tool cover -func=coverage.out
+
+## quality-lint: Run linter with comprehensive checks
+lint:
+	@echo "$(BLUE)Running linter...$(NC)"
+	golangci-lint run --config .golangci.yml || (echo "$(RED)Linting failed!$(NC)" && exit 1)
+
+## quality-bench: Run benchmarks
+bench:
+	@echo "$(BLUE)Running benchmarks...$(NC)"
+	go test -bench=. -benchmem -run=^$$ ./...
+
+## quality-security: Run security scan
+security-scan:
+	@echo "$(BLUE)Running security scan...$(NC)"
+	gosec ./...
+	go list -json -m all | nancy sleuth
+
+## quality-gate: Run complete quality gate
+quality-gate: lint test-race security-scan
+	@echo "$(GREEN)All quality checks passed!$(NC)"
+
+## dev-examples: Run all examples
+examples:
+	@echo "$(BLUE)Running basic example...$(NC)"
+	cd examples && go run ./basic
+	@echo "$(BLUE)Running advanced example...$(NC)"
+	cd examples && go run ./advanced
+
+## dev-docs: Generate and serve documentation
+docs:
+	@echo "$(BLUE)Generating documentation...$(NC)"
+	godoc -http=:6060
+	@echo "$(GREEN)Documentation server running at http://localhost:6060$(NC)"
+
+## dev-serve-docs: Serve documentation
+serve-docs:
+	@echo "$(BLUE)Serving documentation at http://localhost:6060...$(NC)"
+	godoc -http=:6060
+
+## release-version: Show current version information
+version:
+	@echo "$(BLUE)Version Information:$(NC)"
+	@echo "Version: $(VERSION)"
+	@echo "Build Time: $(BUILD_TIME)"
+	@echo "Git Commit: $(GIT_COMMIT)"
+	@echo "Go Version: $(GO_VERSION)"
+	@echo "Module: $(MODULE_NAME)"
+
+## release-validate: Validate version for release
+validate-version:
+	@echo "$(BLUE)Validating version...$(NC)"
+	@if [ -z "$(NEW_VERSION)" ]; then \
+		echo "$(RED)ERROR: NEW_VERSION is required. Usage: make validate-version NEW_VERSION=v1.2.3$(NC)"; \
+		exit 1; \
+	fi
+	@if ! echo "$(NEW_VERSION)" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$$"; then \
+		echo "$(RED)ERROR: Invalid semantic version format. Expected: v1.2.3, v1.2.3-beta.1, etc.$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)Version $(NEW_VERSION) is valid$(NC)"
+
+## release-tag: Create and push a new version tag
+tag-release: validate-version quality-gate
+	@echo "$(BLUE)Creating release tag $(NEW_VERSION)...$(NC)"
+	git tag -a "$(NEW_VERSION)" -m "Release $(NEW_VERSION)"
+	git push origin "$(NEW_VERSION)"
+	@echo "$(GREEN)Tag $(NEW_VERSION) created and pushed$(NC)"
+
+## release-prepare: Prepare for release (run quality checks and validation)
+prepare-release: quality-gate
+	@echo "$(BLUE)Preparing release...$(NC)"
+	@echo "$(GREEN)Release preparation complete. Ready to tag.$(NC)"
+	@echo "$(YELLOW)Next steps:$(NC)"
+	@echo "  1. Run: make tag-release NEW_VERSION=vX.Y.Z"
+	@echo "  2. Create release notes"
+	@echo "  3. Publish to package registries if applicable"
+
+## release-publish: Publish release (placeholder for custom publishing logic)
+publish-release:
+	@echo "$(BLUE)Publishing release...$(NC)"
+	@echo "$(YELLOW)Add your custom publishing logic here$(NC)"
+	@echo "$(GREEN)Release published!$(NC)"
+
+## dev-clean: Clean build artifacts and caches
+clean:
+	@echo "$(BLUE)Cleaning build artifacts...$(NC)"
+	rm -f coverage.out coverage.html
+	rm -rf dist/
+	go clean -cache -testcache -modcache
+
+## dev-format: Format code
+format:
+	@echo "$(BLUE)Formatting code...$(NC)"
+	go fmt ./...
+	goimports -w .
+
+## dev-tidy: Tidy dependencies
+tidy:
+	@echo "$(BLUE)Tidying dependencies...$(NC)"
+	go mod tidy
+
+## dev-check: Run all development checks
+check: format tidy lint test-coverage
+	@echo "$(GREEN)All development checks passed!$(NC)"
+
+## dev-init: Initialize development environment
+init: dev-deps
+	@echo "$(BLUE)Initializing development environment...$(NC)"
+	@if [ ! -f .golangci.yml ]; then \
+		echo "$(YELLOW)Creating .golangci.yml...$(NC)"; \
+		curl -sSL https://raw.githubusercontent.com/golangci/golangci-lint/master/.golangci.reference.yml > .golangci.yml; \
+	fi
+	@echo "$(GREEN)Development environment initialized!$(NC)"
+
+# Performance profiling
+## quality-profile: Run CPU and memory profiling
+profile:
+	@echo "$(BLUE)Running performance profiling...$(NC)"
+	go test -cpuprofile=cpu.prof -memprofile=mem.prof -bench=. ./...
+	@echo "$(GREEN)Profiles generated: cpu.prof, mem.prof$(NC)"
+	@echo "$(YELLOW)View with: go tool pprof cpu.prof$(NC)"
+
+# Advanced testing
+## test-fuzz: Run fuzz tests (Go 1.18+)
+fuzz:
+	@echo "$(BLUE)Running fuzz tests...$(NC)"
+	go test -fuzz=. -fuzztime=30s ./...
+
+## test-integration: Run integration tests
+integration:
+	@echo "$(BLUE)Running integration tests...$(NC)"
+	go test -tags=integration ./...
+
+## test-stress: Run stress tests
+stress:
+	@echo "$(BLUE)Running stress tests...$(NC)"
+	go test -count=100 -parallel=10 ./...
 
 .DEFAULT_GOAL := help

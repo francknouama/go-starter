@@ -1,0 +1,394 @@
+# Prometheus Rules for {{.ProjectName}}
+# Production-ready alerting rules for Go applications
+
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{.ProjectName}}-alerts
+  labels:
+    app: {{.ProjectName}}
+    prometheus: kube-prometheus
+    role: alert-rules
+  namespace: {{ .Values.namespace | default "monitoring" }}
+spec:
+  groups:
+  # Application-level alerts
+  - name: {{.ProjectName}}.application
+    interval: 30s
+    rules:
+    - alert: ApplicationDown
+      expr: up{job="{{.ProjectName}}"} == 0
+      for: 1m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+      annotations:
+        summary: "{{.ProjectName}} application is down"
+        description: "{{.ProjectName}} application has been down for more than 1 minute"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/application-down"
+    
+    - alert: HighErrorRate
+      expr: |
+        (
+          rate(http_requests_total{job="{{.ProjectName}}", status=~"5.."}[5m]) /
+          rate(http_requests_total{job="{{.ProjectName}}"}[5m])
+        ) * 100 > 5
+      for: 5m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "High error rate detected for {{.ProjectName}}"
+        description: "Error rate is {{ $value | humanizePercentage }} which is above 5% for 5 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/high-error-rate"
+    
+    - alert: CriticalErrorRate
+      expr: |
+        (
+          rate(http_requests_total{job="{{.ProjectName}}", status=~"5.."}[5m]) /
+          rate(http_requests_total{job="{{.ProjectName}}"}[5m])
+        ) * 100 > 10
+      for: 2m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Critical error rate detected for {{.ProjectName}}"
+        description: "Error rate is {{ $value | humanizePercentage }} which is above 10% for 2 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/critical-error-rate"
+    
+    - alert: HighLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(http_request_duration_seconds_bucket{job="{{.ProjectName}}"}[5m])
+        ) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "High latency detected for {{.ProjectName}}"
+        description: "95th percentile latency is {{ $value | humanizeDuration }} which is above 500ms for 5 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/high-latency"
+    
+    - alert: CriticalLatency
+      expr: |
+        histogram_quantile(0.95, 
+          rate(http_request_duration_seconds_bucket{job="{{.ProjectName}}"}[5m])
+        ) > 2
+      for: 2m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Critical latency detected for {{.ProjectName}}"
+        description: "95th percentile latency is {{ $value | humanizeDuration }} which is above 2s for 2 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/critical-latency"
+    
+    - alert: LowThroughput
+      expr: rate(http_requests_total{job="{{.ProjectName}}"}[5m]) < 1
+      for: 10m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Low throughput detected for {{.ProjectName}}"
+        description: "Request rate is {{ $value | humanize }} req/s which is below 1 req/s for 10 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/low-throughput"
+
+  # Infrastructure-level alerts
+  - name: {{.ProjectName}}.infrastructure
+    interval: 30s
+    rules:
+    - alert: PodCrashLooping
+      expr: |
+        rate(kube_pod_container_status_restarts_total{
+          container="{{.ProjectName}}",
+          namespace="{{ .Values.namespace | default "default" }}"
+        }[15m]) * 60 * 15 > 0
+      for: 5m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Pod crash looping for {{.ProjectName}}"
+        description: "Pod {{ $labels.pod }} is crash looping in namespace {{ $labels.namespace }}"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/pod-crash-looping"
+    
+    - alert: PodNotReady
+      expr: |
+        kube_pod_status_ready{
+          condition="false",
+          namespace="{{ .Values.namespace | default "default" }}",
+          pod=~"{{.ProjectName}}-.*"
+        } == 1
+      for: 5m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Pod not ready for {{.ProjectName}}"
+        description: "Pod {{ $labels.pod }} has been not ready for more than 5 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/pod-not-ready"
+    
+    - alert: DeploymentReplicasMismatch
+      expr: |
+        kube_deployment_spec_replicas{
+          deployment="{{.ProjectName}}",
+          namespace="{{ .Values.namespace | default "default" }}"
+        } != 
+        kube_deployment_status_replicas_available{
+          deployment="{{.ProjectName}}",
+          namespace="{{ .Values.namespace | default "default" }}"
+        }
+      for: 10m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Deployment replicas mismatch for {{.ProjectName}}"
+        description: "Deployment {{ $labels.deployment }} has {{ $value }} available replicas, expected {{ $labels.spec_replicas }}"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/deployment-replicas-mismatch"
+
+  # Resource usage alerts
+  - name: {{.ProjectName}}.resources
+    interval: 30s
+    rules:
+    - alert: HighCPUUsage
+      expr: |
+        (
+          rate(container_cpu_usage_seconds_total{
+            container="{{.ProjectName}}",
+            namespace="{{ .Values.namespace | default "default" }}"
+          }[5m]) * 100
+        ) > 80
+      for: 10m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "High CPU usage for {{.ProjectName}}"
+        description: "CPU usage is {{ $value | humanizePercentage }} which is above 80% for 10 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/high-cpu-usage"
+    
+    - alert: HighMemoryUsage
+      expr: |
+        (
+          container_memory_working_set_bytes{
+            container="{{.ProjectName}}",
+            namespace="{{ .Values.namespace | default "default" }}"
+          } /
+          container_spec_memory_limit_bytes{
+            container="{{.ProjectName}}",
+            namespace="{{ .Values.namespace | default "default" }}"
+          } * 100
+        ) > 80
+      for: 10m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "High memory usage for {{.ProjectName}}"
+        description: "Memory usage is {{ $value | humanizePercentage }} which is above 80% for 10 minutes"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/high-memory-usage"
+    
+    - alert: ContainerOOMKilled
+      expr: |
+        increase(kube_pod_container_status_restarts_total{
+          container="{{.ProjectName}}",
+          namespace="{{ .Values.namespace | default "default" }}"
+        }[1h]) > 0
+        and
+        kube_pod_container_status_last_terminated_reason{
+          container="{{.ProjectName}}",
+          namespace="{{ .Values.namespace | default "default" }}",
+          reason="OOMKilled"
+        } == 1
+      for: 0m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Container OOM killed for {{.ProjectName}}"
+        description: "Container {{ $labels.container }} in pod {{ $labels.pod }} was OOM killed"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/container-oom-killed"
+
+  {{- if .Features.Database.Driver }}
+  # Database alerts
+  - name: {{.ProjectName}}.database
+    interval: 30s
+    rules:
+    - alert: DatabaseConnectionPoolExhausted
+      expr: |
+        go_sql_max_open_connections{job="{{.ProjectName}}"} - 
+        go_sql_open_connections{job="{{.ProjectName}}"} < 5
+      for: 5m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Database connection pool exhausted for {{.ProjectName}}"
+        description: "Less than 5 database connections available in the pool"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/database-connection-pool-exhausted"
+    
+    - alert: DatabaseSlowQueries
+      expr: |
+        histogram_quantile(0.95,
+          rate(go_sql_query_duration_seconds_bucket{job="{{.ProjectName}}"}[5m])
+        ) > 1
+      for: 5m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Slow database queries detected for {{.ProjectName}}"
+        description: "95th percentile query duration is {{ $value | humanizeDuration }} which is above 1s"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/database-slow-queries"
+  {{- end }}
+
+  # Business logic alerts
+  - name: {{.ProjectName}}.business
+    interval: 30s
+    rules:
+    - alert: LowRequestVolume
+      expr: |
+        (
+          rate(http_requests_total{job="{{.ProjectName}}"}[1h]) < 
+          rate(http_requests_total{job="{{.ProjectName}}"}[1h] offset 24h) * 0.5
+        ) and
+        rate(http_requests_total{job="{{.ProjectName}}"}[1h]) > 0
+      for: 15m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "Low request volume for {{.ProjectName}}"
+        description: "Request volume is 50% lower than the same time yesterday"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/low-request-volume"
+    
+    {{- if eq .Type "web-api" }}
+    - alert: HighAPIErrorRate
+      expr: |
+        (
+          rate(http_requests_total{job="{{.ProjectName}}", method="POST", status=~"4.."}[5m]) /
+          rate(http_requests_total{job="{{.ProjectName}}", method="POST"}[5m])
+        ) * 100 > 10
+      for: 5m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+      annotations:
+        summary: "High API error rate for {{.ProjectName}}"
+        description: "POST requests error rate is {{ $value | humanizePercentage }} which is above 10%"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/high-api-error-rate"
+    {{- end }}
+
+  # Security alerts
+  - name: {{.ProjectName}}.security
+    interval: 30s
+    rules:
+    - alert: TooManyAuthenticationFailures
+      expr: |
+        rate(http_requests_total{
+          job="{{.ProjectName}}",
+          endpoint="/auth/login",
+          status="401"
+        }[5m]) > 5
+      for: 2m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+        security: true
+      annotations:
+        summary: "Too many authentication failures for {{.ProjectName}}"
+        description: "Authentication failure rate is {{ $value }} failures/second which is above 5/second"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/too-many-auth-failures"
+    
+    - alert: SuspiciousRequestPattern
+      expr: |
+        rate(http_requests_total{
+          job="{{.ProjectName}}",
+          status=~"4.."
+        }[1m]) > 50
+      for: 1m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+        security: true
+      annotations:
+        summary: "Suspicious request pattern detected for {{.ProjectName}}"
+        description: "High rate of 4xx errors: {{ $value }} errors/second which might indicate an attack"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/suspicious-request-pattern"
+
+  # SLA/SLO alerts
+  - name: {{.ProjectName}}.slo
+    interval: 30s
+    rules:
+    - alert: SLOErrorBudgetExhausted
+      expr: |
+        (
+          1 - (
+            (
+              rate(http_requests_total{job="{{.ProjectName}}", status!~"5.."}[30d]) /
+              rate(http_requests_total{job="{{.ProjectName}}"}[30d])
+            )
+          )
+        ) > 0.001  # 99.9% SLO, 0.1% error budget
+      for: 0m
+      labels:
+        severity: critical
+        service: {{.ProjectName}}
+        slo: availability
+      annotations:
+        summary: "SLO error budget exhausted for {{.ProjectName}}"
+        description: "Error budget for 99.9% availability SLO has been exhausted"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/slo-error-budget-exhausted"
+    
+    - alert: SLOLatencyBreach
+      expr: |
+        histogram_quantile(0.99,
+          rate(http_request_duration_seconds_bucket{job="{{.ProjectName}}"}[5m])
+        ) > 1
+      for: 5m
+      labels:
+        severity: warning
+        service: {{.ProjectName}}
+        slo: latency
+      annotations:
+        summary: "SLO latency breach for {{.ProjectName}}"
+        description: "99th percentile latency {{ $value | humanizeDuration }} exceeds 1s SLO"
+        runbook_url: "https://runbooks.{{.DomainName | default "example.com"}}/{{.ProjectName}}/slo-latency-breach"
+
+  # Recording rules for better performance and dashboard queries
+  - name: {{.ProjectName}}.recording_rules
+    interval: 30s
+    rules:
+    - record: {{.ProjectName}}:http_request_rate_5m
+      expr: rate(http_requests_total{job="{{.ProjectName}}"}[5m])
+    
+    - record: {{.ProjectName}}:http_error_rate_5m
+      expr: |
+        rate(http_requests_total{job="{{.ProjectName}}", status=~"5.."}[5m]) /
+        rate(http_requests_total{job="{{.ProjectName}}"}[5m])
+    
+    - record: {{.ProjectName}}:http_latency_p95_5m
+      expr: |
+        histogram_quantile(0.95,
+          rate(http_request_duration_seconds_bucket{job="{{.ProjectName}}"}[5m])
+        )
+    
+    - record: {{.ProjectName}}:http_latency_p99_5m
+      expr: |
+        histogram_quantile(0.99,
+          rate(http_request_duration_seconds_bucket{job="{{.ProjectName}}"}[5m])
+        )
+    
+    {{- if .Features.Database.Driver }}
+    - record: {{.ProjectName}}:database_query_rate_5m
+      expr: rate(go_sql_query_total{job="{{.ProjectName}}"}[5m])
+    
+    - record: {{.ProjectName}}:database_connection_utilization
+      expr: |
+        go_sql_open_connections{job="{{.ProjectName}}"} /
+        go_sql_max_open_connections{job="{{.ProjectName}}"}
+    {{- end }}

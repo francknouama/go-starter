@@ -1,49 +1,77 @@
 package {{.DomainName}}
 
 import (
+	"fmt"
 	"time"
 	"{{.ModulePath}}/internal/shared/valueobjects"
 	"{{.ModulePath}}/internal/shared/events"
 	"{{.ModulePath}}/internal/shared/errors"
 )
 
-// {{.DomainName | title}} represents the {{.DomainName}} aggregate root
+// {{.DomainName | title}} represents the {{.DomainName}} aggregate root with rich domain behavior
 type {{.DomainName | title}} struct {
 	id           valueobjects.ID
-	name         string          // Simple name field - customize as needed
-	email        string          // Email field for user domain
-	description  string          // Optional description - customize as needed
-	status       Status          // Active, Inactive, etc.
+	name         UserName        // Rich value object with validation and behavior
+	email        EmailAddress    // Rich email value object
+	description  UserDescription // Rich description value object
+	status       Status          // Current status with business rules
+	profile      UserProfile     // Rich profile information
+	preferences  UserPreferences // User preferences and settings
 	createdAt    time.Time
 	updatedAt    time.Time
+	lastLoginAt  *time.Time      // Track user engagement
 	version      int             // For optimistic locking
 	domainEvents []events.DomainEvent
 }
 
-// New{{.DomainName | title}} creates a new {{.DomainName}} aggregate
-func New{{.DomainName | title}}(name string, email string, description string) (*{{.DomainName | title}}, error) {
-	// Validate inputs
-	if name == "" {
-		return nil, errors.ErrInvalidValueObject.WithDetails("reason", "name cannot be empty")
-	}
-	if email == "" {
-		return nil, errors.ErrInvalidValueObject.WithDetails("reason", "email cannot be empty")
+// New{{.DomainName | title}} creates a new {{.DomainName}} aggregate with rich domain validation
+func New{{.DomainName | title}}(nameStr string, emailStr string, descriptionStr string) (*{{.DomainName | title}}, error) {
+	// Create rich value objects with built-in validation
+	name, err := NewUserName(nameStr)
+	if err != nil {
+		return nil, err
 	}
 	
+	email, err := NewEmailAddress(emailStr)
+	if err != nil {
+		return nil, err
+	}
+	
+	description, err := NewUserDescription(descriptionStr)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Business rule: Email must be unique (checked by repository)
+	// Business rule: Professional emails get different default settings
+	defaultPreferences := NewDefaultUserPreferences()
+	if email.IsBusinessEmail() {
+		defaultPreferences = NewBusinessUserPreferences()
+	}
+	
+	now := time.Now().UTC()
 	{{.DomainName}} := &{{.DomainName | title}}{
 		id:           valueobjects.GenerateID(),
 		name:         name,
 		email:        email,
 		description:  description,
 		status:       StatusActive,
-		createdAt:    time.Now().UTC(),
-		updatedAt:    time.Now().UTC(),
+		profile:      NewUserProfile(email.GetProviderType()),
+		preferences:  defaultPreferences,
+		createdAt:    now,
+		updatedAt:    now,
+		lastLoginAt:  nil, // Not logged in yet
 		version:      1,
 		domainEvents: make([]events.DomainEvent, 0),
 	}
 	
-	// Raise domain event
-	event := New{{.DomainName | title}}CreatedEvent({{.DomainName}}.id, {{.DomainName}}.name)
+	// Raise domain event with rich information
+	event := New{{.DomainName | title}}CreatedEvent(
+		{{.DomainName}}.id, 
+		{{.DomainName}}.name.Value(),
+		{{.DomainName}}.email.Value(),
+		{{.DomainName}}.email.GetProviderType(),
+	)
 	{{.DomainName}}.addDomainEvent(event)
 	
 	return {{.DomainName}}, nil
@@ -77,19 +105,44 @@ func (e *{{.DomainName | title}}) ID() valueobjects.ID {
 	return e.id
 }
 
-// Name returns the {{.DomainName}} name
-func (e *{{.DomainName | title}}) Name() string {
+// Name returns the {{.DomainName}} name value object
+func (e *{{.DomainName | title}}) Name() UserName {
 	return e.name
 }
 
-// Email returns the {{.DomainName}} email
-func (e *{{.DomainName | title}}) Email() string {
+// Email returns the {{.DomainName}} email value object
+func (e *{{.DomainName | title}}) Email() EmailAddress {
 	return e.email
 }
 
-// Description returns the {{.DomainName}} description
-func (e *{{.DomainName | title}}) Description() string {
+// Description returns the {{.DomainName}} description value object
+func (e *{{.DomainName | title}}) Description() UserDescription {
 	return e.description
+}
+
+// Profile returns the user profile
+func (e *{{.DomainName | title}}) Profile() UserProfile {
+	return e.profile
+}
+
+// Preferences returns the user preferences
+func (e *{{.DomainName | title}}) Preferences() UserPreferences {
+	return e.preferences
+}
+
+// LastLoginAt returns when the user last logged in
+func (e *{{.DomainName | title}}) LastLoginAt() *time.Time {
+	return e.lastLoginAt
+}
+
+// DisplayName returns the formatted display name
+func (e *{{.DomainName | title}}) DisplayName() string {
+	return e.name.DisplayName()
+}
+
+// FullContactInfo returns full contact information
+func (e *{{.DomainName | title}}) FullContactInfo() string {
+	return fmt.Sprintf("%s <%s>", e.name.DisplayName(), e.email.Value())
 }
 
 // Status returns the {{.DomainName}} status
@@ -112,63 +165,111 @@ func (e *{{.DomainName | title}}) Version() int {
 	return e.version
 }
 
-// UpdateName updates the {{.DomainName}}'s name
-func (e *{{.DomainName | title}}) UpdateName(name string) error {
-	if name == "" {
-		return errors.ErrInvalidValueObject.WithDetails("reason", "name cannot be empty")
+// UpdateName updates the {{.DomainName}}'s name with business validation
+func (e *{{.DomainName | title}}) UpdateName(nameStr string) error {
+	// Business rule: Cannot update name if user is deleted
+	if e.IsDeleted() {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot update deleted {{.DomainName}} name")
 	}
 	
-	if e.name == name {
+	newName, err := NewUserName(nameStr)
+	if err != nil {
+		return err
+	}
+	
+	if e.name.Equals(newName) {
 		return nil // No change needed
 	}
 	
-	oldName := e.name
-	e.name = name
+	// Business rule: Cannot change name too frequently (e.g., once per month)
+	if e.hasRecentNameChange() {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "name can only be changed once per month")
+	}
+	
+	oldName := e.name.Value()
+	e.name = newName
 	e.updatedAt = time.Now().UTC()
 	e.version++
 	
+	// Update profile with name change
+	e.profile = e.profile.WithNameChange()
+	
 	// Raise domain event
-	event := New{{.DomainName | title}}UpdatedEvent(e.id, "name", oldName, name)
+	event := New{{.DomainName | title}}NameChangedEvent(e.id, oldName, newName.Value())
 	e.addDomainEvent(event)
 	
 	return nil
 }
 
-// UpdateEmail updates the {{.DomainName}}'s email
-func (e *{{.DomainName | title}}) UpdateEmail(email string) error {
-	if email == "" {
-		return errors.ErrInvalidValueObject.WithDetails("reason", "email cannot be empty")
+// UpdateEmail updates the {{.DomainName}}'s email with security validation
+func (e *{{.DomainName | title}}) UpdateEmail(emailStr string) error {
+	// Business rule: Cannot update email if user is deleted
+	if e.IsDeleted() {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot update deleted {{.DomainName}} email")
 	}
 	
-	if e.email == email {
+	newEmail, err := NewEmailAddress(emailStr)
+	if err != nil {
+		return err
+	}
+	
+	if e.email.Equals(newEmail) {
 		return nil // No change needed
 	}
 	
-	oldEmail := e.email
-	e.email = email
+	// Business rule: Email changes require verification (would be handled by application service)
+	// Business rule: Cannot change email too frequently
+	if e.hasRecentEmailChange() {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "email can only be changed once per week")
+	}
+	
+	oldEmail := e.email.Value()
+	e.email = newEmail
 	e.updatedAt = time.Now().UTC()
 	e.version++
 	
+	// Update preferences if switching between business/personal email
+	if oldEmailObj, _ := NewEmailAddress(oldEmail); oldEmailObj.IsBusinessEmail() != newEmail.IsBusinessEmail() {
+		if newEmail.IsBusinessEmail() {
+			e.preferences = e.preferences.ToBusinessDefaults()
+		} else {
+			e.preferences = e.preferences.ToPersonalDefaults()
+		}
+	}
+	
 	// Raise domain event
-	event := New{{.DomainName | title}}UpdatedEvent(e.id, "email", oldEmail, email)
+	event := New{{.DomainName | title}}EmailChangedEvent(e.id, oldEmail, newEmail.Value(), newEmail.GetProviderType())
 	e.addDomainEvent(event)
 	
 	return nil
 }
 
-// UpdateDescription updates the {{.DomainName}}'s description
-func (e *{{.DomainName | title}}) UpdateDescription(description string) error {
-	if e.description == description {
+// UpdateDescription updates the {{.DomainName}}'s description with content validation
+func (e *{{.DomainName | title}}) UpdateDescription(descriptionStr string) error {
+	// Business rule: Cannot update description if user is deleted
+	if e.IsDeleted() {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot update deleted {{.DomainName}} description")
+	}
+	
+	newDescription, err := NewUserDescription(descriptionStr)
+	if err != nil {
+		return err
+	}
+	
+	if e.description.Value() == newDescription.Value() {
 		return nil // No change needed
 	}
 	
-	oldDescription := e.description
-	e.description = description
+	oldDescription := e.description.Value()
+	e.description = newDescription
 	e.updatedAt = time.Now().UTC()
 	e.version++
 	
+	// Update profile completeness
+	e.profile = e.profile.WithDescriptionUpdate(newDescription)
+	
 	// Raise domain event
-	event := New{{.DomainName | title}}UpdatedEvent(e.id, "description", oldDescription, description)
+	event := New{{.DomainName | title}}DescriptionUpdatedEvent(e.id, oldDescription, newDescription.Value())
 	e.addDomainEvent(event)
 	
 	return nil
@@ -264,10 +365,157 @@ func (e *{{.DomainName | title}}) addDomainEvent(event events.DomainEvent) {
 	e.domainEvents = append(e.domainEvents, event)
 }
 
+// RecordLogin records a successful login with business logic
+func (e *{{.DomainName | title}}) RecordLogin() error {
+	// Business rule: Cannot login if deleted or inactive
+	if e.IsDeleted() {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "deleted {{.DomainName}} cannot login")
+	}
+	
+	if e.IsInactive() {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "inactive {{.DomainName}} cannot login")
+	}
+	
+	now := time.Now().UTC()
+	e.lastLoginAt = &now
+	e.updatedAt = now
+	
+	// Update profile with login activity
+	e.profile = e.profile.WithLoginActivity()
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}LoggedInEvent(e.id, e.email.Value(), now)
+	e.addDomainEvent(event)
+	
+	return nil
+}
+
+// UpdatePreferences updates user preferences with validation
+func (e *{{.DomainName | title}}) UpdatePreferences(newPreferences UserPreferences) error {
+	if e.IsDeleted() {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot update deleted {{.DomainName}} preferences")
+	}
+	
+	// Business rule: Validate preferences compatibility
+	if err := newPreferences.ValidateCompatibility(e.email.IsBusinessEmail()); err != nil {
+		return err
+	}
+	
+	oldPreferences := e.preferences
+	e.preferences = newPreferences
+	e.updatedAt = time.Now().UTC()
+	e.version++
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}PreferencesUpdatedEvent(e.id, oldPreferences, newPreferences)
+	e.addDomainEvent(event)
+	
+	return nil
+}
+
+// CanPerformAction checks if user can perform a specific action
+func (e *{{.DomainName | title}}) CanPerformAction(action string) bool {
+	// Business rules for action permissions
+	if e.IsDeleted() {
+		return false
+	}
+	
+	if e.IsInactive() {
+		// Inactive users can only perform limited actions
+		allowedActions := []string{"login", "activate", "view_profile"}
+		for _, allowed := range allowedActions {
+			if action == allowed {
+				return true
+			}
+		}
+		return false
+	}
+	
+	// Active users can perform most actions
+	return true
+}
+
+// GetEngagementLevel returns the user's engagement level based on activity
+func (e *{{.DomainName | title}}) GetEngagementLevel() string {
+	if e.lastLoginAt == nil {
+		return "new"
+	}
+	
+	daysSinceLogin := time.Since(*e.lastLoginAt).Hours() / 24
+	
+	switch {
+	case daysSinceLogin <= 1:
+		return "highly_active"
+	case daysSinceLogin <= 7:
+		return "active"
+	case daysSinceLogin <= 30:
+		return "somewhat_active"
+	case daysSinceLogin <= 90:
+		return "dormant"
+	default:
+		return "inactive"
+	}
+}
+
+// GetAccountAge returns the age of the account
+func (e *{{.DomainName | title}}) GetAccountAge() time.Duration {
+	return time.Since(e.createdAt)
+}
+
+// IsNewAccount checks if this is a new account (less than 7 days old)
+func (e *{{.DomainName | title}}) IsNewAccount() bool {
+	return e.GetAccountAge() < 7*24*time.Hour
+}
+
+// RequiresOnboarding checks if user needs onboarding
+func (e *{{.DomainName | title}}) RequiresOnboarding() bool {
+	return e.IsNewAccount() && !e.profile.IsComplete()
+}
+
+// GetContactSummary returns a summary of contact information
+func (e *{{.DomainName | title}}) GetContactSummary() ContactSummary {
+	return ContactSummary{
+		DisplayName:    e.name.DisplayName(),
+		Email:          e.email.Value(),
+		EmailProvider:  e.email.GetProviderType(),
+		IsBusinessEmail: e.email.IsBusinessEmail(),
+		ProfileComplete: e.profile.IsComplete(),
+		LastSeen:       e.lastLoginAt,
+		AccountAge:     e.GetAccountAge(),
+		EngagementLevel: e.GetEngagementLevel(),
+	}
+}
+
+// hasRecentNameChange checks if name was changed recently (business rule helper)
+func (e *{{.DomainName | title}}) hasRecentNameChange() bool {
+	// In a real implementation, this would check a change history
+	// For now, we'll use a simple heuristic based on update time
+	return time.Since(e.updatedAt) < 30*24*time.Hour // 30 days
+}
+
+// hasRecentEmailChange checks if email was changed recently (business rule helper)
+func (e *{{.DomainName | title}}) hasRecentEmailChange() bool {
+	// In a real implementation, this would check a change history
+	// For now, we'll use a simple heuristic based on update time
+	return time.Since(e.updatedAt) < 7*24*time.Hour // 7 days
+}
+
 // Equals checks if two {{.DomainName}}s are equal
 func (e *{{.DomainName | title}}) Equals(other *{{.DomainName | title}}) bool {
 	if other == nil {
 		return false
 	}
 	return e.id.Equals(other.id)
+}
+
+// ContactSummary represents a summary of user contact information
+type ContactSummary struct {
+	DisplayName     string        `json:"displayName"`
+	Email           string        `json:"email"`
+	EmailProvider   string        `json:"emailProvider"`
+	IsBusinessEmail bool          `json:"isBusinessEmail"`
+	ProfileComplete bool          `json:"profileComplete"`
+	LastSeen        *time.Time    `json:"lastSeen,omitempty"`
+	AccountAge      time.Duration `json:"accountAge"`
+	EngagementLevel string        `json:"engagementLevel"`
 }

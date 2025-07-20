@@ -1,0 +1,383 @@
+# Outputs for {{.ProjectName}} Infrastructure on Google Cloud Platform
+
+{{- if eq .Type "web-api" "microservice" }}
+# VPC and Networking Outputs
+output "vpc_id" {
+  description = "ID of the VPC network"
+  value       = google_compute_network.vpc.id
+}
+
+output "vpc_name" {
+  description = "Name of the VPC network"
+  value       = google_compute_network.vpc.name
+}
+
+output "vpc_self_link" {
+  description = "Self-link of the VPC network"
+  value       = google_compute_network.vpc.self_link
+}
+
+output "gke_subnet_id" {
+  description = "ID of the GKE subnet"
+  value       = google_compute_subnetwork.gke_subnet.id
+}
+
+output "gke_subnet_cidr" {
+  description = "CIDR range of the GKE subnet"
+  value       = google_compute_subnetwork.gke_subnet.ip_cidr_range
+}
+
+# GKE Cluster Outputs
+output "cluster_name" {
+  description = "Name of the GKE cluster"
+  value       = google_container_cluster.primary.name
+}
+
+output "cluster_endpoint" {
+  description = "Endpoint for GKE control plane"
+  value       = google_container_cluster.primary.endpoint
+  sensitive   = true
+}
+
+output "cluster_ca_certificate" {
+  description = "Base64 encoded public certificate that is the root of trust for the cluster"
+  value       = google_container_cluster.primary.master_auth[0].cluster_ca_certificate
+  sensitive   = true
+}
+
+output "cluster_location" {
+  description = "Location of the GKE cluster"
+  value       = google_container_cluster.primary.location
+}
+
+output "cluster_master_version" {
+  description = "The current version of the master in the cluster"
+  value       = google_container_cluster.primary.master_version
+}
+
+output "node_pool_name" {
+  description = "Name of the primary node pool"
+  value       = google_container_node_pool.primary_nodes.name
+}
+
+output "node_pool_instance_group_urls" {
+  description = "List of instance group URLs which have been assigned to the cluster"
+  value       = google_container_node_pool.primary_nodes.instance_group_urls
+}
+
+# Service Account Outputs
+output "gke_service_account_email" {
+  description = "Email of the GKE service account"
+  value       = google_service_account.gke_nodes.email
+}
+
+# Database Outputs (Cloud SQL)
+output "database_instance_name" {
+  description = "Name of the Cloud SQL instance"
+  value       = var.enable_database ? google_sql_database_instance.main[0].name : null
+}
+
+output "database_connection_name" {
+  description = "Connection name of the Cloud SQL instance"
+  value       = var.enable_database ? google_sql_database_instance.main[0].connection_name : null
+  sensitive   = true
+}
+
+output "database_private_ip" {
+  description = "Private IP address of the Cloud SQL instance"
+  value       = var.enable_database ? google_sql_database_instance.main[0].private_ip_address : null
+  sensitive   = true
+}
+
+output "database_name" {
+  description = "Name of the database"
+  value       = var.enable_database ? google_sql_database.database[0].name : null
+}
+
+output "database_username" {
+  description = "Database username"
+  value       = var.enable_database ? google_sql_user.users[0].name : null
+  sensitive   = true
+}
+
+# Redis Outputs (Cloud Memorystore)
+output "redis_host" {
+  description = "Host IP address of the Redis instance"
+  value       = var.enable_redis ? google_redis_instance.cache[0].host : null
+  sensitive   = true
+}
+
+output "redis_port" {
+  description = "Port of the Redis instance"
+  value       = var.enable_redis ? google_redis_instance.cache[0].port : null
+}
+
+output "redis_memory_size" {
+  description = "Memory size of the Redis instance in GB"
+  value       = var.enable_redis ? google_redis_instance.cache[0].memory_size_gb : null
+}
+
+output "redis_version" {
+  description = "Version of the Redis instance"
+  value       = var.enable_redis ? google_redis_instance.cache[0].redis_version : null
+}
+
+# Load Balancer Outputs
+output "load_balancer_ip" {
+  description = "External IP address of the load balancer"
+  value       = google_compute_global_address.lb_ip.address
+}
+
+output "ssl_certificate_name" {
+  description = "Name of the managed SSL certificate"
+  value       = var.ssl_domain_name != "" ? google_compute_managed_ssl_certificate.lb_ssl[0].name : null
+}
+
+# Application URL
+output "application_url" {
+  description = "URL of the deployed application"
+  value       = var.ssl_domain_name != "" ? "https://${var.ssl_domain_name}" : "http://${google_compute_global_address.lb_ip.address}"
+}
+
+{{- else if eq .Type "lambda" "cloud-function" }}
+# Cloud Function Outputs
+output "function_name" {
+  description = "Name of the Cloud Function"
+  value       = google_cloudfunctions2_function.function.name
+}
+
+output "function_uri" {
+  description = "URI of the Cloud Function"
+  value       = google_cloudfunctions2_function.function.service_config[0].uri
+}
+
+output "function_service_account_email" {
+  description = "Email of the function service account"
+  value       = google_service_account.function_sa.email
+}
+
+# Storage Outputs
+output "source_bucket_name" {
+  description = "Name of the source code storage bucket"
+  value       = google_storage_bucket.function_source.name
+}
+
+output "source_bucket_url" {
+  description = "URL of the source code storage bucket"
+  value       = google_storage_bucket.function_source.url
+}
+
+# VPC Connector (if enabled)
+output "vpc_connector_name" {
+  description = "Name of the VPC connector"
+  value       = var.function_vpc_access_enabled ? google_vpc_access_connector.connector[0].name : null
+}
+
+output "vpc_connector_ip_cidr_range" {
+  description = "IP CIDR range of the VPC connector"
+  value       = var.function_vpc_access_enabled ? google_vpc_access_connector.connector[0].ip_cidr_range : null
+}
+
+# Firestore Database (if enabled)
+output "firestore_database_name" {
+  description = "Name of the Firestore database"
+  value       = var.enable_firestore ? google_firestore_database.database[0].name : null
+}
+
+output "firestore_location_id" {
+  description = "Location ID of the Firestore database"
+  value       = var.enable_firestore ? google_firestore_database.database[0].location_id : null
+}
+{{- end }}
+
+# Secret Manager Outputs
+output "secrets_created" {
+  description = "Map of created secrets"
+  value = {
+    for k, secret in google_secret_manager_secret.secrets : k => {
+      secret_id = secret.secret_id
+      name      = secret.name
+    }
+  }
+  sensitive = true
+}
+
+# Monitoring Outputs
+output "notification_channel_id" {
+  description = "ID of the email notification channel"
+  value       = var.alert_email != "" ? google_monitoring_notification_channel.email[0].id : null
+}
+
+output "alert_policy_id" {
+  description = "ID of the high error rate alert policy"
+  value       = google_monitoring_alert_policy.high_error_rate.id
+}
+
+output "log_metric_name" {
+  description = "Name of the error count log metric"
+  value       = google_logging_metric.error_count.name
+}
+
+# Security Outputs
+output "cloud_armor_policy_id" {
+  description = "ID of the Cloud Armor security policy"
+  value       = var.enable_cloud_armor ? google_compute_security_policy.security_policy[0].id : null
+}
+
+output "cloud_armor_policy_name" {
+  description = "Name of the Cloud Armor security policy"
+  value       = var.enable_cloud_armor ? google_compute_security_policy.security_policy[0].name : null
+}
+
+# Workload Identity Outputs
+output "workload_identity_service_account_email" {
+  description = "Email of the Workload Identity service account"
+  value       = var.enable_workload_identity ? google_service_account.workload_identity[0].email : null
+}
+
+# Project Information
+output "project_id" {
+  description = "GCP project ID"
+  value       = var.gcp_project_id
+}
+
+output "region" {
+  description = "GCP region"
+  value       = var.gcp_region
+}
+
+output "zone" {
+  description = "GCP zone"
+  value       = var.gcp_zone
+}
+
+# Environment Information
+output "environment" {
+  description = "Environment name"
+  value       = var.environment
+}
+
+output "project_name" {
+  description = "Project name"
+  value       = var.project_name
+}
+
+# Resource Labels
+output "common_labels" {
+  description = "Common labels applied to all resources"
+  value       = local.common_labels
+}
+
+# Deployment Information
+output "deployment_timestamp" {
+  description = "Timestamp of the deployment"
+  value       = timestamp()
+}
+
+# Resource Summary
+output "resource_summary" {
+  description = "Summary of created resources"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    vpc_created                = true
+    gke_cluster_created        = true
+    database_created           = var.enable_database
+    redis_created             = var.enable_redis
+    load_balancer_ip_created  = true
+    ssl_certificate_created   = var.ssl_domain_name != ""
+    {{- else if eq .Type "lambda" "cloud-function" }}
+    cloud_function_created    = true
+    storage_bucket_created    = true
+    firestore_created         = var.enable_firestore
+    vpc_connector_created     = var.function_vpc_access_enabled
+    {{- end }}
+    secrets_created           = length(var.application_secrets) > 0
+    monitoring_enabled        = var.alert_email != ""
+    cloud_armor_enabled       = var.enable_cloud_armor
+    workload_identity_enabled = var.enable_workload_identity
+  }
+}
+
+# Connection Information for Applications
+output "connection_info" {
+  description = "Connection information for applications"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    kubernetes = {
+      cluster_name = google_container_cluster.primary.name
+      endpoint     = google_container_cluster.primary.endpoint
+      location     = google_container_cluster.primary.location
+    }
+    database = var.enable_database ? {
+      connection_name = google_sql_database_instance.main[0].connection_name
+      private_ip      = google_sql_database_instance.main[0].private_ip_address
+      database_name   = google_sql_database.database[0].name
+      username        = google_sql_user.users[0].name
+    } : null
+    redis = var.enable_redis ? {
+      host = google_redis_instance.cache[0].host
+      port = google_redis_instance.cache[0].port
+    } : null
+    {{- else if eq .Type "lambda" "cloud-function" }}
+    cloud_function = {
+      name = google_cloudfunctions2_function.function.name
+      uri  = google_cloudfunctions2_function.function.service_config[0].uri
+    }
+    firestore = var.enable_firestore ? {
+      database_name = google_firestore_database.database[0].name
+      location_id   = google_firestore_database.database[0].location_id
+    } : null
+    {{- end }}
+    secrets = {
+      for k, secret in google_secret_manager_secret.secrets : k => {
+        secret_name = secret.name
+        secret_id   = secret.secret_id
+      }
+    }
+  }
+  sensitive = true
+}
+
+# Health Check Information
+output "health_check_info" {
+  description = "Health check configuration"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    application_health_url = var.ssl_domain_name != "" ? "https://${var.ssl_domain_name}/health" : "http://${google_compute_global_address.lb_ip.address}/health"
+    {{- else if eq .Type "lambda" "cloud-function" }}
+    cloud_function_health = "Available via Cloud Console monitoring"
+    {{- end }}
+    monitoring_dashboard = "https://console.cloud.google.com/monitoring/dashboards"
+    logging_dashboard    = "https://console.cloud.google.com/logs"
+  }
+}
+
+# Backup Information
+output "backup_info" {
+  description = "Backup configuration information"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    database_backup_enabled = var.enable_database && var.environment == "production"
+    redis_backup_enabled    = var.enable_redis && var.redis_tier == "STANDARD_HA"
+    {{- else if eq .Type "lambda" "cloud-function" }}
+    source_code_versioning = "Enabled via Cloud Storage versioning"
+    {{- end }}
+    automatic_backups = var.environment == "production"
+  }
+}
+
+# Cost Optimization Information
+output "cost_optimization_info" {
+  description = "Cost optimization features enabled"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    preemptible_nodes = var.environment != "production"
+    autoscaling       = true
+    {{- else if eq .Type "lambda" "cloud-function" }}
+    min_instances     = google_cloudfunctions2_function.function.service_config[0].min_instance_count
+    max_instances     = google_cloudfunctions2_function.function.service_config[0].max_instance_count
+    {{- end }}
+    environment       = var.environment
+    cost_center       = var.cost_center
+  }
+}

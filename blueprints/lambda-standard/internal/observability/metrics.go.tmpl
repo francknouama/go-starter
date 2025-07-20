@@ -1,0 +1,281 @@
+package observability
+
+import (
+	"context"
+	"os"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// MetricsClient wraps CloudWatch operations for custom metrics
+type MetricsClient struct {
+	client    *cloudwatch.Client
+	namespace string
+	enabled   bool
+}
+
+var globalMetrics *MetricsClient
+
+// InitializeMetrics initializes the CloudWatch metrics client
+func InitializeMetrics(ctx context.Context) error {
+	// Check if metrics are disabled
+	if os.Getenv("DISABLE_CUSTOM_METRICS") == "true" {
+		globalMetrics = &MetricsClient{enabled: false}
+		logger.Info("Custom metrics disabled by environment variable", nil)
+		return nil
+	}
+
+	// Load AWS configuration
+	cfg, err := config.LoadDefaultConfig(ctx)
+	if err != nil {
+		logger.Error("Failed to load AWS config for metrics", map[string]interface{}{
+			"error": err.Error(),
+		})
+		globalMetrics = &MetricsClient{enabled: false}
+		return err
+	}
+
+	namespace := os.Getenv("METRICS_NAMESPACE")
+	if namespace == "" {
+		namespace = "{{.ProjectName}}/Lambda"
+	}
+
+	globalMetrics = &MetricsClient{
+		client:    cloudwatch.NewFromConfig(cfg),
+		namespace: namespace,
+		enabled:   true,
+	}
+
+	logger.Info("CloudWatch metrics client initialized", map[string]interface{}{
+		"namespace": namespace,
+	})
+
+	return nil
+}
+
+// RecordDuration records a duration metric
+func RecordDuration(metricName string, duration time.Duration, dimensions map[string]string) {
+	if globalMetrics == nil || !globalMetrics.enabled {
+		return
+	}
+
+	globalMetrics.putMetric(metricName, float64(duration.Milliseconds()), types.StandardUnitMilliseconds, dimensions)
+}
+
+// RecordCount records a count metric
+func RecordCount(metricName string, count float64, dimensions map[string]string) {
+	if globalMetrics == nil || !globalMetrics.enabled {
+		return
+	}
+
+	globalMetrics.putMetric(metricName, count, types.StandardUnitCount, dimensions)
+}
+
+// RecordBytes records a bytes metric
+func RecordBytes(metricName string, bytes float64, dimensions map[string]string) {
+	if globalMetrics == nil || !globalMetrics.enabled {
+		return
+	}
+
+	globalMetrics.putMetric(metricName, bytes, types.StandardUnitBytes, dimensions)
+}
+
+// IncrementCounter increments a counter metric by 1
+func IncrementCounter(metricName string, dimensions map[string]string) {
+	RecordCount(metricName, 1, dimensions)
+}
+
+// RecordError records an error occurrence
+func RecordError(errorType string, dimensions map[string]string) {
+	if dimensions == nil {
+		dimensions = make(map[string]string)
+	}
+	dimensions["ErrorType"] = errorType
+	IncrementCounter("Errors", dimensions)
+}
+
+// RecordInvocation records a Lambda invocation
+func RecordInvocation(functionName string, success bool) {
+	dimensions := map[string]string{
+		"FunctionName": functionName,
+		"Status":       "Success",
+	}
+	
+	if !success {
+		dimensions["Status"] = "Error"
+	}
+	
+	IncrementCounter("Invocations", dimensions)
+}
+
+// RecordColdStart records a cold start occurrence
+func RecordColdStart() {
+	IncrementCounter("ColdStarts", nil)
+}
+
+// RecordMemoryUsage records memory usage information
+func RecordMemoryUsage(usedMB float64, allocatedMB float64) {
+	RecordBytes("MemoryUsed", usedMB*1024*1024, nil)
+	RecordBytes("MemoryAllocated", allocatedMB*1024*1024, nil)
+	
+	if allocatedMB > 0 {
+		utilizationPercent := (usedMB / allocatedMB) * 100
+		globalMetrics.putMetric("MemoryUtilization", utilizationPercent, types.StandardUnitPercent, nil)
+	}
+}
+
+// RecordBillingDuration records the billed duration for cost tracking
+func RecordBillingDuration(duration time.Duration) {
+	RecordDuration("BilledDuration", duration, nil)
+}
+
+// RecordRequestSize records the size of incoming requests
+func RecordRequestSize(sizeBytes float64) {
+	RecordBytes("RequestSize", sizeBytes, nil)
+}
+
+// RecordResponseSize records the size of outgoing responses
+func RecordResponseSize(sizeBytes float64) {
+	RecordBytes("ResponseSize", sizeBytes, nil)
+}
+
+// RecordBusinessMetric records custom business metrics
+func RecordBusinessMetric(metricName string, value float64, unit types.StandardUnit, dimensions map[string]string) {
+	if globalMetrics == nil || !globalMetrics.enabled {
+		return
+	}
+
+	globalMetrics.putMetric(metricName, value, unit, dimensions)
+}
+
+// putMetric sends a metric to CloudWatch
+func (m *MetricsClient) putMetric(metricName string, value float64, unit types.StandardUnit, dimensions map[string]string) {
+	if !m.enabled {
+		return
+	}
+
+	// Convert dimensions to CloudWatch format
+	var cwDimensions []types.Dimension
+	for key, val := range dimensions {
+		cwDimensions = append(cwDimensions, types.Dimension{
+			Name:  aws.String(key),
+			Value: aws.String(val),
+		})
+	}
+
+	// Create metric data
+	metricData := types.MetricDatum{
+		MetricName: aws.String(metricName),
+		Value:      aws.Float64(value),
+		Unit:       unit,
+		Timestamp:  aws.Time(time.Now().UTC()),
+		Dimensions: cwDimensions,
+	}
+
+	// Send metric asynchronously to avoid blocking
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		input := &cloudwatch.PutMetricDataInput{
+			Namespace:  aws.String(m.namespace),
+			MetricData: []types.MetricDatum{metricData},
+		}
+
+		if _, err := m.client.PutMetricData(ctx, input); err != nil {
+			logger.Error("Failed to put metric data", map[string]interface{}{
+				"metric":    metricName,
+				"value":     value,
+				"error":     err.Error(),
+				"namespace": m.namespace,
+			})
+		} else {
+			logger.Debug("Metric recorded", map[string]interface{}{
+				"metric":    metricName,
+				"value":     value,
+				"namespace": m.namespace,
+			})
+		}
+	}()
+}
+
+// CreateCustomDashboard creates a CloudWatch dashboard for the Lambda function
+func CreateCustomDashboard(ctx context.Context, functionName string) error {
+	if globalMetrics == nil || !globalMetrics.enabled {
+		return nil
+	}
+
+	dashboardName := functionName + "-Dashboard"
+	
+	// Dashboard body with Lambda metrics
+	dashboardBody := `{
+		"widgets": [
+			{
+				"type": "metric",
+				"x": 0,
+				"y": 0,
+				"width": 12,
+				"height": 6,
+				"properties": {
+					"metrics": [
+						[ "AWS/Lambda", "Duration", "FunctionName", "` + functionName + `" ],
+						[ ".", "Invocations", ".", "." ],
+						[ ".", "Errors", ".", "." ],
+						[ ".", "Throttles", ".", "." ]
+					],
+					"period": 300,
+					"stat": "Average",
+					"region": "us-east-1",
+					"title": "Lambda Function Metrics"
+				}
+			},
+			{
+				"type": "metric",
+				"x": 0,
+				"y": 6,
+				"width": 12,
+				"height": 6,
+				"properties": {
+					"metrics": [
+						[ "` + globalMetrics.namespace + `", "Invocations", "FunctionName", "` + functionName + `" ],
+						[ ".", "Errors", ".", "." ],
+						[ ".", "ColdStarts", ".", "." ]
+					],
+					"period": 300,
+					"stat": "Sum",
+					"region": "us-east-1",
+					"title": "Custom Application Metrics"
+				}
+			}
+		]
+	}`
+
+	input := &cloudwatch.PutDashboardInput{
+		DashboardName: aws.String(dashboardName),
+		DashboardBody: aws.String(dashboardBody),
+	}
+
+	if _, err := globalMetrics.client.PutDashboard(ctx, input); err != nil {
+		logger.Error("Failed to create dashboard", map[string]interface{}{
+			"dashboard": dashboardName,
+			"error":     err.Error(),
+		})
+		return err
+	}
+
+	logger.Info("CloudWatch dashboard created", map[string]interface{}{
+		"dashboard": dashboardName,
+	})
+
+	return nil
+}
+
+// GetMetricsClient returns the global metrics client
+func GetMetricsClient() *MetricsClient {
+	return globalMetrics
+}

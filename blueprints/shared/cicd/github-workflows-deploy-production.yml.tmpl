@@ -1,0 +1,809 @@
+# Production-Grade Deployment Pipeline for Go Projects
+# Supports: Multi-environment deployment, Blue-Green, Canary, Rollback strategies
+# Features: Infrastructure as Code, Monitoring integration, Automated testing
+
+name: Production Deployment
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      strategy:
+        description: 'Deployment strategy'
+        required: true
+        default: 'rolling'
+        type: choice
+        options:
+        - rolling
+        - blue-green
+        - canary
+      skip_tests:
+        description: 'Skip deployment tests'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  GO_VERSION: "{{.GoVersion}}"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  {{- if eq .Type "web-api" "microservice" }}
+  KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+  {{- end }}
+  {{- if eq .Type "lambda" }}
+  AWS_REGION: us-east-1
+  {{- end }}
+
+jobs:
+  # Determine deployment configuration
+  plan:
+    name: Plan Deployment
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.config.outputs.environment }}
+      strategy: ${{ steps.config.outputs.strategy }}
+      should-deploy: ${{ steps.config.outputs.should-deploy }}
+      image-tag: ${{ steps.config.outputs.image-tag }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Determine deployment configuration
+      id: config
+      run: |
+        # Determine environment
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          ENV="${{ github.event.inputs.environment }}"
+          STRATEGY="${{ github.event.inputs.strategy }}"
+        elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+          ENV="staging"
+          STRATEGY="rolling"
+        elif [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+          ENV="production"
+          STRATEGY="blue-green"
+        else
+          ENV="staging"
+          STRATEGY="rolling"
+        fi
+        
+        # Determine image tag
+        if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+          IMAGE_TAG="${{ github.ref_name }}"
+        else
+          IMAGE_TAG="${{ github.sha }}"
+        fi
+        
+        echo "environment=${ENV}" >> $GITHUB_OUTPUT
+        echo "strategy=${STRATEGY}" >> $GITHUB_OUTPUT
+        echo "should-deploy=true" >> $GITHUB_OUTPUT
+        echo "image-tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+        
+        echo "🎯 Deployment Plan:"
+        echo "- Environment: ${ENV}"
+        echo "- Strategy: ${STRATEGY}"
+        echo "- Image Tag: ${IMAGE_TAG}"
+
+  # Pre-deployment validation
+  pre-deploy-validation:
+    name: Pre-deployment Validation
+    needs: plan
+    runs-on: ubuntu-latest
+    environment: 
+      name: ${{ needs.plan.outputs.environment }}
+      url: ${{ steps.urls.outputs.app-url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Validate deployment target
+      run: |
+        ENV="${{ needs.plan.outputs.environment }}"
+        echo "🔍 Validating deployment to ${ENV}..."
+        
+        # Check if environment is ready for deployment
+        case $ENV in
+          staging)
+            echo "✅ Staging environment - deployment allowed"
+            ;;
+          production)
+            if [[ ! "${{ github.ref }}" =~ refs/tags/v.* ]]; then
+              echo "❌ Production deployments only allowed from version tags"
+              exit 1
+            fi
+            echo "✅ Production environment - version tag detected"
+            ;;
+          *)
+            echo "❌ Unknown environment: ${ENV}"
+            exit 1
+            ;;
+        esac
+    
+    - name: Check image availability
+      {{- if ne .Type "lambda" }}
+      run: |
+        IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.plan.outputs.image-tag }}"
+        echo "🔍 Checking image availability: ${IMAGE}"
+        
+        # Login to registry
+        echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u ${{ github.actor }} --password-stdin
+        
+        # Check if image exists
+        if docker manifest inspect "${IMAGE}" > /dev/null 2>&1; then
+          echo "✅ Image found: ${IMAGE}"
+        else
+          echo "❌ Image not found: ${IMAGE}"
+          echo "Available tags:"
+          docker image ls "${REGISTRY}/${IMAGE_NAME}" || true
+          exit 1
+        fi
+      {{- end }}
+    
+    - name: Set deployment URLs
+      id: urls
+      run: |
+        ENV="${{ needs.plan.outputs.environment }}"
+        {{- if eq .Type "web-api" "microservice" }}
+        case $ENV in
+          staging)
+            APP_URL="https://{{.ProjectName}}-staging.{{.DomainName | default "example.com"}}"
+            ;;
+          production)
+            APP_URL="https://{{.ProjectName}}.{{.DomainName | default "example.com"}}"
+            ;;
+        esac
+        {{- else if eq .Type "lambda" }}
+        APP_URL="https://api.gateway.url/${ENV}/{{.ProjectName}}"
+        {{- else }}
+        APP_URL="N/A"
+        {{- end }}
+        
+        echo "app-url=${APP_URL}" >> $GITHUB_OUTPUT
+        echo "🔗 Application URL will be: ${APP_URL}"
+
+  {{- if eq .Type "web-api" "microservice" }}
+  # Deploy infrastructure
+  deploy-infrastructure:
+    name: Deploy Infrastructure
+    needs: [plan, pre-deploy-validation]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.environment }}
+    outputs:
+      cluster-name: ${{ steps.infra.outputs.cluster-name }}
+      namespace: ${{ steps.infra.outputs.namespace }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.6.0
+    
+    - name: Deploy infrastructure with Terraform
+      id: infra
+      working-directory: ./terraform
+      run: |
+        ENV="${{ needs.plan.outputs.environment }}"
+        
+        # Initialize Terraform
+        terraform init \
+          -backend-config="bucket={{.ProjectName}}-terraform-state" \
+          -backend-config="key=${ENV}/terraform.tfstate" \
+          -backend-config="region=us-east-1"
+        
+        # Plan infrastructure changes
+        terraform plan \
+          -var="environment=${ENV}" \
+          -var="project_name={{.ProjectName}}" \
+          -var="image_tag=${{ needs.plan.outputs.image-tag }}" \
+          -out=tfplan
+        
+        # Apply infrastructure changes
+        terraform apply -auto-approve tfplan
+        
+        # Output cluster information
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        NAMESPACE=$(terraform output -raw namespace)
+        
+        echo "cluster-name=${CLUSTER_NAME}" >> $GITHUB_OUTPUT
+        echo "namespace=${NAMESPACE}" >> $GITHUB_OUTPUT
+        
+        echo "🏗️ Infrastructure deployed:"
+        echo "- Cluster: ${CLUSTER_NAME}"
+        echo "- Namespace: ${NAMESPACE}"
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure kubectl
+      run: |
+        echo "${{ env.KUBE_CONFIG_DATA }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+        kubectl config current-context
+        kubectl get nodes
+  {{- end }}
+
+  {{- if eq .Type "lambda" }}
+  # Deploy Lambda function
+  deploy-lambda:
+    name: Deploy Lambda Function
+    needs: [plan, pre-deploy-validation]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.environment }}
+    outputs:
+      function-arn: ${{ steps.deploy.outputs.function-arn }}
+      api-url: ${{ steps.deploy.outputs.api-url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Set up SAM CLI
+      uses: aws-actions/setup-sam@v2
+      with:
+        use-installer: true
+    
+    - name: Download Lambda deployment package
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        path: ./
+    
+    - name: Deploy with SAM
+      id: deploy
+      run: |
+        ENV="${{ needs.plan.outputs.environment }}"
+        STACK_NAME="{{.ProjectName}}-${ENV}"
+        
+        # Deploy the SAM application
+        sam deploy \
+          --stack-name "${STACK_NAME}" \
+          --s3-bucket "${{ secrets.SAM_DEPLOYMENT_BUCKET }}" \
+          --s3-prefix "{{.ProjectName}}/${ENV}" \
+          --parameter-overrides \
+            Environment="${ENV}" \
+            ImageTag="${{ needs.plan.outputs.image-tag }}" \
+          --capabilities CAPABILITY_IAM \
+          --no-confirm-changeset \
+          --no-fail-on-empty-changeset \
+          --tags \
+            Project="{{.ProjectName}}" \
+            Environment="${ENV}" \
+            ManagedBy="SAM" \
+            GitCommit="${{ github.sha }}" \
+            DeployedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        
+        # Get deployment outputs
+        FUNCTION_ARN=$(aws cloudformation describe-stacks \
+          --stack-name "${STACK_NAME}" \
+          --query 'Stacks[0].Outputs[?OutputKey==`FunctionArn`].OutputValue' \
+          --output text)
+        
+        API_URL=$(aws cloudformation describe-stacks \
+          --stack-name "${STACK_NAME}" \
+          --query 'Stacks[0].Outputs[?OutputKey==`ApiUrl`].OutputValue' \
+          --output text)
+        
+        echo "function-arn=${FUNCTION_ARN}" >> $GITHUB_OUTPUT
+        echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
+        
+        echo "🚀 Lambda deployed:"
+        echo "- Function ARN: ${FUNCTION_ARN}"
+        echo "- API URL: ${API_URL}"
+  {{- end }}
+
+  {{- if eq .Type "web-api" "microservice" }}
+  # Application deployment
+  deploy-application:
+    name: Deploy Application
+    needs: [plan, pre-deploy-validation, deploy-infrastructure]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.environment }}
+    outputs:
+      deployment-id: ${{ steps.deploy.outputs.deployment-id }}
+      app-url: ${{ steps.deploy.outputs.app-url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Configure kubectl
+      run: |
+        echo "${{ env.KUBE_CONFIG_DATA }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+    
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.13.0'
+    
+    - name: Deploy with Helm
+      id: deploy
+      run: |
+        export KUBECONFIG=kubeconfig
+        ENV="${{ needs.plan.outputs.environment }}"
+        STRATEGY="${{ needs.plan.outputs.strategy }}"
+        IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.plan.outputs.image-tag }}"
+        NAMESPACE="${{ needs.deploy-infrastructure.outputs.namespace }}"
+        
+        echo "🚀 Deploying ${IMAGE} to ${ENV} using ${STRATEGY} strategy..."
+        
+        # Prepare Helm values
+        cat > values-${ENV}.yaml << EOF
+        image:
+          repository: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tag: ${{ needs.plan.outputs.image-tag }}
+          pullPolicy: Always
+        
+        environment: ${ENV}
+        
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 250m
+            memory: 256Mi
+        
+        autoscaling:
+          enabled: true
+          minReplicas: 2
+          maxReplicas: 10
+          targetCPUUtilizationPercentage: 70
+        
+        ingress:
+          enabled: true
+          className: nginx
+          annotations:
+            cert-manager.io/cluster-issuer: letsencrypt-prod
+          hosts:
+            - host: {{.ProjectName}}-${ENV}.{{.DomainName | default "example.com"}}
+              paths:
+                - path: /
+                  pathType: Prefix
+          tls:
+            - secretName: {{.ProjectName}}-${ENV}-tls
+              hosts:
+                - {{.ProjectName}}-${ENV}.{{.DomainName | default "example.com"}}
+        
+        monitoring:
+          enabled: true
+          serviceMonitor:
+            enabled: true
+            interval: 30s
+        
+        healthcheck:
+          enabled: true
+          path: /health
+          port: 8080
+        EOF
+        
+        # Deploy based on strategy
+        case $STRATEGY in
+          rolling)
+            helm upgrade --install {{.ProjectName}}-${ENV} ./helm/{{.ProjectName}} \
+              --namespace ${NAMESPACE} \
+              --values values-${ENV}.yaml \
+              --wait --timeout=10m
+            ;;
+          blue-green)
+            # Implement blue-green deployment
+            helm upgrade --install {{.ProjectName}}-${ENV}-green ./helm/{{.ProjectName}} \
+              --namespace ${NAMESPACE} \
+              --values values-${ENV}.yaml \
+              --set nameOverride={{.ProjectName}}-green \
+              --wait --timeout=10m
+            ;;
+          canary)
+            # Implement canary deployment
+            helm upgrade --install {{.ProjectName}}-${ENV}-canary ./helm/{{.ProjectName}} \
+              --namespace ${NAMESPACE} \
+              --values values-${ENV}.yaml \
+              --set replicaCount=1 \
+              --set nameOverride={{.ProjectName}}-canary \
+              --wait --timeout=10m
+            ;;
+        esac
+        
+        # Get deployment info
+        DEPLOYMENT_ID=$(kubectl get deployment {{.ProjectName}}-${ENV} -n ${NAMESPACE} -o jsonpath='{.metadata.uid}')
+        APP_URL="https://{{.ProjectName}}-${ENV}.{{.DomainName | default "example.com"}}"
+        
+        echo "deployment-id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+        echo "app-url=${APP_URL}" >> $GITHUB_OUTPUT
+        
+        echo "✅ Application deployed successfully"
+        echo "- Deployment ID: ${DEPLOYMENT_ID}"
+        echo "- App URL: ${APP_URL}"
+  {{- end }}
+
+  # Post-deployment testing
+  post-deploy-tests:
+    name: Post-deployment Tests
+    needs: [plan, {{if eq .Type "lambda"}}deploy-lambda{{else}}deploy-application{{end}}]
+    if: ${{ !github.event.inputs.skip_tests }}
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Wait for deployment to be ready
+      run: |
+        echo "⏳ Waiting for deployment to be ready..."
+        sleep 60
+    
+    - name: Run smoke tests
+      run: |
+        {{- if eq .Type "lambda" }}
+        API_URL="${{ needs.deploy-lambda.outputs.api-url }}"
+        {{- else }}
+        API_URL="${{ needs.deploy-application.outputs.app-url }}"
+        {{- end }}
+        
+        echo "🧪 Running smoke tests against: ${API_URL}"
+        
+        # Health check
+        echo "Testing health endpoint..."
+        curl -f "${API_URL}/health" || {
+          echo "❌ Health check failed"
+          exit 1
+        }
+        echo "✅ Health check passed"
+        
+        # Basic functionality test
+        echo "Testing basic functionality..."
+        {{- if eq .Type "web-api" "microservice" }}
+        RESPONSE=$(curl -s -f "${API_URL}/api/v1/status")
+        if echo "$RESPONSE" | grep -q "ok"; then
+          echo "✅ Basic functionality test passed"
+        else
+          echo "❌ Basic functionality test failed: $RESPONSE"
+          exit 1
+        fi
+        {{- else if eq .Type "lambda" }}
+        RESPONSE=$(curl -s -f -X POST "${API_URL}/invoke" \
+          -H "Content-Type: application/json" \
+          -d '{"test": true}')
+        echo "Lambda response: $RESPONSE"
+        {{- end }}
+    
+    - name: Run load tests
+      run: |
+        {{- if eq .Type "lambda" }}
+        API_URL="${{ needs.deploy-lambda.outputs.api-url }}"
+        {{- else }}
+        API_URL="${{ needs.deploy-application.outputs.app-url }}"
+        {{- end }}
+        
+        echo "🔥 Running load tests..."
+        
+        # Install k6 for load testing
+        sudo apt-key adv --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+        echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+        sudo apt-get update
+        sudo apt-get install k6
+        
+        # Create load test script
+        cat > loadtest.js << 'EOF'
+        import http from 'k6/http';
+        import { check, sleep } from 'k6';
+        
+        export let options = {
+          stages: [
+            { duration: '30s', target: 10 },
+            { duration: '1m', target: 20 },
+            { duration: '30s', target: 0 },
+          ],
+          thresholds: {
+            http_req_duration: ['p(95)<500'], // 95% of requests must complete below 500ms
+            http_req_failed: ['rate<0.1'],   // Error rate must be below 10%
+          },
+        };
+        
+        export default function () {
+          let response = http.get('${API_URL}/health');
+          check(response, {
+            'status is 200': (r) => r.status === 200,
+            'response time < 500ms': (r) => r.timings.duration < 500,
+          });
+          sleep(1);
+        }
+        EOF
+        
+        # Run load test
+        k6 run loadtest.js || {
+          echo "❌ Load tests failed"
+          exit 1
+        }
+        echo "✅ Load tests passed"
+    
+    - name: Run security tests
+      run: |
+        {{- if eq .Type "lambda" }}
+        API_URL="${{ needs.deploy-lambda.outputs.api-url }}"
+        {{- else }}
+        API_URL="${{ needs.deploy-application.outputs.app-url }}"
+        {{- end }}
+        
+        echo "🔒 Running security tests..."
+        
+        # Test for common security headers
+        HEADERS=$(curl -I -s "${API_URL}/health")
+        
+        if echo "$HEADERS" | grep -q "X-Content-Type-Options"; then
+          echo "✅ X-Content-Type-Options header present"
+        else
+          echo "⚠️ X-Content-Type-Options header missing"
+        fi
+        
+        if echo "$HEADERS" | grep -q "X-Frame-Options"; then
+          echo "✅ X-Frame-Options header present"
+        else
+          echo "⚠️ X-Frame-Options header missing"
+        fi
+        
+        if echo "$HEADERS" | grep -q "Strict-Transport-Security"; then
+          echo "✅ HSTS header present"
+        else
+          echo "⚠️ HSTS header missing"
+        fi
+        
+        echo "✅ Security tests completed"
+
+  # Monitoring setup
+  setup-monitoring:
+    name: Setup Monitoring
+    needs: [plan, {{if eq .Type "lambda"}}deploy-lambda{{else}}deploy-application{{end}}]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure monitoring
+      run: |
+        ENV="${{ needs.plan.outputs.environment }}"
+        {{- if eq .Type "lambda" }}
+        FUNCTION_ARN="${{ needs.deploy-lambda.outputs.function-arn }}"
+        {{- else }}
+        DEPLOYMENT_ID="${{ needs.deploy-application.outputs.deployment-id }}"
+        {{- end }}
+        
+        echo "📊 Setting up monitoring for ${ENV}..."
+        
+        {{- if eq .Type "lambda" }}
+        # Create CloudWatch dashboard for Lambda
+        aws cloudwatch put-dashboard \
+          --dashboard-name "{{.ProjectName}}-${ENV}" \
+          --dashboard-body '{
+            "widgets": [
+              {
+                "type": "metric",
+                "properties": {
+                  "metrics": [
+                    ["AWS/Lambda", "Duration", "FunctionName", "{{.ProjectName}}-${ENV}"],
+                    [".", "Errors", ".", "."],
+                    [".", "Invocations", ".", "."]
+                  ],
+                  "period": 300,
+                  "stat": "Average",
+                  "region": "${{ env.AWS_REGION }}",
+                  "title": "{{.ProjectName}} Lambda Metrics"
+                }
+              }
+            ]
+          }'
+        
+        # Create CloudWatch alarms
+        aws cloudwatch put-metric-alarm \
+          --alarm-name "{{.ProjectName}}-${ENV}-errors" \
+          --alarm-description "Lambda function errors" \
+          --metric-name Errors \
+          --namespace AWS/Lambda \
+          --statistic Sum \
+          --period 300 \
+          --threshold 5 \
+          --comparison-operator GreaterThanThreshold \
+          --dimensions Name=FunctionName,Value={{.ProjectName}}-${ENV} \
+          --evaluation-periods 2
+        {{- else }}
+        # Configure Prometheus monitoring
+        kubectl apply -f - << EOF
+        apiVersion: monitoring.coreos.com/v1
+        kind: ServiceMonitor
+        metadata:
+          name: {{.ProjectName}}-${ENV}
+          namespace: ${{ needs.deploy-infrastructure.outputs.namespace }}
+        spec:
+          selector:
+            matchLabels:
+              app: {{.ProjectName}}-${ENV}
+          endpoints:
+          - port: metrics
+            interval: 30s
+            path: /metrics
+        EOF
+        
+        # Create Grafana dashboard
+        echo "📈 Grafana dashboard will be available at: https://grafana.{{.DomainName | default "example.com"}}/d/{{.ProjectName}}-${ENV}"
+        {{- end }}
+        
+        echo "✅ Monitoring configured"
+
+  # Blue-Green traffic switch (if applicable)
+  switch-traffic:
+    name: Switch Traffic (Blue-Green)
+    needs: [plan, deploy-application, post-deploy-tests]
+    if: needs.plan.outputs.strategy == 'blue-green' && needs.post-deploy-tests.result == 'success'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.plan.outputs.environment }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+    
+    - name: Switch traffic to green deployment
+      run: |
+        export KUBECONFIG=kubeconfig
+        echo "${{ env.KUBE_CONFIG_DATA }}" | base64 -d > kubeconfig
+        
+        ENV="${{ needs.plan.outputs.environment }}"
+        NAMESPACE="${{ needs.deploy-infrastructure.outputs.namespace }}"
+        
+        echo "🔄 Switching traffic from blue to green..."
+        
+        # Update service to point to green deployment
+        kubectl patch service {{.ProjectName}}-${ENV} -n ${NAMESPACE} \
+          -p '{"spec":{"selector":{"version":"green"}}}'
+        
+        echo "✅ Traffic switched to green deployment"
+        
+        # Wait and then cleanup blue deployment
+        sleep 300  # Wait 5 minutes
+        
+        echo "🧹 Cleaning up blue deployment..."
+        kubectl delete deployment {{.ProjectName}}-${ENV}-blue -n ${NAMESPACE} || true
+        
+        # Rename green to blue for next deployment
+        kubectl patch deployment {{.ProjectName}}-${ENV}-green -n ${NAMESPACE} \
+          --type='merge' -p='{"metadata":{"name":"{{.ProjectName}}-${ENV}"}}'
+
+  # Deployment notification and summary
+  notify-deployment:
+    name: Notify Deployment
+    needs: [plan, post-deploy-tests, setup-monitoring]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Generate deployment report
+      run: |
+        ENV="${{ needs.plan.outputs.environment }}"
+        STRATEGY="${{ needs.plan.outputs.strategy }}"
+        
+        echo "## 🚀 Deployment Report" > deployment-report.md
+        echo "" >> deployment-report.md
+        echo "- **Environment**: ${ENV}" >> deployment-report.md
+        echo "- **Strategy**: ${STRATEGY}" >> deployment-report.md
+        echo "- **Image Tag**: ${{ needs.plan.outputs.image-tag }}" >> deployment-report.md
+        echo "- **Commit**: ${{ github.sha }}" >> deployment-report.md
+        echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> deployment-report.md
+        echo "" >> deployment-report.md
+        
+        {{- if eq .Type "lambda" }}
+        echo "- **Function ARN**: ${{ needs.deploy-lambda.outputs.function-arn }}" >> deployment-report.md
+        echo "- **API URL**: ${{ needs.deploy-lambda.outputs.api-url }}" >> deployment-report.md
+        {{- else }}
+        echo "- **App URL**: ${{ needs.deploy-application.outputs.app-url }}" >> deployment-report.md
+        echo "- **Deployment ID**: ${{ needs.deploy-application.outputs.deployment-id }}" >> deployment-report.md
+        {{- end }}
+        
+        echo "" >> deployment-report.md
+        echo "### Test Results" >> deployment-report.md
+        
+        if [ "${{ needs.post-deploy-tests.result }}" == "success" ]; then
+          echo "✅ Post-deployment tests: PASSED" >> deployment-report.md
+        else
+          echo "❌ Post-deployment tests: FAILED" >> deployment-report.md
+        fi
+        
+        echo "" >> deployment-report.md
+        echo "### Monitoring" >> deployment-report.md
+        {{- if eq .Type "lambda" }}
+        echo "- **CloudWatch Dashboard**: https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#dashboards:name={{.ProjectName}}-${ENV}" >> deployment-report.md
+        {{- else }}
+        echo "- **Grafana Dashboard**: https://grafana.{{.DomainName | default "example.com"}}/d/{{.ProjectName}}-${ENV}" >> deployment-report.md
+        echo "- **Prometheus**: https://prometheus.{{.DomainName | default "example.com"}}" >> deployment-report.md
+        {{- end }}
+    
+    - name: Notify Slack
+      if: ${{ secrets.SLACK_WEBHOOK_URL }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ needs.post-deploy-tests.result }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          ${{ needs.post-deploy-tests.result == 'success' && '🚀' || '❌' }} Deployment of {{.ProjectName}}
+          Environment: ${{ needs.plan.outputs.environment }}
+          Strategy: ${{ needs.plan.outputs.strategy }}
+          Status: ${{ needs.post-deploy-tests.result == 'success' && 'SUCCESS' || 'FAILED' }}
+          {{- if eq .Type "lambda" }}
+          API: ${{ needs.deploy-lambda.outputs.api-url }}
+          {{- else }}
+          URL: ${{ needs.deploy-application.outputs.app-url }}
+          {{- end }}
+    
+    - name: Update GitHub deployment status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const state = '${{ needs.post-deploy-tests.result }}' === 'success' ? 'success' : 'failure';
+          const environment = '${{ needs.plan.outputs.environment }}';
+          {{- if eq .Type "lambda" }}
+          const environmentUrl = '${{ needs.deploy-lambda.outputs.api-url }}';
+          {{- else }}
+          const environmentUrl = '${{ needs.deploy-application.outputs.app-url }}';
+          {{- end }}
+          
+          github.rest.repos.createDeploymentStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            deployment_id: context.payload.deployment?.id || 0,
+            state: state,
+            environment_url: environmentUrl,
+            description: `Deployment to ${environment} ${state}`
+          });
+    
+    - name: Create GitHub release
+      if: startsWith(github.ref, 'refs/tags/') && needs.post-deploy-tests.result == 'success'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        body_path: deployment-report.md
+        draft: false
+        prerelease: false

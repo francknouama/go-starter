@@ -1,0 +1,219 @@
+package observability
+
+import (
+	"context"
+	"os"
+	"time"
+
+	"github.com/aws/aws-xray-sdk-go/xray"
+	"github.com/aws/aws-xray-sdk-go/xray/xraylog"
+	"{{.ModulePath}}/internal/logger"
+)
+
+var (
+	// Service name for X-Ray segments
+	serviceName = "{{.ProjectName}}"
+	isTracingEnabled = true
+)
+
+// InitializeTracing initializes X-Ray tracing for the Lambda function
+func InitializeTracing() {
+	// Set service name from environment variable if available
+	if name := os.Getenv("SERVICE_NAME"); name != "" {
+		serviceName = name
+	}
+
+	// Check if tracing is disabled
+	if os.Getenv("AWS_XRAY_TRACING_DISABLED") == "true" {
+		isTracingEnabled = false
+		return
+	}
+
+	// Configure X-Ray logging to use our logger
+	xray.SetLogger(xraylog.NewDefaultLogger(os.Stdout, xraylog.LogLevelInfo))
+
+	// Configure X-Ray to capture all AWS SDK calls
+	xray.AWS(&xray.AWSConfig{
+		LogLevel:               xraylog.LogLevelInfo,
+		ContextMissingStrategy: xray.CtxMissingLogError,
+	})
+
+	logger.Debug("X-Ray tracing initialized", map[string]interface{}{
+		"service_name": serviceName,
+		"enabled":      isTracingEnabled,
+	})
+}
+
+// TraceSegment creates a new X-Ray segment for tracing operations
+func TraceSegment(ctx context.Context, name string, fn func(context.Context) error) error {
+	if !isTracingEnabled {
+		return fn(ctx)
+	}
+
+	_, seg := xray.BeginSegment(ctx, name)
+	defer seg.Close(nil)
+
+	// Add service metadata
+	seg.AddAnnotation("service", serviceName)
+	seg.AddAnnotation("operation", name)
+
+	startTime := time.Now()
+	err := fn(seg.Ctx)
+	duration := time.Since(startTime)
+
+	// Add timing and status annotations
+	seg.AddMetadata("timing", map[string]interface{}{
+		"duration_ms": duration.Milliseconds(),
+		"start_time":  startTime.Format(time.RFC3339),
+	})
+
+	if err != nil {
+		seg.AddError(err)
+		seg.AddAnnotation("error", true)
+		logger.Error("Traced operation failed", map[string]interface{}{
+			"operation": name,
+			"error":     err.Error(),
+			"duration":  duration.String(),
+		})
+	} else {
+		seg.AddAnnotation("error", false)
+		logger.Debug("Traced operation completed", map[string]interface{}{
+			"operation": name,
+			"duration":  duration.String(),
+		})
+	}
+
+	return err
+}
+
+// TraceSubsegment creates a subsegment within an existing segment
+func TraceSubsegment(ctx context.Context, name string, fn func(context.Context) error) error {
+	if !isTracingEnabled {
+		return fn(ctx)
+	}
+
+	_, subseg := xray.BeginSubsegment(ctx, name)
+	defer subseg.Close(nil)
+
+	subseg.AddAnnotation("subsegment", name)
+
+	startTime := time.Now()
+	err := fn(subseg.Ctx)
+	duration := time.Since(startTime)
+
+	subseg.AddMetadata("timing", map[string]interface{}{
+		"duration_ms": duration.Milliseconds(),
+	})
+
+	if err != nil {
+		subseg.AddError(err)
+		subseg.AddAnnotation("error", true)
+	} else {
+		subseg.AddAnnotation("error", false)
+	}
+
+	return err
+}
+
+// AddTraceAnnotation adds an annotation to the current segment
+func AddTraceAnnotation(ctx context.Context, key string, value interface{}) {
+	if !isTracingEnabled {
+		return
+	}
+
+	if seg := xray.GetSegment(ctx); seg != nil {
+		seg.AddAnnotation(key, value)
+	}
+}
+
+// AddTraceMetadata adds metadata to the current segment
+func AddTraceMetadata(ctx context.Context, namespace string, data map[string]interface{}) {
+	if !isTracingEnabled {
+		return
+	}
+
+	if seg := xray.GetSegment(ctx); seg != nil {
+		seg.AddMetadata(namespace, data)
+	}
+}
+
+// TraceHTTPRequest traces an HTTP request with detailed information
+func TraceHTTPRequest(ctx context.Context, method, url string, statusCode int, fn func(context.Context) error) error {
+	return TraceSubsegment(ctx, "http_request", func(ctx context.Context) error {
+		if seg := xray.GetSegment(ctx); seg != nil {
+			seg.AddAnnotation("http.method", method)
+			seg.AddAnnotation("http.url", url)
+			
+			// Set namespace for HTTP data
+			seg.SetNamespace("remote")
+		}
+
+		err := fn(ctx)
+
+		if seg := xray.GetSegment(ctx); seg != nil {
+			seg.AddAnnotation("http.status_code", statusCode)
+			
+			// Add HTTP metadata
+			httpData := map[string]interface{}{
+				"request": map[string]interface{}{
+					"method": method,
+					"url":    url,
+				},
+				"response": map[string]interface{}{
+					"status": statusCode,
+				},
+			}
+			
+			if err != nil {
+				httpData["error"] = err.Error()
+			}
+			
+			seg.AddMetadata("http", httpData)
+		}
+
+		return err
+	})
+}
+
+// TraceDBQuery traces a database query operation
+func TraceDBQuery(ctx context.Context, query string, fn func(context.Context) error) error {
+	return TraceSubsegment(ctx, "db_query", func(ctx context.Context) error {
+		if seg := xray.GetSegment(ctx); seg != nil {
+			seg.AddAnnotation("db.type", "sql")
+			seg.SetNamespace("sql")
+		}
+
+		err := fn(ctx)
+
+		if seg := xray.GetSegment(ctx); seg != nil {
+			dbData := map[string]interface{}{
+				"query": query,
+			}
+			
+			if err != nil {
+				dbData["error"] = err.Error()
+			}
+			
+			seg.AddMetadata("sql", dbData)
+		}
+
+		return err
+	})
+}
+
+// GetTraceID returns the current trace ID for correlation
+func GetTraceID(ctx context.Context) string {
+	if !isTracingEnabled {
+		return ""
+	}
+
+	if seg := xray.GetSegment(ctx); seg != nil {
+		return seg.TraceID
+	}
+	return ""
+}
+
+// IsTracingEnabled returns whether X-Ray tracing is enabled
+func IsTracingEnabled() bool {
+	return isTracingEnabled
+}

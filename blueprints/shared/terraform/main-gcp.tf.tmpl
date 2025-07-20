@@ -1,0 +1,789 @@
+# Production Infrastructure for {{.ProjectName}} on Google Cloud Platform
+# Supports: Web APIs, Microservices with GKE, Cloud Run, Cloud Functions
+# Features: High availability, auto-scaling, monitoring, security
+
+terraform {
+  required_version = ">= 1.6"
+  
+  required_providers {
+    google = {
+      source  = "hashicorp/google"
+      version = "~> 4.84"
+    }
+    google-beta = {
+      source  = "hashicorp/google-beta"
+      version = "~> 4.84"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.20"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.10"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
+    }
+  }
+
+  backend "gcs" {
+    # Configuration provided via backend-config during terraform init
+    # bucket = "{{.ProjectName}}-terraform-state"
+    # prefix = "terraform/state"
+  }
+}
+
+# Configure the Google Cloud Provider
+provider "google" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
+  zone    = var.gcp_zone
+}
+
+provider "google-beta" {
+  project = var.gcp_project_id
+  region  = var.gcp_region
+  zone    = var.gcp_zone
+}
+
+# Local variables
+locals {
+  name_prefix = "${var.project_name}-${var.environment}"
+  
+  common_labels = {
+    project     = var.project_name
+    environment = var.environment
+    managed-by  = "terraform"
+    owner       = var.owner
+    cost-center = var.cost_center
+  }
+
+  # Availability zones in the region
+  zones = [
+    "${var.gcp_region}-a",
+    "${var.gcp_region}-b", 
+    "${var.gcp_region}-c"
+  ]
+}
+
+# Random suffix for unique resource names
+resource "random_string" "suffix" {
+  length  = 8
+  special = false
+  upper   = false
+}
+
+{{- if eq .Type "web-api" "microservice" }}
+# Enable required APIs
+resource "google_project_service" "apis" {
+  for_each = toset([
+    "container.googleapis.com",              # GKE
+    "compute.googleapis.com",                # Compute Engine
+    "cloudresourcemanager.googleapis.com",  # Resource Manager
+    "iam.googleapis.com",                    # IAM
+    "monitoring.googleapis.com",             # Cloud Monitoring
+    "logging.googleapis.com",                # Cloud Logging
+    "cloudsql.googleapis.com",              # Cloud SQL
+    "redis.googleapis.com",                 # Cloud Memorystore
+    "secretmanager.googleapis.com",         # Secret Manager
+    "cloudtrace.googleapis.com",            # Cloud Trace
+    "servicenetworking.googleapis.com",     # Service Networking
+  ])
+
+  service                    = each.value
+  disable_dependent_services = false
+  disable_on_destroy        = false
+}
+
+# VPC Network
+resource "google_compute_network" "vpc" {
+  name                    = "${local.name_prefix}-vpc"
+  auto_create_subnetworks = false
+  mtu                     = 1460
+
+  depends_on = [google_project_service.apis]
+}
+
+# Subnet for GKE nodes
+resource "google_compute_subnetwork" "gke_subnet" {
+  name          = "${local.name_prefix}-gke-subnet"
+  ip_cidr_range = var.gke_subnet_cidr
+  region        = var.gcp_region
+  network       = google_compute_network.vpc.id
+
+  # Secondary IP ranges for pods and services
+  secondary_ip_range {
+    range_name    = "gke-pods"
+    ip_cidr_range = var.gke_pods_cidr
+  }
+
+  secondary_ip_range {
+    range_name    = "gke-services"
+    ip_cidr_range = var.gke_services_cidr
+  }
+
+  private_ip_google_access = true
+}
+
+# Private service connection for Cloud SQL
+resource "google_compute_global_address" "private_ip_address" {
+  count = var.enable_database ? 1 : 0
+  
+  name          = "${local.name_prefix}-private-ip"
+  purpose       = "VPC_PEERING"
+  address_type  = "INTERNAL"
+  prefix_length = 16
+  network       = google_compute_network.vpc.id
+}
+
+resource "google_service_networking_connection" "private_vpc_connection" {
+  count = var.enable_database ? 1 : 0
+  
+  network                 = google_compute_network.vpc.id
+  service                 = "servicenetworking.googleapis.com"
+  reserved_peering_ranges = [google_compute_global_address.private_ip_address[0].name]
+  
+  depends_on = [google_project_service.apis]
+}
+
+# GKE Cluster
+resource "google_container_cluster" "primary" {
+  name     = "${local.name_prefix}-gke"
+  location = var.gcp_region
+
+  # We can't create a cluster with no node pool defined, but we want to only use
+  # separately managed node pools. So we create the smallest possible default
+  # node pool and immediately delete it.
+  remove_default_node_pool = true
+  initial_node_count       = 1
+
+  network    = google_compute_network.vpc.name
+  subnetwork = google_compute_subnetwork.gke_subnet.name
+
+  # IP allocation policy
+  ip_allocation_policy {
+    cluster_secondary_range_name  = "gke-pods"
+    services_secondary_range_name = "gke-services"
+  }
+
+  # Network policy
+  network_policy {
+    enabled  = true
+    provider = "CALICO"
+  }
+
+  # Private cluster configuration
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = var.gke_master_cidr
+  }
+
+  # Master auth networks
+  master_auth {
+    client_certificate_config {
+      issue_client_certificate = false
+    }
+  }
+
+  # Workload Identity
+  workload_identity_config {
+    workload_pool = "${var.gcp_project_id}.svc.id.goog"
+  }
+
+  # Maintenance window
+  maintenance_policy {
+    daily_maintenance_window {
+      start_time = "03:00"
+    }
+  }
+
+  # Logging and monitoring
+  logging_service    = "logging.googleapis.com/kubernetes"
+  monitoring_service = "monitoring.googleapis.com/kubernetes"
+
+  # Addons
+  addons_config {
+    http_load_balancing {
+      disabled = false
+    }
+
+    horizontal_pod_autoscaling {
+      disabled = false
+    }
+
+    network_policy_config {
+      disabled = false
+    }
+
+    dns_cache_config {
+      enabled = true
+    }
+  }
+
+  # Resource labels
+  resource_labels = local.common_labels
+
+  depends_on = [
+    google_project_service.apis,
+    google_compute_subnetwork.gke_subnet,
+  ]
+}
+
+# Managed Node Pool
+resource "google_container_node_pool" "primary_nodes" {
+  name       = "${local.name_prefix}-node-pool"
+  location   = var.gcp_region
+  cluster    = google_container_cluster.primary.name
+  node_count = var.gke_node_count
+
+  # Auto-scaling
+  autoscaling {
+    min_node_count = var.gke_min_node_count
+    max_node_count = var.gke_max_node_count
+  }
+
+  # Node configuration
+  node_config {
+    preemptible  = var.environment != "production"
+    machine_type = var.gke_machine_type
+
+    # Google recommends custom service accounts that have cloud-platform scope and permissions granted via IAM Roles.
+    service_account = google_service_account.gke_nodes.email
+    oauth_scopes = [
+      "https://www.googleapis.com/auth/cloud-platform"
+    ]
+
+    # Labels
+    labels = merge(local.common_labels, {
+      node-pool = "primary"
+    })
+
+    # Taints for system workloads (if needed)
+    dynamic "taint" {
+      for_each = var.gke_node_taints
+      content {
+        key    = taint.value.key
+        value  = taint.value.value
+        effect = taint.value.effect
+      }
+    }
+
+    # Security
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+
+    # Workload Identity
+    workload_metadata_config {
+      mode = "GKE_METADATA"
+    }
+
+    disk_size_gb = var.gke_disk_size
+    disk_type    = var.gke_disk_type
+    image_type   = "COS_CONTAINERD"
+
+    metadata = {
+      disable-legacy-endpoints = "true"
+    }
+  }
+
+  # Upgrade settings
+  upgrade_settings {
+    max_surge       = 1
+    max_unavailable = 0
+  }
+
+  # Management
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+}
+
+# Service Account for GKE nodes
+resource "google_service_account" "gke_nodes" {
+  account_id   = "${local.name_prefix}-gke-nodes"
+  display_name = "GKE Node Service Account"
+}
+
+# IAM bindings for GKE node service account
+resource "google_project_iam_member" "gke_nodes" {
+  for_each = toset([
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/monitoring.viewer",
+    "roles/stackdriver.resourceMetadata.writer"
+  ])
+
+  project = var.gcp_project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.gke_nodes.email}"
+}
+
+# Cloud SQL Database (if enabled)
+resource "google_sql_database_instance" "main" {
+  count = var.enable_database ? 1 : 0
+  
+  name             = "${local.name_prefix}-db-${random_string.suffix.result}"
+  database_version = var.database_version
+  region          = var.gcp_region
+  
+  deletion_protection = var.environment == "production"
+
+  settings {
+    tier = var.database_tier
+    
+    # Availability type
+    availability_type = var.environment == "production" ? "REGIONAL" : "ZONAL"
+    
+    # Backup configuration
+    backup_configuration {
+      enabled                        = true
+      start_time                     = "03:00"
+      location                       = var.gcp_region
+      point_in_time_recovery_enabled = var.environment == "production"
+      transaction_log_retention_days = var.environment == "production" ? 7 : 1
+      
+      backup_retention_settings {
+        retained_backups = var.environment == "production" ? 30 : 7
+        retention_unit   = "COUNT"
+      }
+    }
+
+    # IP configuration
+    ip_configuration {
+      ipv4_enabled                                  = false
+      private_network                               = google_compute_network.vpc.id
+      enable_private_path_for_google_cloud_services = true
+    }
+
+    # Maintenance window
+    maintenance_window {
+      day          = 7  # Sunday
+      hour         = 3  # 3 AM
+      update_track = "stable"
+    }
+
+    # Database flags
+    dynamic "database_flags" {
+      for_each = var.database_flags
+      content {
+        name  = database_flags.value.name
+        value = database_flags.value.value
+      }
+    }
+
+    # Insights configuration
+    insights_config {
+      query_insights_enabled  = true
+      query_string_length     = 1024
+      record_application_tags = true
+      record_client_address   = true
+    }
+  }
+
+  depends_on = [
+    google_service_networking_connection.private_vpc_connection,
+    google_project_service.apis
+  ]
+}
+
+# Database
+resource "google_sql_database" "database" {
+  count = var.enable_database ? 1 : 0
+  
+  name     = var.database_name
+  instance = google_sql_database_instance.main[0].name
+}
+
+# Database User
+resource "google_sql_user" "users" {
+  count = var.enable_database ? 1 : 0
+  
+  name     = var.database_username
+  instance = google_sql_database_instance.main[0].name
+  password = var.database_password
+}
+
+# Cloud Memorystore (Redis)
+resource "google_redis_instance" "cache" {
+  count = var.enable_redis ? 1 : 0
+  
+  name           = "${local.name_prefix}-redis"
+  tier           = var.redis_tier
+  memory_size_gb = var.redis_memory_size
+
+  location_id             = var.gcp_zone
+  alternative_location_id = var.redis_alternative_zone
+
+  authorized_network = google_compute_network.vpc.id
+  connect_mode       = "PRIVATE_SERVICE_ACCESS"
+
+  redis_version     = var.redis_version
+  display_name      = "${local.name_prefix} Redis Cache"
+  reserved_ip_range = var.redis_reserved_ip_range
+
+  # Maintenance policy
+  maintenance_policy {
+    weekly_maintenance_window {
+      day = "SUNDAY"
+      start_time {
+        hours   = 3
+        minutes = 0
+        seconds = 0
+        nanos   = 0
+      }
+    }
+  }
+
+  labels = local.common_labels
+
+  depends_on = [google_project_service.apis]
+}
+
+# Global Load Balancer
+resource "google_compute_global_address" "lb_ip" {
+  name = "${local.name_prefix}-lb-ip"
+}
+
+# SSL Certificate (managed)
+resource "google_compute_managed_ssl_certificate" "lb_ssl" {
+  count = var.ssl_domain_name != "" ? 1 : 0
+  
+  name = "${local.name_prefix}-ssl"
+
+  managed {
+    domains = [var.ssl_domain_name]
+  }
+}
+
+# HTTP(S) Load Balancer will be configured via Kubernetes Ingress
+
+{{- else if eq .Type "lambda" "cloud-function" }}
+# Enable required APIs for Cloud Functions
+resource "google_project_service" "cloud_function_apis" {
+  for_each = toset([
+    "cloudfunctions.googleapis.com",
+    "cloudbuild.googleapis.com",
+    "eventarc.googleapis.com",
+    "run.googleapis.com",
+    "storage.googleapis.com",
+    "pubsub.googleapis.com",
+    "logging.googleapis.com",
+    "monitoring.googleapis.com",
+    "secretmanager.googleapis.com",
+  ])
+
+  service                    = each.value
+  disable_dependent_services = false
+  disable_on_destroy        = false
+}
+
+# Storage bucket for function source code
+resource "google_storage_bucket" "function_source" {
+  name                        = "${local.name_prefix}-function-source-${random_string.suffix.result}"
+  location                    = var.gcp_region
+  force_destroy               = true
+  uniform_bucket_level_access = true
+
+  versioning {
+    enabled = true
+  }
+
+  lifecycle_rule {
+    condition {
+      age = 30
+    }
+    action {
+      type = "Delete"
+    }
+  }
+
+  labels = local.common_labels
+}
+
+# Cloud Function (2nd gen)
+resource "google_cloudfunctions2_function" "function" {
+  name        = "${local.name_prefix}-function"
+  location    = var.gcp_region
+  description = "{{.ProjectName}} Cloud Function"
+
+  build_config {
+    runtime     = "go121"
+    entry_point = "HandleRequest"
+    
+    source {
+      storage_source {
+        bucket = google_storage_bucket.function_source.name
+        object = var.function_source_object
+      }
+    }
+  }
+
+  service_config {
+    max_instance_count               = var.function_max_instances
+    min_instance_count               = var.function_min_instances
+    available_memory                 = var.function_memory
+    timeout_seconds                  = var.function_timeout
+    max_instance_request_concurrency = var.function_concurrency
+    
+    # Environment variables
+    dynamic "environment_variables" {
+      for_each = var.function_environment_variables
+      content {
+        key   = environment_variables.key
+        value = environment_variables.value
+      }
+    }
+
+    # VPC Access (if enabled)
+    dynamic "vpc_access" {
+      for_each = var.function_vpc_access_enabled ? [1] : []
+      content {
+        connector = google_vpc_access_connector.connector[0].name
+      }
+    }
+
+    # Service account
+    service_account_email = google_service_account.function_sa.email
+
+    # Security
+    ingress_settings               = "ALLOW_INTERNAL_AND_GCLB"
+    all_traffic_on_latest_revision = true
+  }
+
+  event_trigger {
+    trigger_region = var.gcp_region
+    event_type     = var.function_trigger_type
+    
+    dynamic "event_filters" {
+      for_each = var.function_event_filters
+      content {
+        attribute = event_filters.value.attribute
+        value     = event_filters.value.value
+      }
+    }
+
+    service_account_email = google_service_account.function_sa.email
+  }
+
+  labels = local.common_labels
+
+  depends_on = [google_project_service.cloud_function_apis]
+}
+
+# Service Account for Cloud Function
+resource "google_service_account" "function_sa" {
+  account_id   = "${local.name_prefix}-function-sa"
+  display_name = "Cloud Function Service Account"
+}
+
+# IAM bindings for function service account
+resource "google_project_iam_member" "function_sa_roles" {
+  for_each = toset([
+    "roles/logging.logWriter",
+    "roles/monitoring.metricWriter",
+    "roles/cloudtrace.agent",
+    "roles/secretmanager.secretAccessor",
+  ])
+
+  project = var.gcp_project_id
+  role    = each.value
+  member  = "serviceAccount:${google_service_account.function_sa.email}"
+}
+
+# VPC Access Connector (if VPC access is needed)
+resource "google_vpc_access_connector" "connector" {
+  count = var.function_vpc_access_enabled ? 1 : 0
+  
+  name          = "${local.name_prefix}-vpc-connector"
+  ip_cidr_range = var.vpc_connector_cidr
+  network       = google_compute_network.vpc[0].name
+  region        = var.gcp_region
+
+  depends_on = [google_project_service.cloud_function_apis]
+}
+
+# VPC Network (if needed for VPC access)
+resource "google_compute_network" "vpc" {
+  count = var.function_vpc_access_enabled ? 1 : 0
+  
+  name                    = "${local.name_prefix}-vpc"
+  auto_create_subnetworks = false
+  mtu                     = 1460
+
+  depends_on = [google_project_service.cloud_function_apis]
+}
+
+# Firestore Database (if enabled)
+resource "google_firestore_database" "database" {
+  count = var.enable_firestore ? 1 : 0
+  
+  project                     = var.gcp_project_id
+  name                        = "(default)"
+  location_id                 = var.firestore_location
+  type                        = "FIRESTORE_NATIVE"
+  concurrency_mode            = "OPTIMISTIC"
+  app_engine_integration_mode = "DISABLED"
+
+  depends_on = [google_project_service.cloud_function_apis]
+}
+{{- end }}
+
+# Secret Manager
+resource "google_secret_manager_secret" "secrets" {
+  for_each = var.application_secrets
+
+  secret_id = "${local.name_prefix}-${each.key}"
+  
+  replication {
+    user_managed {
+      replicas {
+        location = var.gcp_region
+      }
+    }
+  }
+
+  labels = local.common_labels
+
+  depends_on = [google_project_service.apis]
+}
+
+resource "google_secret_manager_secret_version" "secret_versions" {
+  for_each = var.application_secrets
+
+  secret      = google_secret_manager_secret.secrets[each.key].id
+  secret_data = each.value
+}
+
+# Cloud Monitoring - Custom Metrics and Alerting
+resource "google_monitoring_notification_channel" "email" {
+  count = var.alert_email != "" ? 1 : 0
+  
+  display_name = "${local.name_prefix} Email Alerts"
+  type         = "email"
+
+  labels = {
+    email_address = var.alert_email
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+# Example alert policy
+resource "google_monitoring_alert_policy" "high_error_rate" {
+  display_name = "${local.name_prefix} High Error Rate"
+  combiner     = "OR"
+  
+  conditions {
+    display_name = "High error rate condition"
+    
+    condition_threshold {
+      filter          = "resource.type=\"gce_instance\""
+      duration        = "300s"
+      comparison      = "COMPARISON_GREATER_THAN"
+      threshold_value = 0.1
+      
+      aggregations {
+        alignment_period   = "300s"
+        per_series_aligner = "ALIGN_RATE"
+      }
+    }
+  }
+
+  notification_channels = var.alert_email != "" ? [google_monitoring_notification_channel.email[0].id] : []
+
+  alert_strategy {
+    auto_close = "1800s"
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+# Cloud Logging - Log-based metrics
+resource "google_logging_metric" "error_count" {
+  name   = "${local.name_prefix}_error_count"
+  filter = "severity>=ERROR"
+  
+  metric_descriptor {
+    metric_kind = "GAUGE"
+    value_type  = "INT64"
+  }
+
+  depends_on = [google_project_service.apis]
+}
+
+# IAM - Workload Identity binding for Kubernetes service accounts
+resource "google_service_account_iam_binding" "workload_identity" {
+  count = var.enable_workload_identity ? 1 : 0
+  
+  service_account_id = google_service_account.workload_identity[0].name
+  role               = "roles/iam.workloadIdentityUser"
+
+  members = [
+    "serviceAccount:${var.gcp_project_id}.svc.id.goog[${var.k8s_namespace}/${var.k8s_service_account_name}]",
+  ]
+}
+
+resource "google_service_account" "workload_identity" {
+  count = var.enable_workload_identity ? 1 : 0
+  
+  account_id   = "${local.name_prefix}-workload-identity"
+  display_name = "Workload Identity Service Account"
+}
+
+# Cloud Armor Security Policy (if enabled)
+resource "google_compute_security_policy" "security_policy" {
+  count = var.enable_cloud_armor ? 1 : 0
+  
+  name        = "${local.name_prefix}-security-policy"
+  description = "Security policy for ${local.name_prefix}"
+
+  # Default rule
+  rule {
+    action   = "allow"
+    priority = "2147483647"
+    
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+    
+    description = "Default allow rule"
+  }
+
+  # Rate limiting rule
+  rule {
+    action   = "rate_based_ban"
+    priority = "1000"
+    
+    match {
+      versioned_expr = "SRC_IPS_V1"
+      
+      config {
+        src_ip_ranges = ["*"]
+      }
+    }
+    
+    rate_limit_options {
+      conform_action = "allow"
+      exceed_action  = "deny(429)"
+      
+      rate_limit_threshold {
+        count        = var.rate_limit_count
+        interval_sec = var.rate_limit_interval
+      }
+      
+      ban_duration_sec = var.rate_limit_ban_duration
+    }
+    
+    description = "Rate limiting rule"
+  }
+}

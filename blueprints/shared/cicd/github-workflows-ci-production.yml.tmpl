@@ -1,0 +1,664 @@
+# Production-Grade CI Pipeline for Go Projects
+# Supports: Web APIs, CLIs, Libraries, Microservices, Lambda Functions
+# Features: Multi-stage testing, security scanning, performance testing, quality gates
+
+name: Production CI
+
+on:
+  push:
+    branches: [ main, develop, release/* ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run security scans daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+env:
+  GO_VERSION: "{{.GoVersion}}"
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Pre-commit validation stage
+  validate:
+    name: Validate & Pre-commit Checks
+    runs-on: ubuntu-latest
+    outputs:
+      should-build: ${{ steps.changes.outputs.should-build }}
+      has-tests: ${{ steps.changes.outputs.has-tests }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+    
+    - name: Detect changes
+      id: changes
+      run: |
+        # Detect if we should run full build based on file changes
+        if git diff --name-only HEAD~1 | grep -E '\.(go|mod|sum|yaml|yml|json)$' > /dev/null; then
+          echo "should-build=true" >> $GITHUB_OUTPUT
+        else
+          echo "should-build=false" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check if tests exist
+        if find . -name "*_test.go" | head -1; then
+          echo "has-tests=true" >> $GITHUB_OUTPUT
+        else
+          echo "has-tests=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Set up Go
+      if: steps.changes.outputs.should-build == 'true'
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Check go mod tidy
+      if: steps.changes.outputs.should-build == 'true'
+      run: |
+        go mod tidy
+        if [ -n "$(git status --porcelain go.mod go.sum)" ]; then
+          echo "❌ go mod tidy resulted in changes:"
+          git diff go.mod go.sum
+          exit 1
+        fi
+        echo "✅ go mod tidy is clean"
+    
+    - name: Check go generate
+      if: steps.changes.outputs.should-build == 'true'
+      run: |
+        go generate ./...
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "❌ go generate resulted in changes:"
+          git status --porcelain
+          git diff
+          exit 1
+        fi
+        echo "✅ go generate is clean"
+    
+    - name: Check formatting
+      if: steps.changes.outputs.should-build == 'true'
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "❌ The following files are not formatted:"
+          gofmt -s -l .
+          exit 1
+        fi
+        echo "✅ All files are properly formatted"
+
+  # Static analysis and linting stage
+  lint-and-analyze:
+    name: Lint & Static Analysis
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should-build == 'true'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+        args: |
+          --timeout=10m
+          --config=.golangci.yml
+          --out-format=colored-line-number,checkstyle:golangci-lint-report.xml
+    
+    - name: Upload lint results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: lint-results
+        path: golangci-lint-report.xml
+    
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck -json ./... > govulncheck-report.json || true
+    
+    - name: Upload vulnerability report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: vulnerability-report
+        path: govulncheck-report.json
+
+  # Security scanning stage
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: validate
+    if: needs.validate.outputs.should-build == 'true'
+    permissions:
+      security-events: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: |
+          -fmt sarif 
+          -out gosec-results.sarif 
+          -exclude-dir=vendor 
+          -exclude-dir=.git 
+          ./...
+    
+    - name: Upload SARIF file
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec-results.sarif
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+    
+    - name: Upload Trivy scan results
+      if: always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: 'trivy-results.sarif'
+    
+    - name: Check for secrets
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
+        extra_args: --debug --only-verified
+
+  # Unit testing stage
+  test:
+    name: Unit Tests
+    needs: [validate, lint-and-analyze]
+    if: needs.validate.outputs.should-build == 'true' && needs.validate.outputs.has-tests == 'true'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        go-version: ["{{.GoVersion}}", "1.21", "1.20"]
+        exclude:
+          # Skip older Go versions on Windows/macOS to reduce CI time
+          - os: windows-latest
+            go-version: "1.20"
+          - os: macos-latest
+            go-version: "1.20"
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ matrix.go-version }}
+        cache: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Verify dependencies
+      run: go mod verify
+    
+    - name: Run unit tests
+      run: |
+        go test -v -race -coverprofile=coverage.out -covermode=atomic \
+          -timeout=10m -tags=unit ./...
+    
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == env.GO_VERSION
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+    
+    - name: Store coverage report
+      if: matrix.os == 'ubuntu-latest' && matrix.go-version == env.GO_VERSION
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: coverage.out
+
+  # Integration testing stage
+  integration-test:
+    name: Integration Tests
+    needs: [validate, test]
+    if: needs.validate.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_USER: testuser
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Wait for services
+      run: |
+        echo "Waiting for PostgreSQL..."
+        until pg_isready -h localhost -p 5432 -U testuser; do sleep 1; done
+        echo "Waiting for Redis..."
+        until redis-cli -h localhost -p 6379 ping; do sleep 1; done
+    
+    - name: Run database migrations
+      if: hashFiles('migrations/*.sql', 'internal/database/migrations/*.sql') != ''
+      run: |
+        # Run migrations if they exist
+        if [ -d "migrations" ] || [ -d "internal/database/migrations" ]; then
+          echo "Running database migrations..."
+          # Add migration logic here based on your migration tool
+        fi
+      env:
+        DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb
+    
+    - name: Run integration tests
+      run: |
+        go test -v -race -coverprofile=integration-coverage.out \
+          -timeout=15m -tags=integration ./...
+      env:
+        DATABASE_URL: postgres://testuser:testpass@localhost:5432/testdb
+        REDIS_URL: redis://localhost:6379
+        TEST_ENV: integration
+    
+    - name: Upload integration coverage
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./integration-coverage.out
+        flags: integration
+        name: codecov-integration
+        fail_ci_if_error: false
+        token: ${{ secrets.CODECOV_TOKEN }}
+
+  # Performance testing stage
+  performance:
+    name: Performance Tests
+    needs: [validate, test]
+    if: needs.validate.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    - name: Run benchmarks
+      run: |
+        go test -bench=. -benchmem -benchtime=5s -timeout=30m \
+          -cpu=1,2,4 ./... > benchmark-results.txt
+    
+    - name: Store benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark-results.txt
+    
+    - name: Check for performance regressions
+      run: |
+        # Compare with previous benchmarks if available
+        if [ -f "benchmark-baseline.txt" ]; then
+          echo "Comparing with baseline performance..."
+          # Add benchcmp or similar tool comparison
+        fi
+
+  # Build and container stage
+  build:
+    name: Build & Containerize
+    needs: [validate, lint-and-analyze, security]
+    if: needs.validate.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      digest: ${{ steps.build.outputs.digest }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    - name: Download dependencies
+      run: go mod download
+    
+    {{- if eq .Type "cli" }}
+    - name: Build CLI for multiple platforms
+      run: |
+        mkdir -p dist
+        # Build for common platforms
+        GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/{{.ProjectName}}-linux-amd64 ./...
+        GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/{{.ProjectName}}-darwin-amd64 ./...
+        GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/{{.ProjectName}}-darwin-arm64 ./...
+        GOOS=windows GOARCH=amd64 go build -ldflags="-s -w" -o dist/{{.ProjectName}}-windows-amd64.exe ./...
+    {{- else if eq .Type "lambda" }}
+    - name: Build Lambda function
+      run: |
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="-s -w" -o bootstrap main.go
+        zip lambda-deployment.zip bootstrap
+    {{- else }}
+    - name: Build application
+      run: |
+        CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -a -installsuffix cgo -o app ./cmd/server
+    {{- end }}
+    
+    {{- if ne .Type "lambda" }}
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{raw}}
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=sha,prefix={{branch}}-
+    
+    - name: Build and push Docker image
+      id: build
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        provenance: true
+        sbom: true
+    
+    - name: Output image
+      id: image
+      run: echo "image=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" >> $GITHUB_OUTPUT
+    {{- end }}
+    
+    - name: Store build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-artifacts
+        path: |
+          {{- if eq .Type "cli" }}
+          dist/
+          {{- else if eq .Type "lambda" }}
+          lambda-deployment.zip
+          bootstrap
+          {{- else }}
+          app
+          {{- end }}
+
+  # ATDD/Acceptance testing stage
+  acceptance-test:
+    name: Acceptance Tests (ATDD)
+    needs: [integration-test, build]
+    if: needs.validate.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+    
+    {{- if ne .Type "lambda" }}
+    - name: Download build artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: build-artifacts
+        path: ./artifacts
+    
+    - name: Make binary executable
+      {{- if eq .Type "cli" }}
+      run: chmod +x ./artifacts/{{.ProjectName}}-linux-amd64
+      {{- else }}
+      run: chmod +x ./artifacts/app
+      {{- end }}
+    {{- end }}
+    
+    - name: Run acceptance tests
+      run: |
+        go test -v -timeout=20m -tags=acceptance ./tests/acceptance/... || {
+          echo "❌ Acceptance tests failed"
+          exit 1
+        }
+      env:
+        {{- if eq .Type "cli" }}
+        CLI_BINARY_PATH: ./artifacts/{{.ProjectName}}-linux-amd64
+        {{- else if eq .Type "lambda" }}
+        LAMBDA_FUNCTION_NAME: {{.ProjectName}}-test
+        {{- else }}
+        API_BINARY_PATH: ./artifacts/app
+        {{- end }}
+    
+    - name: Generate acceptance test report
+      if: always()
+      run: |
+        echo "## 🧪 Acceptance Test Results" >> test-report.md
+        echo "" >> test-report.md
+        echo "- **Status**: ${{ job.status }}" >> test-report.md
+        echo "- **Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> test-report.md
+        echo "- **Commit**: ${{ github.sha }}" >> test-report.md
+    
+    - name: Upload test report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: acceptance-test-report
+        path: test-report.md
+
+  # Quality gate evaluation
+  quality-gate:
+    name: Quality Gate
+    needs: [test, integration-test, security, performance, acceptance-test]
+    if: always() && needs.validate.outputs.should-build == 'true'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download test results
+      uses: actions/download-artifact@v4
+      with:
+        pattern: "*-report*"
+        merge-multiple: true
+    
+    - name: Evaluate quality gates
+      run: |
+        echo "## 🚦 Quality Gate Evaluation" > quality-gate-report.md
+        echo "" >> quality-gate-report.md
+        
+        # Check test results
+        if [ "${{ needs.test.result }}" == "success" ]; then
+          echo "✅ Unit tests: PASSED" >> quality-gate-report.md
+        else
+          echo "❌ Unit tests: FAILED" >> quality-gate-report.md
+        fi
+        
+        # Check integration tests
+        if [ "${{ needs.integration-test.result }}" == "success" ]; then
+          echo "✅ Integration tests: PASSED" >> quality-gate-report.md
+        else
+          echo "❌ Integration tests: FAILED" >> quality-gate-report.md
+        fi
+        
+        # Check security scan
+        if [ "${{ needs.security.result }}" == "success" ]; then
+          echo "✅ Security scan: PASSED" >> quality-gate-report.md
+        else
+          echo "❌ Security scan: FAILED" >> quality-gate-report.md
+        fi
+        
+        # Check acceptance tests
+        if [ "${{ needs.acceptance-test.result }}" == "success" ]; then
+          echo "✅ Acceptance tests: PASSED" >> quality-gate-report.md
+        else
+          echo "❌ Acceptance tests: FAILED" >> quality-gate-report.md
+        fi
+        
+        echo "" >> quality-gate-report.md
+        echo "## 📊 Quality Metrics" >> quality-gate-report.md
+        echo "- **Test Coverage**: Check Codecov report" >> quality-gate-report.md
+        echo "- **Code Quality**: Check golangci-lint report" >> quality-gate-report.md
+        echo "- **Security**: Check vulnerability reports" >> quality-gate-report.md
+        echo "- **Performance**: Check benchmark results" >> quality-gate-report.md
+        
+        # Determine overall result
+        if [ "${{ needs.test.result }}" == "success" ] && \
+           [ "${{ needs.integration-test.result }}" == "success" ] && \
+           [ "${{ needs.security.result }}" == "success" ] && \
+           [ "${{ needs.acceptance-test.result }}" == "success" ]; then
+          echo "✅ **Overall Quality Gate: PASSED**" >> quality-gate-report.md
+          echo "quality-gate=passed" >> $GITHUB_OUTPUT
+        else
+          echo "❌ **Overall Quality Gate: FAILED**" >> quality-gate-report.md
+          echo "quality-gate=failed" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+    
+    - name: Upload quality gate report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: quality-gate-report
+        path: quality-gate-report.md
+    
+    - name: Comment on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const report = fs.readFileSync('quality-gate-report.md', 'utf8');
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: report
+          });
+
+  # Final notification and cleanup
+  notify:
+    name: Notify Results
+    needs: [quality-gate]
+    if: always()
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Notify Slack
+      if: ${{ secrets.SLACK_WEBHOOK_URL }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ needs.quality-gate.result }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          ${{ needs.quality-gate.result == 'success' && '✅' || '❌' }} CI Pipeline for {{.ProjectName}}
+          Branch: ${{ github.ref_name }}
+          Quality Gate: ${{ needs.quality-gate.result == 'success' && 'PASSED' || 'FAILED' }}
+    
+    - name: Update commit status
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const state = '${{ needs.quality-gate.result }}' === 'success' ? 'success' : 'failure';
+          const description = '${{ needs.quality-gate.result }}' === 'success' 
+            ? 'All quality gates passed' 
+            : 'Quality gates failed';
+            
+          github.rest.repos.createCommitStatus({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            sha: context.sha,
+            state: state,
+            target_url: `${context.payload.repository.html_url}/actions/runs/${context.runId}`,
+            description: description,
+            context: 'ci/quality-gate'
+          });

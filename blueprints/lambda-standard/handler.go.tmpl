@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambdacontext"
 	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/observability"
 )
 
 // Request represents the input to our Lambda function
@@ -25,16 +26,37 @@ type Response struct {
 	Headers    map[string]string `json:"headers,omitempty"`
 }
 
-// HandleRequest is the Lambda function handler with comprehensive context handling
+// HandleRequest is the Lambda function handler with comprehensive observability
 func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error) {
-	// Get Lambda context information for proper logging
+	// Initialize observability for this request
+	startTime := time.Now()
+	observability.InitializeCloudWatchLogging(ctx)
+	
+	// Initialize tracing and metrics
+	observability.InitializeTracing()
+	if err := observability.InitializeMetrics(ctx); err != nil {
+		appLogger.WarnWith("Failed to initialize metrics", logger.Fields{
+			"error": err.Error(),
+		})
+	}
+	
+	// Get Lambda context information
 	lc, _ := lambdacontext.FromContext(ctx)
 	requestID := lc.AwsRequestID
+	
+	// Log request start with observability
+	requestSize := int64(len(event))
+	observability.LogRequestStart(ctx, requestSize, "", "")
+	
+	// Record request size metric
+	observability.RecordRequestSize(float64(requestSize))
 	
 	// Check if we have sufficient time to process the request
 	deadline, hasDeadline := ctx.Deadline()
 	if hasDeadline {
 		timeLeft := time.Until(deadline)
+		observability.AddTraceAnnotation(ctx, "time_remaining_ms", timeLeft.Milliseconds())
+		
 		appLogger.InfoWith("Lambda function invoked", logger.Fields{
 			"request_id":            requestID,
 			"invoked_function_arn":  lc.InvokedFunctionArn,
@@ -47,11 +69,18 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 				"request_id":     requestID,
 				"time_remaining": timeLeft.String(),
 			})
-			return Response{
+			
+			response := Response{
 				StatusCode: 408,
 				Body:       `{"error": "Request timeout: insufficient time to process"}`,
 				Headers:    map[string]string{"Content-Type": "application/json"},
-			}, nil
+			}
+			
+			// Log completion with error
+			duration := time.Since(startTime)
+			observability.LogRequestComplete(ctx, duration, 408, int64(len(response.Body)), fmt.Errorf("timeout"))
+			
+			return response, nil
 		}
 
 		// Log warning if we're approaching timeout
@@ -60,6 +89,7 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 				"request_id":     requestID,
 				"time_remaining": timeLeft.String(),
 			})
+			observability.AddTraceAnnotation(ctx, "approaching_timeout", true)
 		}
 	} else {
 		appLogger.InfoWith("Lambda function invoked (no deadline)", logger.Fields{
@@ -81,27 +111,55 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 		}
 	}
 
-	// Try to parse as API Gateway request first
-	var apiEvent events.APIGatewayProxyRequest
-	if err := json.Unmarshal(event, &apiEvent); err == nil && apiEvent.HTTPMethod != "" {
-		return handleAPIGatewayRequest(processingCtx, apiEvent)
-	}
+	// Wrap the entire processing logic with tracing
+	var response Response
+	var processingError error
+	
+	err := observability.TraceSegment(processingCtx, "lambda_handler", func(ctx context.Context) error {
+		// Try to parse as API Gateway request first
+		var apiEvent events.APIGatewayProxyRequest
+		if err := json.Unmarshal(event, &apiEvent); err == nil && apiEvent.HTTPMethod != "" {
+			observability.AddTraceAnnotation(ctx, "event_type", "api_gateway")
+			response, processingError = handleAPIGatewayRequest(ctx, apiEvent)
+			return processingError
+		}
 
-	// Fallback to direct invocation
-	var request Request
-	if err := json.Unmarshal(event, &request); err != nil {
-		appLogger.ErrorWith("Failed to parse request", logger.Fields{
-			"error":      err.Error(),
-			"request_id": requestID,
+		// Fallback to direct invocation
+		observability.AddTraceAnnotation(ctx, "event_type", "direct_invocation")
+		var request Request
+		if err := json.Unmarshal(event, &request); err != nil {
+			appLogger.ErrorWith("Failed to parse request", logger.Fields{
+				"error":      err.Error(),
+				"request_id": requestID,
+			})
+			response = Response{
+				StatusCode: 400,
+				Body:       `{"error": "Invalid request format"}`,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+			}
+			processingError = err
+			return err
+		}
+
+		response, processingError = handleDirectRequest(ctx, request)
+		return processingError
+	})
+	
+	// Log request completion with metrics
+	duration := time.Since(startTime)
+	responseSize := int64(len(response.Body))
+	observability.LogRequestComplete(ctx, duration, response.StatusCode, responseSize, err)
+	
+	// Log business event for successful processing
+	if err == nil && response.StatusCode == 200 {
+		observability.LogBusinessEvent(ctx, "lambda", "request_processed", map[string]interface{}{
+			"status_code":    response.StatusCode,
+			"response_size":  responseSize,
+			"duration_ms":    duration.Milliseconds(),
 		})
-		return Response{
-			StatusCode: 400,
-			Body:       `{"error": "Invalid request format"}`,
-			Headers:    map[string]string{"Content-Type": "application/json"},
-		}, nil
 	}
-
-	return handleDirectRequest(processingCtx, request)
+	
+	return response, err
 }
 
 // handleAPIGatewayRequest handles API Gateway proxy requests with context awareness
@@ -151,8 +209,14 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 		request.Message = event.QueryStringParameters["message"]
 	}
 
-	// Process the request
-	result, err := processRequest(ctx, request)
+	// Process the request with tracing
+	var result map[string]interface{}
+	err := observability.TraceSubsegment(ctx, "process_api_request", func(ctx context.Context) error {
+		var processErr error
+		result, processErr = processRequest(ctx, request)
+		return processErr
+	})
+	
 	if err != nil {
 		appLogger.ErrorWith("Request processing failed", logger.Fields{
 			"error":      err.Error(),

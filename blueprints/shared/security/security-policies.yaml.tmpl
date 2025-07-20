@@ -1,0 +1,574 @@
+# Security Policies for {{.ProjectName}}
+# Production-ready security configurations and policies
+
+# Network Policies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{.ProjectName}}-network-policy
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+spec:
+  podSelector:
+    matchLabels:
+      app: {{.ProjectName}}
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Ingress rules - what can reach our application
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow ingress from monitoring systems
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 8080  # Application port
+    - protocol: TCP
+      port: 9090  # Metrics port
+  
+  # Allow ingress from same namespace (for pod-to-pod communication)
+  - from:
+    - podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Egress rules - what our application can reach
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow HTTPS to external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow HTTP for health checks and internal services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 80
+  
+  {{- if .Features.Database.Driver }}
+  # Allow database connections
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: database
+    ports:
+    - protocol: TCP
+      port: 5432  # PostgreSQL
+    - protocol: TCP
+      port: 3306  # MySQL
+  {{- end }}
+  
+  # Allow Redis connections
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# Pod Security Policy (for clusters that support it)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: {{.ProjectName}}-psp
+  labels:
+    app: {{.ProjectName}}
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+  readOnlyRootFilesystem: true
+
+---
+# Security Context Constraints (for OpenShift)
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: {{.ProjectName}}-scc
+  labels:
+    app: {{.ProjectName}}
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegedContainer: false
+allowedCapabilities: null
+defaultAddCapabilities: null
+requiredDropCapabilities:
+- ALL
+fsGroup:
+  type: RunAsAny
+readOnlyRootFilesystem: true
+runAsUser:
+  type: MustRunAsNonRoot
+seLinuxContext:
+  type: RunAsAny
+volumes:
+- configMap
+- downwardAPI
+- emptyDir
+- persistentVolumeClaim
+- projected
+- secret
+
+---
+# RBAC - Service Account
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+automountServiceAccountToken: false
+
+---
+# RBAC - Role (minimal permissions)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+rules:
+# Minimal permissions for application operation
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get"]
+# If the application needs to watch for configuration changes
+{{- if .Features.ConfigReload }}
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["watch"]
+{{- end }}
+
+---
+# RBAC - Role Binding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+subjects:
+- kind: ServiceAccount
+  name: {{.ProjectName}}
+  namespace: {{ .Values.namespace | default "default" }}
+roleRef:
+  kind: Role
+  name: {{.ProjectName}}
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# OPA Gatekeeper Constraints
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: {{.ProjectName | replace "-" ""}}securityconstraints
+  labels:
+    app: {{.ProjectName}}
+spec:
+  crd:
+    spec:
+      names:
+        kind: {{.ProjectName | replace "-" "" | title}}SecurityConstraints
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            exemptImages:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package {{.ProjectName | replace "-" ""}}.security
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := "Container must run as non-root user"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation
+          msg := "Privilege escalation is not allowed"
+        }
+        
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := "Root filesystem must be read-only"
+        }
+
+---
+# Constraint for the template above
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: {{.ProjectName | replace "-" "" | title}}SecurityConstraints
+metadata:
+  name: {{.ProjectName}}-security-constraints
+  labels:
+    app: {{.ProjectName}}
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment"]
+    labelSelector:
+      matchLabels:
+        app: {{.ProjectName}}
+
+---
+# Falco Security Rules
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-falco-rules
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+data:
+  {{.ProjectName}}_rules.yaml: |
+    - rule: {{.ProjectName}} Unexpected Network Activity
+      desc: Detect unexpected network activity from {{.ProjectName}} pods
+      condition: >
+        (inbound or outbound) and
+        k8s.pod.label.app={{.ProjectName}} and
+        not (
+          (fd.sport in (8080, 9090)) or
+          (fd.dport in (53, 443, 5432, 6379)) or
+          (fd.sip in (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16))
+        )
+      output: >
+        Unexpected network activity from {{.ProjectName}}
+        (user=%ka.user.name verb=%ka.verb uri=%ka.uri
+        resp=%ka.response_code src_ip=%fd.cip dest_port=%fd.dport)
+      priority: WARNING
+      tags: [network, {{.ProjectName}}]
+    
+    - rule: {{.ProjectName}} Privilege Escalation
+      desc: Detect privilege escalation attempts in {{.ProjectName}} containers
+      condition: >
+        spawned_process and
+        k8s.pod.label.app={{.ProjectName}} and
+        ((proc.name in (su, sudo, setuid)) or
+         (proc.args contains "chmod +s") or
+         (proc.args contains "setcap"))
+      output: >
+        Privilege escalation attempt in {{.ProjectName}}
+        (user=%user.name command=%proc.cmdline container=%container.name)
+      priority: CRITICAL
+      tags: [privilege_escalation, {{.ProjectName}}]
+    
+    - rule: {{.ProjectName}} File System Writes
+      desc: Detect unexpected file system writes in {{.ProjectName}} containers
+      condition: >
+        open_write and
+        k8s.pod.label.app={{.ProjectName}} and
+        not (
+          fd.name startswith "/tmp/" or
+          fd.name startswith "/var/tmp/" or
+          fd.name startswith "/dev/" or
+          fd.name startswith "/proc/" or
+          fd.name="/dev/stdout" or
+          fd.name="/dev/stderr"
+        )
+      output: >
+        Unexpected file write in {{.ProjectName}}
+        (user=%user.name command=%proc.cmdline file=%fd.name)
+      priority: WARNING
+      tags: [filesystem, {{.ProjectName}}]
+
+---
+# Kustomize Security Patches
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+metadata:
+  name: {{.ProjectName}}-security-patches
+  labels:
+    app: {{.ProjectName}}
+
+# JSON patches for additional security hardening
+patchesJson6902:
+- target:
+    group: apps
+    version: v1
+    kind: Deployment
+    name: {{.ProjectName}}
+  patch: |-
+    - op: add
+      path: /spec/template/metadata/annotations/container.apparmor.security.beta.kubernetes.io~1{{.ProjectName}}
+      value: runtime/default
+    - op: add
+      path: /spec/template/spec/securityContext/seccompProfile
+      value:
+        type: RuntimeDefault
+    - op: add
+      path: /spec/template/spec/containers/0/securityContext/capabilities
+      value:
+        drop:
+        - ALL
+    - op: add
+      path: /spec/template/spec/containers/0/securityContext/seccompProfile
+      value:
+        type: RuntimeDefault
+
+---
+# Pod Security Standards (PSS) Configuration
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace | default "default" }}
+  labels:
+    # Pod Security Standards
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+    # Additional security labels
+    security.policy: {{.ProjectName}}
+    app: {{.ProjectName}}
+
+---
+# External Secrets Operator Integration
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: {{.ProjectName}}-secret-store
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+spec:
+  provider:
+    # AWS Secrets Manager
+    aws:
+      service: SecretsManager
+      region: us-east-1
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: {{.ProjectName}}-external-secrets
+    # Or HashiCorp Vault
+    # vault:
+    #   server: "https://vault.example.com"
+    #   path: "secret"
+    #   version: "v2"
+    #   auth:
+    #     kubernetes:
+    #       mountPath: "kubernetes"
+    #       role: "{{.ProjectName}}"
+    #       serviceAccountRef:
+    #         name: {{.ProjectName}}-vault
+
+---
+# External Secret
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: {{.ProjectName}}-external-secrets
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+spec:
+  refreshInterval: 15s
+  secretStoreRef:
+    name: {{.ProjectName}}-secret-store
+    kind: SecretStore
+  target:
+    name: {{.ProjectName}}-secrets
+    creationPolicy: Owner
+  data:
+  {{- if .Features.Database.Driver }}
+  - secretKey: database_url
+    remoteRef:
+      key: {{.ProjectName}}/database
+      property: url
+  {{- end }}
+  - secretKey: jwt_secret
+    remoteRef:
+      key: {{.ProjectName}}/auth
+      property: jwt_secret
+  - secretKey: api_key
+    remoteRef:
+      key: {{.ProjectName}}/api
+      property: key
+
+---
+# Certificate Management
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{.ProjectName}}-tls
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+spec:
+  secretName: {{.ProjectName}}-tls
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - {{.ProjectName}}.{{.DomainName | default "example.com"}}
+  - {{.ProjectName}}-staging.{{.DomainName | default "example.com"}}
+
+---
+# Security Scanning with Trivy
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{.ProjectName}}-security-scan
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{.ProjectName}}-security-scan
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            fsGroup: 2000
+          containers:
+          - name: trivy
+            image: aquasec/trivy:latest
+            imagePullPolicy: Always
+            command:
+            - trivy
+            - image
+            - --format
+            - json
+            - --output
+            - /tmp/scan-results.json
+            - ghcr.io/{{.ModulePath}}:latest
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop:
+                - ALL
+            volumeMounts:
+            - name: scan-results
+              mountPath: /tmp
+            resources:
+              limits:
+                cpu: 500m
+                memory: 512Mi
+              requests:
+                cpu: 100m
+                memory: 128Mi
+          volumes:
+          - name: scan-results
+            emptyDir: {}
+
+---
+# Compliance Scanning with kube-bench
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{.ProjectName}}-compliance-scan
+  namespace: {{ .Values.namespace | default "default" }}
+  labels:
+    app: {{.ProjectName}}
+spec:
+  schedule: "0 3 * * 0"  # Weekly on Sunday at 3 AM
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: {{.ProjectName}}-compliance-scan
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: {{.ProjectName}}-compliance-scanner
+          hostPID: true
+          containers:
+          - name: kube-bench
+            image: aquasec/kube-bench:latest
+            command: ["kube-bench"]
+            args: ["--json"]
+            securityContext:
+              privileged: true
+            volumeMounts:
+            - name: var-lib-etcd
+              mountPath: /var/lib/etcd
+              readOnly: true
+            - name: var-lib-kubelet
+              mountPath: /var/lib/kubelet
+              readOnly: true
+            - name: etc-systemd
+              mountPath: /etc/systemd
+              readOnly: true
+            - name: etc-kubernetes
+              mountPath: /etc/kubernetes
+              readOnly: true
+            - name: usr-bin
+              mountPath: /usr/local/mount-from-host/bin
+              readOnly: true
+          volumes:
+          - name: var-lib-etcd
+            hostPath:
+              path: "/var/lib/etcd"
+          - name: var-lib-kubelet
+            hostPath:
+              path: "/var/lib/kubelet"
+          - name: etc-systemd
+            hostPath:
+              path: "/etc/systemd"
+          - name: etc-kubernetes
+            hostPath:
+              path: "/etc/kubernetes"
+          - name: usr-bin
+            hostPath:
+              path: "/usr/bin"

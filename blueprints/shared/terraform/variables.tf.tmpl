@@ -1,0 +1,525 @@
+# Variables for {{.ProjectName}} Infrastructure
+# Production-ready configuration with sensible defaults
+
+# Project metadata
+variable "project_name" {
+  description = "Name of the project"
+  type        = string
+  default     = "{{.ProjectName}}"
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, production)"
+  type        = string
+  
+  validation {
+    condition     = contains(["dev", "staging", "production"], var.environment)
+    error_message = "Environment must be one of: dev, staging, production."
+  }
+}
+
+variable "owner" {
+  description = "Owner of the infrastructure"
+  type        = string
+  default     = "{{.Author | default "DevOps Team"}}"
+}
+
+variable "cost_center" {
+  description = "Cost center for billing"
+  type        = string
+  default     = "engineering"
+}
+
+variable "image_tag" {
+  description = "Docker image tag to deploy"
+  type        = string
+  default     = "latest"
+}
+
+{{- if eq .Type "web-api" "microservice" }}
+# Networking
+variable "vpc_cidr" {
+  description = "CIDR block for VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "private_subnets" {
+  description = "CIDR blocks for private subnets"
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+}
+
+variable "public_subnets" {
+  description = "CIDR blocks for public subnets"
+  type        = list(string)
+  default     = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
+}
+
+variable "enable_nat_gateway" {
+  description = "Enable NAT Gateway for private subnets"
+  type        = bool
+  default     = true
+}
+
+variable "enable_vpn_gateway" {
+  description = "Enable VPN Gateway"
+  type        = bool
+  default     = false
+}
+
+# EKS Configuration
+variable "kubernetes_version" {
+  description = "Kubernetes version for EKS cluster"
+  type        = string
+  default     = "1.28"
+}
+
+variable "eks_node_groups" {
+  description = "EKS node group configurations"
+  type = map(object({
+    instance_types = list(string)
+    capacity_type  = string
+    min_size       = number
+    max_size       = number
+    desired_size   = number
+    disk_size      = number
+    labels         = map(string)
+    taints = list(object({
+      key    = string
+      value  = string
+      effect = string
+    }))
+  }))
+  
+  default = {
+    main = {
+      instance_types = ["t3.medium", "t3.large"]
+      capacity_type  = "ON_DEMAND"
+      min_size       = 1
+      max_size       = 10
+      desired_size   = 3
+      disk_size      = 50
+      labels = {
+        role = "main"
+      }
+      taints = []
+    }
+  }
+}
+
+# Database Configuration
+variable "enable_database" {
+  description = "Enable RDS database"
+  type        = bool
+  default     = {{if .Features.Database.Driver}}true{{else}}false{{end}}
+}
+
+variable "database_engine" {
+  description = "Database engine"
+  type        = string
+  default     = "{{.Features.Database.Driver | default "postgres"}}"
+  
+  validation {
+    condition     = contains(["postgres", "mysql", "mariadb"], var.database_engine)
+    error_message = "Database engine must be one of: postgres, mysql, mariadb."
+  }
+}
+
+variable "database_version" {
+  description = "Database engine version"
+  type        = string
+  default     = "15.4"
+}
+
+variable "database_instance_class" {
+  description = "RDS instance class"
+  type        = string
+  default     = "db.t3.micro"
+}
+
+variable "database_allocated_storage" {
+  description = "Initial allocated storage in GB"
+  type        = number
+  default     = 20
+}
+
+variable "database_max_allocated_storage" {
+  description = "Maximum allocated storage in GB (for autoscaling)"
+  type        = number
+  default     = 100
+}
+
+variable "database_name" {
+  description = "Database name"
+  type        = string
+  default     = "{{.ProjectName | replace "-" "_"}}"
+}
+
+variable "database_username" {
+  description = "Database master username"
+  type        = string
+  default     = "admin"
+}
+
+# Redis Configuration
+variable "enable_redis" {
+  description = "Enable ElastiCache Redis"
+  type        = bool
+  default     = false
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type"
+  type        = string
+  default     = "cache.t3.micro"
+}
+
+variable "redis_num_cache_nodes" {
+  description = "Number of cache nodes"
+  type        = number
+  default     = 1
+}
+
+variable "redis_parameter_group_name" {
+  description = "Redis parameter group name"
+  type        = string
+  default     = "default.redis7"
+}
+
+# Load Balancer
+variable "ssl_certificate_arn" {
+  description = "ARN of the SSL certificate for ALB"
+  type        = string
+  default     = ""
+}
+
+# Monitoring
+variable "enable_prometheus" {
+  description = "Enable Prometheus monitoring"
+  type        = bool
+  default     = true
+}
+
+variable "enable_grafana" {
+  description = "Enable Grafana dashboards"
+  type        = bool
+  default     = true
+}
+
+variable "alerts_sns_topic_arn" {
+  description = "SNS topic ARN for alerts"
+  type        = string
+  default     = ""
+}
+
+# Service Mesh
+variable "enable_service_mesh" {
+  description = "Enable Istio service mesh"
+  type        = bool
+  default     = false
+}
+
+{{- else if eq .Type "lambda" }}
+# Lambda Configuration
+variable "lambda_timeout" {
+  description = "Lambda function timeout in seconds"
+  type        = number
+  default     = 30
+  
+  validation {
+    condition     = var.lambda_timeout >= 1 && var.lambda_timeout <= 900
+    error_message = "Lambda timeout must be between 1 and 900 seconds."
+  }
+}
+
+variable "lambda_memory_size" {
+  description = "Lambda function memory size in MB"
+  type        = number
+  default     = 128
+  
+  validation {
+    condition     = var.lambda_memory_size >= 128 && var.lambda_memory_size <= 10240
+    error_message = "Lambda memory size must be between 128 and 10240 MB."
+  }
+}
+
+variable "lambda_environment_variables" {
+  description = "Environment variables for Lambda function"
+  type        = map(string)
+  default = {
+    LOG_LEVEL = "info"
+    ENVIRONMENT = "production"
+  }
+}
+
+variable "lambda_enable_vpc" {
+  description = "Enable VPC for Lambda function"
+  type        = bool
+  default     = false
+}
+
+variable "enable_lambda_dlq" {
+  description = "Enable Dead Letter Queue for Lambda"
+  type        = bool
+  default     = true
+}
+
+variable "lambda_reserved_concurrency" {
+  description = "Reserved concurrency for Lambda function"
+  type        = number
+  default     = -1  # -1 means no reserved concurrency
+}
+
+variable "lambda_error_threshold" {
+  description = "Error threshold for CloudWatch alarms"
+  type        = number
+  default     = 5
+}
+
+variable "lambda_duration_threshold" {
+  description = "Duration threshold for CloudWatch alarms (in milliseconds)"
+  type        = number
+  default     = 10000
+}
+
+# API Gateway Configuration
+variable "api_domain_name" {
+  description = "Custom domain name for API Gateway"
+  type        = string
+  default     = ""
+}
+
+variable "api_throttle_burst_limit" {
+  description = "API Gateway throttle burst limit"
+  type        = number
+  default     = 2000
+}
+
+variable "api_throttle_rate_limit" {
+  description = "API Gateway throttle rate limit"
+  type        = number
+  default     = 1000
+}
+
+variable "enable_cors" {
+  description = "Enable CORS for API Gateway"
+  type        = bool
+  default     = true
+}
+
+variable "cors_origins" {
+  description = "Allowed CORS origins"
+  type        = list(string)
+  default     = ["*"]
+}
+
+# DynamoDB Configuration
+variable "enable_dynamodb" {
+  description = "Enable DynamoDB table"
+  type        = bool
+  default     = false
+}
+
+variable "dynamodb_billing_mode" {
+  description = "DynamoDB billing mode"
+  type        = string
+  default     = "PAY_PER_REQUEST"
+  
+  validation {
+    condition     = contains(["PAY_PER_REQUEST", "PROVISIONED"], var.dynamodb_billing_mode)
+    error_message = "DynamoDB billing mode must be either PAY_PER_REQUEST or PROVISIONED."
+  }
+}
+
+variable "dynamodb_hash_key" {
+  description = "DynamoDB hash key attribute name"
+  type        = string
+  default     = "id"
+}
+
+variable "dynamodb_range_key" {
+  description = "DynamoDB range key attribute name"
+  type        = string
+  default     = ""
+}
+
+variable "dynamodb_attributes" {
+  description = "DynamoDB table attributes"
+  type = list(object({
+    name = string
+    type = string
+  }))
+  default = [
+    {
+      name = "id"
+      type = "S"
+    }
+  ]
+}
+
+variable "dynamodb_global_secondary_indexes" {
+  description = "DynamoDB Global Secondary Indexes"
+  type = list(object({
+    name            = string
+    hash_key        = string
+    range_key       = string
+    projection_type = string
+  }))
+  default = []
+}
+
+# VPC Configuration (for Lambda VPC access)
+variable "vpc_cidr" {
+  description = "CIDR block for VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "private_subnets" {
+  description = "CIDR blocks for private subnets"
+  type        = list(string)
+  default     = ["10.0.1.0/24", "10.0.2.0/24"]
+}
+
+variable "public_subnets" {
+  description = "CIDR blocks for public subnets"
+  type        = list(string)
+  default     = ["10.0.101.0/24", "10.0.102.0/24"]
+}
+{{- end }}
+
+# SSL/TLS Configuration
+variable "ssl_certificate_arn" {
+  description = "ARN of the SSL certificate"
+  type        = string
+  default     = ""
+}
+
+# Security
+variable "enable_waf" {
+  description = "Enable AWS WAF"
+  type        = bool
+  default     = true
+}
+
+variable "waf_rate_limit" {
+  description = "WAF rate limit (requests per 5 minutes)"
+  type        = number
+  default     = 2000
+}
+
+variable "waf_allowed_ips" {
+  description = "List of allowed IP addresses/CIDR blocks"
+  type        = list(string)
+  default     = []
+}
+
+variable "waf_blocked_ips" {
+  description = "List of blocked IP addresses/CIDR blocks"
+  type        = list(string)
+  default     = []
+}
+
+# Secrets Management
+variable "application_secrets" {
+  description = "Application secrets to store in AWS Secrets Manager"
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
+
+variable "enable_secrets_rotation" {
+  description = "Enable automatic secrets rotation"
+  type        = bool
+  default     = false
+}
+
+variable "secrets_rotation_lambda_arn" {
+  description = "ARN of Lambda function for secrets rotation"
+  type        = string
+  default     = ""
+}
+
+# Compliance and Auditing
+variable "enable_cloudtrail" {
+  description = "Enable AWS CloudTrail"
+  type        = bool
+  default     = true
+}
+
+# Domain Configuration
+variable "domain_name" {
+  description = "Domain name for the application"
+  type        = string
+  default     = "{{.DomainName | default "example.com"}}"
+}
+
+# Environment-specific configurations
+variable "environment_config" {
+  description = "Environment-specific configuration overrides"
+  type = object({
+    min_capacity = number
+    max_capacity = number
+    desired_capacity = number
+    instance_types = list(string)
+    enable_spot_instances = bool
+  })
+  
+  default = {
+    min_capacity = 1
+    max_capacity = 5
+    desired_capacity = 2
+    instance_types = ["t3.medium"]
+    enable_spot_instances = false
+  }
+}
+
+# Cost optimization
+variable "enable_cost_optimization" {
+  description = "Enable cost optimization features"
+  type        = bool
+  default     = true
+}
+
+variable "spot_instance_percentage" {
+  description = "Percentage of spot instances to use (0-100)"
+  type        = number
+  default     = 50
+  
+  validation {
+    condition     = var.spot_instance_percentage >= 0 && var.spot_instance_percentage <= 100
+    error_message = "Spot instance percentage must be between 0 and 100."
+  }
+}
+
+# Disaster Recovery
+variable "enable_multi_region" {
+  description = "Enable multi-region deployment for disaster recovery"
+  type        = bool
+  default     = false
+}
+
+variable "backup_region" {
+  description = "Backup region for disaster recovery"
+  type        = string
+  default     = "us-west-2"
+}
+
+# Feature flags
+variable "feature_flags" {
+  description = "Feature flags for conditional resource creation"
+  type = object({
+    enable_monitoring = bool
+    enable_logging    = bool
+    enable_tracing    = bool
+    enable_metrics    = bool
+  })
+  
+  default = {
+    enable_monitoring = true
+    enable_logging    = true
+    enable_tracing    = true
+    enable_metrics    = true
+  }
+}

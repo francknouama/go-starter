@@ -1,0 +1,513 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "{{.ProjectName}} - Production Dashboard",
+    "tags": [
+      "{{.ProjectName}}",
+      "golang",
+      "{{.Type}}",
+      "production"
+    ],
+    "style": "dark",
+    "timezone": "UTC",
+    "refresh": "30s",
+    "schemaVersion": 39,
+    "version": 1,
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "templating": {
+      "list": [
+        {
+          "name": "namespace",
+          "type": "query",
+          "query": "label_values(up{job=\"{{.ProjectName}}\"}, namespace)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "pod",
+          "type": "query",
+          "query": "label_values(up{job=\"{{.ProjectName}}\", namespace=~\"$namespace\"}, pod)",
+          "refresh": 1,
+          "includeAll": true,
+          "multi": true,
+          "current": {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          }
+        },
+        {
+          "name": "interval",
+          "type": "interval",
+          "query": "1m,5m,10m,30m,1h",
+          "current": {
+            "selected": false,
+            "text": "5m",
+            "value": "5m"
+          }
+        }
+      ]
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Overview",
+        "type": "stat",
+        "gridPos": {
+          "h": 4,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "targets": [
+          {
+            "expr": "up{job=\"{{.ProjectName}}\", namespace=~\"$namespace\"}",
+            "legendFormat": "Service Up",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {
+                  "color": "red",
+                  "value": null
+                },
+                {
+                  "color": "green",
+                  "value": 1
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Request Rate",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval]))",
+            "legendFormat": "Total Requests/sec",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\", status=~\"2..\"}[$interval]))",
+            "legendFormat": "2xx Requests/sec",
+            "refId": "B"
+          },
+          {
+            "expr": "sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\", status=~\"4..\"}[$interval]))",
+            "legendFormat": "4xx Requests/sec",
+            "refId": "C"
+          },
+          {
+            "expr": "sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\", status=~\"5..\"}[$interval]))",
+            "legendFormat": "5xx Requests/sec",
+            "refId": "D"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Error Rate",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 4
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\", status=~\"5..\"}[$interval])) / sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) * 100",
+            "legendFormat": "Error Rate %",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Error Rate %",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "thresholds": [
+          {
+            "value": 1,
+            "colorMode": "critical",
+            "op": "gt"
+          },
+          {
+            "value": 5,
+            "colorMode": "critical",
+            "op": "gt"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Response Time Percentiles",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "50th percentile",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.90, sum(rate(http_request_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "90th percentile",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "95th percentile",
+            "refId": "C"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "99th percentile",
+            "refId": "D"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Response Time (s)",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Throughput by Endpoint",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 12
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(http_requests_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (endpoint)",
+            "legendFormat": "{{ "{{" }}endpoint{{ "}}" }}",
+            "refId": "A"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Requests/sec",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Pod Resource Usage",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(container_cpu_usage_seconds_total{container=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (pod) * 100",
+            "legendFormat": "CPU Usage % - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(container_memory_working_set_bytes{container=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}) by (pod) / 1024 / 1024",
+            "legendFormat": "Memory Usage MB - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "CPU % / Memory MB",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Pod Status",
+        "type": "stat",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 20
+        },
+        "targets": [
+          {
+            "expr": "kube_pod_status_phase{namespace=~\"$namespace\", pod=~\"{{.ProjectName}}-.*\"}",
+            "legendFormat": "{{ "{{" }}pod{{ "}}" }} - {{ "{{" }}phase{{ "}}" }}",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "value"
+            },
+            "mappings": [
+              {
+                "options": {
+                  "1": {
+                    "text": "Running",
+                    "color": "green"
+                  },
+                  "0": {
+                    "text": "Not Running",
+                    "color": "red"
+                  }
+                },
+                "type": "value"
+              }
+            ]
+          }
+        }
+      }
+      {{- if .Features.Database.Driver }},
+      {
+        "id": 8,
+        "title": "Database Metrics",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "go_sql_open_connections{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}",
+            "legendFormat": "Open Connections - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "A"
+          },
+          {
+            "expr": "go_sql_max_open_connections{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}",
+            "legendFormat": "Max Connections - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(go_sql_query_total{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])",
+            "legendFormat": "Query Rate - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Connections / Queries/sec",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 9,
+        "title": "Database Query Duration",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": 28
+        },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(go_sql_query_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "50th percentile",
+            "refId": "A"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(go_sql_query_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "95th percentile",
+            "refId": "B"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(go_sql_query_duration_seconds_bucket{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (le))",
+            "legendFormat": "99th percentile",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Query Duration (s)",
+            "min": 0
+          }
+        ]
+      }
+      {{- end }},
+      {
+        "id": 10,
+        "title": "Go Runtime Metrics",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 0,
+          "y": {{if .Features.Database.Driver}}36{{else}}28{{end}}
+        },
+        "targets": [
+          {
+            "expr": "go_goroutines{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}",
+            "legendFormat": "Goroutines - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "A"
+          },
+          {
+            "expr": "go_threads{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}",
+            "legendFormat": "Threads - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "B"
+          },
+          {
+            "expr": "rate(go_gc_duration_seconds_sum{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])",
+            "legendFormat": "GC Duration - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Count / Duration (s)",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Memory Usage Details",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 12,
+          "x": 12,
+          "y": {{if .Features.Database.Driver}}36{{else}}28{{end}}
+        },
+        "targets": [
+          {
+            "expr": "go_memstats_alloc_bytes{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"} / 1024 / 1024",
+            "legendFormat": "Allocated MB - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "A"
+          },
+          {
+            "expr": "go_memstats_heap_inuse_bytes{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"} / 1024 / 1024",
+            "legendFormat": "Heap In Use MB - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "B"
+          },
+          {
+            "expr": "go_memstats_stack_inuse_bytes{job=\"{{.ProjectName}}\", namespace=~\"$namespace\", pod=~\"$pod\"} / 1024 / 1024",
+            "legendFormat": "Stack In Use MB - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "C"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Memory (MB)",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Network I/O",
+        "type": "graph",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": {{if .Features.Database.Driver}}44{{else}}36{{end}}
+        },
+        "targets": [
+          {
+            "expr": "sum(rate(container_network_receive_bytes_total{namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (pod) / 1024",
+            "legendFormat": "Network RX KB/s - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "A"
+          },
+          {
+            "expr": "sum(rate(container_network_transmit_bytes_total{namespace=~\"$namespace\", pod=~\"$pod\"}[$interval])) by (pod) / 1024",
+            "legendFormat": "Network TX KB/s - {{ "{{" }}pod{{ "}}" }}",
+            "refId": "B"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Network I/O (KB/s)",
+            "min": 0
+          }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Alert Status",
+        "type": "alertlist",
+        "gridPos": {
+          "h": 8,
+          "w": 24,
+          "x": 0,
+          "y": {{if .Features.Database.Driver}}52{{else}}44{{end}}
+        },
+        "options": {
+          "showOptions": "current",
+          "maxItems": 20,
+          "sortOrder": 3,
+          "dashboardAlerts": false,
+          "alertName": "{{.ProjectName}}",
+          "tags": ["{{.ProjectName}}"]
+        }
+      }
+    ],
+    "annotations": {
+      "list": [
+        {
+          "name": "Deployments",
+          "datasource": "Prometheus",
+          "enable": true,
+          "expr": "kube_pod_start_time{namespace=~\"$namespace\", pod=~\"{{.ProjectName}}-.*\"} * 1000",
+          "iconColor": "blue",
+          "name": "Pod Start",
+          "showIn": 0,
+          "step": "1m",
+          "tags": [],
+          "textFormat": "Pod Started: {{ "{{" }}pod{{ "}}" }}",
+          "titleFormat": "Deployment"
+        }
+      ]
+    }
+  },
+  "overwrite": true
+}

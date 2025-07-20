@@ -1,0 +1,331 @@
+package observability
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"runtime"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambdacontext"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// LambdaContext represents Lambda execution context for logging
+type LambdaContext struct {
+	RequestID          string            `json:"requestId"`
+	FunctionName       string            `json:"functionName"`
+	FunctionVersion    string            `json:"functionVersion"`
+	InvokedFunctionArn string            `json:"invokedFunctionArn"`
+	LogGroupName       string            `json:"logGroupName"`
+	LogStreamName      string            `json:"logStreamName"`
+	MemoryLimitInMB    int32             `json:"memoryLimitInMB"`
+	RemainingTimeInMS  int64             `json:"remainingTimeInMS"`
+	Region             string            `json:"region"`
+	Environment        map[string]string `json:"environment,omitempty"`
+}
+
+// PerformanceMetrics tracks performance information
+type PerformanceMetrics struct {
+	InitDuration    time.Duration `json:"initDuration,omitempty"`
+	Duration        time.Duration `json:"duration"`
+	BilledDuration  time.Duration `json:"billedDuration,omitempty"`
+	MemorySize      int32         `json:"memorySize"`
+	MaxMemoryUsed   int32         `json:"maxMemoryUsed,omitempty"`
+	ColdStart       bool          `json:"coldStart"`
+	GoroutineCount  int           `json:"goroutineCount"`
+	HeapAllocBytes  uint64        `json:"heapAllocBytes"`
+	HeapSysBytes    uint64        `json:"heapSysBytes"`
+}
+
+// RequestMetrics captures request-level metrics
+type RequestMetrics struct {
+	RequestSize   int64                  `json:"requestSize,omitempty"`
+	ResponseSize  int64                  `json:"responseSize,omitempty"`
+	StatusCode    int                    `json:"statusCode,omitempty"`
+	ErrorType     string                 `json:"errorType,omitempty"`
+	ErrorMessage  string                 `json:"errorMessage,omitempty"`
+	UserAgent     string                 `json:"userAgent,omitempty"`
+	SourceIP      string                 `json:"sourceIP,omitempty"`
+	CustomFields  map[string]interface{} `json:"customFields,omitempty"`
+}
+
+// StructuredLog represents a structured log entry for CloudWatch
+type StructuredLog struct {
+	Timestamp    time.Time           `json:"timestamp"`
+	Level        string              `json:"level"`
+	Message      string              `json:"message"`
+	Lambda       *LambdaContext      `json:"lambda,omitempty"`
+	Performance  *PerformanceMetrics `json:"performance,omitempty"`
+	Request      *RequestMetrics     `json:"request,omitempty"`
+	TraceID      string              `json:"traceId,omitempty"`
+	SpanID       string              `json:"spanId,omitempty"`
+	Fields       map[string]interface{} `json:"fields,omitempty"`
+}
+
+var (
+	lambdaCtx      *LambdaContext
+	startTime      time.Time
+	isColdStart    = true
+	initDuration   time.Duration
+)
+
+// InitializeCloudWatchLogging initializes CloudWatch structured logging
+func InitializeCloudWatchLogging(ctx context.Context) {
+	startTime = time.Now()
+	
+	// Extract Lambda context
+	if lc, ok := lambdacontext.FromContext(ctx); ok {
+		lambdaCtx = &LambdaContext{
+			RequestID:          lc.AwsRequestID,
+			FunctionName:       lc.InvokedFunctionArn,
+			FunctionVersion:    lc.Identity.FunctionVersion,
+			InvokedFunctionArn: lc.InvokedFunctionArn,
+			LogGroupName:       lc.LogGroupName,
+			LogStreamName:      lc.LogStreamName,
+			MemoryLimitInMB:    lc.MemoryLimitInMB,
+			Region:             os.Getenv("AWS_REGION"),
+		}
+	} else {
+		// Fallback for local development
+		lambdaCtx = &LambdaContext{
+			RequestID:       "local-" + fmt.Sprintf("%d", time.Now().Unix()),
+			FunctionName:    os.Getenv("AWS_LAMBDA_FUNCTION_NAME"),
+			FunctionVersion: os.Getenv("AWS_LAMBDA_FUNCTION_VERSION"),
+			LogGroupName:    "/aws/lambda/" + os.Getenv("AWS_LAMBDA_FUNCTION_NAME"),
+			Region:          os.Getenv("AWS_REGION"),
+		}
+	}
+	
+	// Add environment variables (filtered for security)
+	lambdaCtx.Environment = getFilteredEnvironment()
+	
+	// Calculate init duration if this is a cold start
+	if isColdStart {
+		if initStart := os.Getenv("_LAMBDA_INIT_START"); initStart != "" {
+			// This would be set by a custom runtime or init process
+			initDuration = time.Since(startTime)
+		}
+		
+		// Record cold start metric
+		RecordColdStart()
+		isColdStart = false
+	}
+	
+	logger.Info("CloudWatch logging initialized", map[string]interface{}{
+		"request_id":     lambdaCtx.RequestID,
+		"function_name":  lambdaCtx.FunctionName,
+		"cold_start":     isColdStart,
+		"init_duration":  initDuration.String(),
+	})
+}
+
+// LogStructured logs a structured message to CloudWatch
+func LogStructured(level, message string, fields map[string]interface{}) {
+	structuredLog := &StructuredLog{
+		Timestamp: time.Now().UTC(),
+		Level:     level,
+		Message:   message,
+		Lambda:    lambdaCtx,
+		TraceID:   GetTraceID(context.Background()),
+		Fields:    fields,
+	}
+	
+	// Add performance metrics
+	structuredLog.Performance = getCurrentPerformanceMetrics()
+	
+	// Marshal to JSON for CloudWatch
+	logData, err := json.Marshal(structuredLog)
+	if err != nil {
+		// Fallback to simple logging
+		logger.Error("Failed to marshal structured log", map[string]interface{}{
+			"error":   err.Error(),
+			"message": message,
+		})
+		return
+	}
+	
+	// Output to CloudWatch Logs
+	fmt.Println(string(logData))
+}
+
+// LogRequestStart logs the start of request processing
+func LogRequestStart(ctx context.Context, requestSize int64, userAgent, sourceIP string) {
+	requestMetrics := &RequestMetrics{
+		RequestSize: requestSize,
+		UserAgent:   userAgent,
+		SourceIP:    sourceIP,
+	}
+	
+	structuredLog := &StructuredLog{
+		Timestamp:   time.Now().UTC(),
+		Level:       "INFO",
+		Message:     "Request processing started",
+		Lambda:      lambdaCtx,
+		Performance: getCurrentPerformanceMetrics(),
+		Request:     requestMetrics,
+		TraceID:     GetTraceID(ctx),
+	}
+	
+	logData, _ := json.Marshal(structuredLog)
+	fmt.Println(string(logData))
+}
+
+// LogRequestComplete logs the completion of request processing
+func LogRequestComplete(ctx context.Context, duration time.Duration, statusCode int, responseSize int64, err error) {
+	requestMetrics := &RequestMetrics{
+		ResponseSize: responseSize,
+		StatusCode:   statusCode,
+	}
+	
+	if err != nil {
+		requestMetrics.ErrorType = fmt.Sprintf("%T", err)
+		requestMetrics.ErrorMessage = err.Error()
+	}
+	
+	performanceMetrics := getCurrentPerformanceMetrics()
+	performanceMetrics.Duration = duration
+	
+	// Calculate billed duration (rounds up to nearest 100ms)
+	billedMs := ((duration.Milliseconds() + 99) / 100) * 100
+	performanceMetrics.BilledDuration = time.Duration(billedMs) * time.Millisecond
+	
+	level := "INFO"
+	message := "Request processing completed"
+	if err != nil {
+		level = "ERROR"
+		message = "Request processing failed"
+	}
+	
+	structuredLog := &StructuredLog{
+		Timestamp:   time.Now().UTC(),
+		Level:       level,
+		Message:     message,
+		Lambda:      lambdaCtx,
+		Performance: performanceMetrics,
+		Request:     requestMetrics,
+		TraceID:     GetTraceID(ctx),
+	}
+	
+	logData, _ := json.Marshal(structuredLog)
+	fmt.Println(string(logData))
+	
+	// Record metrics
+	RecordDuration("Duration", duration, map[string]string{
+		"FunctionName": lambdaCtx.FunctionName,
+	})
+	
+	RecordInvocation(lambdaCtx.FunctionName, err == nil)
+	
+	if err != nil {
+		RecordError(requestMetrics.ErrorType, map[string]string{
+			"FunctionName": lambdaCtx.FunctionName,
+		})
+	}
+	
+	RecordMemoryUsage(float64(performanceMetrics.MaxMemoryUsed), float64(performanceMetrics.MemorySize))
+	RecordBillingDuration(performanceMetrics.BilledDuration)
+	
+	if responseSize > 0 {
+		RecordResponseSize(float64(responseSize))
+	}
+}
+
+// LogBusinessEvent logs custom business events
+func LogBusinessEvent(ctx context.Context, eventType, eventName string, data map[string]interface{}) {
+	fields := map[string]interface{}{
+		"event_type": eventType,
+		"event_name": eventName,
+	}
+	
+	// Merge custom data
+	for k, v := range data {
+		fields[k] = v
+	}
+	
+	structuredLog := &StructuredLog{
+		Timestamp:   time.Now().UTC(),
+		Level:       "INFO",
+		Message:     fmt.Sprintf("Business event: %s", eventName),
+		Lambda:      lambdaCtx,
+		Performance: getCurrentPerformanceMetrics(),
+		TraceID:     GetTraceID(ctx),
+		Fields:      fields,
+	}
+	
+	logData, _ := json.Marshal(structuredLog)
+	fmt.Println(string(logData))
+	
+	// Record business metric
+	RecordBusinessMetric("BusinessEvents", 1, "Count", map[string]string{
+		"EventType": eventType,
+		"EventName": eventName,
+	})
+}
+
+// getCurrentPerformanceMetrics collects current performance metrics
+func getCurrentPerformanceMetrics() *PerformanceMetrics {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	
+	metrics := &PerformanceMetrics{
+		ColdStart:      isColdStart,
+		GoroutineCount: runtime.NumGoroutine(),
+		HeapAllocBytes: m.HeapAlloc,
+		HeapSysBytes:   m.HeapSys,
+	}
+	
+	if lambdaCtx != nil {
+		metrics.MemorySize = lambdaCtx.MemoryLimitInMB
+		
+		// Estimate memory usage (this is approximate)
+		metrics.MaxMemoryUsed = int32(m.HeapSys / (1024 * 1024))
+	}
+	
+	if initDuration > 0 {
+		metrics.InitDuration = initDuration
+	}
+	
+	return metrics
+}
+
+// getFilteredEnvironment returns environment variables safe for logging
+func getFilteredEnvironment() map[string]string {
+	env := make(map[string]string)
+	
+	// Safe environment variables to include
+	safeVars := []string{
+		"AWS_REGION",
+		"AWS_LAMBDA_FUNCTION_NAME",
+		"AWS_LAMBDA_FUNCTION_VERSION",
+		"AWS_LAMBDA_RUNTIME_API",
+		"AWS_EXECUTION_ENV",
+		"AWS_LAMBDA_LOG_GROUP_NAME",
+		"AWS_LAMBDA_LOG_STREAM_NAME",
+		"_LAMBDA_TELEMETRY_LOG_FD",
+	}
+	
+	for _, key := range safeVars {
+		if value := os.Getenv(key); value != "" {
+			env[key] = value
+		}
+	}
+	
+	// Add custom application environment variables (prefix with APP_)
+	for _, e := range os.Environ() {
+		if len(e) > 4 && e[:4] == "APP_" {
+			pair := e[4:] // Remove APP_ prefix
+			if idx := len(pair); idx > 0 {
+				env[e[:4+idx]] = os.Getenv(e[:4+idx])
+			}
+		}
+	}
+	
+	return env
+}
+
+// GetLambdaContext returns the current Lambda context
+func GetLambdaContext() *LambdaContext {
+	return lambdaCtx
+}

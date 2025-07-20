@@ -1,0 +1,609 @@
+# Advanced GitLab CI/CD Pipeline for {{.ProjectName}}
+# Supports: Multi-cloud deployment, comprehensive testing, security scanning
+# Features: Matrix builds, parallel testing, advanced deployment strategies
+
+stages:
+  - validate
+  - security
+  - test
+  - build
+  - deploy-staging
+  - integration-tests
+  - deploy-production
+  - post-deploy
+
+variables:
+  # Project configuration
+  PROJECT_NAME: "{{.ProjectName}}"
+  GO_VERSION: "{{.GoVersion | default "1.21"}}"
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: "/certs"
+  
+  # Build configuration
+  CGO_ENABLED: "0"
+  GOOS: linux
+  GOARCH: amd64
+  
+  # Container registry
+  REGISTRY: $CI_REGISTRY
+  IMAGE_NAME: $CI_REGISTRY_IMAGE
+  IMAGE_TAG: $CI_COMMIT_SHA
+  
+  # Kubernetes configuration
+  KUBE_NAMESPACE_STAGING: "${PROJECT_NAME}-staging"
+  KUBE_NAMESPACE_PRODUCTION: "${PROJECT_NAME}-production"
+  
+  # Security scanning
+  SECURITY_SCAN_ENABLED: "true"
+  SAST_EXCLUDED_ANALYZERS: "gosec-sast"
+  DEPENDENCY_SCANNING_ENABLED: "true"
+  
+  # Multi-cloud configuration
+  CLOUD_PROVIDER: "aws"  # aws, gcp, azure
+  TERRAFORM_VERSION: "1.6.0"
+
+# Global settings
+default:
+  image: golang:${GO_VERSION}-alpine
+  before_script:
+    - apk add --no-cache git make curl
+    - go version
+
+# Templates for reusable job configurations
+.base_go_job: &base_go_job
+  image: golang:${GO_VERSION}-alpine
+  before_script:
+    - apk add --no-cache git make curl gcc musl-dev
+    - go mod download
+    - go mod verify
+
+.docker_job: &docker_job
+  image: docker:24-dind
+  services:
+    - docker:24-dind
+  before_script:
+    - docker info
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER --password-stdin $CI_REGISTRY
+
+.terraform_job: &terraform_job
+  image: hashicorp/terraform:${TERRAFORM_VERSION}
+  before_script:
+    - terraform --version
+    - cd infrastructure/terraform
+    - terraform init -backend-config="key=${PROJECT_NAME}/${CI_ENVIRONMENT_NAME}/terraform.tfstate"
+
+# Stage 1: Validation
+code-quality:
+  <<: *base_go_job
+  stage: validate
+  script:
+    - go fmt -d .
+    - go vet ./...
+    {{- if eq .LoggerType "golangci-lint" }}
+    - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin
+    - golangci-lint run --timeout=5m
+    {{- end }}
+  artifacts:
+    reports:
+      junit: report.xml
+    paths:
+      - coverage.out
+    expire_in: 1 week
+
+dependencies-check:
+  <<: *base_go_job
+  stage: validate
+  script:
+    - go mod tidy
+    - git diff --exit-code go.mod go.sum || (echo "Dependencies are not up to date. Run 'go mod tidy' and commit the changes." && exit 1)
+    - go list -m -u all
+
+license-compliance:
+  <<: *base_go_job
+  stage: validate
+  script:
+    - go install github.com/fossa-contrib/fossa-cli@latest
+    - fossa analyze
+    - fossa test
+  allow_failure: true
+
+# Stage 2: Security
+secrets-detection:
+  image: alpine:latest
+  stage: security
+  before_script:
+    - apk add --no-cache git
+  script:
+    - |
+      echo "Scanning for secrets..."
+      if git log --all --full-history -- '*' | grep -i -E "(password|secret|key|token)" | head -5; then
+        echo "Potential secrets found in git history"
+        exit 1
+      fi
+  allow_failure: true
+
+{{- if eq .Type "web-api" "microservice" }}
+container-security:
+  <<: *docker_job
+  stage: security
+  script:
+    - docker build -t ${IMAGE_NAME}:security-scan .
+    - |
+      echo "Running container security scan..."
+      # Using Trivy for vulnerability scanning
+      docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+        aquasec/trivy:latest image --format json --output security-report.json ${IMAGE_NAME}:security-scan
+  artifacts:
+    reports:
+      container_scanning: security-report.json
+    expire_in: 1 week
+{{- end }}
+
+dependency-scanning:
+  <<: *base_go_job
+  stage: security
+  script:
+    - go install github.com/sonatypecommunity/nancy@latest
+    - go list -json -deps ./... | nancy sleuth
+  artifacts:
+    reports:
+      dependency_scanning: nancy-report.json
+  allow_failure: true
+
+# Stage 3: Testing
+unit-tests:
+  <<: *base_go_job
+  stage: test
+  script:
+    - go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+    - go tool cover -html=coverage.out -o coverage.html
+    - go tool cover -func=coverage.out | tail -1 | awk '{print "Total coverage: " $3}'
+  coverage: '/Total coverage: \d+\.\d+%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.out
+      - coverage.html
+    expire_in: 1 week
+
+{{- if eq .Type "web-api" "microservice" }}
+integration-tests:
+  <<: *base_go_job
+  stage: test
+  services:
+    {{- if eq .Features.Database.Driver "postgres" }}
+    - postgres:15-alpine
+    {{- else if eq .Features.Database.Driver "mysql" }}
+    - mysql:8.0
+    {{- end }}
+    - redis:7-alpine
+  variables:
+    {{- if eq .Features.Database.Driver "postgres" }}
+    POSTGRES_DB: testdb
+    POSTGRES_USER: testuser
+    POSTGRES_PASSWORD: testpass
+    DATABASE_URL: "postgres://testuser:testpass@postgres:5432/testdb?sslmode=disable"
+    {{- else if eq .Features.Database.Driver "mysql" }}
+    MYSQL_ROOT_PASSWORD: rootpass
+    MYSQL_DATABASE: testdb
+    MYSQL_USER: testuser
+    MYSQL_PASSWORD: testpass
+    DATABASE_URL: "mysql://testuser:testpass@mysql:3306/testdb"
+    {{- end }}
+    REDIS_URL: "redis://redis:6379/0"
+  script:
+    - make test-integration
+  artifacts:
+    reports:
+      junit: integration-test-report.xml
+    expire_in: 1 week
+
+performance-tests:
+  <<: *base_go_job
+  stage: test
+  script:
+    - go test -bench=. -benchmem ./...
+    - go install github.com/rakyll/hey@latest
+    - |
+      if [ -f "cmd/server/main.go" ]; then
+        go run cmd/server/main.go &
+        SERVER_PID=$!
+        sleep 5
+        hey -n 1000 -c 10 http://localhost:8080/health || true
+        kill $SERVER_PID
+      fi
+  artifacts:
+    paths:
+      - performance-report.txt
+    expire_in: 1 week
+  allow_failure: true
+{{- end }}
+
+# Stage 4: Build
+compile:
+  <<: *base_go_job
+  stage: build
+  script:
+    {{- if eq .Type "cli" }}
+    - make build-all-platforms
+    {{- else }}
+    - make build
+    {{- end }}
+  artifacts:
+    paths:
+      {{- if eq .Type "cli" }}
+      - bin/
+      {{- else }}
+      - bin/{{.ProjectName}}
+      {{- end }}
+    expire_in: 1 week
+
+{{- if eq .Type "web-api" "microservice" }}
+docker-build:
+  <<: *docker_job
+  stage: build
+  script:
+    - docker build --build-arg GO_VERSION=${GO_VERSION} -t ${IMAGE_NAME}:${IMAGE_TAG} .
+    - docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
+    - docker push ${IMAGE_NAME}:${IMAGE_TAG}
+    - docker push ${IMAGE_NAME}:latest
+    - |
+      echo "Image pushed: ${IMAGE_NAME}:${IMAGE_TAG}"
+      echo "Image size:"
+      docker images ${IMAGE_NAME}:${IMAGE_TAG} --format "table {{{{.Repository}}}}\t{{{{.Tag}}}}\t{{{{.Size}}}}"
+  artifacts:
+    reports:
+      dotenv: build.env
+  only:
+    - main
+    - develop
+    - /^release\/.*$/
+
+helm-package:
+  image: alpine/helm:latest
+  stage: build
+  script:
+    - cd helm
+    - helm package . --version ${CI_COMMIT_SHA:0:8}
+    - helm repo index . --url ${CI_PROJECT_URL}/-/packages/helm
+  artifacts:
+    paths:
+      - helm/*.tgz
+      - helm/index.yaml
+    expire_in: 1 week
+  only:
+    - main
+    - develop
+{{- end }}
+
+# Stage 5: Deploy Staging
+deploy-staging:
+  <<: *terraform_job
+  stage: deploy-staging
+  environment:
+    name: staging
+    url: https://staging.{{.DomainName | default "example.com"}}
+  variables:
+    TF_VAR_environment: staging
+    TF_VAR_image_tag: ${IMAGE_TAG}
+  script:
+    - terraform plan -var-file="environments/staging.tfvars" -out=staging.tfplan
+    - terraform apply -auto-approve staging.tfplan
+    {{- if eq .Type "web-api" "microservice" }}
+    - |
+      echo "Deploying to Kubernetes..."
+      kubectl config use-context staging
+      helm upgrade --install ${PROJECT_NAME} helm/ \
+        --namespace ${KUBE_NAMESPACE_STAGING} \
+        --create-namespace \
+        --set image.tag=${IMAGE_TAG} \
+        --set environment=staging \
+        --wait --timeout=300s
+    {{- end }}
+  artifacts:
+    reports:
+      terraform: staging.tfplan.json
+  only:
+    - main
+    - develop
+
+# Stage 6: Integration Tests (Staging)
+staging-smoke-tests:
+  image: alpine:latest
+  stage: integration-tests
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      STAGING_URL="https://staging.{{.DomainName | default "example.com"}}"
+      echo "Running smoke tests against: $STAGING_URL"
+      
+      # Health check
+      curl -f "$STAGING_URL/health" || exit 1
+      
+      {{- if eq .Type "web-api" "microservice" }}
+      # API version check
+      VERSION=$(curl -s "$STAGING_URL/version" | jq -r '.version')
+      echo "Deployed version: $VERSION"
+      
+      # Basic API tests
+      curl -f -X GET "$STAGING_URL/api/v1/health" || exit 1
+      {{- end }}
+      
+      echo "✅ All smoke tests passed"
+  environment:
+    name: staging
+  dependencies:
+    - deploy-staging
+
+load-testing-staging:
+  image: alpine:latest
+  stage: integration-tests
+  before_script:
+    - apk add --no-cache curl
+    - wget -q -O hey https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64
+    - chmod +x hey
+  script:
+    - |
+      STAGING_URL="https://staging.{{.DomainName | default "example.com"}}"
+      echo "Running load tests against: $STAGING_URL"
+      ./hey -n 100 -c 5 -q 10 "$STAGING_URL/health"
+  environment:
+    name: staging
+  dependencies:
+    - deploy-staging
+  allow_failure: true
+
+# Stage 7: Deploy Production
+deploy-production:
+  <<: *terraform_job
+  stage: deploy-production
+  environment:
+    name: production
+    url: https://{{.DomainName | default "example.com"}}
+  variables:
+    TF_VAR_environment: production
+    TF_VAR_image_tag: ${IMAGE_TAG}
+  script:
+    - terraform plan -var-file="environments/production.tfvars" -out=production.tfplan
+    - terraform apply -auto-approve production.tfplan
+    {{- if eq .Type "web-api" "microservice" }}
+    - |
+      echo "Deploying to production Kubernetes..."
+      kubectl config use-context production
+      
+      # Blue-Green Deployment Strategy
+      if kubectl get deployment ${PROJECT_NAME}-blue -n ${KUBE_NAMESPACE_PRODUCTION} >/dev/null 2>&1; then
+        CURRENT_COLOR=blue
+        NEW_COLOR=green
+      else
+        CURRENT_COLOR=green
+        NEW_COLOR=blue
+      fi
+      
+      echo "Deploying to $NEW_COLOR environment"
+      helm upgrade --install ${PROJECT_NAME}-${NEW_COLOR} helm/ \
+        --namespace ${KUBE_NAMESPACE_PRODUCTION} \
+        --create-namespace \
+        --set image.tag=${IMAGE_TAG} \
+        --set environment=production \
+        --set color=${NEW_COLOR} \
+        --wait --timeout=600s
+      
+      # Health check before switching traffic
+      sleep 30
+      NEW_URL="https://${NEW_COLOR}.{{.DomainName | default "example.com"}}"
+      curl -f "$NEW_URL/health" || exit 1
+      
+      echo "Switching traffic to $NEW_COLOR"
+      kubectl patch service ${PROJECT_NAME} -n ${KUBE_NAMESPACE_PRODUCTION} \
+        -p '{"spec":{"selector":{"color":"'${NEW_COLOR}'"}}}'
+      
+      # Cleanup old deployment after successful switch
+      sleep 60
+      if [ "$CURRENT_COLOR" != "" ]; then
+        helm uninstall ${PROJECT_NAME}-${CURRENT_COLOR} -n ${KUBE_NAMESPACE_PRODUCTION} || true
+      fi
+    {{- end }}
+  artifacts:
+    reports:
+      terraform: production.tfplan.json
+  when: manual
+  only:
+    - main
+
+# Stage 8: Post-Deploy
+production-smoke-tests:
+  image: alpine:latest
+  stage: post-deploy
+  before_script:
+    - apk add --no-cache curl jq
+  script:
+    - |
+      PROD_URL="https://{{.DomainName | default "example.com"}}"
+      echo "Running production smoke tests against: $PROD_URL"
+      
+      # Health check
+      curl -f "$PROD_URL/health" || exit 1
+      
+      {{- if eq .Type "web-api" "microservice" }}
+      # API tests
+      curl -f -X GET "$PROD_URL/api/v1/health" || exit 1
+      
+      # Version verification
+      DEPLOYED_VERSION=$(curl -s "$PROD_URL/version" | jq -r '.version')
+      echo "✅ Production deployment successful. Version: $DEPLOYED_VERSION"
+      {{- end }}
+  environment:
+    name: production
+  dependencies:
+    - deploy-production
+
+notify-deployment:
+  image: alpine:latest
+  stage: post-deploy
+  before_script:
+    - apk add --no-cache curl
+  script:
+    - |
+      # Slack notification (if webhook URL is configured)
+      if [ -n "$SLACK_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"text":"🚀 '"${PROJECT_NAME}"' deployed to production successfully!\nCommit: '"${CI_COMMIT_SHA:0:8}"'\nPipeline: '"${CI_PIPELINE_URL}"'"}' \
+          $SLACK_WEBHOOK_URL
+      fi
+      
+      # Custom notification endpoint
+      if [ -n "$NOTIFICATION_WEBHOOK_URL" ]; then
+        curl -X POST -H 'Content-type: application/json' \
+          --data '{"project":"'"${PROJECT_NAME}"'","environment":"production","status":"success","commit":"'"${CI_COMMIT_SHA}"'","pipeline_url":"'"${CI_PIPELINE_URL}"'"}' \
+          $NOTIFICATION_WEBHOOK_URL
+      fi
+  dependencies:
+    - production-smoke-tests
+  allow_failure: true
+
+# Multi-cloud deployment jobs
+.deploy_aws: &deploy_aws
+  <<: *terraform_job
+  variables:
+    CLOUD_PROVIDER: "aws"
+    TF_VAR_cloud_provider: "aws"
+
+.deploy_gcp: &deploy_gcp
+  <<: *terraform_job
+  variables:
+    CLOUD_PROVIDER: "gcp"
+    TF_VAR_cloud_provider: "gcp"
+  before_script:
+    - echo $GCP_SERVICE_ACCOUNT_KEY | base64 -d > gcp-key.json
+    - export GOOGLE_APPLICATION_CREDENTIALS=gcp-key.json
+    - terraform --version
+    - cd infrastructure/terraform
+
+.deploy_azure: &deploy_azure
+  <<: *terraform_job
+  variables:
+    CLOUD_PROVIDER: "azure"
+    TF_VAR_cloud_provider: "azure"
+  before_script:
+    - export ARM_CLIENT_ID=$AZURE_CLIENT_ID
+    - export ARM_CLIENT_SECRET=$AZURE_CLIENT_SECRET
+    - export ARM_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID
+    - export ARM_TENANT_ID=$AZURE_TENANT_ID
+    - terraform --version
+    - cd infrastructure/terraform
+
+# Multi-cloud staging deployment (parallel)
+deploy-staging-aws:
+  <<: *deploy_aws
+  stage: deploy-staging
+  environment:
+    name: staging-aws
+  script:
+    - terraform workspace select staging-aws || terraform workspace new staging-aws
+    - terraform init -backend-config="key=${PROJECT_NAME}/staging-aws/terraform.tfstate"
+    - terraform plan -var-file="clouds/aws/staging.tfvars" -out=staging-aws.tfplan
+    - terraform apply -auto-approve staging-aws.tfplan
+  rules:
+    - if: $CLOUD_PROVIDER == "aws" || $DEPLOY_MULTI_CLOUD == "true"
+
+deploy-staging-gcp:
+  <<: *deploy_gcp
+  stage: deploy-staging
+  environment:
+    name: staging-gcp
+  script:
+    - terraform workspace select staging-gcp || terraform workspace new staging-gcp
+    - terraform init -backend-config="prefix=${PROJECT_NAME}/staging-gcp/terraform.tfstate"
+    - terraform plan -var-file="clouds/gcp/staging.tfvars" -out=staging-gcp.tfplan
+    - terraform apply -auto-approve staging-gcp.tfplan
+  rules:
+    - if: $CLOUD_PROVIDER == "gcp" || $DEPLOY_MULTI_CLOUD == "true"
+
+deploy-staging-azure:
+  <<: *deploy_azure
+  stage: deploy-staging
+  environment:
+    name: staging-azure
+  script:
+    - terraform workspace select staging-azure || terraform workspace new staging-azure
+    - terraform init -backend-config="key=${PROJECT_NAME}/staging-azure/terraform.tfstate"
+    - terraform plan -var-file="clouds/azure/staging.tfvars" -out=staging-azure.tfplan
+    - terraform apply -auto-approve staging-azure.tfplan
+  rules:
+    - if: $CLOUD_PROVIDER == "azure" || $DEPLOY_MULTI_CLOUD == "true"
+
+# Cleanup and maintenance jobs
+cleanup-old-images:
+  <<: *docker_job
+  stage: post-deploy
+  script:
+    - |
+      echo "Cleaning up old container images..."
+      # Keep last 10 images
+      OLD_IMAGES=$(docker images ${IMAGE_NAME} --format "{{{{.Tag}}}}" | tail -n +11)
+      for tag in $OLD_IMAGES; do
+        if [ "$tag" != "latest" ] && [ "$tag" != "${IMAGE_TAG}" ]; then
+          docker rmi ${IMAGE_NAME}:$tag || true
+        fi
+      done
+  when: manual
+  allow_failure: true
+
+# Include additional GitLab CI templates
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Security/Container-Scanning.gitlab-ci.yml
+  - template: Code-Quality.gitlab-ci.yml
+
+# Override default SAST configuration
+sast:
+  variables:
+    SAST_EXCLUDED_PATHS: "spec, test, tests, tmp, vendor"
+  rules:
+    - if: $CI_COMMIT_BRANCH
+
+# Custom rules for feature branches
+.feature_branch_rules: &feature_branch_rules
+  rules:
+    - if: $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != "main" && $CI_COMMIT_BRANCH != "develop"
+      when: manual
+      allow_failure: true
+
+# Jobs that only run on feature branches
+feature-deploy:
+  <<: *terraform_job
+  <<: *feature_branch_rules
+  stage: deploy-staging
+  environment:
+    name: feature-${CI_COMMIT_REF_SLUG}
+    url: https://${CI_COMMIT_REF_SLUG}.{{.DomainName | default "example.com"}}
+    on_stop: feature-cleanup
+  variables:
+    TF_VAR_environment: ${CI_COMMIT_REF_SLUG}
+    TF_VAR_image_tag: ${IMAGE_TAG}
+  script:
+    - terraform workspace select ${CI_COMMIT_REF_SLUG} || terraform workspace new ${CI_COMMIT_REF_SLUG}
+    - terraform plan -var-file="environments/feature.tfvars" -out=feature.tfplan
+    - terraform apply -auto-approve feature.tfplan
+
+feature-cleanup:
+  <<: *terraform_job
+  <<: *feature_branch_rules
+  stage: post-deploy
+  environment:
+    name: feature-${CI_COMMIT_REF_SLUG}
+    action: stop
+  variables:
+    TF_VAR_environment: ${CI_COMMIT_REF_SLUG}
+  script:
+    - terraform workspace select ${CI_COMMIT_REF_SLUG}
+    - terraform destroy -var-file="environments/feature.tfvars" -auto-approve
+    - terraform workspace select default
+    - terraform workspace delete ${CI_COMMIT_REF_SLUG}
+  when: manual

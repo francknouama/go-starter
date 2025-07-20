@@ -1,0 +1,392 @@
+# Outputs for {{.ProjectName}} Infrastructure
+# Essential information for application deployment and monitoring
+
+{{- if eq .Type "web-api" "microservice" }}
+# VPC Outputs
+output "vpc_id" {
+  description = "ID of the VPC"
+  value       = module.vpc.vpc_id
+}
+
+output "vpc_cidr_block" {
+  description = "CIDR block of the VPC"
+  value       = module.vpc.vpc_cidr_block
+}
+
+output "private_subnets" {
+  description = "List of IDs of private subnets"
+  value       = module.vpc.private_subnets
+}
+
+output "public_subnets" {
+  description = "List of IDs of public subnets"
+  value       = module.vpc.public_subnets
+}
+
+# EKS Outputs
+output "cluster_name" {
+  description = "Name of the EKS cluster"
+  value       = module.eks.cluster_name
+}
+
+output "cluster_endpoint" {
+  description = "Endpoint for EKS control plane"
+  value       = module.eks.cluster_endpoint
+  sensitive   = true
+}
+
+output "cluster_security_group_id" {
+  description = "Security group ID attached to the EKS cluster"
+  value       = module.eks.cluster_security_group_id
+}
+
+output "cluster_certificate_authority_data" {
+  description = "Base64 encoded certificate data required to communicate with the cluster"
+  value       = module.eks.cluster_certificate_authority_data
+  sensitive   = true
+}
+
+output "cluster_oidc_issuer_url" {
+  description = "The URL on the EKS cluster OIDC Issuer"
+  value       = module.eks.cluster_oidc_issuer_url
+}
+
+output "node_groups" {
+  description = "EKS node groups information"
+  value       = module.eks.node_groups
+}
+
+# Database Outputs
+output "database_endpoint" {
+  description = "RDS instance endpoint"
+  value       = var.enable_database ? module.database[0].db_instance_endpoint : null
+  sensitive   = true
+}
+
+output "database_port" {
+  description = "RDS instance port"
+  value       = var.enable_database ? module.database[0].db_instance_port : null
+}
+
+output "database_name" {
+  description = "RDS database name"
+  value       = var.enable_database ? module.database[0].db_instance_name : null
+}
+
+output "database_username" {
+  description = "RDS database username"
+  value       = var.enable_database ? module.database[0].db_instance_username : null
+  sensitive   = true
+}
+
+# Redis Outputs
+output "redis_endpoint" {
+  description = "ElastiCache Redis endpoint"
+  value       = var.enable_redis ? module.redis[0].cache_nodes[0].address : null
+  sensitive   = true
+}
+
+output "redis_port" {
+  description = "ElastiCache Redis port"
+  value       = var.enable_redis ? module.redis[0].cache_nodes[0].port : null
+}
+
+# Load Balancer Outputs
+output "alb_dns_name" {
+  description = "DNS name of the load balancer"
+  value       = module.alb.dns_name
+}
+
+output "alb_zone_id" {
+  description = "Zone ID of the load balancer"
+  value       = module.alb.zone_id
+}
+
+output "alb_arn" {
+  description = "ARN of the load balancer"
+  value       = module.alb.arn
+}
+
+output "target_group_arn" {
+  description = "ARN of the target group"
+  value       = module.alb.target_group_arn
+}
+
+# Application URL
+output "application_url" {
+  description = "URL of the deployed application"
+  value       = var.ssl_certificate_arn != "" ? "https://${var.project_name}-${var.environment}.${var.domain_name}" : "http://${module.alb.dns_name}"
+}
+
+{{- else if eq .Type "lambda" }}
+# Lambda Outputs
+output "function_name" {
+  description = "Name of the Lambda function"
+  value       = module.lambda.function_name
+}
+
+output "function_arn" {
+  description = "ARN of the Lambda function"
+  value       = module.lambda.function_arn
+}
+
+output "function_invoke_arn" {
+  description = "Invoke ARN of the Lambda function"
+  value       = module.lambda.function_invoke_arn
+}
+
+output "function_version" {
+  description = "Latest published version of the Lambda function"
+  value       = module.lambda.function_version
+}
+
+# API Gateway Outputs
+output "api_id" {
+  description = "ID of the API Gateway"
+  value       = module.api_gateway.api_id
+}
+
+output "api_url" {
+  description = "URL of the API Gateway"
+  value       = module.api_gateway.api_url
+}
+
+output "api_execution_arn" {
+  description = "Execution ARN of the API Gateway"
+  value       = module.api_gateway.api_execution_arn
+}
+
+output "stage_arn" {
+  description = "ARN of the API Gateway stage"
+  value       = module.api_gateway.stage_arn
+}
+
+# Custom Domain (if configured)
+output "custom_domain_name" {
+  description = "Custom domain name for the API"
+  value       = var.api_domain_name != "" ? var.api_domain_name : null
+}
+
+# DynamoDB Outputs (if enabled)
+output "dynamodb_table_name" {
+  description = "Name of the DynamoDB table"
+  value       = var.enable_dynamodb ? module.dynamodb[0].table_name : null
+}
+
+output "dynamodb_table_arn" {
+  description = "ARN of the DynamoDB table"
+  value       = var.enable_dynamodb ? module.dynamodb[0].table_arn : null
+}
+
+output "dynamodb_table_stream_arn" {
+  description = "ARN of the DynamoDB table stream"
+  value       = var.enable_dynamodb ? module.dynamodb[0].table_stream_arn : null
+}
+
+# VPC Outputs (if Lambda uses VPC)
+output "vpc_id" {
+  description = "ID of the VPC"
+  value       = var.lambda_enable_vpc ? module.vpc[0].vpc_id : null
+}
+
+output "private_subnets" {
+  description = "List of IDs of private subnets"
+  value       = var.lambda_enable_vpc ? module.vpc[0].private_subnets : null
+}
+
+output "lambda_security_group_id" {
+  description = "Security group ID for Lambda function"
+  value       = var.lambda_enable_vpc ? module.security_groups[0].lambda_sg_id : null
+}
+{{- end }}
+
+# Monitoring Outputs
+output "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group"
+  value       = module.monitoring.log_group_name
+}
+
+output "cloudwatch_log_group_arn" {
+  description = "ARN of the CloudWatch log group"
+  value       = module.monitoring.log_group_arn
+}
+
+{{- if eq .Type "lambda" }}
+output "cloudwatch_dashboard_url" {
+  description = "URL of the CloudWatch dashboard"
+  value       = "https://console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.name}#dashboards:name=${var.project_name}-${var.environment}"
+}
+{{- else }}
+output "prometheus_endpoint" {
+  description = "Prometheus endpoint"
+  value       = var.enable_prometheus ? "https://prometheus.${var.domain_name}" : null
+}
+
+output "grafana_endpoint" {
+  description = "Grafana endpoint"
+  value       = var.enable_grafana ? "https://grafana.${var.domain_name}" : null
+}
+{{- end }}
+
+# Security Outputs
+output "waf_web_acl_id" {
+  description = "ID of the WAF Web ACL"
+  value       = var.enable_waf ? module.waf[0].web_acl_id : null
+}
+
+output "waf_web_acl_arn" {
+  description = "ARN of the WAF Web ACL"
+  value       = var.enable_waf ? module.waf[0].web_acl_arn : null
+}
+
+# Secrets Manager Outputs
+output "secrets_manager_secret_arn" {
+  description = "ARN of the secrets in AWS Secrets Manager"
+  value       = module.secrets.secret_arn
+  sensitive   = true
+}
+
+output "secrets_manager_secret_name" {
+  description = "Name of the secret in AWS Secrets Manager"
+  value       = module.secrets.secret_name
+}
+
+# CloudTrail Outputs (if enabled)
+output "cloudtrail_arn" {
+  description = "ARN of the CloudTrail"
+  value       = var.enable_cloudtrail ? module.cloudtrail[0].trail_arn : null
+}
+
+output "cloudtrail_s3_bucket" {
+  description = "S3 bucket used by CloudTrail"
+  value       = var.enable_cloudtrail ? module.cloudtrail[0].s3_bucket_name : null
+}
+
+# Environment Information
+output "environment" {
+  description = "Environment name"
+  value       = var.environment
+}
+
+output "project_name" {
+  description = "Project name"
+  value       = var.project_name
+}
+
+output "region" {
+  description = "AWS region"
+  value       = data.aws_region.current.name
+}
+
+output "account_id" {
+  description = "AWS account ID"
+  value       = data.aws_caller_identity.current.account_id
+  sensitive   = true
+}
+
+# Deployment Information
+output "deployment_timestamp" {
+  description = "Timestamp of the deployment"
+  value       = timestamp()
+}
+
+output "terraform_workspace" {
+  description = "Terraform workspace"
+  value       = terraform.workspace
+}
+
+# Resource Tags
+output "common_tags" {
+  description = "Common tags applied to all resources"
+  value       = local.common_tags
+}
+
+# Cost and Resource Information
+output "resource_summary" {
+  description = "Summary of created resources"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    vpc_created               = true
+    eks_cluster_created       = true
+    database_created          = var.enable_database
+    redis_created            = var.enable_redis
+    load_balancer_created    = true
+    monitoring_enabled       = var.enable_prometheus
+    service_mesh_enabled     = var.enable_service_mesh
+    {{- else if eq .Type "lambda" }}
+    lambda_function_created  = true
+    api_gateway_created      = true
+    dynamodb_created         = var.enable_dynamodb
+    vpc_created              = var.lambda_enable_vpc
+    {{- end }}
+    waf_enabled              = var.enable_waf
+    cloudtrail_enabled       = var.enable_cloudtrail
+    secrets_manager_enabled  = true
+  }
+}
+
+# Connection Information for Applications
+output "connection_info" {
+  description = "Connection information for applications"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    kubernetes = {
+      cluster_name = module.eks.cluster_name
+      endpoint     = module.eks.cluster_endpoint
+      namespace    = var.environment
+    }
+    database = var.enable_database ? {
+      host     = module.database[0].db_instance_endpoint
+      port     = module.database[0].db_instance_port
+      name     = module.database[0].db_instance_name
+      username = module.database[0].db_instance_username
+    } : null
+    redis = var.enable_redis ? {
+      host = module.redis[0].cache_nodes[0].address
+      port = module.redis[0].cache_nodes[0].port
+    } : null
+    {{- else if eq .Type "lambda" }}
+    lambda = {
+      function_name = module.lambda.function_name
+      function_arn  = module.lambda.function_arn
+    }
+    api_gateway = {
+      url = module.api_gateway.api_url
+      id  = module.api_gateway.api_id
+    }
+    dynamodb = var.enable_dynamodb ? {
+      table_name = module.dynamodb[0].table_name
+      table_arn  = module.dynamodb[0].table_arn
+    } : null
+    {{- end }}
+    secrets = {
+      secret_name = module.secrets.secret_name
+      secret_arn  = module.secrets.secret_arn
+    }
+  }
+  sensitive = true
+}
+
+# Health Check Endpoints
+output "health_check_urls" {
+  description = "Health check URLs for monitoring"
+  value = {
+    {{- if eq .Type "web-api" "microservice" }}
+    application = "${var.ssl_certificate_arn != "" ? "https" : "http"}://${var.project_name}-${var.environment}.${var.domain_name}/health"
+    load_balancer = "http://${module.alb.dns_name}/health"
+    {{- else if eq .Type "lambda" }}
+    api_gateway = "${module.api_gateway.api_url}/health"
+    lambda_function = "AWS Lambda Console"
+    {{- end }}
+  }
+}
+
+# Backup Information (if enabled)
+output "backup_info" {
+  description = "Backup configuration information"
+  value = var.environment == "production" ? {
+    backup_plan_name = module.backup[0].backup_plan_name
+    backup_plan_arn  = module.backup[0].backup_plan_arn
+    backup_vault_name = module.backup[0].backup_vault_name
+  } : null
+}

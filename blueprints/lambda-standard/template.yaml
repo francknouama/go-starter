@@ -74,18 +74,28 @@ files:
     destination: "README.md"
 
   # GitHub Configuration
-  - source: ".github/workflows/ci.yml.tmpl"
+  - source: "github-workflows-ci.yml.tmpl"
     destination: ".github/workflows/ci.yml"
 
-  - source: ".github/workflows/deploy.yml.tmpl"
+  - source: "github-workflows-deploy.yml.tmpl"
     destination: ".github/workflows/deploy.yml"
+
   # Lambda handler
   - source: "handler.go.tmpl"
     destination: "handler.go"
 
-  # Logger
+  # Internal packages
   - source: "internal/logger/logger.go.tmpl"
     destination: "internal/logger/logger.go"
+
+  - source: "internal/observability/tracing.go.tmpl"
+    destination: "internal/observability/tracing.go"
+
+  - source: "internal/observability/metrics.go.tmpl"
+    destination: "internal/observability/metrics.go"
+
+  - source: "internal/observability/cloudwatch.go.tmpl"
+    destination: "internal/observability/cloudwatch.go"
 
   # AWS deployment
   - source: "template.yaml.tmpl"
@@ -96,15 +106,21 @@ files:
     executable: true
 
   # Environment
-  - source: ".env.example.tmpl"
+  - source: "env-example.tmpl"
     destination: ".env.example"
 
-  - source: ".gitignore.tmpl"
+  - source: "gitignore.tmpl"
     destination: ".gitignore"
 
 dependencies:
   - module: "github.com/aws/aws-lambda-go"
     version: "v1.41.0"
+  - module: "github.com/aws/aws-xray-sdk-go"
+    version: "v1.8.0"
+  - module: "github.com/aws/aws-sdk-go-v2"
+    version: "v1.21.0"
+  - module: "github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+    version: "v1.27.0"
   - module: "go.uber.org/zap"
     version: "v1.26.0"
     condition: "{{eq .Logger \"zap\"}}"
@@ -127,4 +143,12 @@ features:
     
   - name: "aws_deployment"
     description: "AWS SAM deployment templates"
+    enabled_when: "true"
+    
+  - name: "observability"
+    description: "Complete AWS observability stack (X-Ray tracing, CloudWatch metrics)"
+    enabled_when: "true"
+    
+  - name: "performance_monitoring"
+    description: "Lambda performance monitoring and alerting"
     enabled_when: "true"

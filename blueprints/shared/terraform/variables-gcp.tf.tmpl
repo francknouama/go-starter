@@ -1,0 +1,359 @@
+# Google Cloud Platform Variables for {{.ProjectName}}
+
+# Project Configuration
+variable "gcp_project_id" {
+  description = "The GCP project ID"
+  type        = string
+}
+
+variable "gcp_region" {
+  description = "The GCP region for resources"
+  type        = string
+  default     = "us-central1"
+}
+
+variable "gcp_zone" {
+  description = "The GCP zone for zonal resources"
+  type        = string
+  default     = "us-central1-a"
+}
+
+# Common Variables
+variable "project_name" {
+  description = "Name of the project"
+  type        = string
+  default     = "{{.ProjectName}}"
+}
+
+variable "environment" {
+  description = "Environment (dev, staging, production)"
+  type        = string
+  default     = "dev"
+  
+  validation {
+    condition     = contains(["dev", "staging", "production"], var.environment)
+    error_message = "Environment must be one of: dev, staging, production."
+  }
+}
+
+variable "owner" {
+  description = "Owner of the resources"
+  type        = string
+  default     = ""
+}
+
+variable "cost_center" {
+  description = "Cost center for billing"
+  type        = string
+  default     = ""
+}
+
+{{- if eq .Type "web-api" "microservice" }}
+# GKE Configuration
+variable "gke_subnet_cidr" {
+  description = "CIDR range for GKE subnet"
+  type        = string
+  default     = "10.0.0.0/24"
+}
+
+variable "gke_pods_cidr" {
+  description = "CIDR range for GKE pods"
+  type        = string
+  default     = "10.1.0.0/16"
+}
+
+variable "gke_services_cidr" {
+  description = "CIDR range for GKE services"
+  type        = string
+  default     = "10.2.0.0/16"
+}
+
+variable "gke_master_cidr" {
+  description = "CIDR range for GKE master"
+  type        = string
+  default     = "10.3.0.0/28"
+}
+
+variable "gke_node_count" {
+  description = "Number of nodes in the GKE node pool"
+  type        = number
+  default     = 2
+}
+
+variable "gke_min_node_count" {
+  description = "Minimum number of nodes in the GKE node pool"
+  type        = number
+  default     = 1
+}
+
+variable "gke_max_node_count" {
+  description = "Maximum number of nodes in the GKE node pool"
+  type        = number
+  default     = 10
+}
+
+variable "gke_machine_type" {
+  description = "Machine type for GKE nodes"
+  type        = string
+  default     = "e2-standard-2"
+}
+
+variable "gke_disk_size" {
+  description = "Disk size for GKE nodes in GB"
+  type        = number
+  default     = 50
+}
+
+variable "gke_disk_type" {
+  description = "Disk type for GKE nodes"
+  type        = string
+  default     = "pd-standard"
+}
+
+variable "gke_node_taints" {
+  description = "List of taints to apply to GKE nodes"
+  type = list(object({
+    key    = string
+    value  = string
+    effect = string
+  }))
+  default = []
+}
+
+# Database Configuration (Cloud SQL)
+variable "enable_database" {
+  description = "Whether to create a Cloud SQL database"
+  type        = bool
+  default     = false
+}
+
+variable "database_version" {
+  description = "Database version"
+  type        = string
+  default     = "POSTGRES_14"
+}
+
+variable "database_tier" {
+  description = "Database tier"
+  type        = string
+  default     = "db-f1-micro"
+}
+
+variable "database_name" {
+  description = "Database name"
+  type        = string
+  default     = "{{.ProjectName | snakecase}}"
+}
+
+variable "database_username" {
+  description = "Database username"
+  type        = string
+  default     = "app_user"
+}
+
+variable "database_password" {
+  description = "Database password"
+  type        = string
+  sensitive   = true
+}
+
+variable "database_flags" {
+  description = "Database flags"
+  type = list(object({
+    name  = string
+    value = string
+  }))
+  default = []
+}
+
+# Redis Configuration (Cloud Memorystore)
+variable "enable_redis" {
+  description = "Whether to create a Redis instance"
+  type        = bool
+  default     = false
+}
+
+variable "redis_tier" {
+  description = "Redis service tier"
+  type        = string
+  default     = "BASIC"
+  
+  validation {
+    condition     = contains(["BASIC", "STANDARD_HA"], var.redis_tier)
+    error_message = "Redis tier must be BASIC or STANDARD_HA."
+  }
+}
+
+variable "redis_memory_size" {
+  description = "Redis memory size in GB"
+  type        = number
+  default     = 1
+}
+
+variable "redis_version" {
+  description = "Redis version"
+  type        = string
+  default     = "REDIS_6_X"
+}
+
+variable "redis_alternative_zone" {
+  description = "Alternative zone for Redis (for STANDARD_HA tier)"
+  type        = string
+  default     = "us-central1-b"
+}
+
+variable "redis_reserved_ip_range" {
+  description = "Reserved IP range for Redis"
+  type        = string
+  default     = "10.4.0.0/29"
+}
+
+{{- else if eq .Type "lambda" "cloud-function" }}
+# Cloud Function Configuration
+variable "function_source_object" {
+  description = "Cloud Storage object containing function source"
+  type        = string
+}
+
+variable "function_max_instances" {
+  description = "Maximum number of function instances"
+  type        = number
+  default     = 100
+}
+
+variable "function_min_instances" {
+  description = "Minimum number of function instances"
+  type        = number
+  default     = 0
+}
+
+variable "function_memory" {
+  description = "Memory allocated to function"
+  type        = string
+  default     = "256M"
+}
+
+variable "function_timeout" {
+  description = "Function timeout in seconds"
+  type        = number
+  default     = 60
+}
+
+variable "function_concurrency" {
+  description = "Maximum concurrent requests per instance"
+  type        = number
+  default     = 1
+}
+
+variable "function_environment_variables" {
+  description = "Environment variables for the function"
+  type        = map(string)
+  default     = {}
+}
+
+variable "function_trigger_type" {
+  description = "Function trigger type"
+  type        = string
+  default     = "google.cloud.pubsub.topic.v1.messagePublished"
+}
+
+variable "function_event_filters" {
+  description = "Event filters for function trigger"
+  type = list(object({
+    attribute = string
+    value     = string
+  }))
+  default = []
+}
+
+variable "function_vpc_access_enabled" {
+  description = "Whether to enable VPC access for the function"
+  type        = bool
+  default     = false
+}
+
+variable "vpc_connector_cidr" {
+  description = "CIDR range for VPC connector"
+  type        = string
+  default     = "10.8.0.0/28"
+}
+
+# Firestore Configuration
+variable "enable_firestore" {
+  description = "Whether to create a Firestore database"
+  type        = bool
+  default     = false
+}
+
+variable "firestore_location" {
+  description = "Firestore location"
+  type        = string
+  default     = "us-central"
+}
+{{- end }}
+
+# SSL Configuration
+variable "ssl_domain_name" {
+  description = "Domain name for SSL certificate"
+  type        = string
+  default     = ""
+}
+
+# Monitoring and Alerting
+variable "alert_email" {
+  description = "Email address for alerts"
+  type        = string
+  default     = ""
+}
+
+# Security
+variable "enable_cloud_armor" {
+  description = "Whether to enable Cloud Armor"
+  type        = bool
+  default     = true
+}
+
+variable "rate_limit_count" {
+  description = "Rate limit count"
+  type        = number
+  default     = 100
+}
+
+variable "rate_limit_interval" {
+  description = "Rate limit interval in seconds"
+  type        = number
+  default     = 60
+}
+
+variable "rate_limit_ban_duration" {
+  description = "Rate limit ban duration in seconds"
+  type        = number
+  default     = 600
+}
+
+# Workload Identity
+variable "enable_workload_identity" {
+  description = "Whether to enable Workload Identity"
+  type        = bool
+  default     = true
+}
+
+variable "k8s_namespace" {
+  description = "Kubernetes namespace for Workload Identity"
+  type        = string
+  default     = "default"
+}
+
+variable "k8s_service_account_name" {
+  description = "Kubernetes service account name for Workload Identity"
+  type        = string
+  default     = "{{.ProjectName}}-sa"
+}
+
+# Secrets
+variable "application_secrets" {
+  description = "Application secrets to store in Secret Manager"
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+}
