@@ -1,0 +1,168 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-config
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: config
+data:
+  # Server configuration
+  server.host: "0.0.0.0"
+  server.port: "{{.Port}}"
+  server.communication_protocol: "{{.CommunicationProtocol}}"
+  server.read_timeout: "30s"
+  server.write_timeout: "30s"
+  server.idle_timeout: "120s"
+  server.graceful_timeout: "30s"
+
+{{if ne .DatabaseType "none"}}
+  # Database configuration
+  database.type: "{{.DatabaseType}}"
+  database.host: "{{.ProjectName}}-{{.DatabaseType}}"
+  {{if eq .DatabaseType "postgres"}}
+  database.port: "5432"
+  {{else if eq .DatabaseType "mysql"}}
+  database.port: "3306"
+  {{else if eq .DatabaseType "mongodb"}}
+  database.port: "27017"
+  {{else if eq .DatabaseType "redis"}}
+  database.port: "6379"
+  {{end}}
+  database.name: "{{.ProjectName | replace "-" "_"}}"
+  database.ssl_mode: "disable"
+  database.max_open_conns: "25"
+  database.max_idle_conns: "25"
+  database.conn_max_lifetime: "5m"
+{{end}}
+
+{{if .EnableObservability}}
+  # Observability configuration
+  observability.metrics.enabled: "true"
+  observability.metrics.port: "9090"
+  observability.metrics.path: "/metrics"
+  
+  observability.tracing.enabled: "true"
+  observability.tracing.service_name: "{{.ProjectName}}"
+  observability.tracing.endpoint: "http://jaeger-collector:14268/api/traces"
+  observability.tracing.sample_rate: "0.1"
+  
+  observability.health.enabled: "true"
+  observability.health.port: "8080"
+  observability.health.path: "/health"
+{{end}}
+
+{{if .EnableServiceMesh}}
+  # Service mesh configuration
+  service_mesh.enabled: "true"
+  service_mesh.namespace: "{{.ServiceMesh.Namespace}}"
+  service_mesh.tls: "true"
+{{end}}
+
+  # Logging configuration
+  logging.level: "info"
+  logging.format: "json"
+  logging.output: "stdout"
+
+  # Environment
+  environment: "production"
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{.ProjectName}}-secrets
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: secrets
+type: Opaque
+data:
+{{if ne .DatabaseType "none"}}
+  # Database credentials (base64 encoded)
+  database.username: "{{.ProjectName | replace "-" "_" | b64enc}}"
+  database.password: "Y2hhbmdlbWU="  # changeme (base64 encoded)
+{{end}}
+{{if .EnableAuthentication}}
+  # JWT secret (base64 encoded)
+  jwt.secret: "Y2hhbmdlLW1lLXRvLWEtc3Ryb25nLXNlY3JldA=="  # change-me-to-a-strong-secret (base64 encoded)
+{{end}}
+
+---
+
+{{if .EnableObservability}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName}}-monitoring
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    rule_files:
+      - "{{.ProjectName}}_rules.yml"
+
+    scrape_configs:
+      - job_name: '{{.ProjectName}}'
+        static_configs:
+          - targets: ['{{.ProjectName}}-metrics:9090']
+        metrics_path: /metrics
+        scrape_interval: 10s
+        scrape_timeout: 5s
+
+  {{.ProjectName}}_rules.yml: |
+    groups:
+    - name: {{.ProjectName}}.rules
+      rules:
+      - alert: {{.ProjectName}}Down
+        expr: up{job="{{.ProjectName}}"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{.ProjectName}} service is down"
+          description: "{{.ProjectName}} service has been down for more than 1 minute."
+
+      - alert: {{.ProjectName}}HighErrorRate
+        expr: rate({{.ProjectName | replace "-" "_"}}_http_requests_total{status_code=~"5.."}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{.ProjectName}} high error rate"
+          description: "{{.ProjectName}} error rate is above 10% for 5 minutes."
+
+      - alert: {{.ProjectName}}HighResponseTime
+        expr: histogram_quantile(0.95, rate({{.ProjectName | replace "-" "_"}}_http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{.ProjectName}} high response time"
+          description: "{{.ProjectName}} 95th percentile response time is above 1 second for 5 minutes."
+
+      - alert: {{.ProjectName}}HighMemoryUsage
+        expr: container_memory_usage_bytes{pod=~"{{.ProjectName}}-.*"} / container_spec_memory_limit_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{.ProjectName}} high memory usage"
+          description: "{{.ProjectName}} memory usage is above 80% for 5 minutes."
+
+      - alert: {{.ProjectName}}HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{pod=~"{{.ProjectName}}-.*"}[5m]) / container_spec_cpu_quota > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{.ProjectName}} high CPU usage"
+          description: "{{.ProjectName}} CPU usage is above 80% for 5 minutes."
+{{end}}

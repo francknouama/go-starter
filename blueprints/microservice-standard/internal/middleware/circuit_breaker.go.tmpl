@@ -1,0 +1,434 @@
+package middleware
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"github.com/sony/gobreaker"
+	"{{.ModulePath}}/internal/metrics"
+)
+
+// CircuitBreakerConfig holds circuit breaker configuration
+type CircuitBreakerConfig struct {
+	Name           string
+	MaxRequests    uint32
+	Interval       time.Duration
+	Timeout        time.Duration
+	ReadyToTrip    func(counts gobreaker.Counts) bool
+	OnStateChange  func(name string, from gobreaker.State, to gobreaker.State)
+}
+
+// CircuitBreakerManager manages multiple circuit breakers
+type CircuitBreakerManager struct {
+	breakers map[string]*gobreaker.CircuitBreaker
+	metrics  *metrics.Metrics
+{{if eq .Logger "zap"}}
+	logger   *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+	mu       sync.RWMutex
+}
+
+// NewCircuitBreakerManager creates a new circuit breaker manager
+func NewCircuitBreakerManager(metrics *metrics.Metrics{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *CircuitBreakerManager {
+	return &CircuitBreakerManager{
+		breakers: make(map[string]*gobreaker.CircuitBreaker),
+		metrics:  metrics,
+{{if ne .Logger "zerolog"}}
+		logger:   logger,
+{{end}}
+	}
+}
+
+// GetOrCreateBreaker gets an existing circuit breaker or creates a new one
+func (m *CircuitBreakerManager) GetOrCreateBreaker(name string, config CircuitBreakerConfig) *gobreaker.CircuitBreaker {
+	m.mu.RLock()
+	if breaker, exists := m.breakers[name]; exists {
+		m.mu.RUnlock()
+		return breaker
+	}
+	m.mu.RUnlock()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Double-check pattern
+	if breaker, exists := m.breakers[name]; exists {
+		return breaker
+	}
+
+	// Set default configuration
+	if config.MaxRequests == 0 {
+		config.MaxRequests = 10
+	}
+	if config.Interval == 0 {
+		config.Interval = 60 * time.Second
+	}
+	if config.Timeout == 0 {
+		config.Timeout = 30 * time.Second
+	}
+	if config.ReadyToTrip == nil {
+		config.ReadyToTrip = func(counts gobreaker.Counts) bool {
+			failureRatio := float64(counts.TotalFailures) / float64(counts.Requests)
+			return counts.Requests >= 10 && failureRatio >= 0.6
+		}
+	}
+
+	// Create state change callback
+	onStateChange := func(cbName string, from gobreaker.State, to gobreaker.State) {
+{{if eq .Logger "zap"}}
+		m.logger.Info("Circuit breaker state changed",
+			zap.String("name", cbName),
+			zap.String("from", from.String()),
+			zap.String("to", to.String()))
+{{else if eq .Logger "logrus"}}
+		m.logger.WithFields(logrus.Fields{
+			"name": cbName,
+			"from": from.String(),
+			"to":   to.String(),
+		}).Info("Circuit breaker state changed")
+{{else if eq .Logger "zerolog"}}
+		log.Info().
+			Str("name", cbName).
+			Str("from", from.String()).
+			Str("to", to.String()).
+			Msg("Circuit breaker state changed")
+{{else}}
+		m.logger.Info("Circuit breaker state changed",
+			"name", cbName,
+			"from", from.String(),
+			"to", to.String())
+{{end}}
+
+		// Record metrics
+		var stateValue int
+		switch to {
+		case gobreaker.StateClosed:
+			stateValue = 0
+		case gobreaker.StateHalfOpen:
+			stateValue = 1
+		case gobreaker.StateOpen:
+			stateValue = 2
+		}
+		m.metrics.RecordCircuitBreakerState(cbName, stateValue)
+
+		// Call custom callback if provided
+		if config.OnStateChange != nil {
+			config.OnStateChange(cbName, from, to)
+		}
+	}
+
+	settings := gobreaker.Settings{
+		Name:          name,
+		MaxRequests:   config.MaxRequests,
+		Interval:      config.Interval,
+		Timeout:       config.Timeout,
+		ReadyToTrip:   config.ReadyToTrip,
+		OnStateChange: onStateChange,
+	}
+
+	breaker := gobreaker.NewCircuitBreaker(settings)
+	m.breakers[name] = breaker
+
+{{if eq .Logger "zap"}}
+	m.logger.Info("Circuit breaker created",
+		zap.String("name", name),
+		zap.Uint32("max_requests", config.MaxRequests),
+		zap.Duration("interval", config.Interval),
+		zap.Duration("timeout", config.Timeout))
+{{else if eq .Logger "logrus"}}
+	m.logger.WithFields(logrus.Fields{
+		"name":         name,
+		"max_requests": config.MaxRequests,
+		"interval":     config.Interval,
+		"timeout":      config.Timeout,
+	}).Info("Circuit breaker created")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Str("name", name).
+		Uint32("max_requests", config.MaxRequests).
+		Dur("interval", config.Interval).
+		Dur("timeout", config.Timeout).
+		Msg("Circuit breaker created")
+{{else}}
+	m.logger.Info("Circuit breaker created",
+		"name", name,
+		"max_requests", config.MaxRequests,
+		"interval", config.Interval,
+		"timeout", config.Timeout)
+{{end}}
+
+	return breaker
+}
+
+// Execute executes a function with circuit breaker protection
+func (m *CircuitBreakerManager) Execute(name string, fn func() (interface{}, error)) (interface{}, error) {
+	breaker := m.GetOrCreateBreaker(name, CircuitBreakerConfig{Name: name})
+	
+	result, err := breaker.Execute(fn)
+	
+	// Record metrics
+	state := breaker.State().String()
+	if err != nil {
+		if err == gobreaker.ErrOpenState {
+			m.metrics.RecordCircuitBreakerRequest(name, state, "rejected")
+		} else {
+			m.metrics.RecordCircuitBreakerRequest(name, state, "failure")
+		}
+	} else {
+		m.metrics.RecordCircuitBreakerRequest(name, state, "success")
+	}
+	
+	return result, err
+}
+
+// HTTPCircuitBreakerMiddleware returns an HTTP middleware that protects endpoints with circuit breakers
+func (m *CircuitBreakerManager) HTTPCircuitBreakerMiddleware(breakerName string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			breaker := m.GetOrCreateBreaker(breakerName, CircuitBreakerConfig{Name: breakerName})
+			
+			_, err := breaker.Execute(func() (interface{}, error) {
+				// Create a response recorder to capture any errors
+				recorder := &circuitBreakerResponseRecorder{
+					ResponseWriter: w,
+					statusCode:     http.StatusOK,
+				}
+				
+				next.ServeHTTP(recorder, r)
+				
+				// Consider 5xx status codes as failures
+				if recorder.statusCode >= 500 {
+					return nil, fmt.Errorf("HTTP %d", recorder.statusCode)
+				}
+				
+				return nil, nil
+			})
+			
+			if err != nil {
+				if err == gobreaker.ErrOpenState {
+					// Circuit breaker is open
+{{if eq .Logger "zap"}}
+					m.logger.Warn("Circuit breaker is open, rejecting request",
+						zap.String("breaker", breakerName),
+						zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+					m.logger.WithFields(logrus.Fields{
+						"breaker": breakerName,
+						"path":    r.URL.Path,
+					}).Warn("Circuit breaker is open, rejecting request")
+{{else if eq .Logger "zerolog"}}
+					log.Warn().
+						Str("breaker", breakerName).
+						Str("path", r.URL.Path).
+						Msg("Circuit breaker is open, rejecting request")
+{{else}}
+					m.logger.Warn("Circuit breaker is open, rejecting request",
+						"breaker", breakerName,
+						"path", r.URL.Path)
+{{end}}
+					
+					http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+					return
+				}
+			}
+		})
+	}
+}
+
+// circuitBreakerResponseRecorder captures the HTTP status code for circuit breaker logic
+type circuitBreakerResponseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+	written    bool
+}
+
+func (r *circuitBreakerResponseRecorder) WriteHeader(statusCode int) {
+	if !r.written {
+		r.statusCode = statusCode
+		r.written = true
+	}
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (r *circuitBreakerResponseRecorder) Write(data []byte) (int, error) {
+	if !r.written {
+		r.WriteHeader(http.StatusOK)
+	}
+	return r.ResponseWriter.Write(data)
+}
+
+// DatabaseCircuitBreaker wraps database operations with circuit breaker protection
+type DatabaseCircuitBreaker struct {
+	manager *CircuitBreakerManager
+	name    string
+}
+
+// NewDatabaseCircuitBreaker creates a new database circuit breaker
+func NewDatabaseCircuitBreaker(manager *CircuitBreakerManager, name string) *DatabaseCircuitBreaker {
+	return &DatabaseCircuitBreaker{
+		manager: manager,
+		name:    name,
+	}
+}
+
+// Execute executes a database operation with circuit breaker protection
+func (d *DatabaseCircuitBreaker) Execute(fn func() error) error {
+	_, err := d.manager.Execute(d.name, func() (interface{}, error) {
+		return nil, fn()
+	})
+	return err
+}
+
+// ExternalServiceCircuitBreaker wraps external service calls with circuit breaker protection
+type ExternalServiceCircuitBreaker struct {
+	manager *CircuitBreakerManager
+	name    string
+}
+
+// NewExternalServiceCircuitBreaker creates a new external service circuit breaker
+func NewExternalServiceCircuitBreaker(manager *CircuitBreakerManager, serviceName string) *ExternalServiceCircuitBreaker {
+	return &ExternalServiceCircuitBreaker{
+		manager: manager,
+		name:    fmt.Sprintf("external_service_%s", serviceName),
+	}
+}
+
+// Execute executes an external service call with circuit breaker protection
+func (e *ExternalServiceCircuitBreaker) Execute(fn func() (interface{}, error)) (interface{}, error) {
+	return e.manager.Execute(e.name, fn)
+}
+
+// HTTPClientWithCircuitBreaker wraps an HTTP client with circuit breaker protection
+type HTTPClientWithCircuitBreaker struct {
+	client  *http.Client
+	manager *CircuitBreakerManager
+	name    string
+}
+
+// NewHTTPClientWithCircuitBreaker creates a new HTTP client with circuit breaker
+func NewHTTPClientWithCircuitBreaker(client *http.Client, manager *CircuitBreakerManager, name string) *HTTPClientWithCircuitBreaker {
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	
+	return &HTTPClientWithCircuitBreaker{
+		client:  client,
+		manager: manager,
+		name:    name,
+	}
+}
+
+// Do executes an HTTP request with circuit breaker protection
+func (h *HTTPClientWithCircuitBreaker) Do(req *http.Request) (*http.Response, error) {
+	result, err := h.manager.Execute(h.name, func() (interface{}, error) {
+		resp, err := h.client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		
+		// Consider 5xx status codes as failures
+		if resp.StatusCode >= 500 {
+			resp.Body.Close()
+			return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		}
+		
+		return resp, nil
+	})
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	return result.(*http.Response), nil
+}
+
+// Get executes a GET request with circuit breaker protection
+func (h *HTTPClientWithCircuitBreaker) Get(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	return h.Do(req)
+}
+
+// Post executes a POST request with circuit breaker protection
+func (h *HTTPClientWithCircuitBreaker) Post(url, contentType string, body interface{}) (*http.Response, error) {
+	// This is a simplified implementation - in a real scenario, you'd handle body serialization
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	req.Header.Set("Content-Type", contentType)
+	return h.Do(req)
+}
+
+// GetStats returns circuit breaker statistics for monitoring
+func (m *CircuitBreakerManager) GetStats() map[string]gobreaker.Counts {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	stats := make(map[string]gobreaker.Counts)
+	for name, breaker := range m.breakers {
+		stats[name] = breaker.Counts()
+	}
+	
+	return stats
+}
+
+// ResetBreaker resets a specific circuit breaker
+func (m *CircuitBreakerManager) ResetBreaker(name string) error {
+	m.mu.RLock()
+	breaker, exists := m.breakers[name]
+	m.mu.RUnlock()
+	
+	if !exists {
+		return fmt.Errorf("circuit breaker %s not found", name)
+	}
+	
+	// Circuit breaker libraries typically don't have a reset method,
+	// but we can recreate the breaker
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	
+	// Get the current settings (this is a simplified approach)
+	// In a real implementation, you'd store the original config
+	config := CircuitBreakerConfig{
+		Name: name,
+	}
+	
+	delete(m.breakers, name)
+	m.GetOrCreateBreaker(name, config)
+	
+{{if eq .Logger "zap"}}
+	m.logger.Info("Circuit breaker reset", zap.String("name", name))
+{{else if eq .Logger "logrus"}}
+	m.logger.WithField("name", name).Info("Circuit breaker reset")
+{{else if eq .Logger "zerolog"}}
+	log.Info().Str("name", name).Msg("Circuit breaker reset")
+{{else}}
+	m.logger.Info("Circuit breaker reset", "name", name)
+{{end}}
+	
+	return nil
+}

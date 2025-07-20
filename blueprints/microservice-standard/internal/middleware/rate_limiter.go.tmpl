@@ -1,0 +1,435 @@
+package middleware
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"golang.org/x/time/rate"
+	"{{.ModulePath}}/internal/metrics"
+)
+
+// RateLimiterConfig holds rate limiter configuration
+type RateLimiterConfig struct {
+	RequestsPerSecond int           // Number of requests per second
+	BurstSize         int           // Maximum burst size
+	CleanupInterval   time.Duration // How often to clean up old limiters
+	KeyExtractor      func(*http.Request) string // Function to extract key from request
+}
+
+// RateLimiter manages rate limiting for requests
+type RateLimiter struct {
+	limiters map[string]*rate.Limiter
+	config   RateLimiterConfig
+	metrics  *metrics.Metrics
+{{if eq .Logger "zap"}}
+	logger   *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+	mu       sync.RWMutex
+	stopChan chan struct{}
+	wg       sync.WaitGroup
+}
+
+// NewRateLimiter creates a new rate limiter
+func NewRateLimiter(config RateLimiterConfig, metrics *metrics.Metrics{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *RateLimiter {
+	if config.RequestsPerSecond <= 0 {
+		config.RequestsPerSecond = 100
+	}
+	if config.BurstSize <= 0 {
+		config.BurstSize = 200
+	}
+	if config.CleanupInterval <= 0 {
+		config.CleanupInterval = 5 * time.Minute
+	}
+	if config.KeyExtractor == nil {
+		config.KeyExtractor = IPKeyExtractor
+	}
+
+	rl := &RateLimiter{
+		limiters: make(map[string]*rate.Limiter),
+		config:   config,
+		metrics:  metrics,
+{{if ne .Logger "zerolog"}}
+		logger:   logger,
+{{end}}
+		stopChan: make(chan struct{}),
+	}
+
+	// Start cleanup goroutine
+	rl.wg.Add(1)
+	go rl.cleanup()
+
+{{if eq .Logger "zap"}}
+	logger.Info("Rate limiter initialized",
+		zap.Int("requests_per_second", config.RequestsPerSecond),
+		zap.Int("burst_size", config.BurstSize),
+		zap.Duration("cleanup_interval", config.CleanupInterval))
+{{else if eq .Logger "logrus"}}
+	logger.WithFields(logrus.Fields{
+		"requests_per_second": config.RequestsPerSecond,
+		"burst_size":         config.BurstSize,
+		"cleanup_interval":   config.CleanupInterval,
+	}).Info("Rate limiter initialized")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Int("requests_per_second", config.RequestsPerSecond).
+		Int("burst_size", config.BurstSize).
+		Dur("cleanup_interval", config.CleanupInterval).
+		Msg("Rate limiter initialized")
+{{else}}
+	logger.Info("Rate limiter initialized",
+		"requests_per_second", config.RequestsPerSecond,
+		"burst_size", config.BurstSize,
+		"cleanup_interval", config.CleanupInterval)
+{{end}}
+
+	return rl
+}
+
+// getLimiter gets or creates a rate limiter for a specific key
+func (rl *RateLimiter) getLimiter(key string) *rate.Limiter {
+	rl.mu.RLock()
+	if limiter, exists := rl.limiters[key]; exists {
+		rl.mu.RUnlock()
+		return limiter
+	}
+	rl.mu.RUnlock()
+
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	// Double-check pattern
+	if limiter, exists := rl.limiters[key]; exists {
+		return limiter
+	}
+
+	// Create new limiter
+	limiter := rate.NewLimiter(
+		rate.Limit(rl.config.RequestsPerSecond),
+		rl.config.BurstSize,
+	)
+	rl.limiters[key] = limiter
+
+	return limiter
+}
+
+// Allow checks if a request should be allowed
+func (rl *RateLimiter) Allow(key string) bool {
+	limiter := rl.getLimiter(key)
+	allowed := limiter.Allow()
+	
+	// Record metrics
+	result := "allowed"
+	if !allowed {
+		result = "denied"
+	}
+	rl.metrics.RecordRateLimiterRequest(result)
+	
+	return allowed
+}
+
+// Middleware returns an HTTP middleware that rate limits requests
+func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := rl.config.KeyExtractor(r)
+			
+			if !rl.Allow(key) {
+{{if eq .Logger "zap"}}
+				rl.logger.Warn("Rate limit exceeded",
+					zap.String("key", key),
+					zap.String("path", r.URL.Path),
+					zap.String("method", r.Method))
+{{else if eq .Logger "logrus"}}
+				rl.logger.WithFields(logrus.Fields{
+					"key":    key,
+					"path":   r.URL.Path,
+					"method": r.Method,
+				}).Warn("Rate limit exceeded")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().
+					Str("key", key).
+					Str("path", r.URL.Path).
+					Str("method", r.Method).
+					Msg("Rate limit exceeded")
+{{else}}
+				rl.logger.Warn("Rate limit exceeded",
+					"key", key,
+					"path", r.URL.Path,
+					"method", r.Method)
+{{end}}
+
+				// Set rate limit headers
+				w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.config.RequestsPerSecond))
+				w.Header().Set("X-RateLimit-Remaining", "0")
+				w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Second).Unix(), 10))
+				
+				http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+				return
+			}
+
+			// Add rate limit headers for successful requests
+			limiter := rl.getLimiter(key)
+			tokensRemaining := int(limiter.Tokens())
+			if tokensRemaining > rl.config.BurstSize {
+				tokensRemaining = rl.config.BurstSize
+			}
+			
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.config.RequestsPerSecond))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(tokensRemaining))
+			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(time.Now().Add(time.Second).Unix(), 10))
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// cleanup removes old and unused rate limiters
+func (rl *RateLimiter) cleanup() {
+	defer rl.wg.Done()
+	
+	ticker := time.NewTicker(rl.config.CleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			rl.performCleanup()
+		case <-rl.stopChan:
+			return
+		}
+	}
+}
+
+// performCleanup removes limiters that haven't been used recently
+func (rl *RateLimiter) performCleanup() {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+
+	before := len(rl.limiters)
+	
+	// Remove limiters that have full token buckets (indicating no recent activity)
+	for key, limiter := range rl.limiters {
+		if limiter.Tokens() >= float64(rl.config.BurstSize) {
+			delete(rl.limiters, key)
+		}
+	}
+
+	after := len(rl.limiters)
+	cleaned := before - after
+
+	if cleaned > 0 {
+{{if eq .Logger "zap"}}
+		rl.logger.Debug("Rate limiter cleanup completed",
+			zap.Int("cleaned", cleaned),
+			zap.Int("remaining", after))
+{{else if eq .Logger "logrus"}}
+		rl.logger.WithFields(logrus.Fields{
+			"cleaned":   cleaned,
+			"remaining": after,
+		}).Debug("Rate limiter cleanup completed")
+{{else if eq .Logger "zerolog"}}
+		log.Debug().
+			Int("cleaned", cleaned).
+			Int("remaining", after).
+			Msg("Rate limiter cleanup completed")
+{{else}}
+		rl.logger.Debug("Rate limiter cleanup completed",
+			"cleaned", cleaned,
+			"remaining", after)
+{{end}}
+	}
+}
+
+// Stop stops the rate limiter cleanup goroutine
+func (rl *RateLimiter) Stop() {
+	close(rl.stopChan)
+	rl.wg.Wait()
+}
+
+// GetStats returns rate limiter statistics
+func (rl *RateLimiter) GetStats() map[string]interface{} {
+	rl.mu.RLock()
+	defer rl.mu.RUnlock()
+
+	stats := map[string]interface{}{
+		"active_limiters":     len(rl.limiters),
+		"requests_per_second": rl.config.RequestsPerSecond,
+		"burst_size":         rl.config.BurstSize,
+	}
+
+	return stats
+}
+
+// Key extraction functions
+
+// IPKeyExtractor extracts the client IP address as the rate limiting key
+func IPKeyExtractor(r *http.Request) string {
+	// Try to get real IP from headers (in case of proxy)
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		// X-Forwarded-For can contain multiple IPs, take the first one
+		if ips := strings.Split(forwarded, ","); len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		return realIP
+	}
+
+	// Fall back to remote address
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
+// UserKeyExtractor extracts the user ID from the request context or headers
+func UserKeyExtractor(r *http.Request) string {
+	// Try to get user ID from context (if set by auth middleware)
+	if userID := r.Context().Value("user_id"); userID != nil {
+		if uid, ok := userID.(string); ok {
+			return fmt.Sprintf("user:%s", uid)
+		}
+	}
+
+	// Try to get from Authorization header
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		// This is a simplified example - you'd extract the user ID from the token
+		return fmt.Sprintf("token:%s", auth[:min(len(auth), 10)])
+	}
+
+	// Fall back to IP
+	return fmt.Sprintf("ip:%s", IPKeyExtractor(r))
+}
+
+// APIKeyExtractor extracts the API key as the rate limiting key
+func APIKeyExtractor(r *http.Request) string {
+	// Try multiple common API key headers
+	apiKeyHeaders := []string{"X-API-Key", "X-Api-Key", "API-Key", "Authorization"}
+	
+	for _, header := range apiKeyHeaders {
+		if key := r.Header.Get(header); key != "" {
+			return fmt.Sprintf("apikey:%s", key)
+		}
+	}
+
+	// Try query parameter
+	if key := r.URL.Query().Get("api_key"); key != "" {
+		return fmt.Sprintf("apikey:%s", key)
+	}
+
+	// Fall back to IP
+	return fmt.Sprintf("ip:%s", IPKeyExtractor(r))
+}
+
+// PathBasedKeyExtractor creates rate limiting keys based on the request path and IP
+func PathBasedKeyExtractor(r *http.Request) string {
+	ip := IPKeyExtractor(r)
+	path := r.URL.Path
+	
+	// Normalize path (remove trailing slash, convert to lowercase)
+	path = strings.ToLower(strings.TrimSuffix(path, "/"))
+	if path == "" {
+		path = "/"
+	}
+	
+	return fmt.Sprintf("%s:%s", ip, path)
+}
+
+// CompositeRateLimiter allows different rate limits for different types of requests
+type CompositeRateLimiter struct {
+	limiters map[string]*RateLimiter
+	router   func(*http.Request) string // Returns which limiter to use
+{{if eq .Logger "zap"}}
+	logger   *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+}
+
+// NewCompositeRateLimiter creates a composite rate limiter
+func NewCompositeRateLimiter(router func(*http.Request) string{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *CompositeRateLimiter {
+	return &CompositeRateLimiter{
+		limiters: make(map[string]*RateLimiter),
+		router:   router,
+{{if ne .Logger "zerolog"}}
+		logger:   logger,
+{{end}}
+	}
+}
+
+// AddLimiter adds a rate limiter for a specific category
+func (cl *CompositeRateLimiter) AddLimiter(name string, limiter *RateLimiter) {
+	cl.limiters[name] = limiter
+}
+
+// Middleware returns an HTTP middleware for composite rate limiting
+func (cl *CompositeRateLimiter) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			limiterName := cl.router(r)
+			
+			if limiter, exists := cl.limiters[limiterName]; exists {
+				// Use the specific limiter's middleware
+				limiter.Middleware()(next).ServeHTTP(w, r)
+			} else {
+{{if eq .Logger "zap"}}
+				cl.logger.Warn("No rate limiter found for category",
+					zap.String("category", limiterName),
+					zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+				cl.logger.WithFields(logrus.Fields{
+					"category": limiterName,
+					"path":     r.URL.Path,
+				}).Warn("No rate limiter found for category")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().
+					Str("category", limiterName).
+					Str("path", r.URL.Path).
+					Msg("No rate limiter found for category")
+{{else}}
+				cl.logger.Warn("No rate limiter found for category",
+					"category", limiterName,
+					"path", r.URL.Path)
+{{end}}
+
+				// No rate limiting if no limiter found
+				next.ServeHTTP(w, r)
+			}
+		})
+	}
+}
+
+// Helper function (Go 1.21+ has this built-in)
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

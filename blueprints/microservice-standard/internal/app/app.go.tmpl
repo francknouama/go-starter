@@ -1,0 +1,527 @@
+package app
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"golang.org/x/sync/errgroup"
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handler"
+{{if .EnableObservability}}
+	"{{.ModulePath}}/internal/health"
+	"{{.ModulePath}}/internal/metrics"
+	"{{.ModulePath}}/internal/tracing"
+{{end}}
+{{if .EnableCircuitBreaker}}
+	"{{.ModulePath}}/internal/middleware"
+{{end}}
+{{if eq .CommunicationProtocol "grpc"}}
+	"{{.ModulePath}}/internal/server"
+{{end}}
+)
+
+// App represents the microservice application
+type App struct {
+	config   *config.Config
+{{if eq .Logger "zap"}}
+	logger   *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	logger   zerolog.Logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+
+{{if .EnableObservability}}
+	// Observability components
+	healthChecker *health.HealthChecker
+	metrics       *metrics.Metrics
+	tracer        *tracing.Tracer
+{{end}}
+
+{{if .EnableCircuitBreaker}}
+	// Resilience components
+	circuitBreakerManager *middleware.CircuitBreakerManager
+{{end}}
+
+{{if .EnableRateLimiting}}
+	rateLimiter *middleware.RateLimiter
+{{end}}
+
+	// Application components
+	handler *handler.ServiceHandler
+
+	// Lifecycle management
+	shutdownTimeout time.Duration
+}
+
+// New creates a new application instance
+func New() (*App, error) {
+	// Load configuration
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Initialize logger
+	logger, err := initLogger(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
+{{if eq .Logger "zap"}}
+	logger.Info("Application initializing", zap.String("service", "{{.ProjectName}}"))
+{{else if eq .Logger "logrus"}}
+	logger.WithField("service", "{{.ProjectName}}").Info("Application initializing")
+{{else if eq .Logger "zerolog"}}
+	logger.Info().Str("service", "{{.ProjectName}}").Msg("Application initializing")
+{{else}}
+	logger.Info("Application initializing", "service", "{{.ProjectName}}")
+{{end}}
+
+	app := &App{
+		config:          cfg,
+		logger:          logger,
+		shutdownTimeout: cfg.Server.GracefulTimeout,
+	}
+
+	// Initialize components
+	if err := app.initializeComponents(); err != nil {
+		return nil, fmt.Errorf("failed to initialize components: %w", err)
+	}
+
+{{if eq .Logger "zap"}}
+	logger.Info("Application initialized successfully")
+{{else if eq .Logger "logrus"}}
+	logger.Info("Application initialized successfully")
+{{else if eq .Logger "zerolog"}}
+	logger.Info().Msg("Application initialized successfully")
+{{else}}
+	logger.Info("Application initialized successfully")
+{{end}}
+
+	return app, nil
+}
+
+// initLogger initializes the logger based on configuration
+func initLogger(cfg *config.Config) ({{if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}zerolog.Logger{{else}}*slog.Logger{{end}}, error) {
+{{if eq .Logger "zap"}}
+	var logger *zap.Logger
+	var err error
+
+	switch cfg.Logging.Format {
+	case "json":
+		if cfg.Logging.Level == "debug" {
+			logger, err = zap.NewDevelopment()
+		} else {
+			logger, err = zap.NewProduction()
+		}
+	default:
+		config := zap.NewDevelopmentConfig()
+		config.Encoding = "console"
+		logger, err = config.Build()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return logger, nil
+
+{{else if eq .Logger "logrus"}}
+	logger := logrus.New()
+
+	// Set log level
+	switch cfg.Logging.Level {
+	case "debug":
+		logger.SetLevel(logrus.DebugLevel)
+	case "info":
+		logger.SetLevel(logrus.InfoLevel)
+	case "warn":
+		logger.SetLevel(logrus.WarnLevel)
+	case "error":
+		logger.SetLevel(logrus.ErrorLevel)
+	default:
+		logger.SetLevel(logrus.InfoLevel)
+	}
+
+	// Set formatter
+	if cfg.Logging.Format == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+		})
+	}
+
+	// Set output
+	if cfg.Logging.Output == "stdout" {
+		logger.SetOutput(os.Stdout)
+	} else {
+		logger.SetOutput(os.Stderr)
+	}
+
+	return logger, nil
+
+{{else if eq .Logger "zerolog"}}
+	// Set global log level
+	switch cfg.Logging.Level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "info":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+
+	var logger zerolog.Logger
+
+	if cfg.Logging.Format == "console" {
+		logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+	} else {
+		if cfg.Logging.Output == "stdout" {
+			logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+		} else {
+			logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+		}
+	}
+
+	return logger, nil
+
+{{else}}
+	var level slog.Level
+	switch cfg.Logging.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "info":
+		level = slog.LevelInfo
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	var handler slog.Handler
+	if cfg.Logging.Format == "json" {
+		if cfg.Logging.Output == "stdout" {
+			handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		} else {
+			handler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+		}
+	} else {
+		if cfg.Logging.Output == "stdout" {
+			handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		} else {
+			handler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level})
+		}
+	}
+
+	logger := slog.New(handler)
+	return logger, nil
+{{end}}
+}
+
+// initializeComponents initializes all application components
+func (a *App) initializeComponents() error {
+{{if .EnableObservability}}
+	// Initialize observability components
+	if err := a.initObservability(); err != nil {
+		return fmt.Errorf("failed to initialize observability: %w", err)
+	}
+{{end}}
+
+{{if .EnableCircuitBreaker}}
+	// Initialize circuit breaker manager
+	a.circuitBreakerManager = middleware.NewCircuitBreakerManager(a.metrics, a.logger)
+{{end}}
+
+{{if .EnableRateLimiting}}
+	// Initialize rate limiter
+	rateLimiterConfig := middleware.RateLimiterConfig{
+		RequestsPerSecond: 100, // This could be configurable
+		BurstSize:         200,
+		CleanupInterval:   5 * time.Minute,
+		KeyExtractor:      middleware.IPKeyExtractor,
+	}
+	a.rateLimiter = middleware.NewRateLimiter(rateLimiterConfig, a.metrics, a.logger)
+{{end}}
+
+	// Initialize business logic handler
+	a.handler = handler.NewServiceHandler({{if eq .Logger "zerolog"}}a.logger{{else}}a.logger{{end}})
+
+	return nil
+}
+
+{{if .EnableObservability}}
+// initObservability initializes observability components
+func (a *App) initObservability() error {
+	// Initialize metrics
+	a.metrics = metrics.NewMetrics(a.config, a.logger)
+
+	// Initialize tracing
+	tracer, err := tracing.NewTracer(a.config, a.logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize tracing: %w", err)
+	}
+	a.tracer = tracer
+
+	// Initialize health checker
+	a.healthChecker = health.NewHealthChecker(a.config, a.logger)
+
+	return nil
+}
+{{end}}
+
+// Run starts the application and blocks until shutdown
+func (a *App) Run(ctx context.Context) error {
+	// Create a context for shutdown coordination
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Create an error group for managing goroutines
+	g, ctx := errgroup.WithContext(ctx)
+
+{{if .EnableObservability}}
+	// Start observability servers
+	if a.config.Observability.Metrics.Enabled {
+		g.Go(func() error {
+			return a.metrics.StartHTTPServer(ctx)
+		})
+	}
+
+	if a.config.Observability.Health.Enabled {
+		g.Go(func() error {
+			return a.healthChecker.StartHTTPServer(ctx)
+		})
+	}
+{{end}}
+
+	// Start the main application server
+	g.Go(func() error {
+		return a.startMainServer(ctx)
+	})
+
+	// Handle shutdown signals
+	g.Go(func() error {
+		return a.handleShutdownSignals(ctx, cancel)
+	})
+
+{{if eq .Logger "zap"}}
+	a.logger.Info("Application started, waiting for shutdown signal")
+{{else if eq .Logger "logrus"}}
+	a.logger.Info("Application started, waiting for shutdown signal")
+{{else if eq .Logger "zerolog"}}
+	a.logger.Info().Msg("Application started, waiting for shutdown signal")
+{{else}}
+	a.logger.Info("Application started, waiting for shutdown signal")
+{{end}}
+
+	// Wait for all goroutines to complete
+	return g.Wait()
+}
+
+// startMainServer starts the main application server
+func (a *App) startMainServer(ctx context.Context) error {
+	switch a.config.Server.CommunicationProtocol {
+	case "grpc":
+		return a.startGRPCServer(ctx)
+	case "rest":
+		return a.startHTTPServer(ctx)
+	default:
+		return fmt.Errorf("unsupported communication protocol: %s", a.config.Server.CommunicationProtocol)
+	}
+}
+
+{{if eq .CommunicationProtocol "grpc"}}
+// startGRPCServer starts the gRPC server
+func (a *App) startGRPCServer(ctx context.Context) error {
+{{if eq .Logger "zap"}}
+	a.logger.Info("Starting gRPC server",
+		zap.String("host", a.config.Server.Host),
+		zap.Int("port", a.config.Server.Port))
+{{else if eq .Logger "logrus"}}
+	a.logger.WithFields(logrus.Fields{
+		"host": a.config.Server.Host,
+		"port": a.config.Server.Port,
+	}).Info("Starting gRPC server")
+{{else if eq .Logger "zerolog"}}
+	a.logger.Info().
+		Str("host", a.config.Server.Host).
+		Int("port", a.config.Server.Port).
+		Msg("Starting gRPC server")
+{{else}}
+	a.logger.Info("Starting gRPC server",
+		"host", a.config.Server.Host,
+		"port", a.config.Server.Port)
+{{end}}
+
+	// Create gRPC server with middleware
+	grpcServer := server.NewGRPCServer(a.config, a.handler, a.logger{{if .EnableObservability}}, a.metrics{{end}}{{if .EnableCircuitBreaker}}, a.circuitBreakerManager{{end}})
+	
+	return grpcServer.Start(ctx)
+}
+{{end}}
+
+// startHTTPServer starts the HTTP server
+func (a *App) startHTTPServer(ctx context.Context) error {
+{{if eq .Logger "zap"}}
+	a.logger.Info("Starting HTTP server",
+		zap.String("host", a.config.Server.Host),
+		zap.Int("port", a.config.Server.Port))
+{{else if eq .Logger "logrus"}}
+	a.logger.WithFields(logrus.Fields{
+		"host": a.config.Server.Host,
+		"port": a.config.Server.Port,
+	}).Info("Starting HTTP server")
+{{else if eq .Logger "zerolog"}}
+	a.logger.Info().
+		Str("host", a.config.Server.Host).
+		Int("port", a.config.Server.Port).
+		Msg("Starting HTTP server")
+{{else}}
+	a.logger.Info("Starting HTTP server",
+		"host", a.config.Server.Host,
+		"port", a.config.Server.Port)
+{{end}}
+
+	// Create HTTP server with middleware
+	httpServer := server.NewHTTPServer(a.config, a.handler, a.logger{{if .EnableObservability}}, a.metrics{{end}}{{if .EnableRateLimiting}}, a.rateLimiter{{end}})
+	
+	return httpServer.Start(ctx)
+}
+
+// handleShutdownSignals handles OS signals for graceful shutdown
+func (a *App) handleShutdownSignals(ctx context.Context, cancel context.CancelFunc) error {
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-sigChan:
+{{if eq .Logger "zap"}}
+		a.logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
+{{else if eq .Logger "logrus"}}
+		a.logger.WithField("signal", sig.String()).Info("Received shutdown signal")
+{{else if eq .Logger "zerolog"}}
+		a.logger.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
+{{else}}
+		a.logger.Info("Received shutdown signal", "signal", sig.String())
+{{end}}
+		cancel()
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Shutdown gracefully shuts down the application
+func (a *App) Shutdown() error {
+{{if eq .Logger "zap"}}
+	a.logger.Info("Application shutdown initiated")
+{{else if eq .Logger "logrus"}}
+	a.logger.Info("Application shutdown initiated")
+{{else if eq .Logger "zerolog"}}
+	a.logger.Info().Msg("Application shutdown initiated")
+{{else}}
+	a.logger.Info("Application shutdown initiated")
+{{end}}
+
+	// Create a context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), a.shutdownTimeout)
+	defer cancel()
+
+{{if .EnableRateLimiting}}
+	// Stop rate limiter cleanup
+	if a.rateLimiter != nil {
+		a.rateLimiter.Stop()
+	}
+{{end}}
+
+{{if .EnableObservability}}
+	// Shutdown tracing
+	if a.tracer != nil {
+		if err := a.tracer.Shutdown(ctx); err != nil {
+{{if eq .Logger "zap"}}
+			a.logger.Error("Failed to shutdown tracer", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			a.logger.WithError(err).Error("Failed to shutdown tracer")
+{{else if eq .Logger "zerolog"}}
+			a.logger.Error().Err(err).Msg("Failed to shutdown tracer")
+{{else}}
+			a.logger.Error("Failed to shutdown tracer", "error", err)
+{{end}}
+		}
+	}
+{{end}}
+
+{{if eq .Logger "zap"}}
+	// Sync logger
+	if a.logger != nil {
+		_ = a.logger.Sync()
+	}
+{{end}}
+
+{{if eq .Logger "zap"}}
+	a.logger.Info("Application shutdown completed")
+{{else if eq .Logger "logrus"}}
+	a.logger.Info("Application shutdown completed")
+{{else if eq .Logger "zerolog"}}
+	a.logger.Info().Msg("Application shutdown completed")
+{{else}}
+	a.logger.Info("Application shutdown completed")
+{{end}}
+
+	return nil
+}
+
+// Health returns the current health status of the application
+func (a *App) Health(ctx context.Context) map[string]interface{} {
+	health := map[string]interface{}{
+		"service": "{{.ProjectName}}",
+		"version": "1.0.0",
+		"status":  "healthy",
+	}
+
+{{if .EnableObservability}}
+	if a.healthChecker != nil {
+		healthResponse := a.healthChecker.CheckHealth(ctx)
+		health["detailed"] = healthResponse
+	}
+{{end}}
+
+{{if .EnableCircuitBreaker}}
+	if a.circuitBreakerManager != nil {
+		health["circuit_breakers"] = a.circuitBreakerManager.GetStats()
+	}
+{{end}}
+
+{{if .EnableRateLimiting}}
+	if a.rateLimiter != nil {
+		health["rate_limiter"] = a.rateLimiter.GetStats()
+	}
+{{end}}
+
+	return health
+}

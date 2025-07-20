@@ -1,0 +1,369 @@
+package middleware
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"github.com/google/uuid"
+)
+
+// LoggingMiddleware provides structured HTTP request logging
+type LoggingMiddleware struct {
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	logRequestBody  bool
+	logResponseBody bool
+	maxBodySize     int64
+}
+
+// LoggingConfig holds configuration for logging middleware
+type LoggingConfig struct {
+	LogRequestBody  bool
+	LogResponseBody bool
+	MaxBodySize     int64 // Maximum body size to log (in bytes)
+}
+
+// NewLoggingMiddleware creates a new logging middleware
+func NewLoggingMiddleware({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, config LoggingConfig) *LoggingMiddleware {
+	if config.MaxBodySize == 0 {
+		config.MaxBodySize = 1024 * 4 // 4KB default
+	}
+
+	return &LoggingMiddleware{
+{{if ne .Logger "zerolog"}}
+		logger:          logger,
+{{end}}
+		logRequestBody:  config.LogRequestBody,
+		logResponseBody: config.LogResponseBody,
+		maxBodySize:     config.MaxBodySize,
+	}
+}
+
+// Middleware returns the logging middleware
+func (l *LoggingMiddleware) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			
+			// Generate request ID if not present
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.New().String()
+				r.Header.Set("X-Request-ID", requestID)
+			}
+
+			// Add request ID to response headers
+			w.Header().Set("X-Request-ID", requestID)
+
+			// Read request body if logging is enabled
+			var requestBody []byte
+			if l.logRequestBody && r.Body != nil {
+				requestBody = l.readBody(r.Body, l.maxBodySize)
+				// Restore the body for the next handler
+				r.Body = io.NopCloser(bytes.NewBuffer(requestBody))
+			}
+
+			// Create response recorder to capture response data
+			recorder := &loggingResponseRecorder{
+				ResponseWriter: w,
+				statusCode:     http.StatusOK,
+				body:          bytes.NewBuffer(nil),
+				logBody:       l.logResponseBody,
+				maxBodySize:   l.maxBodySize,
+			}
+
+			// Process request
+			next.ServeHTTP(recorder, r)
+
+			// Calculate duration
+			duration := time.Since(start)
+
+			// Extract user information from context if available
+			userID := ""
+			if uid := r.Context().Value("user_id"); uid != nil {
+				if id, ok := uid.(string); ok {
+					userID = id
+				}
+			}
+
+			// Log the request
+			l.logRequest(r, recorder, requestID, userID, duration, requestBody, recorder.getBody())
+		})
+	}
+}
+
+// logRequest logs the HTTP request with all relevant information
+func (l *LoggingMiddleware) logRequest(r *http.Request, recorder *loggingResponseRecorder, requestID, userID string, duration time.Duration, requestBody, responseBody []byte) {
+{{if eq .Logger "zap"}}
+	fields := []zap.Field{
+		zap.String("request_id", requestID),
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.String("query", r.URL.RawQuery),
+		zap.Int("status_code", recorder.statusCode),
+		zap.Duration("duration", duration),
+		zap.String("remote_addr", r.RemoteAddr),
+		zap.String("user_agent", r.UserAgent()),
+		zap.Int64("request_size", r.ContentLength),
+		zap.Int("response_size", recorder.size),
+	}
+
+	if userID != "" {
+		fields = append(fields, zap.String("user_id", userID))
+	}
+
+	if l.logRequestBody && len(requestBody) > 0 {
+		fields = append(fields, zap.String("request_body", string(requestBody)))
+	}
+
+	if l.logResponseBody && len(responseBody) > 0 {
+		fields = append(fields, zap.String("response_body", string(responseBody)))
+	}
+
+	// Add custom headers
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		fields = append(fields, zap.String("x_forwarded_for", forwarded))
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		fields = append(fields, zap.String("x_real_ip", realIP))
+	}
+
+	if recorder.statusCode >= 500 {
+		l.logger.Error("HTTP request completed with server error", fields...)
+	} else if recorder.statusCode >= 400 {
+		l.logger.Warn("HTTP request completed with client error", fields...)
+	} else {
+		l.logger.Info("HTTP request completed", fields...)
+	}
+
+{{else if eq .Logger "logrus"}}
+	fields := logrus.Fields{
+		"request_id":    requestID,
+		"method":        r.Method,
+		"path":          r.URL.Path,
+		"query":         r.URL.RawQuery,
+		"status_code":   recorder.statusCode,
+		"duration":      duration,
+		"remote_addr":   r.RemoteAddr,
+		"user_agent":    r.UserAgent(),
+		"request_size":  r.ContentLength,
+		"response_size": recorder.size,
+	}
+
+	if userID != "" {
+		fields["user_id"] = userID
+	}
+
+	if l.logRequestBody && len(requestBody) > 0 {
+		fields["request_body"] = string(requestBody)
+	}
+
+	if l.logResponseBody && len(responseBody) > 0 {
+		fields["response_body"] = string(responseBody)
+	}
+
+	// Add custom headers
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		fields["x_forwarded_for"] = forwarded
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		fields["x_real_ip"] = realIP
+	}
+
+	entry := l.logger.WithFields(fields)
+
+	if recorder.statusCode >= 500 {
+		entry.Error("HTTP request completed with server error")
+	} else if recorder.statusCode >= 400 {
+		entry.Warn("HTTP request completed with client error")
+	} else {
+		entry.Info("HTTP request completed")
+	}
+
+{{else if eq .Logger "zerolog"}}
+	event := log.Info()
+	if recorder.statusCode >= 500 {
+		event = log.Error()
+	} else if recorder.statusCode >= 400 {
+		event = log.Warn()
+	}
+
+	event = event.
+		Str("request_id", requestID).
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Str("query", r.URL.RawQuery).
+		Int("status_code", recorder.statusCode).
+		Dur("duration", duration).
+		Str("remote_addr", r.RemoteAddr).
+		Str("user_agent", r.UserAgent()).
+		Int64("request_size", r.ContentLength).
+		Int("response_size", recorder.size)
+
+	if userID != "" {
+		event = event.Str("user_id", userID)
+	}
+
+	if l.logRequestBody && len(requestBody) > 0 {
+		event = event.Str("request_body", string(requestBody))
+	}
+
+	if l.logResponseBody && len(responseBody) > 0 {
+		event = event.Str("response_body", string(responseBody))
+	}
+
+	// Add custom headers
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		event = event.Str("x_forwarded_for", forwarded)
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		event = event.Str("x_real_ip", realIP)
+	}
+
+	if recorder.statusCode >= 500 {
+		event.Msg("HTTP request completed with server error")
+	} else if recorder.statusCode >= 400 {
+		event.Msg("HTTP request completed with client error")
+	} else {
+		event.Msg("HTTP request completed")
+	}
+
+{{else}}
+	args := []any{
+		"request_id", requestID,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"query", r.URL.RawQuery,
+		"status_code", recorder.statusCode,
+		"duration", duration,
+		"remote_addr", r.RemoteAddr,
+		"user_agent", r.UserAgent(),
+		"request_size", r.ContentLength,
+		"response_size", recorder.size,
+	}
+
+	if userID != "" {
+		args = append(args, "user_id", userID)
+	}
+
+	if l.logRequestBody && len(requestBody) > 0 {
+		args = append(args, "request_body", string(requestBody))
+	}
+
+	if l.logResponseBody && len(responseBody) > 0 {
+		args = append(args, "response_body", string(responseBody))
+	}
+
+	// Add custom headers
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		args = append(args, "x_forwarded_for", forwarded)
+	}
+	if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+		args = append(args, "x_real_ip", realIP)
+	}
+
+	if recorder.statusCode >= 500 {
+		l.logger.Error("HTTP request completed with server error", args...)
+	} else if recorder.statusCode >= 400 {
+		l.logger.Warn("HTTP request completed with client error", args...)
+	} else {
+		l.logger.Info("HTTP request completed", args...)
+	}
+{{end}}
+}
+
+// readBody reads and limits the body size
+func (l *LoggingMiddleware) readBody(body io.ReadCloser, maxSize int64) []byte {
+	if body == nil {
+		return nil
+	}
+
+	limitedReader := io.LimitReader(body, maxSize)
+	data, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return nil
+	}
+
+	return data
+}
+
+// loggingResponseRecorder captures response data for logging
+type loggingResponseRecorder struct {
+	http.ResponseWriter
+	statusCode  int
+	size        int
+	body        *bytes.Buffer
+	logBody     bool
+	maxBodySize int64
+	written     bool
+}
+
+func (r *loggingResponseRecorder) WriteHeader(statusCode int) {
+	if !r.written {
+		r.statusCode = statusCode
+		r.written = true
+	}
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (r *loggingResponseRecorder) Write(data []byte) (int, error) {
+	if !r.written {
+		r.WriteHeader(http.StatusOK)
+	}
+
+	// Capture body for logging if enabled
+	if r.logBody && r.body.Len() < int(r.maxBodySize) {
+		remaining := int(r.maxBodySize) - r.body.Len()
+		if len(data) <= remaining {
+			r.body.Write(data)
+		} else {
+			r.body.Write(data[:remaining])
+		}
+	}
+
+	n, err := r.ResponseWriter.Write(data)
+	r.size += n
+	return n, err
+}
+
+func (r *loggingResponseRecorder) getBody() []byte {
+	if r.logBody {
+		return r.body.Bytes()
+	}
+	return nil
+}
+
+// RequestIDMiddleware adds request ID to each request
+func RequestIDMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.New().String()
+				r.Header.Set("X-Request-ID", requestID)
+			}
+
+			w.Header().Set("X-Request-ID", requestID)
+			next.ServeHTTP(w, r)
+		})
+	}
+}

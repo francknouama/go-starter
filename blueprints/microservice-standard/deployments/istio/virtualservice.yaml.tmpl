@@ -1,0 +1,151 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{.ServiceMesh.Namespace}}
+  labels:
+    app: {{.ProjectName}}
+    component: service-mesh
+spec:
+  hosts:
+  - {{.ProjectName}}
+  - {{.ProjectName}}.{{.ServiceMesh.Namespace}}.svc.cluster.local
+  http:
+  - match:
+    - uri:
+        prefix: "/health"
+    route:
+    - destination:
+        host: {{.ProjectName}}
+        port:
+          number: 8080
+    timeout: 5s
+  - match:
+    - uri:
+        prefix: "/metrics"
+    route:
+    - destination:
+        host: {{.ProjectName}}
+        port:
+          number: 9090
+    timeout: 10s
+  - match:
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        host: {{.ProjectName}}
+        port:
+          number: {{.Port}}
+        subset: v1
+      weight: 100
+    fault:
+      delay:
+        percentage:
+          value: 0.1
+        fixedDelay: 100ms
+    retries:
+      attempts: 3
+      perTryTimeout: 30s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    timeout: 60s
+
+---
+
+{{if eq .CommunicationProtocol "rest"}}
+# External VirtualService for ingress traffic
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{.ProjectName}}-external
+  namespace: {{.ServiceMesh.Namespace}}
+  labels:
+    app: {{.ProjectName}}
+    component: service-mesh-external
+spec:
+  hosts:
+  - "{{.ProjectName}}.example.com"  # Replace with your actual domain
+  gateways:
+  - {{.ProjectName}}-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api/v1"
+    route:
+    - destination:
+        host: {{.ProjectName}}
+        port:
+          number: {{.Port}}
+        subset: v1
+    corsPolicy:
+      allowOrigins:
+      - exact: "https://app.example.com"
+      - exact: "https://admin.example.com"
+      allowMethods:
+      - GET
+      - POST
+      - PUT
+      - DELETE
+      - OPTIONS
+      allowHeaders:
+      - Authorization
+      - Content-Type
+      - X-Request-ID
+      - X-API-Key
+      allowCredentials: true
+      maxAge: 24h
+    headers:
+      request:
+        add:
+          X-Forwarded-Proto: https
+        remove:
+        - X-Internal-Header
+      response:
+        add:
+          X-Content-Type-Options: nosniff
+          X-Frame-Options: DENY
+          X-XSS-Protection: "1; mode=block"
+    fault:
+      delay:
+        percentage:
+          value: 0.01  # 1% of requests
+        fixedDelay: 200ms
+    retries:
+      attempts: 3
+      perTryTimeout: 30s
+      retryOn: 5xx,reset,connect-failure,refused-stream
+    timeout: 60s
+
+---
+
+# Gateway for external traffic
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: {{.ProjectName}}-gateway
+  namespace: {{.ServiceMesh.Namespace}}
+  labels:
+    app: {{.ProjectName}}
+    component: service-mesh-gateway
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - "{{.ProjectName}}.example.com"
+    tls:
+      httpsRedirect: true
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: {{.ProjectName}}-tls-secret
+    hosts:
+    - "{{.ProjectName}}.example.com"
+{{end}}

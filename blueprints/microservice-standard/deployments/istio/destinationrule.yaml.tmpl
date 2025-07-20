@@ -1,0 +1,115 @@
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{.ServiceMesh.Namespace}}
+  labels:
+    app: {{.ProjectName}}
+    component: service-mesh
+spec:
+  host: {{.ProjectName}}
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 30s
+        keepAlive:
+          time: 7200s
+          interval: 75s
+      http:
+        http1MaxPendingRequests: 10
+        http2MaxRequests: 100
+        maxRequestsPerConnection: 2
+        maxRetries: 3
+        idleTimeout: 90s
+        h2UpgradePolicy: UPGRADE
+    loadBalancer:
+      simple: LEAST_CONN
+    outlierDetection:
+      consecutiveErrors: 5
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 30
+      splitExternalLocalOriginErrors: false
+{{if .ServiceMesh.TLS}}
+    tls:
+      mode: ISTIO_MUTUAL
+{{end}}
+  subsets:
+  - name: v1
+    labels:
+      version: v1
+    trafficPolicy:
+      connectionPool:
+        tcp:
+          maxConnections: 50
+        http:
+          http1MaxPendingRequests: 5
+          maxRequestsPerConnection: 1
+
+---
+
+# Circuit breaker configuration
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{.ProjectName}}-circuit-breaker
+  namespace: {{.ServiceMesh.Namespace}}
+  labels:
+    app: {{.ProjectName}}
+    component: service-mesh-circuit-breaker
+spec:
+  host: {{.ProjectName}}
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+        connectTimeout: 10s
+      http:
+        http1MaxPendingRequests: 10
+        maxRequestsPerConnection: 2
+        maxRetries: 2
+        idleTimeout: 30s
+    outlierDetection:
+      consecutiveErrors: 3
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+      minHealthPercent: 50
+
+---
+
+{{if ne .DatabaseType "none"}}
+# Database destination rule (if database is in mesh)
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{.ProjectName}}-{{.DatabaseType}}
+  namespace: {{.ServiceMesh.Namespace}}
+  labels:
+    app: {{.ProjectName}}
+    component: service-mesh-database
+spec:
+  host: {{.ProjectName}}-{{.DatabaseType}}
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 25
+        connectTimeout: 30s
+        keepAlive:
+          time: 7200s
+          interval: 75s
+    outlierDetection:
+      consecutiveErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+      minHealthPercent: 70
+{{if .ServiceMesh.TLS}}
+    tls:
+      mode: SIMPLE  # or ISTIO_MUTUAL if database supports it
+{{end}}
+{{end}}

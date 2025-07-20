@@ -1,0 +1,416 @@
+package tests
+
+import (
+	"context"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+
+	"{{.ModulePath}}/internal/app"
+	"{{.ModulePath}}/internal/config"
+)
+
+// IntegrationTestSuite provides integration tests for the microservice
+type IntegrationTestSuite struct {
+	suite.Suite
+	app       *app.App
+	container testcontainers.Container
+	baseURL   string
+}
+
+// SetupSuite runs before all tests in the suite
+func (suite *IntegrationTestSuite) SetupSuite() {
+	ctx := context.Background()
+
+{{if ne .DatabaseType "none"}}
+	// Start database container
+	req := testcontainers.ContainerRequest{
+		{{if eq .DatabaseType "postgres"}}
+		Image:        "postgres:15-alpine",
+		ExposedPorts: []string{"5432/tcp"},
+		Env: map[string]string{
+			"POSTGRES_DB":       "{{.ProjectName | replace "-" "_"}}_test",
+			"POSTGRES_USER":     "test",
+			"POSTGRES_PASSWORD": "test",
+		},
+		WaitingFor: wait.ForListeningPort("5432/tcp"),
+		{{else if eq .DatabaseType "mysql"}}
+		Image:        "mysql:8.0",
+		ExposedPorts: []string{"3306/tcp"},
+		Env: map[string]string{
+			"MYSQL_DATABASE":      "{{.ProjectName | replace "-" "_"}}_test",
+			"MYSQL_USER":          "test",
+			"MYSQL_PASSWORD":      "test",
+			"MYSQL_ROOT_PASSWORD": "root",
+		},
+		WaitingFor: wait.ForListeningPort("3306/tcp"),
+		{{else if eq .DatabaseType "mongodb"}}
+		Image:        "mongo:6",
+		ExposedPorts: []string{"27017/tcp"},
+		Env: map[string]string{
+			"MONGO_INITDB_DATABASE": "{{.ProjectName | replace "-" "_"}}_test",
+		},
+		WaitingFor: wait.ForListeningPort("27017/tcp"),
+		{{else if eq .DatabaseType "redis"}}
+		Image:        "redis:7-alpine",
+		ExposedPorts: []string{"6379/tcp"},
+		WaitingFor: wait.ForListeningPort("6379/tcp"),
+		{{end}}
+	}
+
+	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: req,
+		Started:          true,
+	})
+	suite.Require().NoError(err)
+	suite.container = container
+
+	// Get container port
+	{{if eq .DatabaseType "postgres"}}
+	port, err := container.MappedPort(ctx, "5432")
+	{{else if eq .DatabaseType "mysql"}}
+	port, err := container.MappedPort(ctx, "3306")
+	{{else if eq .DatabaseType "mongodb"}}
+	port, err := container.MappedPort(ctx, "27017")
+	{{else if eq .DatabaseType "redis"}}
+	port, err := container.MappedPort(ctx, "6379")
+	{{end}}
+	suite.Require().NoError(err)
+
+	host, err := container.Host(ctx)
+	suite.Require().NoError(err)
+
+	// Set database environment variables for testing
+	{{if eq .DatabaseType "postgres"}}
+	suite.T().Setenv("DATABASE_HOST", host)
+	suite.T().Setenv("DATABASE_PORT", port.Port())
+	suite.T().Setenv("DATABASE_NAME", "{{.ProjectName | replace "-" "_"}}_test")
+	suite.T().Setenv("DATABASE_USERNAME", "test")
+	suite.T().Setenv("DATABASE_PASSWORD", "test")
+	{{else if eq .DatabaseType "mysql"}}
+	suite.T().Setenv("DATABASE_HOST", host)
+	suite.T().Setenv("DATABASE_PORT", port.Port())
+	suite.T().Setenv("DATABASE_NAME", "{{.ProjectName | replace "-" "_"}}_test")
+	suite.T().Setenv("DATABASE_USERNAME", "test")
+	suite.T().Setenv("DATABASE_PASSWORD", "test")
+	{{else if eq .DatabaseType "mongodb"}}
+	suite.T().Setenv("DATABASE_HOST", host)
+	suite.T().Setenv("DATABASE_PORT", port.Port())
+	suite.T().Setenv("DATABASE_NAME", "{{.ProjectName | replace "-" "_"}}_test")
+	{{else if eq .DatabaseType "redis"}}
+	suite.T().Setenv("DATABASE_HOST", host)
+	suite.T().Setenv("DATABASE_PORT", port.Port())
+	{{end}}
+
+	// Wait for database to be ready
+	time.Sleep(5 * time.Second)
+{{end}}
+
+	// Set test environment variables
+	suite.T().Setenv("PORT", "0") // Use random port
+	suite.T().Setenv("HOST", "127.0.0.1")
+	suite.T().Setenv("PROTOCOL", "{{.CommunicationProtocol}}")
+	suite.T().Setenv("ENVIRONMENT", "test")
+	suite.T().Setenv("LOG_LEVEL", "debug")
+{{if .EnableObservability}}
+	suite.T().Setenv("OBSERVABILITY_METRICS_ENABLED", "true")
+	suite.T().Setenv("OBSERVABILITY_METRICS_PORT", "0")
+	suite.T().Setenv("OBSERVABILITY_HEALTH_ENABLED", "true")
+	suite.T().Setenv("OBSERVABILITY_HEALTH_PORT", "0")
+	suite.T().Setenv("OBSERVABILITY_TRACING_ENABLED", "false") // Disable for tests
+{{end}}
+{{if .EnableAuthentication}}
+	suite.T().Setenv("SECURITY_JWT_SECRET", "test-secret-key-for-testing-only")
+{{end}}
+
+	// Create and start application
+	application, err := app.New()
+	suite.Require().NoError(err)
+	suite.app = application
+
+	// Start the application in a goroutine
+	go func() {
+		ctx := context.Background()
+		err := suite.app.Run(ctx)
+		if err != nil {
+			suite.T().Logf("Application error: %v", err)
+		}
+	}()
+
+	// Wait for application to start
+	time.Sleep(2 * time.Second)
+
+	// Set base URL for HTTP tests
+	{{if eq .CommunicationProtocol "rest"}}
+	suite.baseURL = "http://127.0.0.1:{{.Port}}"
+	{{else}}
+	suite.baseURL = "http://127.0.0.1:8080" // Health endpoint
+	{{end}}
+}
+
+// TearDownSuite runs after all tests in the suite
+func (suite *IntegrationTestSuite) TearDownSuite() {
+	ctx := context.Background()
+
+	// Shutdown application
+	if suite.app != nil {
+		err := suite.app.Shutdown()
+		suite.Require().NoError(err)
+	}
+
+{{if ne .DatabaseType "none"}}
+	// Stop database container
+	if suite.container != nil {
+		err := suite.container.Terminate(ctx)
+		suite.Require().NoError(err)
+	}
+{{end}}
+}
+
+// TestHealth tests the health endpoint
+func (suite *IntegrationTestSuite) TestHealth() {
+	tests := []struct {
+		name           string
+		endpoint       string
+		expectedStatus int
+	}{
+		{
+			name:           "Liveness probe",
+			endpoint:       "/health/live",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "Readiness probe",
+			endpoint:       "/health/ready",
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:           "General health",
+			endpoint:       "/health",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			resp, err := http.Get(suite.baseURL + tt.endpoint)
+			suite.Require().NoError(err)
+			defer resp.Body.Close()
+
+			suite.Equal(tt.expectedStatus, resp.StatusCode)
+			suite.Equal("application/json", resp.Header.Get("Content-Type"))
+		})
+	}
+}
+
+{{if .EnableObservability}}
+// TestMetrics tests the metrics endpoint
+func (suite *IntegrationTestSuite) TestMetrics() {
+	resp, err := http.Get("http://127.0.0.1:9090/metrics")
+	suite.Require().NoError(err)
+	defer resp.Body.Close()
+
+	suite.Equal(http.StatusOK, resp.StatusCode)
+	
+	// Check for basic Prometheus metrics
+	body := make([]byte, 1024)
+	n, err := resp.Body.Read(body)
+	suite.Require().NoError(err)
+	
+	metricsContent := string(body[:n])
+	suite.Contains(metricsContent, "go_info")
+	suite.Contains(metricsContent, "{{.ProjectName | replace "-" "_"}}_")
+}
+{{end}}
+
+{{if eq .CommunicationProtocol "rest"}}
+// TestAPIEndpoints tests the main API endpoints
+func (suite *IntegrationTestSuite) TestAPIEndpoints() {
+	tests := []struct {
+		name           string
+		method         string
+		endpoint       string
+		expectedStatus int
+	}{
+		{
+			name:           "Hello endpoint",
+			method:         "GET",
+			endpoint:       "/hello?name=World",
+			expectedStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			req, err := http.NewRequest(tt.method, suite.baseURL+tt.endpoint, nil)
+			suite.Require().NoError(err)
+
+			client := &http.Client{Timeout: 10 * time.Second}
+			resp, err := client.Do(req)
+			suite.Require().NoError(err)
+			defer resp.Body.Close()
+
+			suite.Equal(tt.expectedStatus, resp.StatusCode)
+		})
+	}
+}
+{{end}}
+
+{{if .EnableRateLimiting}}
+// TestRateLimiting tests rate limiting functionality
+func (suite *IntegrationTestSuite) TestRateLimiting() {
+	client := &http.Client{Timeout: 5 * time.Second}
+	
+	// Make many requests quickly to trigger rate limiting
+	for i := 0; i < 150; i++ {
+		resp, err := client.Get(suite.baseURL + "/health")
+		if err != nil {
+			continue
+		}
+		resp.Body.Close()
+		
+		// Check if we hit rate limit
+		if resp.StatusCode == http.StatusTooManyRequests {
+			suite.Equal("application/json", resp.Header.Get("Content-Type"))
+			suite.NotEmpty(resp.Header.Get("X-RateLimit-Limit"))
+			suite.NotEmpty(resp.Header.Get("X-RateLimit-Remaining"))
+			suite.NotEmpty(resp.Header.Get("X-RateLimit-Reset"))
+			return
+		}
+	}
+	
+	suite.Fail("Rate limiting was not triggered")
+}
+{{end}}
+
+{{if .EnableAuthentication}}
+// TestAuthentication tests JWT authentication
+func (suite *IntegrationTestSuite) TestAuthentication() {
+	// Test accessing protected endpoint without token
+	resp, err := http.Get(suite.baseURL + "/api/protected")
+	suite.Require().NoError(err)
+	defer resp.Body.Close()
+	
+	suite.Equal(http.StatusUnauthorized, resp.StatusCode)
+	
+	// TODO: Add test with valid JWT token
+	// This would require generating a test token or mocking the auth service
+}
+{{end}}
+
+// TestConcurrentRequests tests the service under concurrent load
+func (suite *IntegrationTestSuite) TestConcurrentRequests() {
+	const numGoroutines = 10
+	const requestsPerGoroutine = 5
+	
+	results := make(chan int, numGoroutines*requestsPerGoroutine)
+	
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			client := &http.Client{Timeout: 10 * time.Second}
+			for j := 0; j < requestsPerGoroutine; j++ {
+				resp, err := client.Get(suite.baseURL + "/health")
+				if err != nil {
+					results <- 0
+					continue
+				}
+				resp.Body.Close()
+				results <- resp.StatusCode
+			}
+		}()
+	}
+	
+	// Collect results
+	successCount := 0
+	for i := 0; i < numGoroutines*requestsPerGoroutine; i++ {
+		status := <-results
+		if status == http.StatusOK {
+			successCount++
+		}
+	}
+	
+	// Should handle most concurrent requests successfully
+	expectedMinSuccess := int(float64(numGoroutines*requestsPerGoroutine) * 0.8) // 80% success rate
+	suite.GreaterOrEqual(successCount, expectedMinSuccess)
+}
+
+// TestGracefulShutdown tests that the service shuts down gracefully
+func (suite *IntegrationTestSuite) TestGracefulShutdown() {
+	// This is more of a demonstration - actual graceful shutdown testing
+	// would require more complex setup to simulate real shutdown scenarios
+	
+	// Check that app can provide health status
+	health := suite.app.Health(context.Background())
+	suite.NotNil(health)
+	suite.Equal("{{.ProjectName}}", health["service"])
+	suite.Equal("healthy", health["status"])
+}
+
+{{if ne .DatabaseType "none"}}
+// TestDatabaseConnectivity tests database connectivity
+func (suite *IntegrationTestSuite) TestDatabaseConnectivity() {
+	// This test would check that the service can connect to the database
+	// and perform basic operations
+	
+	// For now, just check that health endpoint reports database as healthy
+	resp, err := http.Get(suite.baseURL + "/health")
+	suite.Require().NoError(err)
+	defer resp.Body.Close()
+	
+	suite.Equal(http.StatusOK, resp.StatusCode)
+	
+	// TODO: Add more specific database connectivity tests
+	// This would involve checking the actual database connection
+	// and possibly performing CRUD operations
+}
+{{end}}
+
+// TestEnvironmentConfiguration tests that configuration is loaded correctly
+func (suite *IntegrationTestSuite) TestEnvironmentConfiguration() {
+	// Test that the service respects environment configuration
+	// This is implicitly tested by the service starting correctly
+	// with test environment variables
+	
+	// Check that health endpoint is available (indicating proper config loading)
+	resp, err := http.Get(suite.baseURL + "/health")
+	suite.Require().NoError(err)
+	defer resp.Body.Close()
+	
+	suite.Equal(http.StatusOK, resp.StatusCode)
+}
+
+// TestServiceRecovery tests that the service can recover from panics
+func (suite *IntegrationTestSuite) TestServiceRecovery() {
+	// This would test the recovery middleware
+	// In a real implementation, you might have a test endpoint that panics
+	
+	// For now, just verify the service is stable
+	for i := 0; i < 5; i++ {
+		resp, err := http.Get(suite.baseURL + "/health")
+		suite.Require().NoError(err)
+		resp.Body.Close()
+		suite.Equal(http.StatusOK, resp.StatusCode)
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// Run the integration test suite
+func TestIntegrationSuite(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+	
+	suite.Run(t, new(IntegrationTestSuite))
+}
+
+// Benchmark tests
+func BenchmarkHealthEndpoint(b *testing.B) {
+	// This would require setting up the service for benchmarking
+	// For now, it's a placeholder
+	b.Skip("Benchmark setup required")
+}

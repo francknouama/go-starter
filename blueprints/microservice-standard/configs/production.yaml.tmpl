@@ -1,0 +1,47 @@
+# {{.ProjectName}} Production Configuration
+# This configuration overrides the default config for production deployment
+
+# Server configuration
+server:
+  host: "0.0.0.0"
+  port: {{.Port}}
+  read_timeout: "60s"
+  write_timeout: "60s"
+  idle_timeout: "300s"
+  graceful_timeout: "60s"
+
+{{if ne .DatabaseType "none"}}
+# Database configuration for production
+database:
+  ssl_mode: "require"
+  max_open_conns: 50
+  max_idle_conns: 10
+  conn_max_lifetime: "1h"
+{{end}}
+
+{{if .EnableObservability}}
+# Observability configuration for production
+observability:
+  metrics:
+    enabled: true
+  
+  tracing:
+    enabled: true
+    sample_rate: 0.01  # Sample 1% of requests in production
+  
+  health:
+    enabled: true
+{{end}}
+
+{{if .EnableServiceMesh}}
+# Service mesh configuration for production
+service_mesh:
+  enabled: true
+  tls: true
+{{end}}
+
+# Logging configuration for production
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"

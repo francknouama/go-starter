@@ -1,0 +1,351 @@
+package middleware
+
+import (
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// CORSConfig holds CORS configuration
+type CORSConfig struct {
+	AllowedOrigins     []string
+	AllowedMethods     []string
+	AllowedHeaders     []string
+	ExposedHeaders     []string
+	AllowCredentials   bool
+	MaxAge             time.Duration
+	AllowAllOrigins    bool
+	AllowOriginFunc    func(origin string) bool
+	AllowPrivateNetwork bool
+}
+
+// DefaultCORSConfig returns a default CORS configuration
+func DefaultCORSConfig() CORSConfig {
+	return CORSConfig{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodHead,
+			http.MethodOptions,
+		},
+		AllowedHeaders: []string{
+			"Accept",
+			"Authorization",
+			"Content-Type",
+			"X-CSRF-Token",
+			"X-Request-ID",
+			"X-API-Key",
+		},
+		ExposedHeaders: []string{
+			"X-Request-ID",
+		},
+		AllowCredentials: true,
+		MaxAge:          12 * time.Hour,
+	}
+}
+
+// CORSMiddleware provides CORS handling
+type CORSMiddleware struct {
+	config CORSConfig
+}
+
+// NewCORSMiddleware creates a new CORS middleware
+func NewCORSMiddleware(config CORSConfig) *CORSMiddleware {
+	// Set defaults if not provided
+	if len(config.AllowedMethods) == 0 {
+		config.AllowedMethods = DefaultCORSConfig().AllowedMethods
+	}
+	if len(config.AllowedHeaders) == 0 {
+		config.AllowedHeaders = DefaultCORSConfig().AllowedHeaders
+	}
+	if config.MaxAge == 0 {
+		config.MaxAge = DefaultCORSConfig().MaxAge
+	}
+
+	// Check if allowing all origins
+	for _, origin := range config.AllowedOrigins {
+		if origin == "*" {
+			config.AllowAllOrigins = true
+			break
+		}
+	}
+
+	return &CORSMiddleware{
+		config: config,
+	}
+}
+
+// Middleware returns the CORS middleware
+func (c *CORSMiddleware) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			
+			// Handle preflight requests
+			if r.Method == http.MethodOptions {
+				c.handlePreflight(w, r)
+				return
+			}
+
+			// Set CORS headers for actual requests
+			c.setCORSHeaders(w, r, origin)
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// handlePreflight handles CORS preflight requests
+func (c *CORSMiddleware) handlePreflight(w http.ResponseWriter, r *http.Request) {
+	origin := r.Header.Get("Origin")
+	method := r.Header.Get("Access-Control-Request-Method")
+	headers := r.Header.Get("Access-Control-Request-Headers")
+
+	// Check if origin is allowed
+	if !c.isOriginAllowed(origin) {
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
+
+	// Check if method is allowed
+	if !c.isMethodAllowed(method) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Set CORS headers
+	c.setCORSHeaders(w, r, origin)
+
+	// Set preflight-specific headers
+	if method != "" {
+		w.Header().Set("Access-Control-Allow-Methods", strings.Join(c.config.AllowedMethods, ", "))
+	}
+
+	if headers != "" {
+		if c.areHeadersAllowed(headers) {
+			w.Header().Set("Access-Control-Allow-Headers", headers)
+		} else {
+			w.Header().Set("Access-Control-Allow-Headers", strings.Join(c.config.AllowedHeaders, ", "))
+		}
+	}
+
+	// Set max age
+	if c.config.MaxAge > 0 {
+		w.Header().Set("Access-Control-Max-Age", strconv.Itoa(int(c.config.MaxAge.Seconds())))
+	}
+
+	// Handle private network access
+	if c.config.AllowPrivateNetwork && r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+		w.Header().Set("Access-Control-Allow-Private-Network", "true")
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setCORSHeaders sets the CORS headers for responses
+func (c *CORSMiddleware) setCORSHeaders(w http.ResponseWriter, r *http.Request, origin string) {
+	// Set allowed origins
+	if c.config.AllowAllOrigins {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+	} else if c.isOriginAllowed(origin) {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Add("Vary", "Origin")
+	}
+
+	// Set credentials
+	if c.config.AllowCredentials && !c.config.AllowAllOrigins {
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+	}
+
+	// Set exposed headers
+	if len(c.config.ExposedHeaders) > 0 {
+		w.Header().Set("Access-Control-Expose-Headers", strings.Join(c.config.ExposedHeaders, ", "))
+	}
+}
+
+// isOriginAllowed checks if the origin is allowed
+func (c *CORSMiddleware) isOriginAllowed(origin string) bool {
+	if origin == "" {
+		return true // Same-origin requests
+	}
+
+	if c.config.AllowAllOrigins {
+		return true
+	}
+
+	// Use custom function if provided
+	if c.config.AllowOriginFunc != nil {
+		return c.config.AllowOriginFunc(origin)
+	}
+
+	// Check against allowed origins list
+	for _, allowedOrigin := range c.config.AllowedOrigins {
+		if allowedOrigin == "*" || allowedOrigin == origin {
+			return true
+		}
+		
+		// Support wildcard subdomains (e.g., "*.example.com")
+		if strings.HasPrefix(allowedOrigin, "*.") {
+			domain := allowedOrigin[2:]
+			if strings.HasSuffix(origin, "."+domain) || origin == domain {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// isMethodAllowed checks if the method is allowed
+func (c *CORSMiddleware) isMethodAllowed(method string) bool {
+	if method == "" {
+		return true
+	}
+
+	for _, allowedMethod := range c.config.AllowedMethods {
+		if allowedMethod == method {
+			return true
+		}
+	}
+
+	return false
+}
+
+// areHeadersAllowed checks if the requested headers are allowed
+func (c *CORSMiddleware) areHeadersAllowed(requestedHeaders string) bool {
+	if requestedHeaders == "" {
+		return true
+	}
+
+	headers := strings.Split(requestedHeaders, ",")
+	for _, header := range headers {
+		header = strings.TrimSpace(header)
+		header = strings.ToLower(header)
+		
+		// Always allow simple headers
+		if c.isSimpleHeader(header) {
+			continue
+		}
+
+		// Check against allowed headers
+		allowed := false
+		for _, allowedHeader := range c.config.AllowedHeaders {
+			if strings.ToLower(allowedHeader) == header {
+				allowed = true
+				break
+			}
+		}
+
+		if !allowed {
+			return false
+		}
+	}
+
+	return true
+}
+
+// isSimpleHeader checks if the header is a simple header that doesn't need explicit permission
+func (c *CORSMiddleware) isSimpleHeader(header string) bool {
+	simpleHeaders := []string{
+		"accept",
+		"accept-language",
+		"content-language",
+		"content-type",
+	}
+
+	for _, simple := range simpleHeaders {
+		if header == simple {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Predefined CORS configurations for common scenarios
+
+// RestrictiveCORSConfig returns a restrictive CORS configuration
+func RestrictiveCORSConfig(allowedOrigins []string) CORSConfig {
+	return CORSConfig{
+		AllowedOrigins: allowedOrigins,
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodDelete,
+		},
+		AllowedHeaders: []string{
+			"Accept",
+			"Authorization",
+			"Content-Type",
+			"X-Request-ID",
+		},
+		ExposedHeaders: []string{
+			"X-Request-ID",
+		},
+		AllowCredentials: true,
+		MaxAge:          1 * time.Hour,
+	}
+}
+
+// PermissiveCORSConfig returns a permissive CORS configuration (for development)
+func PermissiveCORSConfig() CORSConfig {
+	return CORSConfig{
+		AllowAllOrigins: true,
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodHead,
+			http.MethodOptions,
+		},
+		AllowedHeaders: []string{"*"},
+		ExposedHeaders: []string{
+			"X-Request-ID",
+			"X-RateLimit-Limit",
+			"X-RateLimit-Remaining",
+			"X-RateLimit-Reset",
+		},
+		AllowCredentials:    false, // Cannot be true with AllowAllOrigins
+		MaxAge:             24 * time.Hour,
+		AllowPrivateNetwork: true,
+	}
+}
+
+// APICORSConfig returns a CORS configuration suitable for APIs
+func APICORSConfig(allowedOrigins []string) CORSConfig {
+	return CORSConfig{
+		AllowedOrigins: allowedOrigins,
+		AllowedMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodOptions,
+		},
+		AllowedHeaders: []string{
+			"Accept",
+			"Authorization",
+			"Content-Type",
+			"X-Request-ID",
+			"X-API-Key",
+			"X-Requested-With",
+		},
+		ExposedHeaders: []string{
+			"X-Request-ID",
+			"X-RateLimit-Limit",
+			"X-RateLimit-Remaining",
+			"X-RateLimit-Reset",
+		},
+		AllowCredentials: true,
+		MaxAge:          12 * time.Hour,
+	}
+}

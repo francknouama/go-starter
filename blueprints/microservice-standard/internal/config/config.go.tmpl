@@ -1,0 +1,350 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+	"github.com/spf13/viper"
+)
+
+// Config holds all configuration for the microservice
+type Config struct {
+	Server       ServerConfig       `mapstructure:"server"`
+	Database     DatabaseConfig     `mapstructure:"database"`
+	Observability ObservabilityConfig `mapstructure:"observability"`
+	Security     SecurityConfig     `mapstructure:"security"`
+	ServiceMesh  ServiceMeshConfig  `mapstructure:"service_mesh"`
+	Logging      LoggingConfig      `mapstructure:"logging"`
+}
+
+// ServerConfig holds server-related configuration
+type ServerConfig struct {
+	Host                  string        `mapstructure:"host"`
+	Port                  int           `mapstructure:"port"`
+	CommunicationProtocol string        `mapstructure:"communication_protocol"`
+	ReadTimeout          time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout         time.Duration `mapstructure:"write_timeout"`
+	IdleTimeout          time.Duration `mapstructure:"idle_timeout"`
+	GracefulTimeout      time.Duration `mapstructure:"graceful_timeout"`
+}
+
+{{if ne .DatabaseType "none"}}
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Type            string        `mapstructure:"type"`
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	Name            string        `mapstructure:"name"`
+	Username        string        `mapstructure:"username"`
+	Password        string        `mapstructure:"password"`
+	SSLMode         string        `mapstructure:"ssl_mode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+}
+{{else}}
+// DatabaseConfig placeholder when no database is selected
+type DatabaseConfig struct{}
+{{end}}
+
+{{if .EnableObservability}}
+// ObservabilityConfig holds observability configuration
+type ObservabilityConfig struct {
+	Metrics MetricsConfig `mapstructure:"metrics"`
+	Tracing TracingConfig `mapstructure:"tracing"`
+	Health  HealthConfig  `mapstructure:"health"`
+}
+
+// MetricsConfig holds metrics configuration
+type MetricsConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Port    int    `mapstructure:"port"`
+	Path    string `mapstructure:"path"`
+}
+
+// TracingConfig holds tracing configuration
+type TracingConfig struct {
+	Enabled     bool    `mapstructure:"enabled"`
+	ServiceName string  `mapstructure:"service_name"`
+	Endpoint    string  `mapstructure:"endpoint"`
+	SampleRate  float64 `mapstructure:"sample_rate"`
+}
+
+// HealthConfig holds health check configuration
+type HealthConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Port    int    `mapstructure:"port"`
+	Path    string `mapstructure:"path"`
+}
+{{else}}
+// ObservabilityConfig placeholder when observability is disabled
+type ObservabilityConfig struct{}
+{{end}}
+
+{{if .EnableAuthentication}}
+// SecurityConfig holds security-related configuration
+type SecurityConfig struct {
+	JWT JWTConfig `mapstructure:"jwt"`
+}
+
+// JWTConfig holds JWT configuration
+type JWTConfig struct {
+	Secret     string        `mapstructure:"secret"`
+	ExpiryTime time.Duration `mapstructure:"expiry_time"`
+	Issuer     string        `mapstructure:"issuer"`
+}
+{{else}}
+// SecurityConfig placeholder when authentication is disabled
+type SecurityConfig struct{}
+{{end}}
+
+{{if .EnableServiceMesh}}
+// ServiceMeshConfig holds service mesh configuration
+type ServiceMeshConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Namespace string `mapstructure:"namespace"`
+	TLS       bool   `mapstructure:"tls"`
+}
+{{else}}
+// ServiceMeshConfig placeholder when service mesh is disabled
+type ServiceMeshConfig struct{}
+{{end}}
+
+// LoggingConfig holds logging configuration
+type LoggingConfig struct {
+	Level  string `mapstructure:"level"`
+	Format string `mapstructure:"format"`
+	Output string `mapstructure:"output"`
+}
+
+// LoadConfig loads configuration from files and environment variables
+func LoadConfig() (*Config, error) {
+	v := viper.New()
+
+	// Set defaults
+	setDefaults(v)
+
+	// Configure Viper
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	
+	// Add config paths
+	v.AddConfigPath("./configs")
+	v.AddConfigPath(".")
+	
+	// Set environment variable prefix
+	v.SetEnvPrefix("{{.ProjectName | upper | replace "-" "_"}}")
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Read config file
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			// Config file not found; ignore error if desired
+{{if eq .Logger "zap"}}
+			// Use a simple logger since the app logger might not be initialized yet
+			fmt.Printf("Warning: Config file not found, using defaults and environment variables\n")
+{{else if eq .Logger "logrus"}}
+			fmt.Printf("Warning: Config file not found, using defaults and environment variables\n")
+{{else if eq .Logger "zerolog"}}
+			fmt.Printf("Warning: Config file not found, using defaults and environment variables\n")
+{{else}}
+			fmt.Printf("Warning: Config file not found, using defaults and environment variables\n")
+{{end}}
+		} else {
+			return nil, fmt.Errorf("error reading config file: %w", err)
+		}
+	}
+
+	// Override with environment-specific config if exists
+	env := os.Getenv("ENVIRONMENT")
+	if env != "" {
+		envConfigFile := filepath.Join("configs", env+".yaml")
+		if _, err := os.Stat(envConfigFile); err == nil {
+			v.SetConfigFile(envConfigFile)
+			if err := v.MergeInConfig(); err != nil {
+				return nil, fmt.Errorf("error reading environment config file %s: %w", envConfigFile, err)
+			}
+		}
+	}
+
+	var config Config
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	}
+
+	// Validate configuration
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults(v *viper.Viper) {
+	// Server defaults
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.port", {{.Port}})
+	v.SetDefault("server.communication_protocol", "{{.CommunicationProtocol}}")
+	v.SetDefault("server.read_timeout", "30s")
+	v.SetDefault("server.write_timeout", "30s")
+	v.SetDefault("server.idle_timeout", "120s")
+	v.SetDefault("server.graceful_timeout", "30s")
+
+{{if ne .DatabaseType "none"}}
+	// Database defaults
+	v.SetDefault("database.type", "{{.DatabaseType}}")
+	v.SetDefault("database.host", "localhost")
+	{{if eq .DatabaseType "postgres"}}
+	v.SetDefault("database.port", 5432)
+	{{else if eq .DatabaseType "mysql"}}
+	v.SetDefault("database.port", 3306)
+	{{else if eq .DatabaseType "mongodb"}}
+	v.SetDefault("database.port", 27017)
+	{{else if eq .DatabaseType "redis"}}
+	v.SetDefault("database.port", 6379)
+	{{end}}
+	v.SetDefault("database.name", "{{.ProjectName | replace "-" "_"}}")
+	v.SetDefault("database.username", "")
+	v.SetDefault("database.password", "")
+	v.SetDefault("database.ssl_mode", "disable")
+	v.SetDefault("database.max_open_conns", 25)
+	v.SetDefault("database.max_idle_conns", 25)
+	v.SetDefault("database.conn_max_lifetime", "5m")
+{{end}}
+
+{{if .EnableObservability}}
+	// Observability defaults
+	v.SetDefault("observability.metrics.enabled", true)
+	v.SetDefault("observability.metrics.port", 9090)
+	v.SetDefault("observability.metrics.path", "/metrics")
+	
+	v.SetDefault("observability.tracing.enabled", true)
+	v.SetDefault("observability.tracing.service_name", "{{.ProjectName}}")
+	v.SetDefault("observability.tracing.endpoint", "http://localhost:14268/api/traces")
+	v.SetDefault("observability.tracing.sample_rate", 0.1)
+	
+	v.SetDefault("observability.health.enabled", true)
+	v.SetDefault("observability.health.port", 8080)
+	v.SetDefault("observability.health.path", "/health")
+{{end}}
+
+{{if .EnableAuthentication}}
+	// Security defaults
+	v.SetDefault("security.jwt.secret", "")
+	v.SetDefault("security.jwt.expiry_time", "24h")
+	v.SetDefault("security.jwt.issuer", "{{.ProjectName}}")
+{{end}}
+
+{{if .EnableServiceMesh}}
+	// Service mesh defaults
+	v.SetDefault("service_mesh.enabled", false)
+	v.SetDefault("service_mesh.namespace", "default")
+	v.SetDefault("service_mesh.tls", true)
+{{end}}
+
+	// Logging defaults
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.format", "json")
+	v.SetDefault("logging.output", "stdout")
+}
+
+// validateConfig validates the configuration
+func validateConfig(config *Config) error {
+	// Validate server configuration
+	if config.Server.Port <= 0 || config.Server.Port > 65535 {
+		return fmt.Errorf("invalid server port: %d", config.Server.Port)
+	}
+
+	if config.Server.Host == "" {
+		return fmt.Errorf("server host cannot be empty")
+	}
+
+	validProtocols := map[string]bool{
+		"grpc": true,
+		"rest": true,
+		"nats": true,
+	}
+	if !validProtocols[config.Server.CommunicationProtocol] {
+		return fmt.Errorf("invalid communication protocol: %s", config.Server.CommunicationProtocol)
+	}
+
+{{if ne .DatabaseType "none"}}
+	// Validate database configuration
+	if config.Database.Host == "" {
+		return fmt.Errorf("database host cannot be empty")
+	}
+
+	if config.Database.Port <= 0 || config.Database.Port > 65535 {
+		return fmt.Errorf("invalid database port: %d", config.Database.Port)
+	}
+{{end}}
+
+{{if .EnableAuthentication}}
+	// Validate security configuration
+	if config.Security.JWT.Secret == "" {
+		return fmt.Errorf("JWT secret cannot be empty")
+	}
+{{end}}
+
+	// Validate logging configuration
+	validLogLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLogLevels[config.Logging.Level] {
+		return fmt.Errorf("invalid log level: %s", config.Logging.Level)
+	}
+
+	return nil
+}
+
+{{if ne .DatabaseType "none"}}
+// GetDatabaseConnectionString returns the database connection string
+func (c *Config) GetDatabaseConnectionString() string {
+	switch c.Database.Type {
+	{{if eq .DatabaseType "postgres"}}
+	case "postgres":
+		return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			c.Database.Host, c.Database.Port, c.Database.Username, c.Database.Password, c.Database.Name, c.Database.SSLMode)
+	{{end}}
+	{{if eq .DatabaseType "mysql"}}
+	case "mysql":
+		return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			c.Database.Username, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Name)
+	{{end}}
+	{{if eq .DatabaseType "mongodb"}}
+	case "mongodb":
+		if c.Database.Username != "" && c.Database.Password != "" {
+			return fmt.Sprintf("mongodb://%s:%s@%s:%d/%s",
+				c.Database.Username, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Name)
+		}
+		return fmt.Sprintf("mongodb://%s:%d/%s", c.Database.Host, c.Database.Port, c.Database.Name)
+	{{end}}
+	{{if eq .DatabaseType "redis"}}
+	case "redis":
+		if c.Database.Password != "" {
+			return fmt.Sprintf("redis://:%s@%s:%d/0", c.Database.Password, c.Database.Host, c.Database.Port)
+		}
+		return fmt.Sprintf("redis://%s:%d/0", c.Database.Host, c.Database.Port)
+	{{end}}
+	default:
+		return ""
+	}
+}
+{{end}}

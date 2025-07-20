@@ -1,0 +1,455 @@
+package middleware
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"github.com/golang-jwt/jwt/v5"
+	"{{.ModulePath}}/internal/config"
+)
+
+// Claims represents the JWT claims
+type Claims struct {
+	UserID   string   `json:"user_id"`
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Roles    []string `json:"roles"`
+	jwt.RegisteredClaims
+}
+
+// AuthMiddleware provides JWT authentication middleware
+type AuthMiddleware struct {
+	config *config.Config
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	jwtSecret []byte
+}
+
+// NewAuthMiddleware creates a new authentication middleware
+func NewAuthMiddleware(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *AuthMiddleware {
+	return &AuthMiddleware{
+		config:    cfg,
+{{if ne .Logger "zerolog"}}
+		logger:    logger,
+{{end}}
+		jwtSecret: []byte(cfg.Security.JWT.Secret),
+	}
+}
+
+// Middleware returns the authentication middleware
+func (a *AuthMiddleware) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Extract token from Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+{{if eq .Logger "zap"}}
+				a.logger.Warn("Missing Authorization header", zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+				a.logger.WithField("path", r.URL.Path).Warn("Missing Authorization header")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().Str("path", r.URL.Path).Msg("Missing Authorization header")
+{{else}}
+				a.logger.Warn("Missing Authorization header", "path", r.URL.Path)
+{{end}}
+				http.Error(w, "Missing authorization token", http.StatusUnauthorized)
+				return
+			}
+
+			// Extract token from "Bearer <token>" format
+			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+			if tokenString == authHeader {
+{{if eq .Logger "zap"}}
+				a.logger.Warn("Invalid Authorization header format", zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+				a.logger.WithField("path", r.URL.Path).Warn("Invalid Authorization header format")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().Str("path", r.URL.Path).Msg("Invalid Authorization header format")
+{{else}}
+				a.logger.Warn("Invalid Authorization header format", "path", r.URL.Path)
+{{end}}
+				http.Error(w, "Invalid authorization token format", http.StatusUnauthorized)
+				return
+			}
+
+			// Parse and validate token
+			claims, err := a.validateToken(tokenString)
+			if err != nil {
+{{if eq .Logger "zap"}}
+				a.logger.Warn("Token validation failed", 
+					zap.Error(err), 
+					zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+				a.logger.WithFields(logrus.Fields{
+					"error": err,
+					"path":  r.URL.Path,
+				}).Warn("Token validation failed")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().Err(err).Str("path", r.URL.Path).Msg("Token validation failed")
+{{else}}
+				a.logger.Warn("Token validation failed", "error", err, "path", r.URL.Path)
+{{end}}
+				http.Error(w, "Invalid authorization token", http.StatusUnauthorized)
+				return
+			}
+
+			// Add claims to request context
+			ctx := context.WithValue(r.Context(), "claims", claims)
+			ctx = context.WithValue(ctx, "user_id", claims.UserID)
+			ctx = context.WithValue(ctx, "username", claims.Username)
+			ctx = context.WithValue(ctx, "user_roles", claims.Roles)
+
+{{if eq .Logger "zap"}}
+			a.logger.Debug("User authenticated", 
+				zap.String("user_id", claims.UserID),
+				zap.String("username", claims.Username),
+				zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+			a.logger.WithFields(logrus.Fields{
+				"user_id":  claims.UserID,
+				"username": claims.Username,
+				"path":     r.URL.Path,
+			}).Debug("User authenticated")
+{{else if eq .Logger "zerolog"}}
+			log.Debug().
+				Str("user_id", claims.UserID).
+				Str("username", claims.Username).
+				Str("path", r.URL.Path).
+				Msg("User authenticated")
+{{else}}
+			a.logger.Debug("User authenticated", 
+				"user_id", claims.UserID,
+				"username", claims.Username,
+				"path", r.URL.Path)
+{{end}}
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// OptionalMiddleware returns middleware that doesn't require authentication but extracts user info if present
+func (a *AuthMiddleware) OptionalMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" {
+				tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+				if tokenString != authHeader {
+					if claims, err := a.validateToken(tokenString); err == nil {
+						ctx := context.WithValue(r.Context(), "claims", claims)
+						ctx = context.WithValue(ctx, "user_id", claims.UserID)
+						ctx = context.WithValue(ctx, "username", claims.Username)
+						ctx = context.WithValue(ctx, "user_roles", claims.Roles)
+						r = r.WithContext(ctx)
+					}
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireRole returns middleware that requires specific roles
+func (a *AuthMiddleware) RequireRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims, ok := r.Context().Value("claims").(*Claims)
+			if !ok {
+				http.Error(w, "Authentication required", http.StatusUnauthorized)
+				return
+			}
+
+			// Check if user has required role
+			hasRole := false
+			for _, requiredRole := range roles {
+				for _, userRole := range claims.Roles {
+					if userRole == requiredRole {
+						hasRole = true
+						break
+					}
+				}
+				if hasRole {
+					break
+				}
+			}
+
+			if !hasRole {
+{{if eq .Logger "zap"}}
+				a.logger.Warn("Insufficient permissions", 
+					zap.String("user_id", claims.UserID),
+					zap.Strings("required_roles", roles),
+					zap.Strings("user_roles", claims.Roles),
+					zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+				a.logger.WithFields(logrus.Fields{
+					"user_id":        claims.UserID,
+					"required_roles": roles,
+					"user_roles":     claims.Roles,
+					"path":           r.URL.Path,
+				}).Warn("Insufficient permissions")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().
+					Str("user_id", claims.UserID).
+					Strs("required_roles", roles).
+					Strs("user_roles", claims.Roles).
+					Str("path", r.URL.Path).
+					Msg("Insufficient permissions")
+{{else}}
+				a.logger.Warn("Insufficient permissions", 
+					"user_id", claims.UserID,
+					"required_roles", roles,
+					"user_roles", claims.Roles,
+					"path", r.URL.Path)
+{{end}}
+				http.Error(w, "Insufficient permissions", http.StatusForbidden)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// validateToken validates a JWT token and returns claims
+func (a *AuthMiddleware) validateToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		// Validate signing method
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("invalid signing method: %v", token.Header["alg"])
+		}
+		return a.jwtSecret, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token: %w", err)
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	// Check if token is expired
+	if claims.ExpiresAt != nil && claims.ExpiresAt.Time.Before(time.Now()) {
+		return nil, fmt.Errorf("token expired")
+	}
+
+	// Check issuer
+	if claims.Issuer != a.config.Security.JWT.Issuer {
+		return nil, fmt.Errorf("invalid issuer")
+	}
+
+	return claims, nil
+}
+
+// GenerateToken generates a JWT token for a user
+func (a *AuthMiddleware) GenerateToken(userID, username, email string, roles []string) (string, error) {
+	expirationTime := time.Now().Add(a.config.Security.JWT.ExpiryTime)
+
+	claims := &Claims{
+		UserID:   userID,
+		Username: username,
+		Email:    email,
+		Roles:    roles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expirationTime),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    a.config.Security.JWT.Issuer,
+			Subject:   userID,
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(a.jwtSecret)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+
+	return tokenString, nil
+}
+
+// RefreshToken refreshes an existing JWT token
+func (a *AuthMiddleware) RefreshToken(tokenString string) (string, error) {
+	claims, err := a.validateToken(tokenString)
+	if err != nil {
+		return "", err
+	}
+
+	// Check if token is close to expiration (within 1 hour)
+	if claims.ExpiresAt != nil && time.Until(claims.ExpiresAt.Time) > time.Hour {
+		return "", fmt.Errorf("token not eligible for refresh")
+	}
+
+	// Generate new token with same claims but new expiration
+	return a.GenerateToken(claims.UserID, claims.Username, claims.Email, claims.Roles)
+}
+
+// GetUserFromContext extracts user information from request context
+func GetUserFromContext(ctx context.Context) (*Claims, bool) {
+	claims, ok := ctx.Value("claims").(*Claims)
+	return claims, ok
+}
+
+// GetUserIDFromContext extracts user ID from request context
+func GetUserIDFromContext(ctx context.Context) (string, bool) {
+	userID, ok := ctx.Value("user_id").(string)
+	return userID, ok
+}
+
+// GetUserRolesFromContext extracts user roles from request context
+func GetUserRolesFromContext(ctx context.Context) ([]string, bool) {
+	roles, ok := ctx.Value("user_roles").([]string)
+	return roles, ok
+}
+
+// HasRole checks if user has a specific role
+func HasRole(ctx context.Context, role string) bool {
+	roles, ok := GetUserRolesFromContext(ctx)
+	if !ok {
+		return false
+	}
+
+	for _, userRole := range roles {
+		if userRole == role {
+			return true
+		}
+	}
+	return false
+}
+
+// API Key Authentication
+
+// APIKeyMiddleware provides API key authentication
+type APIKeyMiddleware struct {
+	validKeys map[string]string // key -> user_id
+{{if eq .Logger "zap"}}
+	logger    *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger    *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger    *slog.Logger
+{{end}}
+}
+
+// NewAPIKeyMiddleware creates a new API key middleware
+func NewAPIKeyMiddleware(keys map[string]string{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *APIKeyMiddleware {
+	return &APIKeyMiddleware{
+		validKeys: keys,
+{{if ne .Logger "zerolog"}}
+		logger:    logger,
+{{end}}
+	}
+}
+
+// Middleware returns the API key authentication middleware
+func (a *APIKeyMiddleware) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Try multiple common API key headers
+			var apiKey string
+			apiKeyHeaders := []string{"X-API-Key", "X-Api-Key", "API-Key"}
+			
+			for _, header := range apiKeyHeaders {
+				if key := r.Header.Get(header); key != "" {
+					apiKey = key
+					break
+				}
+			}
+
+			// Try query parameter
+			if apiKey == "" {
+				apiKey = r.URL.Query().Get("api_key")
+			}
+
+			if apiKey == "" {
+{{if eq .Logger "zap"}}
+				a.logger.Warn("Missing API key", zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+				a.logger.WithField("path", r.URL.Path).Warn("Missing API key")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().Str("path", r.URL.Path).Msg("Missing API key")
+{{else}}
+				a.logger.Warn("Missing API key", "path", r.URL.Path)
+{{end}}
+				http.Error(w, "API key required", http.StatusUnauthorized)
+				return
+			}
+
+			// Validate API key
+			userID, valid := a.validKeys[apiKey]
+			if !valid {
+{{if eq .Logger "zap"}}
+				a.logger.Warn("Invalid API key", 
+					zap.String("path", r.URL.Path),
+					zap.String("api_key_prefix", apiKey[:min(len(apiKey), 8)]))
+{{else if eq .Logger "logrus"}}
+				a.logger.WithFields(logrus.Fields{
+					"path":           r.URL.Path,
+					"api_key_prefix": apiKey[:min(len(apiKey), 8)],
+				}).Warn("Invalid API key")
+{{else if eq .Logger "zerolog"}}
+				log.Warn().
+					Str("path", r.URL.Path).
+					Str("api_key_prefix", apiKey[:min(len(apiKey), 8)]).
+					Msg("Invalid API key")
+{{else}}
+				a.logger.Warn("Invalid API key", 
+					"path", r.URL.Path,
+					"api_key_prefix", apiKey[:min(len(apiKey), 8)])
+{{end}}
+				http.Error(w, "Invalid API key", http.StatusUnauthorized)
+				return
+			}
+
+			// Add user context
+			ctx := context.WithValue(r.Context(), "user_id", userID)
+			ctx = context.WithValue(ctx, "auth_method", "api_key")
+
+{{if eq .Logger "zap"}}
+			a.logger.Debug("API key authenticated", 
+				zap.String("user_id", userID),
+				zap.String("path", r.URL.Path))
+{{else if eq .Logger "logrus"}}
+			a.logger.WithFields(logrus.Fields{
+				"user_id": userID,
+				"path":    r.URL.Path,
+			}).Debug("API key authenticated")
+{{else if eq .Logger "zerolog"}}
+			log.Debug().
+				Str("user_id", userID).
+				Str("path", r.URL.Path).
+				Msg("API key authenticated")
+{{else}}
+			a.logger.Debug("API key authenticated", 
+				"user_id", userID,
+				"path", r.URL.Path)
+{{end}}
+
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

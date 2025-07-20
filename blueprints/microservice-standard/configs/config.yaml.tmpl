@@ -1,9 +1,83 @@
-service:
-  name: "{{.ProjectName}}"
+# {{.ProjectName}} Configuration
+# This is the main configuration file for the microservice
+
+# Server configuration
+server:
+  host: "0.0.0.0"
   port: {{.Port}}
   communication_protocol: "{{.CommunicationProtocol}}"
-  {{if ne .ServiceDiscovery "none"}}
-  service_discovery: "{{.ServiceDiscovery}}"
-  {{end}}
+  read_timeout: "30s"
+  write_timeout: "30s"
+  idle_timeout: "120s"
+  graceful_timeout: "30s"
 
-# Add other configuration parameters as needed
+{{if ne .DatabaseType "none"}}
+# Database configuration
+database:
+  type: "{{.DatabaseType}}"
+  host: "localhost"
+  {{if eq .DatabaseType "postgres"}}
+  port: 5432
+  {{else if eq .DatabaseType "mysql"}}
+  port: 3306
+  {{else if eq .DatabaseType "mongodb"}}
+  port: 27017
+  {{else if eq .DatabaseType "redis"}}
+  port: 6379
+  {{end}}
+  name: "{{.ProjectName | replace "-" "_"}}"
+  username: ""
+  password: ""
+  ssl_mode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 25
+  conn_max_lifetime: "5m"
+{{end}}
+
+{{if .EnableObservability}}
+# Observability configuration
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  
+  tracing:
+    enabled: true
+    service_name: "{{.ProjectName}}"
+    endpoint: "http://localhost:14268/api/traces"
+    sample_rate: 0.1
+  
+  health:
+    enabled: true
+    port: 8080
+    path: "/health"
+{{end}}
+
+{{if .EnableAuthentication}}
+# Security configuration
+security:
+  jwt:
+    secret: ""  # Set via environment variable SECURITY_JWT_SECRET
+    expiry_time: "24h"
+    issuer: "{{.ProjectName}}"
+{{end}}
+
+{{if .EnableServiceMesh}}
+# Service mesh configuration
+service_mesh:
+  enabled: false  # Enable in production with Istio
+  namespace: "default"
+  tls: true
+{{end}}
+
+# Logging configuration
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+# Service discovery configuration
+{{if ne .ServiceDiscovery "none"}}
+service_discovery: "{{.ServiceDiscovery}}"
+{{end}}

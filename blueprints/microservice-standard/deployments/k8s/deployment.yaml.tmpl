@@ -1,0 +1,194 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    version: v1
+    component: microservice
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: {{.ProjectName}}
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: {{.ProjectName}}
+        version: v1
+        component: microservice
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+{{if .EnableServiceMesh}}
+        sidecar.istio.io/inject: "true"
+{{end}}
+    spec:
+      serviceAccountName: {{.ProjectName}}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+      containers:
+      - name: {{.ProjectName}}
+        image: {{.ProjectName}}:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: {{if eq .CommunicationProtocol "grpc"}}grpc{{else}}http{{end}}
+          containerPort: {{.Port}}
+          protocol: TCP
+{{if .EnableObservability}}
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        - name: health
+          containerPort: 8080
+          protocol: TCP
+{{end}}
+        env:
+        - name: PORT
+          value: "{{.Port}}"
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PROTOCOL
+          value: "{{.CommunicationProtocol}}"
+        - name: ENVIRONMENT
+          value: "production"
+        - name: LOG_LEVEL
+          value: "info"
+{{if .EnableObservability}}
+        - name: OBSERVABILITY_METRICS_ENABLED
+          value: "true"
+        - name: OBSERVABILITY_METRICS_PORT
+          value: "9090"
+        - name: OBSERVABILITY_TRACING_ENABLED
+          value: "true"
+        - name: OBSERVABILITY_TRACING_ENDPOINT
+          value: "http://jaeger-collector:14268/api/traces"
+        - name: OBSERVABILITY_HEALTH_ENABLED
+          value: "true"
+        - name: OBSERVABILITY_HEALTH_PORT
+          value: "8080"
+{{end}}
+{{if ne .DatabaseType "none"}}
+        - name: DATABASE_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: {{.ProjectName}}-config
+              key: database.host
+        - name: DATABASE_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: {{.ProjectName}}-config
+              key: database.port
+        - name: DATABASE_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: {{.ProjectName}}-config
+              key: database.name
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{.ProjectName}}-secrets
+              key: database.username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{.ProjectName}}-secrets
+              key: database.password
+{{end}}
+{{if .EnableAuthentication}}
+        - name: SECURITY_JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{.ProjectName}}-secrets
+              key: jwt.secret
+{{end}}
+        envFrom:
+        - configMapRef:
+            name: {{.ProjectName}}-config
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+{{if .EnableObservability}}
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: health
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: health
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health/ready
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 30
+{{end}}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 65534
+          capabilities:
+            drop:
+            - ALL
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: cache
+          mountPath: /app/cache
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      terminationGracePeriodSeconds: 30
+      restartPolicy: Always
+      dnsPolicy: ClusterFirst
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+      - key: "node.kubernetes.io/not-ready"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+      - key: "node.kubernetes.io/unreachable"
+        operator: "Exists"
+        effect: "NoExecute"
+        tolerationSeconds: 300
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - {{.ProjectName}}
+              topologyKey: kubernetes.io/hostname

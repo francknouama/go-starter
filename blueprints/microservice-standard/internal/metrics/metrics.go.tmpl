@@ -1,0 +1,411 @@
+package metrics
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"{{.ModulePath}}/internal/config"
+)
+
+// Metrics holds all application metrics
+type Metrics struct {
+	// HTTP metrics
+	HTTPRequestsTotal     *prometheus.CounterVec
+	HTTPRequestDuration   *prometheus.HistogramVec
+	HTTPRequestsInFlight  prometheus.Gauge
+
+{{if eq .CommunicationProtocol "grpc"}}
+	// gRPC metrics
+	GRPCRequestsTotal     *prometheus.CounterVec
+	GRPCRequestDuration   *prometheus.HistogramVec
+	GRPCRequestsInFlight  prometheus.Gauge
+{{end}}
+
+	// Application metrics
+	DatabaseConnectionsOpen prometheus.Gauge
+	DatabaseQueriesTotal    *prometheus.CounterVec
+	DatabaseQueryDuration   *prometheus.HistogramVec
+
+	// Circuit breaker metrics
+	CircuitBreakerState     *prometheus.GaugeVec
+	CircuitBreakerRequests  *prometheus.CounterVec
+
+	// Rate limiter metrics
+	RateLimiterRequests *prometheus.CounterVec
+
+	// Custom business metrics
+	BusinessOperationsTotal    *prometheus.CounterVec
+	BusinessOperationDuration  *prometheus.HistogramVec
+
+	config *config.Config
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	registry *prometheus.Registry
+}
+
+// NewMetrics creates a new metrics instance
+func NewMetrics(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *Metrics {
+	registry := prometheus.NewRegistry()
+
+	m := &Metrics{
+		config:   cfg,
+{{if ne .Logger "zerolog"}}
+		logger:   logger,
+{{end}}
+		registry: registry,
+	}
+
+	m.initMetrics()
+	m.registerMetrics()
+
+	return m
+}
+
+// initMetrics initializes all metrics
+func (m *Metrics) initMetrics() {
+	// HTTP metrics
+	m.HTTPRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_http_requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method", "path", "status_code"},
+	)
+
+	m.HTTPRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_http_request_duration_seconds",
+			Help: "HTTP request duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "path", "status_code"},
+	)
+
+	m.HTTPRequestsInFlight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_http_requests_in_flight",
+			Help: "Number of HTTP requests currently being processed",
+		},
+	)
+
+{{if eq .CommunicationProtocol "grpc"}}
+	// gRPC metrics
+	m.GRPCRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_grpc_requests_total",
+			Help: "Total number of gRPC requests",
+		},
+		[]string{"method", "status_code"},
+	)
+
+	m.GRPCRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_grpc_request_duration_seconds",
+			Help: "gRPC request duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "status_code"},
+	)
+
+	m.GRPCRequestsInFlight = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_grpc_requests_in_flight",
+			Help: "Number of gRPC requests currently being processed",
+		},
+	)
+{{end}}
+
+	// Database metrics
+	m.DatabaseConnectionsOpen = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_database_connections_open",
+			Help: "Number of open database connections",
+		},
+	)
+
+	m.DatabaseQueriesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_database_queries_total",
+			Help: "Total number of database queries",
+		},
+		[]string{"operation", "status"},
+	)
+
+	m.DatabaseQueryDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_database_query_duration_seconds",
+			Help: "Database query duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"operation"},
+	)
+
+	// Circuit breaker metrics
+	m.CircuitBreakerState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_circuit_breaker_state",
+			Help: "Circuit breaker state (0=closed, 1=half-open, 2=open)",
+		},
+		[]string{"name"},
+	)
+
+	m.CircuitBreakerRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_circuit_breaker_requests_total",
+			Help: "Total number of circuit breaker requests",
+		},
+		[]string{"name", "state", "result"},
+	)
+
+	// Rate limiter metrics
+	m.RateLimiterRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_rate_limiter_requests_total",
+			Help: "Total number of rate limiter requests",
+		},
+		[]string{"result"}, // allowed, denied
+	)
+
+	// Business metrics
+	m.BusinessOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_business_operations_total",
+			Help: "Total number of business operations",
+		},
+		[]string{"operation", "status"},
+	)
+
+	m.BusinessOperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name: "{{.ProjectName | replace "-" "_"}}_business_operation_duration_seconds",
+			Help: "Business operation duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"operation"},
+	)
+}
+
+// registerMetrics registers all metrics with the registry
+func (m *Metrics) registerMetrics() {
+	m.registry.MustRegister(
+		m.HTTPRequestsTotal,
+		m.HTTPRequestDuration,
+		m.HTTPRequestsInFlight,
+{{if eq .CommunicationProtocol "grpc"}}
+		m.GRPCRequestsTotal,
+		m.GRPCRequestDuration,
+		m.GRPCRequestsInFlight,
+{{end}}
+		m.DatabaseConnectionsOpen,
+		m.DatabaseQueriesTotal,
+		m.DatabaseQueryDuration,
+		m.CircuitBreakerState,
+		m.CircuitBreakerRequests,
+		m.RateLimiterRequests,
+		m.BusinessOperationsTotal,
+		m.BusinessOperationDuration,
+	)
+
+	// Add Go runtime metrics
+	m.registry.MustRegister(prometheus.NewGoCollector())
+	m.registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+}
+
+// RecordHTTPRequest records an HTTP request metric
+func (m *Metrics) RecordHTTPRequest(method, path string, statusCode int, duration time.Duration) {
+	status := strconv.Itoa(statusCode)
+	m.HTTPRequestsTotal.WithLabelValues(method, path, status).Inc()
+	m.HTTPRequestDuration.WithLabelValues(method, path, status).Observe(duration.Seconds())
+}
+
+// IncHTTPRequestsInFlight increments the in-flight HTTP requests counter
+func (m *Metrics) IncHTTPRequestsInFlight() {
+	m.HTTPRequestsInFlight.Inc()
+}
+
+// DecHTTPRequestsInFlight decrements the in-flight HTTP requests counter
+func (m *Metrics) DecHTTPRequestsInFlight() {
+	m.HTTPRequestsInFlight.Dec()
+}
+
+{{if eq .CommunicationProtocol "grpc"}}
+// RecordGRPCRequest records a gRPC request metric
+func (m *Metrics) RecordGRPCRequest(method string, statusCode string, duration time.Duration) {
+	m.GRPCRequestsTotal.WithLabelValues(method, statusCode).Inc()
+	m.GRPCRequestDuration.WithLabelValues(method, statusCode).Observe(duration.Seconds())
+}
+
+// IncGRPCRequestsInFlight increments the in-flight gRPC requests counter
+func (m *Metrics) IncGRPCRequestsInFlight() {
+	m.GRPCRequestsInFlight.Inc()
+}
+
+// DecGRPCRequestsInFlight decrements the in-flight gRPC requests counter
+func (m *Metrics) DecGRPCRequestsInFlight() {
+	m.GRPCRequestsInFlight.Dec()
+}
+{{end}}
+
+// RecordDatabaseQuery records a database query metric
+func (m *Metrics) RecordDatabaseQuery(operation string, success bool, duration time.Duration) {
+	status := "success"
+	if !success {
+		status = "error"
+	}
+	m.DatabaseQueriesTotal.WithLabelValues(operation, status).Inc()
+	m.DatabaseQueryDuration.WithLabelValues(operation).Observe(duration.Seconds())
+}
+
+// SetDatabaseConnections sets the number of open database connections
+func (m *Metrics) SetDatabaseConnections(count float64) {
+	m.DatabaseConnectionsOpen.Set(count)
+}
+
+// RecordCircuitBreakerState records circuit breaker state
+func (m *Metrics) RecordCircuitBreakerState(name string, state int) {
+	m.CircuitBreakerState.WithLabelValues(name).Set(float64(state))
+}
+
+// RecordCircuitBreakerRequest records a circuit breaker request
+func (m *Metrics) RecordCircuitBreakerRequest(name, state, result string) {
+	m.CircuitBreakerRequests.WithLabelValues(name, state, result).Inc()
+}
+
+// RecordRateLimiterRequest records a rate limiter request
+func (m *Metrics) RecordRateLimiterRequest(result string) {
+	m.RateLimiterRequests.WithLabelValues(result).Inc()
+}
+
+// RecordBusinessOperation records a business operation metric
+func (m *Metrics) RecordBusinessOperation(operation string, success bool, duration time.Duration) {
+	status := "success"
+	if !success {
+		status = "error"
+	}
+	m.BusinessOperationsTotal.WithLabelValues(operation, status).Inc()
+	m.BusinessOperationDuration.WithLabelValues(operation).Observe(duration.Seconds())
+}
+
+// HTTPMiddleware returns an HTTP middleware that records metrics
+func (m *Metrics) HTTPMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		m.IncHTTPRequestsInFlight()
+		defer m.DecHTTPRequestsInFlight()
+
+		// Create a response recorder to capture the status code
+		recorder := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		
+		next.ServeHTTP(recorder, r)
+		
+		duration := time.Since(start)
+		m.RecordHTTPRequest(r.Method, r.URL.Path, recorder.statusCode, duration)
+	})
+}
+
+// responseRecorder captures the HTTP status code
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	r.statusCode = statusCode
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Handler returns the Prometheus metrics handler
+func (m *Metrics) Handler() http.Handler {
+	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+	})
+}
+
+// StartHTTPServer starts a dedicated HTTP server for metrics
+func (m *Metrics) StartHTTPServer(ctx context.Context) error {
+	if !m.config.Observability.Metrics.Enabled {
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	mux.Handle(m.config.Observability.Metrics.Path, m.Handler())
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", m.config.Observability.Metrics.Port),
+		Handler: mux,
+	}
+
+{{if eq .Logger "zap"}}
+	m.logger.Info("Starting metrics server",
+		zap.Int("port", m.config.Observability.Metrics.Port),
+		zap.String("path", m.config.Observability.Metrics.Path))
+{{else if eq .Logger "logrus"}}
+	m.logger.WithFields(logrus.Fields{
+		"port": m.config.Observability.Metrics.Port,
+		"path": m.config.Observability.Metrics.Path,
+	}).Info("Starting metrics server")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Int("port", m.config.Observability.Metrics.Port).
+		Str("path", m.config.Observability.Metrics.Path).
+		Msg("Starting metrics server")
+{{else}}
+	m.logger.Info("Starting metrics server",
+		"port", m.config.Observability.Metrics.Port,
+		"path", m.config.Observability.Metrics.Path)
+{{end}}
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+{{if eq .Logger "zap"}}
+			m.logger.Error("Metrics server error", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			m.logger.WithError(err).Error("Metrics server error")
+{{else if eq .Logger "zerolog"}}
+			log.Error().Err(err).Msg("Metrics server error")
+{{else}}
+			m.logger.Error("Metrics server error", "error", err)
+{{end}}
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+{{if eq .Logger "zap"}}
+	m.logger.Info("Shutting down metrics server")
+{{else if eq .Logger "logrus"}}
+	m.logger.Info("Shutting down metrics server")
+{{else if eq .Logger "zerolog"}}
+	log.Info().Msg("Shutting down metrics server")
+{{else}}
+	m.logger.Info("Shutting down metrics server")
+{{end}}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return server.Shutdown(shutdownCtx)
+}

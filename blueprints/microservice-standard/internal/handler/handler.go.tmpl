@@ -19,27 +19,17 @@ type ServiceHandler struct {
 {{else if eq .Logger "logrus"}}
 	logger *logrus.Logger
 {{else if eq .Logger "zerolog"}}
-	// zerolog uses global logger
+	logger zerolog.Logger
 {{else}}
 	logger *slog.Logger
 {{end}}
 }
 
 // NewServiceHandler creates a new ServiceHandler instance
-func NewServiceHandler() *ServiceHandler {
-{{if eq .Logger "zap"}}
-	logger, _ := zap.NewProduction()
-	return &ServiceHandler{logger: logger}
-{{else if eq .Logger "logrus"}}
-	logger := logrus.New()
-	logger.SetFormatter(&logrus.JSONFormatter{})
-	return &ServiceHandler{logger: logger}
-{{else if eq .Logger "zerolog"}}
-	return &ServiceHandler{}
-{{else}}
-	logger := slog.Default()
-	return &ServiceHandler{logger: logger}
-{{end}}
+func NewServiceHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "zerolog"}}logger zerolog.Logger{{else}}logger *slog.Logger{{end}}) *ServiceHandler {
+	return &ServiceHandler{
+		logger: logger,
+	}
 }
 
 // SayHello returns a greeting message
@@ -50,7 +40,7 @@ func (h *ServiceHandler) SayHello(name string) string {
 {{else if eq .Logger "logrus"}}
 	h.logger.WithFields(logrus.Fields{"name": name, "message": message}).Info("SayHello called")
 {{else if eq .Logger "zerolog"}}
-	log.Info().Str("name", name).Str("message", message).Msg("SayHello called")
+	h.logger.Info().Str("name", name).Str("message", message).Msg("SayHello called")
 {{else}}
 	h.logger.Info("SayHello called", "name", name, "message", message)
 {{end}}

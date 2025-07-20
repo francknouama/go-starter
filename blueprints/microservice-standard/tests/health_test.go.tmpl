@@ -1,0 +1,393 @@
+package tests
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/health"
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
+// HealthTestSuite tests the health check functionality
+type HealthTestSuite struct {
+	suite.Suite
+	healthChecker *health.HealthChecker
+	config        *config.Config
+{{if eq .Logger "zap"}}
+	logger        *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger        *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	logger        zerolog.Logger
+{{else}}
+	logger        *slog.Logger
+{{end}}
+}
+
+// SetupTest runs before each test
+func (suite *HealthTestSuite) SetupTest() {
+	suite.config = &config.Config{
+{{if .EnableObservability}}
+		Observability: config.ObservabilityConfig{
+			Health: config.HealthConfig{
+				Enabled: true,
+				Port:    8080,
+				Path:    "/health",
+			},
+		},
+{{end}}
+	}
+
+{{if eq .Logger "zap"}}
+	suite.logger = zap.NewNop()
+{{else if eq .Logger "logrus"}}
+	suite.logger = logrus.New()
+	suite.logger.SetOutput(io.Discard)
+{{else if eq .Logger "zerolog"}}
+	suite.logger = zerolog.Nop()
+{{else}}
+	suite.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+{{end}}
+
+	suite.healthChecker = health.NewHealthChecker(suite.config, suite.logger)
+}
+
+// TestLivenessCheck tests the liveness check
+func (suite *HealthTestSuite) TestLivenessCheck() {
+	ctx := context.Background()
+	
+	result := suite.healthChecker.LivenessCheck(ctx)
+	
+	suite.Equal(health.StatusHealthy, result.Status)
+	suite.Equal("Service is alive", result.Message)
+	suite.NotZero(result.Timestamp)
+	suite.NotZero(result.Duration)
+}
+
+// TestReadinessCheck tests the readiness check
+func (suite *HealthTestSuite) TestReadinessCheck() {
+	ctx := context.Background()
+	
+	result := suite.healthChecker.ReadinessCheck(ctx)
+	
+	suite.Equal(health.StatusHealthy, result.Status)
+	suite.Contains(result.Message, "ready")
+	suite.NotZero(result.Timestamp)
+	suite.NotZero(result.Duration)
+}
+
+// TestCheckHealth tests the overall health check
+func (suite *HealthTestSuite) TestCheckHealth() {
+	ctx := context.Background()
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	suite.Equal(health.StatusHealthy, response.Status)
+	suite.Equal("1.0.0", response.Version)
+	suite.NotZero(response.Timestamp)
+	suite.NotZero(response.Duration)
+	suite.Contains(response.Checks, "readiness")
+	suite.Contains(response.Checks, "liveness")
+}
+
+// TestCustomHealthCheck tests registering and executing custom health checks
+func (suite *HealthTestSuite) TestCustomHealthCheck() {
+	ctx := context.Background()
+	
+	// Register a custom health check
+	customCheckCalled := false
+	suite.healthChecker.RegisterCheck("custom", func(ctx context.Context) health.CheckResult {
+		customCheckCalled = true
+		return health.CheckResult{
+			Status:    health.StatusHealthy,
+			Message:   "Custom check passed",
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	suite.True(customCheckCalled)
+	suite.Contains(response.Checks, "custom")
+	suite.Equal(health.StatusHealthy, response.Checks["custom"].Status)
+	suite.Equal("Custom check passed", response.Checks["custom"].Message)
+}
+
+// TestUnhealthyCheck tests handling of unhealthy checks
+func (suite *HealthTestSuite) TestUnhealthyCheck() {
+	ctx := context.Background()
+	
+	// Register an unhealthy check
+	suite.healthChecker.RegisterCheck("unhealthy", func(ctx context.Context) health.CheckResult {
+		return health.CheckResult{
+			Status:    health.StatusUnhealthy,
+			Message:   "Service is down",
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	// Overall status should be unhealthy
+	suite.Equal(health.StatusUnhealthy, response.Status)
+	suite.Contains(response.Checks, "unhealthy")
+	suite.Equal(health.StatusUnhealthy, response.Checks["unhealthy"].Status)
+}
+
+// TestDegradedCheck tests handling of degraded checks
+func (suite *HealthTestSuite) TestDegradedCheck() {
+	ctx := context.Background()
+	
+	// Register a degraded check
+	suite.healthChecker.RegisterCheck("degraded", func(ctx context.Context) health.CheckResult {
+		return health.CheckResult{
+			Status:    health.StatusDegraded,
+			Message:   "Service is degraded",
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	// Overall status should be degraded (not unhealthy since default checks are healthy)
+	suite.Equal(health.StatusDegraded, response.Status)
+	suite.Contains(response.Checks, "degraded")
+	suite.Equal(health.StatusDegraded, response.Checks["degraded"].Status)
+}
+
+// TestHealthCheckTimeout tests that health checks respect context timeout
+func (suite *HealthTestSuite) TestHealthCheckTimeout() {
+	// Register a slow check that takes longer than the timeout
+	suite.healthChecker.RegisterCheck("slow", func(ctx context.Context) health.CheckResult {
+		select {
+		case <-time.After(10 * time.Second):
+			return health.CheckResult{
+				Status:    health.StatusHealthy,
+				Message:   "Slow check completed",
+				Timestamp: time.Now(),
+				Duration:  10 * time.Second,
+			}
+		case <-ctx.Done():
+			return health.CheckResult{
+				Status:    health.StatusUnhealthy,
+				Message:   "Check timed out",
+				Timestamp: time.Now(),
+				Duration:  time.Since(time.Now()),
+			}
+		}
+	})
+	
+	// Create a context with a short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	// The slow check should have timed out
+	suite.Contains(response.Checks, "slow")
+	slowCheck := response.Checks["slow"]
+	suite.True(slowCheck.Duration < 1*time.Second) // Should complete quickly due to timeout
+}
+
+// TestUnregisterCheck tests removing health checks
+func (suite *HealthTestSuite) TestUnregisterCheck() {
+	ctx := context.Background()
+	
+	// Register a check
+	suite.healthChecker.RegisterCheck("temporary", func(ctx context.Context) health.CheckResult {
+		return health.CheckResult{
+			Status:    health.StatusHealthy,
+			Message:   "Temporary check",
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	// Verify it's there
+	response := suite.healthChecker.CheckHealth(ctx)
+	suite.Contains(response.Checks, "temporary")
+	
+	// Remove it
+	suite.healthChecker.UnregisterCheck("temporary")
+	
+	// Verify it's gone
+	response = suite.healthChecker.CheckHealth(ctx)
+	suite.NotContains(response.Checks, "temporary")
+}
+
+// TestConcurrentHealthChecks tests that health checks can be executed concurrently
+func (suite *HealthTestSuite) TestConcurrentHealthChecks() {
+	ctx := context.Background()
+	
+	// Register multiple checks that take some time
+	for i := 0; i < 5; i++ {
+		checkName := fmt.Sprintf("concurrent_%d", i)
+		suite.healthChecker.RegisterCheck(checkName, func(ctx context.Context) health.CheckResult {
+			time.Sleep(100 * time.Millisecond)
+			return health.CheckResult{
+				Status:    health.StatusHealthy,
+				Message:   "Concurrent check",
+				Timestamp: time.Now(),
+				Duration:  100 * time.Millisecond,
+			}
+		})
+	}
+	
+	start := time.Now()
+	response := suite.healthChecker.CheckHealth(ctx)
+	duration := time.Since(start)
+	
+	// Should complete faster than sequential execution (5 * 100ms = 500ms)
+	// Allow some overhead, but should be significantly faster
+	suite.Less(duration, 300*time.Millisecond)
+	suite.Equal(health.StatusHealthy, response.Status)
+	
+	// Should have all concurrent checks
+	for i := 0; i < 5; i++ {
+		checkName := fmt.Sprintf("concurrent_%d", i)
+		suite.Contains(response.Checks, checkName)
+	}
+}
+
+{{if ne .DatabaseType "none"}}
+// MockDatabase represents a mock database for testing
+type MockDatabase struct {
+	mock.Mock
+}
+
+func (m *MockDatabase) Ping(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+// TestDatabaseHealthCheck tests database connectivity health check
+func (suite *HealthTestSuite) TestDatabaseHealthCheck() {
+	ctx := context.Background()
+	
+	// Create mock database
+	mockDB := new(MockDatabase)
+	
+	// Test successful database connection
+	mockDB.On("Ping", mock.Anything).Return(nil)
+	
+	// Register database health check
+	suite.healthChecker.RegisterCheck("database", func(ctx context.Context) health.CheckResult {
+		err := mockDB.Ping(ctx)
+		if err != nil {
+			return health.CheckResult{
+				Status:    health.StatusUnhealthy,
+				Message:   fmt.Sprintf("Database connection failed: %v", err),
+				Timestamp: time.Now(),
+				Duration:  time.Millisecond,
+			}
+		}
+		return health.CheckResult{
+			Status:    health.StatusHealthy,
+			Message:   "Database connection healthy",
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	suite.Equal(health.StatusHealthy, response.Status)
+	suite.Contains(response.Checks, "database")
+	suite.Equal(health.StatusHealthy, response.Checks["database"].Status)
+	
+	mockDB.AssertExpectations(suite.T())
+}
+
+// TestDatabaseHealthCheckFailure tests database connectivity failure
+func (suite *HealthTestSuite) TestDatabaseHealthCheckFailure() {
+	ctx := context.Background()
+	
+	// Create mock database
+	mockDB := new(MockDatabase)
+	
+	// Test failed database connection
+	mockDB.On("Ping", mock.Anything).Return(errors.New("connection refused"))
+	
+	// Register database health check
+	suite.healthChecker.RegisterCheck("database", func(ctx context.Context) health.CheckResult {
+		err := mockDB.Ping(ctx)
+		if err != nil {
+			return health.CheckResult{
+				Status:    health.StatusUnhealthy,
+				Message:   fmt.Sprintf("Database connection failed: %v", err),
+				Timestamp: time.Now(),
+				Duration:  time.Millisecond,
+			}
+		}
+		return health.CheckResult{
+			Status:    health.StatusHealthy,
+			Message:   "Database connection healthy",
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	suite.Equal(health.StatusUnhealthy, response.Status)
+	suite.Contains(response.Checks, "database")
+	suite.Equal(health.StatusUnhealthy, response.Checks["database"].Status)
+	suite.Contains(response.Checks["database"].Message, "connection refused")
+	
+	mockDB.AssertExpectations(suite.T())
+}
+{{end}}
+
+// TestHealthCheckDetails tests that health checks include proper details
+func (suite *HealthTestSuite) TestHealthCheckDetails() {
+	ctx := context.Background()
+	
+	// Register a check with details
+	suite.healthChecker.RegisterCheck("detailed", func(ctx context.Context) health.CheckResult {
+		return health.CheckResult{
+			Status:  health.StatusHealthy,
+			Message: "Detailed check",
+			Details: map[string]interface{}{
+				"connections": 10,
+				"memory_usage": "150MB",
+				"uptime": "2h30m",
+			},
+			Timestamp: time.Now(),
+			Duration:  time.Millisecond,
+		}
+	})
+	
+	response := suite.healthChecker.CheckHealth(ctx)
+	
+	suite.Contains(response.Checks, "detailed")
+	detailedCheck := response.Checks["detailed"]
+	suite.NotNil(detailedCheck.Details)
+	suite.Equal(10, detailedCheck.Details["connections"])
+	suite.Equal("150MB", detailedCheck.Details["memory_usage"])
+	suite.Equal("2h30m", detailedCheck.Details["uptime"])
+}
+
+// Run the health test suite
+func TestHealthSuite(t *testing.T) {
+	suite.Run(t, new(HealthTestSuite))
+}

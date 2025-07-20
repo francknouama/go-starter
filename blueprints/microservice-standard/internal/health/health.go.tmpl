@@ -1,0 +1,444 @@
+package health
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"{{.ModulePath}}/internal/config"
+{{if ne .DatabaseType "none"}}
+{{if eq .DatabaseType "redis"}}
+	"github.com/redis/go-redis/v9"
+{{else if eq .DatabaseType "mongodb"}}
+	"go.mongodb.org/mongo-driver/mongo"
+{{end}}
+{{end}}
+)
+
+// Status represents the health status of a component
+type Status string
+
+const (
+	StatusHealthy   Status = "healthy"
+	StatusUnhealthy Status = "unhealthy"
+	StatusDegraded  Status = "degraded"
+)
+
+// Check represents a health check function
+type Check func(ctx context.Context) CheckResult
+
+// CheckResult represents the result of a health check
+type CheckResult struct {
+	Status    Status                 `json:"status"`
+	Message   string                 `json:"message,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+	Timestamp time.Time             `json:"timestamp"`
+	Duration  time.Duration         `json:"duration"`
+}
+
+// HealthChecker manages health checks for the microservice
+type HealthChecker struct {
+	checks map[string]Check
+	config *config.Config
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	mu     sync.RWMutex
+}
+
+// HealthResponse represents the overall health status
+type HealthResponse struct {
+	Status    Status                    `json:"status"`
+	Version   string                   `json:"version"`
+	Timestamp time.Time                `json:"timestamp"`
+	Duration  time.Duration            `json:"duration"`
+	Checks    map[string]CheckResult   `json:"checks"`
+}
+
+// NewHealthChecker creates a new health checker
+func NewHealthChecker(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *HealthChecker {
+	h := &HealthChecker{
+		checks: make(map[string]Check),
+		config: cfg,
+{{if ne .Logger "zerolog"}}
+		logger: logger,
+{{end}}
+	}
+
+	// Register default checks
+	h.RegisterCheck("readiness", h.ReadinessCheck)
+	h.RegisterCheck("liveness", h.LivenessCheck)
+
+	return h
+}
+
+// RegisterCheck registers a health check
+func (h *HealthChecker) RegisterCheck(name string, check Check) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.checks[name] = check
+}
+
+// UnregisterCheck removes a health check
+func (h *HealthChecker) UnregisterCheck(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.checks, name)
+}
+
+// CheckHealth performs all registered health checks
+func (h *HealthChecker) CheckHealth(ctx context.Context) HealthResponse {
+	start := time.Now()
+	
+	h.mu.RLock()
+	checks := make(map[string]Check)
+	for name, check := range h.checks {
+		checks[name] = check
+	}
+	h.mu.RUnlock()
+
+	results := make(map[string]CheckResult)
+	overall := StatusHealthy
+
+	// Execute all checks concurrently
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	
+	for name, check := range checks {
+		wg.Add(1)
+		go func(checkName string, checkFunc Check) {
+			defer wg.Done()
+			
+			checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			
+			result := checkFunc(checkCtx)
+			
+			mu.Lock()
+			results[checkName] = result
+			if result.Status == StatusUnhealthy {
+				overall = StatusUnhealthy
+			} else if result.Status == StatusDegraded && overall == StatusHealthy {
+				overall = StatusDegraded
+			}
+			mu.Unlock()
+		}(name, check)
+	}
+	
+	wg.Wait()
+
+	response := HealthResponse{
+		Status:    overall,
+		Version:   "1.0.0", // This could be injected during build
+		Timestamp: time.Now(),
+		Duration:  time.Since(start),
+		Checks:    results,
+	}
+
+{{if eq .Logger "zap"}}
+	h.logger.Info("Health check completed",
+		zap.String("overall_status", string(overall)),
+		zap.Duration("duration", response.Duration),
+		zap.Int("checks_count", len(results)))
+{{else if eq .Logger "logrus"}}
+	h.logger.WithFields(logrus.Fields{
+		"overall_status": string(overall),
+		"duration":      response.Duration,
+		"checks_count":  len(results),
+	}).Info("Health check completed")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Str("overall_status", string(overall)).
+		Dur("duration", response.Duration).
+		Int("checks_count", len(results)).
+		Msg("Health check completed")
+{{else}}
+	h.logger.Info("Health check completed",
+		"overall_status", string(overall),
+		"duration", response.Duration,
+		"checks_count", len(results))
+{{end}}
+
+	return response
+}
+
+// LivenessCheck checks if the service is alive
+func (h *HealthChecker) LivenessCheck(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	// This is a simple liveness check - just verify the service is running
+	// In a real implementation, you might check critical resources
+	
+	return CheckResult{
+		Status:    StatusHealthy,
+		Message:   "Service is alive",
+		Timestamp: time.Now(),
+		Duration:  time.Since(start),
+	}
+}
+
+// ReadinessCheck checks if the service is ready to serve requests
+func (h *HealthChecker) ReadinessCheck(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	// Check dependencies like database, external services, etc.
+	details := make(map[string]interface{})
+	status := StatusHealthy
+	message := "Service is ready"
+
+{{if ne .DatabaseType "none"}}
+	// Add database check if database is configured
+	if dbStatus := h.checkDatabase(ctx); dbStatus.Status != StatusHealthy {
+		status = dbStatus.Status
+		message = "Service dependencies not ready"
+		details["database"] = dbStatus
+	}
+{{end}}
+
+	return CheckResult{
+		Status:    status,
+		Message:   message,
+		Details:   details,
+		Timestamp: time.Now(),
+		Duration:  time.Since(start),
+	}
+}
+
+{{if ne .DatabaseType "none"}}
+// RegisterDatabaseCheck registers a database health check
+func (h *HealthChecker) RegisterDatabaseCheck({{if eq .DatabaseType "redis"}}client *redis.Client{{else if eq .DatabaseType "mongodb"}}client *mongo.Client{{else}}db *sql.DB{{end}}) {
+	h.RegisterCheck("database", func(ctx context.Context) CheckResult {
+		return h.checkDatabaseConnection(ctx, {{if eq .DatabaseType "redis"}}client{{else if eq .DatabaseType "mongodb"}}client{{else}}db{{end}})
+	})
+}
+
+func (h *HealthChecker) checkDatabase(ctx context.Context) CheckResult {
+	// This is called from readiness check when database is available
+	// The actual database check is registered separately
+	return CheckResult{
+		Status:    StatusHealthy,
+		Message:   "Database check not registered",
+		Timestamp: time.Now(),
+	}
+}
+
+func (h *HealthChecker) checkDatabaseConnection(ctx context.Context, {{if eq .DatabaseType "redis"}}client *redis.Client{{else if eq .DatabaseType "mongodb"}}client *mongo.Client{{else}}db *sql.DB{{end}}) CheckResult {
+	start := time.Now()
+	
+	{{if eq .DatabaseType "redis"}}
+	if err := client.Ping(ctx).Err(); err != nil {
+		return CheckResult{
+			Status:    StatusUnhealthy,
+			Message:   fmt.Sprintf("Redis connection failed: %v", err),
+			Timestamp: time.Now(),
+			Duration:  time.Since(start),
+		}
+	}
+	{{else if eq .DatabaseType "mongodb"}}
+	if err := client.Ping(ctx, nil); err != nil {
+		return CheckResult{
+			Status:    StatusUnhealthy,
+			Message:   fmt.Sprintf("MongoDB connection failed: %v", err),
+			Timestamp: time.Now(),
+			Duration:  time.Since(start),
+		}
+	}
+	{{else}}
+	if err := db.PingContext(ctx); err != nil {
+		return CheckResult{
+			Status:    StatusUnhealthy,
+			Message:   fmt.Sprintf("Database connection failed: %v", err),
+			Timestamp: time.Now(),
+			Duration:  time.Since(start),
+		}
+	}
+	{{end}}
+
+	return CheckResult{
+		Status:    StatusHealthy,
+		Message:   "Database connection healthy",
+		Timestamp: time.Now(),
+		Duration:  time.Since(start),
+	}
+}
+{{end}}
+
+// Handler returns an HTTP handler for health checks
+func (h *HealthChecker) Handler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		
+		health := h.CheckHealth(ctx)
+		
+		w.Header().Set("Content-Type", "application/json")
+		
+		// Set HTTP status based on health status
+		switch health.Status {
+		case StatusHealthy:
+			w.WriteHeader(http.StatusOK)
+		case StatusDegraded:
+			w.WriteHeader(http.StatusOK) // Still OK for degraded
+		case StatusUnhealthy:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		
+		if err := json.NewEncoder(w).Encode(health); err != nil {
+{{if eq .Logger "zap"}}
+			h.logger.Error("Failed to encode health response", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			h.logger.WithError(err).Error("Failed to encode health response")
+{{else if eq .Logger "zerolog"}}
+			log.Error().Err(err).Msg("Failed to encode health response")
+{{else}}
+			h.logger.Error("Failed to encode health response", "error", err)
+{{end}}
+		}
+	}
+}
+
+// LivenessHandler returns an HTTP handler for liveness checks
+func (h *HealthChecker) LivenessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		
+		result := h.LivenessCheck(ctx)
+		
+		w.Header().Set("Content-Type", "application/json")
+		
+		if result.Status == StatusHealthy {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+{{if eq .Logger "zap"}}
+			h.logger.Error("Failed to encode liveness response", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			h.logger.WithError(err).Error("Failed to encode liveness response")
+{{else if eq .Logger "zerolog"}}
+			log.Error().Err(err).Msg("Failed to encode liveness response")
+{{else}}
+			h.logger.Error("Failed to encode liveness response", "error", err)
+{{end}}
+		}
+	}
+}
+
+// ReadinessHandler returns an HTTP handler for readiness checks
+func (h *HealthChecker) ReadinessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		
+		result := h.ReadinessCheck(ctx)
+		
+		w.Header().Set("Content-Type", "application/json")
+		
+		if result.Status == StatusHealthy {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+{{if eq .Logger "zap"}}
+			h.logger.Error("Failed to encode readiness response", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			h.logger.WithError(err).Error("Failed to encode readiness response")
+{{else if eq .Logger "zerolog"}}
+			log.Error().Err(err).Msg("Failed to encode readiness response")
+{{else}}
+			h.logger.Error("Failed to encode readiness response", "error", err)
+{{end}}
+		}
+	}
+}
+
+// StartHTTPServer starts a dedicated HTTP server for health checks
+func (h *HealthChecker) StartHTTPServer(ctx context.Context) error {
+	if !h.config.Observability.Health.Enabled {
+		return nil
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc(h.config.Observability.Health.Path, h.Handler())
+	mux.HandleFunc(h.config.Observability.Health.Path+"/live", h.LivenessHandler())
+	mux.HandleFunc(h.config.Observability.Health.Path+"/ready", h.ReadinessHandler())
+
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", h.config.Observability.Health.Port),
+		Handler: mux,
+	}
+
+{{if eq .Logger "zap"}}
+	h.logger.Info("Starting health check server",
+		zap.Int("port", h.config.Observability.Health.Port),
+		zap.String("path", h.config.Observability.Health.Path))
+{{else if eq .Logger "logrus"}}
+	h.logger.WithFields(logrus.Fields{
+		"port": h.config.Observability.Health.Port,
+		"path": h.config.Observability.Health.Path,
+	}).Info("Starting health check server")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Int("port", h.config.Observability.Health.Port).
+		Str("path", h.config.Observability.Health.Path).
+		Msg("Starting health check server")
+{{else}}
+	h.logger.Info("Starting health check server",
+		"port", h.config.Observability.Health.Port,
+		"path", h.config.Observability.Health.Path)
+{{end}}
+
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+{{if eq .Logger "zap"}}
+			h.logger.Error("Health check server error", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			h.logger.WithError(err).Error("Health check server error")
+{{else if eq .Logger "zerolog"}}
+			log.Error().Err(err).Msg("Health check server error")
+{{else}}
+			h.logger.Error("Health check server error", "error", err)
+{{end}}
+		}
+	}()
+
+	// Wait for context cancellation
+	<-ctx.Done()
+
+{{if eq .Logger "zap"}}
+	h.logger.Info("Shutting down health check server")
+{{else if eq .Logger "logrus"}}
+	h.logger.Info("Shutting down health check server")
+{{else if eq .Logger "zerolog"}}
+	log.Info().Msg("Shutting down health check server")
+{{else}}
+	h.logger.Info("Shutting down health check server")
+{{end}}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	return server.Shutdown(shutdownCtx)
+}

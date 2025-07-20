@@ -1,0 +1,270 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: rbac
+rules:
+# Allow reading ConfigMaps and Secrets
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+# Allow reading endpoints for service discovery
+- apiGroups: [""]
+  resources: ["endpoints"]
+  verbs: ["get", "list", "watch"]
+# Allow reading services
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "watch"]
+# Allow reading pods (for health checks and metrics)
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+{{if eq .ServiceDiscovery "kubernetes"}}
+# Additional permissions for Kubernetes service discovery
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+{{end}}
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: rbac
+subjects:
+- kind: ServiceAccount
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+roleRef:
+  kind: Role
+  name: {{.ProjectName}}
+  apiGroup: rbac.authorization.k8s.io
+
+---
+
+{{if .EnableObservability}}
+# Additional ClusterRole for metrics collection
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{.ProjectName}}-metrics
+  labels:
+    app: {{.ProjectName}}
+    component: rbac-metrics
+rules:
+# Allow reading metrics from nodes and pods across the cluster
+- apiGroups: [""]
+  resources: ["nodes", "nodes/metrics", "pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics"]
+  verbs: ["get"]
+
+---
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{.ProjectName}}-metrics
+  labels:
+    app: {{.ProjectName}}
+    component: rbac-metrics
+subjects:
+- kind: ServiceAccount
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+roleRef:
+  kind: ClusterRole
+  name: {{.ProjectName}}-metrics
+  apiGroup: rbac.authorization.k8s.io
+{{end}}
+
+---
+
+# Network Policy for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: security
+spec:
+  podSelector:
+    matchLabels:
+      app: {{.ProjectName}}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from other pods in the same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+    ports:
+    - protocol: TCP
+      port: {{.Port}}
+{{if .EnableObservability}}
+    - protocol: TCP
+      port: 9090  # metrics
+    - protocol: TCP
+      port: 8080  # health
+{{end}}
+{{if .EnableServiceMesh}}
+  # Allow ingress from Istio proxy
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: {{.Port}}
+{{if .EnableObservability}}
+    - protocol: TCP
+      port: 9090
+    - protocol: TCP
+      port: 8080
+{{end}}
+{{end}}
+  egress:
+  # Allow egress to DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow egress to other services in the cluster
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 80
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: {{.Port}}
+{{if ne .DatabaseType "none"}}
+  # Allow egress to database
+  - to: []
+    ports:
+    {{if eq .DatabaseType "postgres"}}
+    - protocol: TCP
+      port: 5432
+    {{else if eq .DatabaseType "mysql"}}
+    - protocol: TCP
+      port: 3306
+    {{else if eq .DatabaseType "mongodb"}}
+    - protocol: TCP
+      port: 27017
+    {{else if eq .DatabaseType "redis"}}
+    - protocol: TCP
+      port: 6379
+    {{end}}
+{{end}}
+{{if .EnableObservability}}
+  # Allow egress to observability services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus
+    - protocol: TCP
+      port: 14268 # Jaeger
+    - protocol: TCP
+      port: 6831  # Jaeger UDP
+    - protocol: UDP
+      port: 6831  # Jaeger UDP
+{{end}}
+
+---
+
+{{if .EnableObservability}}
+# Pod Security Policy (if enabled in cluster)
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: {{.ProjectName}}
+  labels:
+    app: {{.ProjectName}}
+    component: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: true
+
+---
+
+# ClusterRole for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{.ProjectName}}-psp
+  labels:
+    app: {{.ProjectName}}
+    component: security
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - {{.ProjectName}}
+
+---
+
+# ClusterRoleBinding for Pod Security Policy
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{.ProjectName}}-psp
+  labels:
+    app: {{.ProjectName}}
+    component: security
+roleRef:
+  kind: ClusterRole
+  name: {{.ProjectName}}-psp
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+{{end}}

@@ -62,6 +62,54 @@ variables:
       - "rest"
       - "nats"
 
+  - name: "EnableObservability"
+    description: "Enable observability features (metrics, tracing, health checks)"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableCircuitBreaker"
+    description: "Enable circuit breaker patterns for resilience"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableRateLimiting"
+    description: "Enable rate limiting middleware"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableAuthentication"
+    description: "Enable JWT authentication middleware"
+    type: "boolean"
+    required: false
+    default: false
+
+  - name: "EnableKubernetes"
+    description: "Generate Kubernetes manifests and configs"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableServiceMesh"
+    description: "Enable service mesh (Istio) configuration"
+    type: "boolean"
+    required: false
+    default: false
+
+  - name: "DatabaseType"
+    description: "Database type for the microservice"
+    type: "string"
+    required: false
+    default: "none"
+    choices:
+      - "none"
+      - "postgres"
+      - "mysql"
+      - "mongodb"
+      - "redis"
+
 files:
   - source: "go.mod.tmpl"
     destination: "go.mod"
@@ -81,11 +129,22 @@ files:
 
   - source: ".github/workflows/deploy.yml.tmpl"
     destination: ".github/workflows/deploy.yml"
+    
   - source: "Makefile.tmpl"
     destination: "Makefile"
 
   - source: ".gitignore.tmpl"
     destination: ".gitignore"
+
+  # Core application files
+  - source: "internal/config/config.go.tmpl"
+    destination: "internal/config/config.go"
+
+  - source: "internal/app/app.go.tmpl"
+    destination: "internal/app/app.go"
+
+  - source: "internal/handler/handler.go.tmpl"
+    destination: "internal/handler/handler.go"
 
   # gRPC related files
   - source: "proto/service.proto.tmpl"
@@ -96,13 +155,45 @@ files:
     destination: "internal/server/grpc.go"
     condition: "{{eq .CommunicationProtocol \"grpc\"}}"
 
-  - source: "internal/handler/handler.go.tmpl"
-    destination: "internal/handler/handler.go"
-
   # REST related files
   - source: "internal/server/http.go.tmpl"
     destination: "internal/server/http.go"
     condition: "{{eq .CommunicationProtocol \"rest\"}}"
+
+  # Health checks and observability
+  - source: "internal/health/health.go.tmpl"
+    destination: "internal/health/health.go"
+    condition: "{{.EnableObservability}}"
+
+  - source: "internal/metrics/metrics.go.tmpl"
+    destination: "internal/metrics/metrics.go"
+    condition: "{{.EnableObservability}}"
+
+  - source: "internal/tracing/tracing.go.tmpl"
+    destination: "internal/tracing/tracing.go"
+    condition: "{{.EnableObservability}}"
+
+  # Middleware
+  - source: "internal/middleware/circuit_breaker.go.tmpl"
+    destination: "internal/middleware/circuit_breaker.go"
+    condition: "{{.EnableCircuitBreaker}}"
+
+  - source: "internal/middleware/rate_limiter.go.tmpl"
+    destination: "internal/middleware/rate_limiter.go"
+    condition: "{{.EnableRateLimiting}}"
+
+  - source: "internal/middleware/auth.go.tmpl"
+    destination: "internal/middleware/auth.go"
+    condition: "{{.EnableAuthentication}}"
+
+  - source: "internal/middleware/logging.go.tmpl"
+    destination: "internal/middleware/logging.go"
+
+  - source: "internal/middleware/recovery.go.tmpl"
+    destination: "internal/middleware/recovery.go"
+
+  - source: "internal/middleware/cors.go.tmpl"
+    destination: "internal/middleware/cors.go"
 
   # Service Discovery related files
   - source: "internal/discovery/consul.go.tmpl"
@@ -113,29 +204,119 @@ files:
     destination: "internal/discovery/kubernetes.go"
     condition: "{{eq .ServiceDiscovery \"kubernetes\"}}"
 
+  # Database files
+  - source: "internal/database/postgres.go.tmpl"
+    destination: "internal/database/postgres.go"
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+
+  - source: "internal/database/mysql.go.tmpl"
+    destination: "internal/database/mysql.go"
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+
+  - source: "internal/database/mongodb.go.tmpl"
+    destination: "internal/database/mongodb.go"
+    condition: "{{eq .DatabaseType \"mongodb\"}}"
+
+  - source: "internal/database/redis.go.tmpl"
+    destination: "internal/database/redis.go"
+    condition: "{{eq .DatabaseType \"redis\"}}"
+
+  # Kubernetes manifests
+  - source: "deployments/k8s/deployment.yaml.tmpl"
+    destination: "deployments/k8s/deployment.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  - source: "deployments/k8s/service.yaml.tmpl"
+    destination: "deployments/k8s/service.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  - source: "deployments/k8s/configmap.yaml.tmpl"
+    destination: "deployments/k8s/configmap.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  - source: "deployments/k8s/serviceaccount.yaml.tmpl"
+    destination: "deployments/k8s/serviceaccount.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  - source: "deployments/k8s/rbac.yaml.tmpl"
+    destination: "deployments/k8s/rbac.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  # Service mesh configuration
+  - source: "deployments/istio/virtualservice.yaml.tmpl"
+    destination: "deployments/istio/virtualservice.yaml"
+    condition: "{{.EnableServiceMesh}}"
+
+  - source: "deployments/istio/destinationrule.yaml.tmpl"
+    destination: "deployments/istio/destinationrule.yaml"
+    condition: "{{.EnableServiceMesh}}"
+
+  - source: "deployments/istio/peerauthentication.yaml.tmpl"
+    destination: "deployments/istio/peerauthentication.yaml"
+    condition: "{{.EnableServiceMesh}}"
+
+  # Testing files
+  - source: "tests/integration_test.go.tmpl"
+    destination: "tests/integration_test.go"
+
+  - source: "tests/health_test.go.tmpl"
+    destination: "tests/health_test.go"
+    condition: "{{.EnableObservability}}"
+
   # Configuration
   - source: "configs/config.yaml.tmpl"
     destination: "configs/config.yaml"
 
+  - source: "configs/local.yaml.tmpl"
+    destination: "configs/local.yaml"
+
+  - source: "configs/production.yaml.tmpl"
+    destination: "configs/production.yaml"
+
+  # Development tools
+  - source: "scripts/generate.sh.tmpl"
+    destination: "scripts/generate.sh"
+
+  - source: "scripts/test.sh.tmpl"
+    destination: "scripts/test.sh"
+
+  - source: "docker-compose.yml.tmpl"
+    destination: "docker-compose.yml"
+
 dependencies:
+  # Core dependencies
+  - module: "github.com/spf13/viper"
+    version: "v1.17.0"
+  - module: "github.com/spf13/cobra"
+    version: "v1.8.0"
+  
+  # gRPC and Protocol Buffers
   - module: "google.golang.org/grpc"
     version: "v1.73.0"
     condition: "{{eq .CommunicationProtocol \"grpc\"}}"
   - module: "google.golang.org/protobuf"
     version: "v1.36.6"
     condition: "{{eq .CommunicationProtocol \"grpc\"}}"
+  
+  # HTTP frameworks
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+    condition: "{{eq .CommunicationProtocol \"rest\"}}"
+  
+  # Service Discovery
   - module: "github.com/hashicorp/consul/api"
     version: "v1.25.1"
     condition: "{{eq .ServiceDiscovery \"consul\"}}"
   - module: "k8s.io/client-go"
     version: "v0.28.3"
     condition: "{{eq .ServiceDiscovery \"kubernetes\"}}"
+  
+  # Message queues
   - module: "github.com/nats-io/nats.go"
     version: "v1.30.0"
     condition: "{{eq .CommunicationProtocol \"nats\"}}"
-  - module: "github.com/gin-gonic/gin"
-    version: "v1.9.1"
-    condition: "{{eq .CommunicationProtocol \"rest\"}}"
+  
+  # Logging
   - module: "go.uber.org/zap"
     version: "v1.26.0"
     condition: "{{eq .Logger \"zap\"}}"
@@ -145,6 +326,75 @@ dependencies:
   - module: "github.com/rs/zerolog"
     version: "v1.31.0"
     condition: "{{eq .Logger \"zerolog\"}}"
+  
+  # Observability
+  - module: "go.opentelemetry.io/otel"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/trace"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/sdk"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/exporters/jaeger"
+    version: "v1.17.0"
+    condition: "{{.EnableObservability}}"
+  - module: "github.com/prometheus/client_golang"
+    version: "v1.17.0"
+    condition: "{{.EnableObservability}}"
+  
+  # Circuit breaker and resilience
+  - module: "github.com/sony/gobreaker"
+    version: "v0.5.0"
+    condition: "{{.EnableCircuitBreaker}}"
+  
+  # Rate limiting
+  - module: "golang.org/x/time"
+    version: "v0.5.0"
+    condition: "{{.EnableRateLimiting}}"
+  
+  # Authentication
+  - module: "github.com/golang-jwt/jwt/v5"
+    version: "v5.0.0"
+    condition: "{{.EnableAuthentication}}"
+  
+  # Database drivers
+  - module: "github.com/lib/pq"
+    version: "v1.10.9"
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - module: "github.com/go-sql-driver/mysql"
+    version: "v1.7.1"
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+  - module: "go.mongodb.org/mongo-driver"
+    version: "v1.12.1"
+    condition: "{{eq .DatabaseType \"mongodb\"}}"
+  - module: "github.com/redis/go-redis/v9"
+    version: "v9.2.1"
+    condition: "{{eq .DatabaseType \"redis\"}}"
+  
+  # ORM/Database toolkit
+  - module: "gorm.io/gorm"
+    version: "v1.25.5"
+    condition: "{{or (eq .DatabaseType \"postgres\") (eq .DatabaseType \"mysql\")}}"
+  - module: "gorm.io/driver/postgres"
+    version: "v1.5.4"
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - module: "gorm.io/driver/mysql"
+    version: "v1.5.2"
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+  
+  # Testing
+  - module: "github.com/stretchr/testify"
+    version: "v1.8.4"
+  - module: "github.com/testcontainers/testcontainers-go"
+    version: "v0.24.1"
+  
+  # Utilities
+  - module: "github.com/google/uuid"
+    version: "v1.4.0"
+  - module: "golang.org/x/sync"
+    version: "v0.5.0"
 
 post_hooks:
   - name: "go_mod_tidy"

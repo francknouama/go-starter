@@ -1,0 +1,338 @@
+package tracing
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
+
+	"{{.ModulePath}}/internal/config"
+)
+
+// Tracer wraps OpenTelemetry tracer with configuration
+type Tracer struct {
+	tracer   oteltrace.Tracer
+	provider *trace.TracerProvider
+	config   *config.Config
+{{if eq .Logger "zap"}}
+	logger   *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+}
+
+// NewTracer creates a new tracer instance
+func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) (*Tracer, error) {
+	if !cfg.Observability.Tracing.Enabled {
+		// Return a no-op tracer
+		return &Tracer{
+			tracer: otel.Tracer("noop"),
+			config: cfg,
+{{if ne .Logger "zerolog"}}
+			logger: logger,
+{{end}}
+		}, nil
+	}
+
+	// Create Jaeger exporter
+	exp, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(cfg.Observability.Tracing.Endpoint)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Jaeger exporter: %w", err)
+	}
+
+	// Create resource
+	res, err := resource.New(context.Background(),
+		resource.WithAttributes(
+			semconv.ServiceName(cfg.Observability.Tracing.ServiceName),
+			semconv.ServiceVersion("1.0.0"), // This could be injected during build
+			attribute.String("environment", "production"), // This could be configurable
+		),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create resource: %w", err)
+	}
+
+	// Create trace provider
+	tp := trace.NewTracerProvider(
+		trace.WithBatcher(exp),
+		trace.WithResource(res),
+		trace.WithSampler(trace.TraceIDRatioBased(cfg.Observability.Tracing.SampleRate)),
+	)
+
+	// Set global trace provider
+	otel.SetTracerProvider(tp)
+
+	// Set global text map propagator
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	tracer := otel.Tracer(cfg.Observability.Tracing.ServiceName)
+
+{{if eq .Logger "zap"}}
+	logger.Info("Tracing initialized",
+		zap.String("service_name", cfg.Observability.Tracing.ServiceName),
+		zap.String("endpoint", cfg.Observability.Tracing.Endpoint),
+		zap.Float64("sample_rate", cfg.Observability.Tracing.SampleRate))
+{{else if eq .Logger "logrus"}}
+	logger.WithFields(logrus.Fields{
+		"service_name": cfg.Observability.Tracing.ServiceName,
+		"endpoint":     cfg.Observability.Tracing.Endpoint,
+		"sample_rate":  cfg.Observability.Tracing.SampleRate,
+	}).Info("Tracing initialized")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Str("service_name", cfg.Observability.Tracing.ServiceName).
+		Str("endpoint", cfg.Observability.Tracing.Endpoint).
+		Float64("sample_rate", cfg.Observability.Tracing.SampleRate).
+		Msg("Tracing initialized")
+{{else}}
+	logger.Info("Tracing initialized",
+		"service_name", cfg.Observability.Tracing.ServiceName,
+		"endpoint", cfg.Observability.Tracing.Endpoint,
+		"sample_rate", cfg.Observability.Tracing.SampleRate)
+{{end}}
+
+	return &Tracer{
+		tracer:   tracer,
+		provider: tp,
+		config:   cfg,
+{{if ne .Logger "zerolog"}}
+		logger:   logger,
+{{end}}
+	}, nil
+}
+
+// Start starts a new span
+func (t *Tracer) Start(ctx context.Context, operationName string, opts ...oteltrace.SpanStartOption) (context.Context, oteltrace.Span) {
+	return t.tracer.Start(ctx, operationName, opts...)
+}
+
+// StartSpan is a convenience method that starts a span and returns it
+func (t *Tracer) StartSpan(ctx context.Context, operationName string, opts ...oteltrace.SpanStartOption) (context.Context, oteltrace.Span) {
+	return t.Start(ctx, operationName, opts...)
+}
+
+// StartHTTPServerSpan starts a span for an HTTP server request
+func (t *Tracer) StartHTTPServerSpan(ctx context.Context, method, path string) (context.Context, oteltrace.Span) {
+	return t.tracer.Start(ctx, fmt.Sprintf("%s %s", method, path),
+		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
+		oteltrace.WithAttributes(
+			semconv.HTTPMethod(method),
+			semconv.HTTPRoute(path),
+			semconv.HTTPScheme("http"),
+		),
+	)
+}
+
+// StartHTTPClientSpan starts a span for an HTTP client request
+func (t *Tracer) StartHTTPClientSpan(ctx context.Context, method, url string) (context.Context, oteltrace.Span) {
+	return t.tracer.Start(ctx, fmt.Sprintf("%s %s", method, url),
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(
+			semconv.HTTPMethod(method),
+			semconv.HTTPURL(url),
+		),
+	)
+}
+
+{{if eq .CommunicationProtocol "grpc"}}
+// StartGRPCServerSpan starts a span for a gRPC server request
+func (t *Tracer) StartGRPCServerSpan(ctx context.Context, method string) (context.Context, oteltrace.Span) {
+	return t.tracer.Start(ctx, method,
+		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
+		oteltrace.WithAttributes(
+			semconv.RPCSystem("grpc"),
+			semconv.RPCService("{{.ProjectName}}"),
+			semconv.RPCMethod(method),
+		),
+	)
+}
+
+// StartGRPCClientSpan starts a span for a gRPC client request
+func (t *Tracer) StartGRPCClientSpan(ctx context.Context, service, method string) (context.Context, oteltrace.Span) {
+	return t.tracer.Start(ctx, fmt.Sprintf("%s/%s", service, method),
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(
+			semconv.RPCSystem("grpc"),
+			semconv.RPCService(service),
+			semconv.RPCMethod(method),
+		),
+	)
+}
+{{end}}
+
+// StartDatabaseSpan starts a span for a database operation
+func (t *Tracer) StartDatabaseSpan(ctx context.Context, operation, table string) (context.Context, oteltrace.Span) {
+	return t.tracer.Start(ctx, fmt.Sprintf("db.%s %s", operation, table),
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(
+			semconv.DBSystem("{{.DatabaseType}}"),
+			semconv.DBOperation(operation),
+			attribute.String("db.table", table),
+		),
+	)
+}
+
+// AddEvent adds an event to the current span
+func (t *Tracer) AddEvent(ctx context.Context, name string, attrs ...attribute.KeyValue) {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil {
+		span.AddEvent(name, oteltrace.WithAttributes(attrs...))
+	}
+}
+
+// SetError sets an error on the current span
+func (t *Tracer) SetError(ctx context.Context, err error) {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil && err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+}
+
+// SetAttributes sets attributes on the current span
+func (t *Tracer) SetAttributes(ctx context.Context, attrs ...attribute.KeyValue) {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil {
+		span.SetAttributes(attrs...)
+	}
+}
+
+// GetTraceID returns the trace ID from the current span
+func (t *Tracer) GetTraceID(ctx context.Context) string {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil {
+		return span.SpanContext().TraceID().String()
+	}
+	return ""
+}
+
+// GetSpanID returns the span ID from the current span
+func (t *Tracer) GetSpanID(ctx context.Context) string {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil {
+		return span.SpanContext().SpanID().String()
+	}
+	return ""
+}
+
+// Shutdown gracefully shuts down the tracer
+func (t *Tracer) Shutdown(ctx context.Context) error {
+	if t.provider == nil {
+		return nil
+	}
+
+{{if eq .Logger "zap"}}
+	t.logger.Info("Shutting down tracer")
+{{else if eq .Logger "logrus"}}
+	t.logger.Info("Shutting down tracer")
+{{else if eq .Logger "zerolog"}}
+	log.Info().Msg("Shutting down tracer")
+{{else}}
+	t.logger.Info("Shutting down tracer")
+{{end}}
+
+	return t.provider.Shutdown(ctx)
+}
+
+// SpanFromContext extracts the span from the context
+func SpanFromContext(ctx context.Context) oteltrace.Span {
+	return oteltrace.SpanFromContext(ctx)
+}
+
+// ContextWithSpan returns a new context with the span
+func ContextWithSpan(ctx context.Context, span oteltrace.Span) context.Context {
+	return oteltrace.ContextWithSpan(ctx, span)
+}
+
+// TracingMiddleware returns an HTTP middleware that creates spans for requests
+func (t *Tracer) TracingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract trace context from headers
+		ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		
+		// Start a new span
+		ctx, span := t.StartHTTPServerSpan(ctx, r.Method, r.URL.Path)
+		defer span.End()
+
+		// Add request attributes
+		span.SetAttributes(
+			semconv.HTTPRequestContentLength(int(r.ContentLength)),
+			semconv.HTTPUserAgent(r.UserAgent()),
+			semconv.HTTPClientIP(r.RemoteAddr),
+		)
+
+		// Create a response recorder to capture the status code
+		recorder := &responseRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		
+		// Continue with the request
+		next.ServeHTTP(recorder, r.WithContext(ctx))
+		
+		// Add response attributes
+		span.SetAttributes(
+			semconv.HTTPStatusCode(recorder.statusCode),
+		)
+
+		// Set span status based on HTTP status code
+		if recorder.statusCode >= 400 {
+			span.SetStatus(codes.Error, fmt.Sprintf("HTTP %d", recorder.statusCode))
+		}
+	})
+}
+
+// responseRecorder captures the HTTP status code for tracing
+type responseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	r.statusCode = statusCode
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+// Helper function to add common attributes
+func WithUserID(userID string) attribute.KeyValue {
+	return attribute.String("user.id", userID)
+}
+
+func WithRequestID(requestID string) attribute.KeyValue {
+	return attribute.String("request.id", requestID)
+}
+
+func WithOperation(operation string) attribute.KeyValue {
+	return attribute.String("operation", operation)
+}
+
+func WithEntityID(entityID string) attribute.KeyValue {
+	return attribute.String("entity.id", entityID)
+}
+
+func WithTenantID(tenantID string) attribute.KeyValue {
+	return attribute.String("tenant.id", tenantID)
+}
