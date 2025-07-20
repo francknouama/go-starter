@@ -21,8 +21,10 @@ import (
 	"github.com/go-chi/chi/v5/middleware"{{end}}{{if and (eq .Framework "stdlib") (ne .AuthType "") (ne .DatabaseDriver "")}}	"strings"{{end}}
 
 	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/errors"
 	"{{.ModulePath}}/internal/handlers"
 	internalLogger "{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/middleware"
 {{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/database"
 	"{{.ModulePath}}/internal/repository"
@@ -58,6 +60,12 @@ func main() {
 		"environment": cfg.Environment,
 	})
 
+	// Initialize security middleware
+	securityHeaders := middleware.DefaultSecurityHeaders()
+	validationConfig := middleware.DefaultValidationConfig()
+	requestIDConfig := middleware.DefaultRequestIDConfig()
+	errorHandler := errors.NewErrorHandler(appLogger)
+
 {{- if ne .DatabaseDriver ""}}
 	// Initialize database
 	db, err := database.Connect(cfg.Database, appLogger)
@@ -92,7 +100,12 @@ func main() {
 	}
 	router := gin.New()
 	
-	// Add middleware 
+	// Add security middleware
+	router.Use(requestIDConfig.GinRequestIDMiddleware())
+	router.Use(securityHeaders.GinSecurityHeaders())
+	router.Use(validationConfig.GinValidationMiddleware())
+	
+	// Add standard middleware 
 	router.Use(gin.Logger())
 	router.Use(gin.Recovery())
 
@@ -107,7 +120,7 @@ func main() {
 		// Public routes
 		public := v1.Group("/")
 		{
-			authHandler := handlers.NewAuthHandler(authService)
+			authHandler := handlers.NewAuthHandler(authService, errorHandler)
 			public.POST("/auth/login", authHandler.Login)
 			public.POST("/auth/register", authHandler.Register)
 		}
@@ -143,7 +156,12 @@ func main() {
 	}{{end}}{{if eq .Framework "echo"}}	router := echo.New()
 	router.HideBanner = true
 	
-	// Add middleware
+	// Add security middleware
+	router.Use(requestIDConfig.EchoRequestIDMiddleware())
+	router.Use(securityHeaders.EchoSecurityHeaders())
+	router.Use(validationConfig.EchoValidationMiddleware())
+	
+	// Add standard middleware
 	router.Use(middleware.Logger())
 	router.Use(middleware.Recover())
 	router.Use(middleware.CORS())
@@ -186,7 +204,12 @@ func main() {
 		DisableStartupMessage: true,
 	})
 	
-	// Add middleware
+	// Add security middleware
+	router.Use(requestIDConfig.FiberRequestIDMiddleware())
+	router.Use(securityHeaders.FiberSecurityHeaders())
+	router.Use(validationConfig.FiberValidationMiddleware())
+	
+	// Add standard middleware
 	router.Use(logger.New())
 	router.Use(recover.New())
 	router.Use(cors.New())
@@ -227,7 +250,12 @@ func main() {
 {{- end}}
 {{- end}}{{end}}{{if eq .Framework "chi"}}	router := chi.NewRouter()
 	
-	// Add middleware
+	// Add security middleware
+	router.Use(requestIDConfig.ChiRequestIDMiddleware())
+	router.Use(securityHeaders.ChiSecurityHeaders())
+	router.Use(validationConfig.ChiValidationMiddleware())
+	
+	// Add standard middleware
 	router.Use(middleware.Logger)
 	router.Use(middleware.Recoverer)
 
@@ -266,6 +294,9 @@ func main() {
 {{- end}}
 	}){{end}}{{if eq .Framework "stdlib"}}	// Standard library HTTP mux
 	mux := http.NewServeMux()
+	
+	// Wrap mux with security middleware
+	securedMux := requestIDConfig.StdlibRequestIDMiddleware()(securityHeaders.StdlibSecurityHeaders()(validationConfig.StdlibValidationMiddleware()(mux)))
 
 	// Health check routes
 	mux.HandleFunc("/health", handlers.HealthCheck)
@@ -355,7 +386,7 @@ func main() {
 {{end}}{{if eq .Framework "echo"}}		if err := router.Start(addr); err != nil {
 {{end}}{{if eq .Framework "fiber"}}		if err := router.Listen(addr); err != nil {
 {{end}}{{if eq .Framework "chi"}}		if err := http.ListenAndServe(addr, router); err != nil {
-{{end}}{{if eq .Framework "stdlib"}}		if err := http.ListenAndServe(addr, mux); err != nil {
+{{end}}{{if eq .Framework "stdlib"}}		if err := http.ListenAndServe(addr, securedMux); err != nil {
 {{end}}			appLogger.ErrorWith("Failed to start server", internalLogger.Fields{"error": err})
 			os.Exit(1)
 		}

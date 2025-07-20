@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/errors"
 	"{{.ModulePath}}/internal/models"
 	"{{.ModulePath}}/internal/services"
 )
@@ -12,12 +13,14 @@ import (
 // AuthHandler handles authentication-related HTTP requests
 type AuthHandler struct {
 	authService services.AuthService
+	errorHandler *errors.ErrorHandler
 }
 
 // NewAuthHandler creates a new auth handler
-func NewAuthHandler(authService services.AuthService) *AuthHandler {
+func NewAuthHandler(authService services.AuthService, errorHandler *errors.ErrorHandler) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
+		errorHandler: errorHandler,
 	}
 }
 
@@ -25,26 +28,15 @@ func NewAuthHandler(authService services.AuthService) *AuthHandler {
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req models.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
-			"code":  "INVALID_REQUEST_DATA",
-		})
+		status, response := h.errorHandler.HandleError(errors.ErrValidationFailed.WithInternalError(err), c.GetString("request_id"))
+		c.JSON(status, response)
 		return
 	}
 
 	token, user, err := h.authService.Login(req.Email, req.Password)
 	if err != nil {
-		if err.Error() == "invalid credentials" {
-			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "Invalid credentials",
-				"code":  "INVALID_CREDENTIALS",
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Authentication failed",
-			"code":  "AUTH_ERROR",
-		})
+		status, response := h.errorHandler.HandleError(err, c.GetString("request_id"))
+		c.JSON(status, response)
 		return
 	}
 
@@ -58,26 +50,15 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req models.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "Invalid request data",
-			"code":  "INVALID_REQUEST_DATA",
-		})
+		status, response := h.errorHandler.HandleError(errors.ErrValidationFailed.WithInternalError(err), c.GetString("request_id"))
+		c.JSON(status, response)
 		return
 	}
 
 	user, err := h.authService.Register(req)
 	if err != nil {
-		if err.Error() == "user already exists" {
-			c.JSON(http.StatusConflict, gin.H{
-				"error": "User already exists",
-				"code":  "USER_EXISTS",
-			})
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": "Registration failed",
-			"code":  "REGISTRATION_ERROR",
-		})
+		status, response := h.errorHandler.HandleError(err, c.GetString("request_id"))
+		c.JSON(status, response)
 		return
 	}
 

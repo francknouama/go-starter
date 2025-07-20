@@ -1,0 +1,320 @@
+// Package middleware provides input validation middleware to prevent common attacks
+package middleware
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+	"strings"
+)
+
+// ValidationConfig holds validation middleware configuration
+type ValidationConfig struct {
+	// MaxRequestSize limits request body size (in bytes)
+	MaxRequestSize int64
+	// AllowedContentTypes restricts accepted content types
+	AllowedContentTypes []string
+	// RequireContentType enforces content-type header presence
+	RequireContentType bool
+	// MaxHeaderSize limits individual header size
+	MaxHeaderSize int
+	// MaxURILength limits URI length
+	MaxURILength int
+	// AllowedMethods restricts HTTP methods
+	AllowedMethods []string
+}
+
+// DefaultValidationConfig returns secure default validation configuration
+func DefaultValidationConfig() *ValidationConfig {
+	return &ValidationConfig{
+		MaxRequestSize:      10 << 20, // 10 MB
+		AllowedContentTypes: []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"},
+		RequireContentType:  true,
+		MaxHeaderSize:       8192, // 8 KB
+		MaxURILength:        2048, // 2 KB
+		AllowedMethods:      []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"},
+	}
+}
+
+{{- if eq .Framework "gin"}}
+// GinValidationMiddleware returns Gin middleware for request validation
+func (vc *ValidationConfig) GinValidationMiddleware() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		if err := vc.validateRequest(c.Request); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR",
+				"details": err.Error(),
+			})
+			c.Abort()
+			return
+		}
+		
+		// Limit request body size
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, vc.MaxRequestSize)
+		c.Next()
+	})
+}
+{{- else if eq .Framework "echo"}}
+// EchoValidationMiddleware returns Echo middleware for request validation
+func (vc *ValidationConfig) EchoValidationMiddleware() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if err := vc.validateRequest(c.Request()); err != nil {
+				return c.JSON(http.StatusBadRequest, map[string]interface{}{
+					"error": "Request validation failed",
+					"code":  "VALIDATION_ERROR",
+					"details": err.Error(),
+				})
+			}
+			
+			// Limit request body size
+			c.Request().Body = http.MaxBytesReader(c.Response().Writer, c.Request().Body, vc.MaxRequestSize)
+			return next(c)
+		}
+	}
+}
+{{- else if eq .Framework "fiber"}}
+// FiberValidationMiddleware returns Fiber middleware for request validation
+func (vc *ValidationConfig) FiberValidationMiddleware() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if err := vc.validateFiberRequest(c); err != nil {
+			return c.Status(http.StatusBadRequest).JSON(fiber.Map{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR",
+				"details": err.Error(),
+			})
+		}
+		
+		return c.Next()
+	}
+}
+
+func (vc *ValidationConfig) validateFiberRequest(c *fiber.Ctx) error {
+	// Validate content type
+	if vc.RequireContentType && len(c.Body()) > 0 {
+		contentType := c.Get("Content-Type")
+		if contentType == "" {
+			return fmt.Errorf("content-type header required")
+		}
+		
+		if !vc.isAllowedContentType(contentType) {
+			return fmt.Errorf("unsupported content type: %s", contentType)
+		}
+	}
+	
+	// Validate request size
+	if len(c.Body()) > int(vc.MaxRequestSize) {
+		return fmt.Errorf("request body too large")
+	}
+	
+	// Validate URI length
+	if len(c.OriginalURL()) > vc.MaxURILength {
+		return fmt.Errorf("URI too long")
+	}
+	
+	// Validate HTTP method
+	if !vc.isAllowedMethod(c.Method()) {
+		return fmt.Errorf("method not allowed: %s", c.Method())
+	}
+	
+	return nil
+}
+{{- else if eq .Framework "chi"}}
+// ChiValidationMiddleware returns Chi middleware for request validation
+func (vc *ValidationConfig) ChiValidationMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := vc.validateRequest(r); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(fmt.Sprintf(`{"error":"Request validation failed","code":"VALIDATION_ERROR","details":"%s"}`, err.Error())))
+				return
+			}
+			
+			// Limit request body size
+			r.Body = http.MaxBytesReader(w, r.Body, vc.MaxRequestSize)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- else}}
+// StdlibValidationMiddleware returns standard library middleware for request validation
+func (vc *ValidationConfig) StdlibValidationMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := vc.validateRequest(r); err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(fmt.Sprintf(`{"error":"Request validation failed","code":"VALIDATION_ERROR","details":"%s"}`, err.Error())))
+				return
+			}
+			
+			// Limit request body size
+			r.Body = http.MaxBytesReader(w, r.Body, vc.MaxRequestSize)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- end}}
+
+// validateRequest performs comprehensive request validation
+func (vc *ValidationConfig) validateRequest(r *http.Request) error {
+	// Validate content type for requests with body
+	if vc.RequireContentType && r.ContentLength > 0 {
+		contentType := r.Header.Get("Content-Type")
+		if contentType == "" {
+			return fmt.Errorf("content-type header required")
+		}
+		
+		if !vc.isAllowedContentType(contentType) {
+			return fmt.Errorf("unsupported content type: %s", contentType)
+		}
+	}
+	
+	// Validate request size based on Content-Length header
+	if r.ContentLength > vc.MaxRequestSize {
+		return fmt.Errorf("request body too large")
+	}
+	
+	// Validate individual header sizes
+	for name, values := range r.Header {
+		for _, value := range values {
+			if len(name)+len(value) > vc.MaxHeaderSize {
+				return fmt.Errorf("header too large: %s", name)
+			}
+		}
+	}
+	
+	// Validate URI length
+	if len(r.RequestURI) > vc.MaxURILength {
+		return fmt.Errorf("URI too long")
+	}
+	
+	// Validate HTTP method
+	if !vc.isAllowedMethod(r.Method) {
+		return fmt.Errorf("method not allowed: %s", r.Method)
+	}
+	
+	return nil
+}
+
+// isAllowedContentType checks if content type is in allowed list
+func (vc *ValidationConfig) isAllowedContentType(contentType string) bool {
+	// Extract base content type (ignore charset, boundary, etc.)
+	baseType := strings.Split(contentType, ";")[0]
+	baseType = strings.TrimSpace(strings.ToLower(baseType))
+	
+	for _, allowed := range vc.AllowedContentTypes {
+		if strings.ToLower(allowed) == baseType {
+			return true
+		}
+	}
+	return false
+}
+
+// isAllowedMethod checks if HTTP method is in allowed list
+func (vc *ValidationConfig) isAllowedMethod(method string) bool {
+	method = strings.ToUpper(method)
+	for _, allowed := range vc.AllowedMethods {
+		if strings.ToUpper(allowed) == method {
+			return true
+		}
+	}
+	return false
+}
+
+// InputSanitizer provides input sanitization functions
+type InputSanitizer struct{}
+
+// NewInputSanitizer creates a new input sanitizer
+func NewInputSanitizer() *InputSanitizer {
+	return &InputSanitizer{}
+}
+
+// SanitizeString removes potentially dangerous characters from string input
+func (s *InputSanitizer) SanitizeString(input string) string {
+	// Remove null bytes
+	input = strings.ReplaceAll(input, "\x00", "")
+	
+	// Remove control characters (except tab, newline, carriage return)
+	var result strings.Builder
+	for _, r := range input {
+		if r >= 32 || r == '\t' || r == '\n' || r == '\r' {
+			result.WriteRune(r)
+		}
+	}
+	
+	return strings.TrimSpace(result.String())
+}
+
+// SanitizeEmail validates and sanitizes email input
+func (s *InputSanitizer) SanitizeEmail(email string) (string, error) {
+	email = s.SanitizeString(email)
+	email = strings.ToLower(email)
+	
+	// Basic email validation
+	if len(email) == 0 {
+		return "", fmt.Errorf("email cannot be empty")
+	}
+	
+	if len(email) > 254 {
+		return "", fmt.Errorf("email too long")
+	}
+	
+	// Simple email format check
+	if !strings.Contains(email, "@") || strings.Count(email, "@") != 1 {
+		return "", fmt.Errorf("invalid email format")
+	}
+	
+	parts := strings.Split(email, "@")
+	if len(parts[0]) == 0 || len(parts[1]) == 0 {
+		return "", fmt.Errorf("invalid email format")
+	}
+	
+	return email, nil
+}
+
+// SanitizeName validates and sanitizes name fields
+func (s *InputSanitizer) SanitizeName(name string) (string, error) {
+	name = s.SanitizeString(name)
+	
+	if len(name) == 0 {
+		return "", fmt.Errorf("name cannot be empty")
+	}
+	
+	if len(name) > 100 {
+		return "", fmt.Errorf("name too long")
+	}
+	
+	// Check for suspicious characters
+	suspiciousChars := []string{"<", ">", "\"", "'", "&", "script", "javascript", "onclick"}
+	nameLower := strings.ToLower(name)
+	for _, char := range suspiciousChars {
+		if strings.Contains(nameLower, char) {
+			return "", fmt.Errorf("name contains invalid characters")
+		}
+	}
+	
+	return name, nil
+}
+
+// ValidatePassword performs password validation
+func (s *InputSanitizer) ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters")
+	}
+	
+	if len(password) > 128 {
+		return fmt.Errorf("password too long")
+	}
+	
+	// Check for null bytes or control characters
+	for _, r := range password {
+		if r < 32 && r != '\t' && r != '\n' && r != '\r' {
+			return fmt.Errorf("password contains invalid characters")
+		}
+	}
+	
+	return nil
+}
