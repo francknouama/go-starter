@@ -1,0 +1,253 @@
+// Package errors provides secure error handling that prevents information disclosure
+package errors
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+)
+
+// ErrorCode represents a secure error code that doesn't leak internal details
+type ErrorCode string
+
+const (
+	// ErrCodeNotFound indicates a resource was not found
+	ErrCodeNotFound ErrorCode = "NOT_FOUND"
+	// ErrCodeUnauthorized indicates authentication failure
+	ErrCodeUnauthorized ErrorCode = "UNAUTHORIZED"
+	// ErrCodeForbidden indicates authorization failure
+	ErrCodeForbidden ErrorCode = "FORBIDDEN"
+	// ErrCodeValidation indicates input validation failure
+	ErrCodeValidation ErrorCode = "VALIDATION_ERROR"
+	// ErrCodeRateLimit indicates rate limit exceeded
+	ErrCodeRateLimit ErrorCode = "RATE_LIMIT_EXCEEDED"
+	// ErrCodeInternal indicates an internal server error
+	ErrCodeInternal ErrorCode = "INTERNAL_ERROR"
+	// ErrCodeBadRequest indicates a malformed request
+	ErrCodeBadRequest ErrorCode = "BAD_REQUEST"
+	// ErrCodeConflict indicates a resource conflict
+	ErrCodeConflict ErrorCode = "CONFLICT"
+	// ErrCodeTooLarge indicates request entity too large
+	ErrCodeTooLarge ErrorCode = "REQUEST_TOO_LARGE"
+)
+
+// SecureError represents an error that can be safely returned to clients
+type SecureError struct {
+	Code       ErrorCode `json:"code"`
+	Message    string    `json:"message"`
+	StatusCode int       `json:"-"`
+	// Internal error details - never exposed to client
+	internalError error
+	// Request ID for logging correlation
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// Error implements the error interface
+func (e *SecureError) Error() string {
+	return e.Message
+}
+
+// Internal returns the internal error for logging purposes
+func (e *SecureError) Internal() error {
+	return e.internalError
+}
+
+// ToHTTPResponse returns HTTP status code and response body
+func (e *SecureError) ToHTTPResponse() (int, map[string]interface{}) {
+	response := map[string]interface{}{
+		"error": e.Message,
+		"code":  e.Code,
+	}
+	
+	if e.RequestID != "" {
+		response["request_id"] = e.RequestID
+	}
+	
+	return e.StatusCode, response
+}
+
+// Common secure errors
+var (
+	// ErrUserNotFound indicates user not found (generic message)
+	ErrUserNotFound = &SecureError{
+		Code:       ErrCodeNotFound,
+		Message:    "Resource not found",
+		StatusCode: http.StatusNotFound,
+	}
+	
+	// ErrInvalidCredentials indicates invalid authentication
+	ErrInvalidCredentials = &SecureError{
+		Code:       ErrCodeUnauthorized,
+		Message:    "Invalid credentials",
+		StatusCode: http.StatusUnauthorized,
+	}
+	
+	// ErrUnauthorized indicates missing authentication
+	ErrUnauthorized = &SecureError{
+		Code:       ErrCodeUnauthorized,
+		Message:    "Authentication required",
+		StatusCode: http.StatusUnauthorized,
+	}
+	
+	// ErrForbidden indicates insufficient permissions
+	ErrForbidden = &SecureError{
+		Code:       ErrCodeForbidden,
+		Message:    "Insufficient permissions",
+		StatusCode: http.StatusForbidden,
+	}
+	
+	// ErrValidationFailed indicates input validation failure
+	ErrValidationFailed = &SecureError{
+		Code:       ErrCodeValidation,
+		Message:    "Input validation failed",
+		StatusCode: http.StatusBadRequest,
+	}
+	
+	// ErrRateLimitExceeded indicates rate limit exceeded
+	ErrRateLimitExceeded = &SecureError{
+		Code:       ErrCodeRateLimit,
+		Message:    "Rate limit exceeded",
+		StatusCode: http.StatusTooManyRequests,
+	}
+	
+	// ErrInternalServer indicates internal server error
+	ErrInternalServer = &SecureError{
+		Code:       ErrCodeInternal,
+		Message:    "Internal server error",
+		StatusCode: http.StatusInternalServerError,
+	}
+	
+	// ErrBadRequest indicates malformed request
+	ErrBadRequest = &SecureError{
+		Code:       ErrCodeBadRequest,
+		Message:    "Malformed request",
+		StatusCode: http.StatusBadRequest,
+	}
+	
+	// ErrConflict indicates resource conflict
+	ErrConflict = &SecureError{
+		Code:       ErrCodeConflict,
+		Message:    "Resource conflict",
+		StatusCode: http.StatusConflict,
+	}
+	
+	// ErrRequestTooLarge indicates request entity too large
+	ErrRequestTooLarge = &SecureError{
+		Code:       ErrCodeTooLarge,
+		Message:    "Request entity too large",
+		StatusCode: http.StatusRequestEntityTooLarge,
+	}
+)
+
+// NewSecureError creates a new secure error with internal error for logging
+func NewSecureError(code ErrorCode, message string, statusCode int, internalErr error) *SecureError {
+	return &SecureError{
+		Code:          code,
+		Message:       message,
+		StatusCode:    statusCode,
+		internalError: internalErr,
+	}
+}
+
+// WithRequestID adds request ID to the error for correlation
+func (e *SecureError) WithRequestID(requestID string) *SecureError {
+	e.RequestID = requestID
+	return e
+}
+
+// WithInternalError adds internal error details for logging
+func (e *SecureError) WithInternalError(err error) *SecureError {
+	e.internalError = err
+	return e
+}
+
+// WrapError wraps any error into a secure error, hiding internal details
+func WrapError(err error, requestID string) *SecureError {
+	if err == nil {
+		return nil
+	}
+	
+	// Check if it's already a secure error
+	var secureErr *SecureError
+	if errors.As(err, &secureErr) {
+		return secureErr.WithRequestID(requestID)
+	}
+	
+	// Check for specific error types and map to secure errors
+	switch {
+	case errors.Is(err, errors.New("user not found")):
+		return ErrUserNotFound.WithRequestID(requestID).WithInternalError(err)
+	case errors.Is(err, errors.New("invalid credentials")):
+		return ErrInvalidCredentials.WithRequestID(requestID).WithInternalError(err)
+	case errors.Is(err, errors.New("unauthorized")):
+		return ErrUnauthorized.WithRequestID(requestID).WithInternalError(err)
+	case errors.Is(err, errors.New("forbidden")):
+		return ErrForbidden.WithRequestID(requestID).WithInternalError(err)
+	default:
+		// Generic internal error - don't leak details
+		return ErrInternalServer.WithRequestID(requestID).WithInternalError(err)
+	}
+}
+
+// ErrorHandler provides framework-agnostic error handling
+type ErrorHandler struct {
+	Logger Logger
+}
+
+// Logger interface for error logging
+type Logger interface {
+	ErrorWith(msg string, fields map[string]interface{})
+	WarnWith(msg string, fields map[string]interface{})
+}
+
+// NewErrorHandler creates a new error handler
+func NewErrorHandler(logger Logger) *ErrorHandler {
+	return &ErrorHandler{Logger: logger}
+}
+
+// HandleError processes an error and returns appropriate HTTP response
+func (h *ErrorHandler) HandleError(err error, requestID string) (int, map[string]interface{}) {
+	if err == nil {
+		return http.StatusOK, nil
+	}
+	
+	secureErr := WrapError(err, requestID)
+	
+	// Log internal error details for debugging (never exposed to client)
+	if secureErr.Internal() != nil {
+		h.Logger.ErrorWith("Internal error occurred", map[string]interface{}{
+			"request_id":    requestID,
+			"error_code":    secureErr.Code,
+			"error_message": secureErr.Message,
+			"internal_error": secureErr.Internal().Error(),
+		})
+	} else {
+		h.Logger.WarnWith("Secure error returned", map[string]interface{}{
+			"request_id":    requestID,
+			"error_code":    secureErr.Code,
+			"error_message": secureErr.Message,
+		})
+	}
+	
+	return secureErr.ToHTTPResponse()
+}
+
+// ValidationError creates a validation error with field details
+func ValidationError(message string, field string) *SecureError {
+	return &SecureError{
+		Code:       ErrCodeValidation,
+		Message:    fmt.Sprintf("Validation failed: %s", message),
+		StatusCode: http.StatusBadRequest,
+	}
+}
+
+// DatabaseError wraps database errors to prevent SQL details leakage
+func DatabaseError(err error) *SecureError {
+	// Never expose database details
+	return &SecureError{
+		Code:          ErrCodeInternal,
+		Message:       "Database operation failed",
+		StatusCode:    http.StatusInternalServerError,
+		internalError: err,
+	}
+}

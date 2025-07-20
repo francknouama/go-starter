@@ -1,0 +1,163 @@
+// Package middleware provides security-focused HTTP middleware
+// that can be used across all web framework implementations
+package middleware
+
+import (
+	"net/http"
+)
+
+// SecurityHeaders adds essential security headers to prevent common attacks
+type SecurityHeaders struct {
+	// ContentSecurityPolicy defines CSP header value
+	ContentSecurityPolicy string
+	// StrictTransportSecurity defines HSTS header value  
+	StrictTransportSecurity string
+	// EnableXSSProtection enables X-XSS-Protection header
+	EnableXSSProtection bool
+	// EnableFrameOptions enables X-Frame-Options header
+	EnableFrameOptions bool
+	// EnableContentTypeOptions enables X-Content-Type-Options header
+	EnableContentTypeOptions bool
+	// ReferrerPolicy defines Referrer-Policy header value
+	ReferrerPolicy string
+}
+
+// DefaultSecurityHeaders returns secure default configuration
+func DefaultSecurityHeaders() *SecurityHeaders {
+	return &SecurityHeaders{
+		ContentSecurityPolicy:   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';",
+		StrictTransportSecurity: "max-age=31536000; includeSubDomains; preload",
+		EnableXSSProtection:     true,
+		EnableFrameOptions:      true, 
+		EnableContentTypeOptions: true,
+		ReferrerPolicy:          "strict-origin-when-cross-origin",
+	}
+}
+
+{{- if eq .Framework "gin"}}
+// GinSecurityHeaders returns Gin middleware for security headers
+func (sh *SecurityHeaders) GinSecurityHeaders() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		sh.setHeaders(c.Writer)
+		c.Next()
+	})
+}
+{{- else if eq .Framework "echo"}}
+// EchoSecurityHeaders returns Echo middleware for security headers
+func (sh *SecurityHeaders) EchoSecurityHeaders() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			sh.setHeaders(c.Response().Writer)
+			return next(c)
+		}
+	}
+}
+{{- else if eq .Framework "fiber"}}
+// FiberSecurityHeaders returns Fiber middleware for security headers
+func (sh *SecurityHeaders) FiberSecurityHeaders() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sh.setFiberHeaders(c)
+		return c.Next()
+	}
+}
+
+func (sh *SecurityHeaders) setFiberHeaders(c *fiber.Ctx) {
+	if sh.ContentSecurityPolicy != "" {
+		c.Set("Content-Security-Policy", sh.ContentSecurityPolicy)
+	}
+	if sh.StrictTransportSecurity != "" {
+		c.Set("Strict-Transport-Security", sh.StrictTransportSecurity)
+	}
+	if sh.EnableXSSProtection {
+		c.Set("X-XSS-Protection", "1; mode=block")
+	}
+	if sh.EnableFrameOptions {
+		c.Set("X-Frame-Options", "DENY")
+	}
+	if sh.EnableContentTypeOptions {
+		c.Set("X-Content-Type-Options", "nosniff")
+	}
+	if sh.ReferrerPolicy != "" {
+		c.Set("Referrer-Policy", sh.ReferrerPolicy)
+	}
+}
+{{- else if eq .Framework "chi"}}
+// ChiSecurityHeaders returns Chi middleware for security headers
+func (sh *SecurityHeaders) ChiSecurityHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sh.setHeaders(w)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- else}}
+// StdlibSecurityHeaders returns standard library middleware for security headers
+func (sh *SecurityHeaders) StdlibSecurityHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			sh.setHeaders(w)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- end}}
+
+// setHeaders applies security headers to the response writer
+func (sh *SecurityHeaders) setHeaders(w http.ResponseWriter) {
+	if sh.ContentSecurityPolicy != "" {
+		w.Header().Set("Content-Security-Policy", sh.ContentSecurityPolicy)
+	}
+	if sh.StrictTransportSecurity != "" {
+		w.Header().Set("Strict-Transport-Security", sh.StrictTransportSecurity)
+	}
+	if sh.EnableXSSProtection {
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+	}
+	if sh.EnableFrameOptions {
+		w.Header().Set("X-Frame-Options", "DENY")
+	}
+	if sh.EnableContentTypeOptions {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+	}
+	if sh.ReferrerPolicy != "" {
+		w.Header().Set("Referrer-Policy", sh.ReferrerPolicy)
+	}
+}
+
+// SecurityLevel defines different security header configurations
+type SecurityLevel int
+
+const (
+	// SecurityLevelBasic provides minimal security headers
+	SecurityLevelBasic SecurityLevel = iota
+	// SecurityLevelStandard provides recommended security headers
+	SecurityLevelStandard
+	// SecurityLevelStrict provides maximum security headers
+	SecurityLevelStrict
+)
+
+// NewSecurityHeaders creates security headers based on security level
+func NewSecurityHeaders(level SecurityLevel) *SecurityHeaders {
+	switch level {
+	case SecurityLevelBasic:
+		return &SecurityHeaders{
+			EnableXSSProtection:      true,
+			EnableFrameOptions:       true,
+			EnableContentTypeOptions: true,
+		}
+	case SecurityLevelStandard:
+		return DefaultSecurityHeaders()
+	case SecurityLevelStrict:
+		return &SecurityHeaders{
+			ContentSecurityPolicy:   "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self';",
+			StrictTransportSecurity: "max-age=63072000; includeSubDomains; preload",
+			EnableXSSProtection:     true,
+			EnableFrameOptions:      true,
+			EnableContentTypeOptions: true,
+			ReferrerPolicy:          "no-referrer",
+		}
+	default:
+		return DefaultSecurityHeaders()
+	}
+}
