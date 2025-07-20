@@ -145,6 +145,14 @@ func (p *SurveyPrompter) promptProjectType(config *types.ProjectConfig) error {
 		return err
 	}
 	config.Type = projectType
+	
+	// If CLI type selected, prompt for complexity level
+	if projectType == "cli" {
+		if err := p.promptCLIComplexity(config); err != nil {
+			return err
+		}
+	}
+	
 	return nil
 }
 
@@ -566,4 +574,53 @@ func (p *SurveyPrompter) promptGoVersionSurvey() (string, error) {
 
 	// Extract version number (first part before the dash)
 	return strings.Split(selection, " ")[0], nil
+}
+
+// promptCLIComplexity prompts the user to choose CLI complexity level with clear guidance
+func (p *SurveyPrompter) promptCLIComplexity(config *types.ProjectConfig) error {
+	options := []string{
+		"Simple - Quick scripts & utilities (8 files, minimal deps)",
+		"Standard - Production CLIs (30 files, full features)",
+	}
+
+	prompt := &survey.Select{
+		Message: "Choose CLI complexity level:",
+		Options: options,
+		Help: `CLI Complexity Guide:
+
+• Simple CLI (Recommended for 80% of use cases):
+  - Quick utilities and scripts
+  - Learning Go CLI development  
+  - Internal tools with minimal requirements
+  - Prototyping command-line interfaces
+  - Projects needing < 3 commands
+  - 8 files, single dependency (cobra)
+
+• Standard CLI (Enterprise-grade):
+  - Production CLI tools for distribution
+  - Multiple subcommands (5+)
+  - Configuration file support
+  - Complex business logic
+  - Team collaboration with CI/CD
+  - 30 files, multiple dependencies
+
+💡 Tip: Start simple, migrate to standard when needed`,
+		Default: options[0], // Default to Simple for most users
+	}
+
+	var selection string
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
+		return err
+	}
+
+	// Map selection to complexity and update config
+	if strings.HasPrefix(selection, "Simple") {
+		config.Variables["complexity"] = "simple"
+		config.Variables["blueprint_hint"] = "cli-simple"
+	} else {
+		config.Variables["complexity"] = "standard"
+		config.Variables["blueprint_hint"] = "cli-standard"
+	}
+
+	return nil
 }

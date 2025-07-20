@@ -231,6 +231,13 @@ func (p *BubbleTeaPrompter) GetProjectConfig(initial types.ProjectConfig, advanc
 			return config, err
 		}
 		config.Type = projectType
+		
+		// If CLI type selected, prompt for complexity level
+		if projectType == "cli" {
+			if err := p.promptCLIComplexity(&config); err != nil {
+				return config, err
+			}
+		}
 	}
 
 	// Framework selection based on project type
@@ -477,6 +484,41 @@ func (p *BubbleTeaPrompter) promptAuthentication(config *types.ProjectConfig) er
 	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
 		config.Features.Authentication.Type = "jwt"
 		fmt.Println(selectedStyle.Render("✓ JWT authentication enabled"))
+	}
+
+	return nil
+}
+
+// promptCLIComplexity prompts the user to choose CLI complexity level with clear guidance
+func (p *BubbleTeaPrompter) promptCLIComplexity(config *types.ProjectConfig) error {
+	items := []interfaces.SelectionItem{
+		interfaces.NewSelectionItem(
+			"Simple CLI", 
+			"Quick scripts & utilities (8 files, minimal deps)", 
+			"simple",
+		),
+		interfaces.NewSelectionItem(
+			"Standard CLI", 
+			"Production CLIs (30 files, full features)", 
+			"standard",
+		),
+	}
+
+	selection, err := p.RunSelection("Choose CLI complexity level:", items)
+	if err != nil {
+		return err
+	}
+
+	// Map selection to complexity and update config
+	if config.Variables == nil {
+		config.Variables = make(map[string]string)
+	}
+	
+	config.Variables["complexity"] = selection
+	if selection == "simple" {
+		config.Variables["blueprint_hint"] = "cli-simple"
+	} else {
+		config.Variables["blueprint_hint"] = "cli-standard"
 	}
 
 	return nil

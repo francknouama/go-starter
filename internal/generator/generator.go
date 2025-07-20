@@ -185,6 +185,62 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 	return result, nil
 }
 
+// GenerateInMemory generates a project in memory and returns the file contents
+func (g *Generator) GenerateInMemory(config *types.ProjectConfig, blueprintID string) (map[string][]byte, error) {
+	// Validate configuration
+	if err := g.validateConfig(*config); err != nil {
+		return nil, err
+	}
+
+	// Get template
+	tmpl, err := g.registry.Get(blueprintID)
+	if err != nil {
+		return nil, fmt.Errorf("template not found: %s", blueprintID)
+	}
+
+	// Generate files in memory
+	files := make(map[string][]byte)
+	context := g.createTemplateContext(*config, tmpl)
+
+	for _, file := range tmpl.Files {
+		// Skip files with failing conditions
+		if file.Condition != "" {
+			shouldInclude, err := g.evaluateCondition(file.Condition, context)
+			if err != nil {
+				fmt.Printf("Warning: Failed to evaluate condition %q: %v\n", file.Condition, err)
+				continue
+			}
+			if !shouldInclude {
+				continue
+			}
+		}
+
+		// Process destination path
+		destPath := g.processTemplatePath(file.Destination, *config, &tmpl)
+
+		// Load and process template content
+		content, err := g.loader.LoadTemplateFile(blueprintID, file.Source)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load template %s: %w", file.Source, err)
+		}
+
+		// Execute template
+		goTmpl, err := template.New(file.Source).Funcs(sprig.TxtFuncMap()).Parse(content)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse template %s: %w", file.Source, err)
+		}
+
+		var buf bytes.Buffer
+		if err := goTmpl.Execute(&buf, context); err != nil {
+			return nil, fmt.Errorf("failed to execute template %s: %w", file.Source, err)
+		}
+
+		files[destPath] = buf.Bytes()
+	}
+
+	return files, nil
+}
+
 // Preview shows what would be generated without creating files
 func (g *Generator) Preview(config types.ProjectConfig, outputDir string) error {
 	fmt.Printf("Preview for project '%s':\n", config.Name)
