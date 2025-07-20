@@ -63,9 +63,19 @@ func NewFiberAdapter(
 
 // setupMiddleware configures the middleware chain
 func (f *FiberAdapter) setupMiddleware() {
+	// Request ID middleware
+	f.app.Use(adaptor.HTTPMiddleware(middleware.RequestID()))
+	
+	// Security headers middleware
+	securityConfig := middleware.DefaultSecurityConfig()
+	f.app.Use(adaptor.HTTPMiddleware(middleware.Security(securityConfig)))
+	
 	// CORS middleware
 	corsConfig := middleware.DefaultCORSConfig()
 	f.app.Use(adaptor.HTTPMiddleware(middleware.CORS(corsConfig)))
+	
+	// Content type validation middleware
+	f.app.Use(adaptor.HTTPMiddleware(middleware.ContentTypeValidation()))
 	
 	// Logging middleware
 	loggingConfig := middleware.LoggingConfig{
@@ -73,6 +83,9 @@ func (f *FiberAdapter) setupMiddleware() {
 		Logger:    f.logger,
 	}
 	f.app.Use(adaptor.HTTPMiddleware(middleware.Logging(loggingConfig)))
+	
+	// Error handler middleware
+	f.app.Use(adaptor.HTTPMiddleware(middleware.ErrorHandler(f.logger)))
 }
 
 // setupRoutes configures all the HTTP routes

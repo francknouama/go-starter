@@ -1,0 +1,166 @@
+package middleware
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	
+	"{{.ModulePath}}/internal/application/ports/output"
+)
+
+// ErrorResponse represents a standardized error response
+type ErrorResponse struct {
+	Error     string         `json:"error"`
+	Code      string         `json:"code,omitempty"`
+	RequestID string         `json:"request_id,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
+}
+
+// Common application errors that might be returned by services
+var (
+	ErrNotFound          = errors.New("resource not found")
+	ErrUnauthorized      = errors.New("unauthorized")
+	ErrForbidden         = errors.New("forbidden")
+	ErrBadRequest        = errors.New("bad request")
+	ErrConflict          = errors.New("conflict")
+	ErrInternalServer    = errors.New("internal server error")
+	ErrValidation        = errors.New("validation error")
+	ErrInvalidInput      = errors.New("invalid input")
+)
+
+// ErrorHandler returns a middleware that handles errors in a secure and consistent way
+func ErrorHandler(logger output.LoggerPort) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return &errorHandler{
+			next:   next,
+			logger: logger,
+		}
+	}
+}
+
+type errorHandler struct {
+	next   http.Handler
+	logger output.LoggerPort
+}
+
+func (h *errorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Create a custom response writer to capture errors
+	rw := &responseWriter{
+		ResponseWriter: w,
+		statusCode:     http.StatusOK,
+		written:        false,
+	}
+	
+	// Defer panic recovery
+	defer func() {
+		if rec := recover(); rec != nil {
+			requestID := GetRequestID(r.Context())
+			h.logger.Error("Panic recovered",
+				"panic", rec,
+				"request_id", requestID,
+				"path", r.URL.Path,
+				"method", r.Method,
+			)
+			
+			h.writeErrorResponse(w, http.StatusInternalServerError, ErrorResponse{
+				Error:     "An internal error occurred",
+				Code:      "INTERNAL_ERROR",
+				RequestID: requestID,
+			})
+		}
+	}()
+	
+	h.next.ServeHTTP(rw, r)
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	written    bool
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	if !rw.written {
+		rw.statusCode = code
+		rw.ResponseWriter.WriteHeader(code)
+		rw.written = true
+	}
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.written {
+		rw.WriteHeader(http.StatusOK)
+	}
+	return rw.ResponseWriter.Write(b)
+}
+
+func (h *errorHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, response ErrorResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(response)
+}
+
+// HandleHTTPError is a helper function to handle errors in HTTP handlers
+func HandleHTTPError(w http.ResponseWriter, r *http.Request, err error, logger output.LoggerPort) {
+	requestID := GetRequestID(r.Context())
+	
+	// Log the error
+	logger.Error("Request error",
+		"error", err,
+		"request_id", requestID,
+		"path", r.URL.Path,
+		"method", r.Method,
+	)
+	
+	// Determine status code and message based on error
+	var statusCode int
+	var errorMessage string
+	var errorCode string
+	
+	switch {
+	case errors.Is(err, ErrNotFound):
+		statusCode = http.StatusNotFound
+		errorMessage = "Resource not found"
+		errorCode = "NOT_FOUND"
+	case errors.Is(err, ErrUnauthorized):
+		statusCode = http.StatusUnauthorized
+		errorMessage = "Authentication required"
+		errorCode = "UNAUTHORIZED"
+	case errors.Is(err, ErrForbidden):
+		statusCode = http.StatusForbidden
+		errorMessage = "Access forbidden"
+		errorCode = "FORBIDDEN"
+	case errors.Is(err, ErrBadRequest):
+		statusCode = http.StatusBadRequest
+		errorMessage = "Invalid request"
+		errorCode = "BAD_REQUEST"
+	case errors.Is(err, ErrValidation):
+		statusCode = http.StatusBadRequest
+		errorMessage = "Validation error"
+		errorCode = "VALIDATION_ERROR"
+	case errors.Is(err, ErrInvalidInput):
+		statusCode = http.StatusBadRequest
+		errorMessage = "Invalid input"
+		errorCode = "INVALID_INPUT"
+	case errors.Is(err, ErrConflict):
+		statusCode = http.StatusConflict
+		errorMessage = "Resource conflict"
+		errorCode = "CONFLICT"
+	default:
+		// Don't expose internal error details
+		statusCode = http.StatusInternalServerError
+		errorMessage = "An internal error occurred"
+		errorCode = "INTERNAL_ERROR"
+	}
+	
+	response := ErrorResponse{
+		Error:     errorMessage,
+		Code:      errorCode,
+		RequestID: requestID,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(response)
+}

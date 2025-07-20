@@ -1,0 +1,128 @@
+package middleware
+
+import (
+	"net/http"
+	"strings"
+)
+
+// SecurityConfig represents security headers configuration
+type SecurityConfig struct {
+	// ContentTypeOptions controls X-Content-Type-Options header
+	ContentTypeOptions string
+	// FrameOptions controls X-Frame-Options header
+	FrameOptions string
+	// XSSProtection controls X-XSS-Protection header
+	XSSProtection string
+	// StrictTransportSecurity controls Strict-Transport-Security header
+	StrictTransportSecurity string
+	// ReferrerPolicy controls Referrer-Policy header
+	ReferrerPolicy string
+	// ContentSecurityPolicy controls Content-Security-Policy header
+	ContentSecurityPolicy string
+	// PermissionsPolicy controls Permissions-Policy header
+	PermissionsPolicy string
+}
+
+// DefaultSecurityConfig returns the default security configuration
+func DefaultSecurityConfig() SecurityConfig {
+	return SecurityConfig{
+		ContentTypeOptions:      "nosniff",
+		FrameOptions:           "DENY",
+		XSSProtection:          "1; mode=block",
+		StrictTransportSecurity: "max-age=31536000; includeSubDomains",
+		ReferrerPolicy:         "strict-origin-when-cross-origin",
+		ContentSecurityPolicy:  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';",
+		PermissionsPolicy:      "geolocation=(), microphone=(), camera=()",
+	}
+}
+
+// Security returns a middleware that adds security headers to responses
+func Security(config SecurityConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Set security headers
+			if config.ContentTypeOptions != "" {
+				w.Header().Set("X-Content-Type-Options", config.ContentTypeOptions)
+			}
+			if config.FrameOptions != "" {
+				w.Header().Set("X-Frame-Options", config.FrameOptions)
+			}
+			if config.XSSProtection != "" {
+				w.Header().Set("X-XSS-Protection", config.XSSProtection)
+			}
+			if config.StrictTransportSecurity != "" {
+				w.Header().Set("Strict-Transport-Security", config.StrictTransportSecurity)
+			}
+			if config.ReferrerPolicy != "" {
+				w.Header().Set("Referrer-Policy", config.ReferrerPolicy)
+			}
+			if config.ContentSecurityPolicy != "" {
+				w.Header().Set("Content-Security-Policy", config.ContentSecurityPolicy)
+			}
+			if config.PermissionsPolicy != "" {
+				w.Header().Set("Permissions-Policy", config.PermissionsPolicy)
+			}
+			
+			// Remove server information headers
+			w.Header().Del("X-Powered-By")
+			w.Header().Del("Server")
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ContentTypeValidation returns a middleware that validates Content-Type headers
+func ContentTypeValidation() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip validation for GET, DELETE, HEAD, OPTIONS
+			if r.Method == http.MethodGet || 
+			   r.Method == http.MethodDelete || 
+			   r.Method == http.MethodHead || 
+			   r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			contentType := r.Header.Get("Content-Type")
+			if contentType == "" {
+				http.Error(w, `{"error":"Content-Type header is required"}`, http.StatusBadRequest)
+				return
+			}
+			
+			// Check for valid content types
+			validTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+			valid := false
+			for _, validType := range validTypes {
+				if strings.HasPrefix(strings.ToLower(contentType), validType) {
+					valid = true
+					break
+				}
+			}
+			
+			if !valid {
+				http.Error(w, `{"error":"Unsupported content type"}`, http.StatusUnsupportedMediaType)
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimiter returns a basic rate limiting middleware
+// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate in production
+func RateLimiter() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// TODO: Implement proper rate limiting
+			// Consider using:
+			// - golang.org/x/time/rate for in-memory rate limiting
+			// - github.com/ulule/limiter for distributed rate limiting
+			// - Redis-based rate limiting for multi-instance deployments
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}

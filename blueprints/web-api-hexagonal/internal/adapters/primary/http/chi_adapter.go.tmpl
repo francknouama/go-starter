@@ -60,9 +60,19 @@ func NewChiAdapter(
 
 // setupMiddleware configures the middleware chain
 func (c *ChiAdapter) setupMiddleware() {
+	// Request ID middleware
+	c.router.Use(middleware.RequestID())
+	
+	// Security headers middleware
+	securityConfig := middleware.DefaultSecurityConfig()
+	c.router.Use(middleware.Security(securityConfig))
+	
 	// CORS middleware
 	corsConfig := middleware.DefaultCORSConfig()
 	c.router.Use(middleware.CORS(corsConfig))
+	
+	// Content type validation middleware
+	c.router.Use(middleware.ContentTypeValidation())
 	
 	// Logging middleware
 	loggingConfig := middleware.LoggingConfig{
@@ -70,6 +80,9 @@ func (c *ChiAdapter) setupMiddleware() {
 		Logger:    c.logger,
 	}
 	c.router.Use(middleware.Logging(loggingConfig))
+	
+	// Error handler middleware
+	c.router.Use(middleware.ErrorHandler(c.logger))
 }
 
 // setupRoutes configures all the HTTP routes

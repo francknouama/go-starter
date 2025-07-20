@@ -62,20 +62,38 @@ func NewGinAdapter(
 
 // setupMiddleware configures the middleware chain
 func (g *GinAdapter) setupMiddleware() {
+	// Request ID middleware
+	g.router.Use(wrapMiddleware(middleware.RequestID()))
+	
+	// Security headers middleware
+	securityConfig := middleware.DefaultSecurityConfig()
+	g.router.Use(wrapMiddleware(middleware.Security(securityConfig)))
+	
 	// CORS middleware
 	corsConfig := middleware.DefaultCORSConfig()
-	g.router.Use(gin.WrapH(middleware.CORS(corsConfig)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// This will be replaced by the actual handler
-	}))))
+	g.router.Use(wrapMiddleware(middleware.CORS(corsConfig)))
+	
+	// Content type validation middleware
+	g.router.Use(wrapMiddleware(middleware.ContentTypeValidation()))
 	
 	// Logging middleware
 	loggingConfig := middleware.LoggingConfig{
 		SkipPaths: []string{"/health", "/metrics"},
 		Logger:    g.logger,
 	}
-	g.router.Use(gin.WrapH(middleware.Logging(loggingConfig)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// This will be replaced by the actual handler
-	}))))
+	g.router.Use(wrapMiddleware(middleware.Logging(loggingConfig)))
+	
+	// Error handler middleware
+	g.router.Use(wrapMiddleware(middleware.ErrorHandler(g.logger)))
+}
+
+// wrapMiddleware wraps a standard http.Handler middleware for use with Gin
+func wrapMiddleware(middleware func(http.Handler) http.Handler) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c.Next()
+		})).ServeHTTP(c.Writer, c.Request)
+	}
 }
 
 // setupRoutes configures all the HTTP routes

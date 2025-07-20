@@ -64,9 +64,19 @@ func NewEchoAdapter(
 
 // setupMiddleware configures the middleware chain
 func (e *EchoAdapter) setupMiddleware() {
+	// Request ID middleware
+	e.echo.Use(echo.WrapMiddleware(middleware.RequestID()))
+	
+	// Security headers middleware
+	securityConfig := middleware.DefaultSecurityConfig()
+	e.echo.Use(echo.WrapMiddleware(middleware.Security(securityConfig)))
+	
 	// CORS middleware
 	corsConfig := middleware.DefaultCORSConfig()
 	e.echo.Use(echo.WrapMiddleware(middleware.CORS(corsConfig)))
+	
+	// Content type validation middleware
+	e.echo.Use(echo.WrapMiddleware(middleware.ContentTypeValidation()))
 	
 	// Logging middleware
 	loggingConfig := middleware.LoggingConfig{
@@ -74,6 +84,9 @@ func (e *EchoAdapter) setupMiddleware() {
 		Logger:    e.logger,
 	}
 	e.echo.Use(echo.WrapMiddleware(middleware.Logging(loggingConfig)))
+	
+	// Error handler middleware
+	e.echo.Use(echo.WrapMiddleware(middleware.ErrorHandler(e.logger)))
 }
 
 // setupRoutes configures all the HTTP routes

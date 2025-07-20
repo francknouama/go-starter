@@ -1,0 +1,525 @@
+package middleware
+
+import (
+{{- if eq .Framework "gin"}}
+	"net/http"
+	
+	"github.com/gin-gonic/gin"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/shared/errors"
+{{- else if eq .Framework "echo"}}
+	"net/http"
+	
+	"github.com/labstack/echo/v4"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/shared/errors"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/shared/errors"
+{{- else if eq .Framework "chi"}}
+	"encoding/json"
+	"net/http"
+	
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/shared/errors"
+{{- else if eq .Framework "stdlib"}}
+	"encoding/json"
+	"net/http"
+	
+	"{{.ModulePath}}/internal/infrastructure/logger"
+	"{{.ModulePath}}/internal/shared/errors"
+{{- end}}
+)
+
+// ErrorResponse represents a standardized error response
+type ErrorResponse struct {
+	Error     string            `json:"error"`
+	Code      string            `json:"code,omitempty"`
+	RequestID string            `json:"request_id,omitempty"`
+	Details   map[string]any    `json:"details,omitempty"`
+}
+
+{{- if eq .Framework "gin"}}
+// ErrorHandler handles errors in a secure and consistent way
+func ErrorHandler(logger *logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		
+		// Check if there are any errors
+		if len(c.Errors) > 0 {
+			err := c.Errors.Last().Err
+			requestID := GetRequestID(c)
+			
+			// Log the error with request ID
+			logger.Error("Request error", 
+				"error", err,
+				"request_id", requestID,
+				"path", c.Request.URL.Path,
+				"method", c.Request.Method,
+			)
+			
+			// Handle different error types
+			switch e := err.(type) {
+			case errors.ApplicationError:
+				handleApplicationError(c, e, requestID)
+			case errors.DomainError:
+				handleDomainError(c, e, requestID)
+			default:
+				// Generic error - don't expose internal details
+				c.JSON(http.StatusInternalServerError, ErrorResponse{
+					Error:     "An internal error occurred",
+					Code:      "INTERNAL_ERROR",
+					RequestID: requestID,
+				})
+			}
+		}
+	}
+}
+
+func handleApplicationError(c *gin.Context, err errors.ApplicationError, requestID string) {
+	statusCode := http.StatusBadRequest
+	
+	// Map error codes to HTTP status codes
+	switch err.Code {
+	case "VALIDATION_ERROR", "INVALID_INPUT", "MISSING_REQUIRED_FIELD":
+		statusCode = http.StatusBadRequest
+	case "AUTHENTICATION_ERROR", "INVALID_CREDENTIALS":
+		statusCode = http.StatusUnauthorized
+	case "UNAUTHORIZED", "FORBIDDEN":
+		statusCode = http.StatusForbidden
+	case "RESOURCE_NOT_FOUND":
+		statusCode = http.StatusNotFound
+	case "RESOURCE_CONFLICT":
+		statusCode = http.StatusConflict
+	case "RESOURCE_LOCKED":
+		statusCode = http.StatusLocked
+	default:
+		statusCode = http.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	// Only include details in non-production environments
+	if gin.Mode() != gin.ReleaseMode && err.Details != nil {
+		response.Details = err.Details
+	}
+	
+	c.JSON(statusCode, response)
+}
+
+func handleDomainError(c *gin.Context, err errors.DomainError, requestID string) {
+	statusCode := http.StatusBadRequest
+	
+	// Map domain error codes to HTTP status codes
+	switch err.Code {
+	case "ENTITY_NOT_FOUND", "USER_NOT_FOUND":
+		statusCode = http.StatusNotFound
+	case "ENTITY_ALREADY_EXISTS":
+		statusCode = http.StatusConflict
+	case "CONCURRENCY_CONFLICT", "AGGREGATE_VERSION_MISMATCH":
+		statusCode = http.StatusConflict
+	case "INVALID_VALUE_OBJECT", "INVALID_EMAIL", "INVALID_ID", "INVALID_ENTITY_STATE":
+		statusCode = http.StatusBadRequest
+	case "BUSINESS_RULE_VIOLATION", "DOMAIN_INVARIANT_VIOLATION":
+		statusCode = http.StatusUnprocessableEntity
+	default:
+		statusCode = http.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	// Only include details in non-production environments
+	if gin.Mode() != gin.ReleaseMode && err.Details != nil {
+		response.Details = err.Details
+	}
+	
+	c.JSON(statusCode, response)
+}
+
+{{- else if eq .Framework "echo"}}
+// ErrorHandler handles errors in a secure and consistent way
+func ErrorHandler(logger *logger.Logger) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			err := next(c)
+			if err != nil {
+				requestID := GetRequestID(c)
+				
+				// Log the error with request ID
+				logger.Error("Request error",
+					"error", err,
+					"request_id", requestID,
+					"path", c.Request().URL.Path,
+					"method", c.Request().Method,
+				)
+				
+				// Handle different error types
+				switch e := err.(type) {
+				case errors.ApplicationError:
+					return handleApplicationError(c, e, requestID)
+				case errors.DomainError:
+					return handleDomainError(c, e, requestID)
+				case *echo.HTTPError:
+					// Handle Echo HTTP errors
+					return c.JSON(e.Code, ErrorResponse{
+						Error:     e.Message.(string),
+						Code:      "HTTP_ERROR",
+						RequestID: requestID,
+					})
+				default:
+					// Generic error - don't expose internal details
+					return c.JSON(http.StatusInternalServerError, ErrorResponse{
+						Error:     "An internal error occurred",
+						Code:      "INTERNAL_ERROR",
+						RequestID: requestID,
+					})
+				}
+			}
+			return nil
+		}
+	}
+}
+
+func handleApplicationError(c echo.Context, err errors.ApplicationError, requestID string) error {
+	statusCode := http.StatusBadRequest
+	
+	// Map error codes to HTTP status codes
+	switch err.Code {
+	case "VALIDATION_ERROR", "INVALID_INPUT", "MISSING_REQUIRED_FIELD":
+		statusCode = http.StatusBadRequest
+	case "AUTHENTICATION_ERROR", "INVALID_CREDENTIALS":
+		statusCode = http.StatusUnauthorized
+	case "UNAUTHORIZED", "FORBIDDEN":
+		statusCode = http.StatusForbidden
+	case "RESOURCE_NOT_FOUND":
+		statusCode = http.StatusNotFound
+	case "RESOURCE_CONFLICT":
+		statusCode = http.StatusConflict
+	case "RESOURCE_LOCKED":
+		statusCode = http.StatusLocked
+	default:
+		statusCode = http.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	// Only include details in non-production environments
+	if err.Details != nil {
+		response.Details = err.Details
+	}
+	
+	return c.JSON(statusCode, response)
+}
+
+func handleDomainError(c echo.Context, err errors.DomainError, requestID string) error {
+	statusCode := http.StatusBadRequest
+	
+	// Map domain error codes to HTTP status codes
+	switch err.Code {
+	case "ENTITY_NOT_FOUND", "USER_NOT_FOUND":
+		statusCode = http.StatusNotFound
+	case "ENTITY_ALREADY_EXISTS":
+		statusCode = http.StatusConflict
+	case "CONCURRENCY_CONFLICT", "AGGREGATE_VERSION_MISMATCH":
+		statusCode = http.StatusConflict
+	case "INVALID_VALUE_OBJECT", "INVALID_EMAIL", "INVALID_ID", "INVALID_ENTITY_STATE":
+		statusCode = http.StatusBadRequest
+	case "BUSINESS_RULE_VIOLATION", "DOMAIN_INVARIANT_VIOLATION":
+		statusCode = http.StatusUnprocessableEntity
+	default:
+		statusCode = http.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	// Only include details in non-production environments
+	if err.Details != nil {
+		response.Details = err.Details
+	}
+	
+	return c.JSON(statusCode, response)
+}
+
+{{- else if eq .Framework "fiber"}}
+// ErrorHandler handles errors in a secure and consistent way
+func ErrorHandler(logger *logger.Logger) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		err := c.Next()
+		if err != nil {
+			requestID := GetRequestID(c)
+			
+			// Log the error with request ID
+			logger.Error("Request error",
+				"error", err,
+				"request_id", requestID,
+				"path", c.Path(),
+				"method", c.Method(),
+			)
+			
+			// Handle different error types
+			switch e := err.(type) {
+			case errors.ApplicationError:
+				return handleApplicationError(c, e, requestID)
+			case errors.DomainError:
+				return handleDomainError(c, e, requestID)
+			case *fiber.Error:
+				// Handle Fiber errors
+				return c.Status(e.Code).JSON(ErrorResponse{
+					Error:     e.Message,
+					Code:      "HTTP_ERROR",
+					RequestID: requestID,
+				})
+			default:
+				// Generic error - don't expose internal details
+				return c.Status(fiber.StatusInternalServerError).JSON(ErrorResponse{
+					Error:     "An internal error occurred",
+					Code:      "INTERNAL_ERROR",
+					RequestID: requestID,
+				})
+			}
+		}
+		return nil
+	}
+}
+
+func handleApplicationError(c *fiber.Ctx, err errors.ApplicationError, requestID string) error {
+	statusCode := fiber.StatusBadRequest
+	
+	// Map error codes to HTTP status codes
+	switch err.Code {
+	case "VALIDATION_ERROR", "INVALID_INPUT", "MISSING_REQUIRED_FIELD":
+		statusCode = fiber.StatusBadRequest
+	case "AUTHENTICATION_ERROR", "INVALID_CREDENTIALS":
+		statusCode = fiber.StatusUnauthorized
+	case "UNAUTHORIZED", "FORBIDDEN":
+		statusCode = fiber.StatusForbidden
+	case "RESOURCE_NOT_FOUND":
+		statusCode = fiber.StatusNotFound
+	case "RESOURCE_CONFLICT":
+		statusCode = fiber.StatusConflict
+	case "RESOURCE_LOCKED":
+		statusCode = fiber.StatusLocked
+	default:
+		statusCode = fiber.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	// Only include details in non-production environments
+	if err.Details != nil {
+		response.Details = err.Details
+	}
+	
+	return c.Status(statusCode).JSON(response)
+}
+
+func handleDomainError(c *fiber.Ctx, err errors.DomainError, requestID string) error {
+	statusCode := fiber.StatusBadRequest
+	
+	// Map domain error codes to HTTP status codes
+	switch err.Code {
+	case "ENTITY_NOT_FOUND", "USER_NOT_FOUND":
+		statusCode = fiber.StatusNotFound
+	case "ENTITY_ALREADY_EXISTS":
+		statusCode = fiber.StatusConflict
+	case "CONCURRENCY_CONFLICT", "AGGREGATE_VERSION_MISMATCH":
+		statusCode = fiber.StatusConflict
+	case "INVALID_VALUE_OBJECT", "INVALID_EMAIL", "INVALID_ID", "INVALID_ENTITY_STATE":
+		statusCode = fiber.StatusBadRequest
+	case "BUSINESS_RULE_VIOLATION", "DOMAIN_INVARIANT_VIOLATION":
+		statusCode = fiber.StatusUnprocessableEntity
+	default:
+		statusCode = fiber.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	// Only include details in non-production environments
+	if err.Details != nil {
+		response.Details = err.Details
+	}
+	
+	return c.Status(statusCode).JSON(response)
+}
+
+{{- else if or (eq .Framework "chi") (eq .Framework "stdlib")}}
+// ErrorHandler creates an error handling middleware
+func ErrorHandler(logger *logger.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Create a custom response writer to capture errors
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			
+			// Defer error handling
+			defer func() {
+				if rec := recover(); rec != nil {
+					requestID := GetRequestID(r.Context())
+					logger.Error("Panic recovered",
+						"panic", rec,
+						"request_id", requestID,
+						"path", r.URL.Path,
+						"method", r.Method,
+					)
+					
+					writeErrorResponse(w, http.StatusInternalServerError, ErrorResponse{
+						Error:     "An internal error occurred",
+						Code:      "INTERNAL_ERROR",
+						RequestID: requestID,
+					})
+				}
+			}()
+			
+			next.ServeHTTP(rw, r)
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	written    bool
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	if !rw.written {
+		rw.statusCode = code
+		rw.ResponseWriter.WriteHeader(code)
+		rw.written = true
+	}
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if !rw.written {
+		rw.WriteHeader(http.StatusOK)
+	}
+	return rw.ResponseWriter.Write(b)
+}
+
+// HandleApplicationError handles application errors
+func HandleApplicationError(w http.ResponseWriter, r *http.Request, err errors.ApplicationError, logger *logger.Logger) {
+	requestID := GetRequestID(r.Context())
+	
+	logger.Error("Application error",
+		"error", err,
+		"request_id", requestID,
+		"path", r.URL.Path,
+		"method", r.Method,
+	)
+	
+	statusCode := http.StatusBadRequest
+	
+	// Map error codes to HTTP status codes
+	switch err.Code {
+	case "VALIDATION_ERROR", "INVALID_INPUT", "MISSING_REQUIRED_FIELD":
+		statusCode = http.StatusBadRequest
+	case "AUTHENTICATION_ERROR", "INVALID_CREDENTIALS":
+		statusCode = http.StatusUnauthorized
+	case "UNAUTHORIZED", "FORBIDDEN":
+		statusCode = http.StatusForbidden
+	case "RESOURCE_NOT_FOUND":
+		statusCode = http.StatusNotFound
+	case "RESOURCE_CONFLICT":
+		statusCode = http.StatusConflict
+	case "RESOURCE_LOCKED":
+		statusCode = http.StatusLocked
+	default:
+		statusCode = http.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	writeErrorResponse(w, statusCode, response)
+}
+
+// HandleDomainError handles domain errors
+func HandleDomainError(w http.ResponseWriter, r *http.Request, err errors.DomainError, logger *logger.Logger) {
+	requestID := GetRequestID(r.Context())
+	
+	logger.Error("Domain error",
+		"error", err,
+		"request_id", requestID,
+		"path", r.URL.Path,
+		"method", r.Method,
+	)
+	
+	statusCode := http.StatusBadRequest
+	
+	// Map domain error codes to HTTP status codes
+	switch err.Code {
+	case "ENTITY_NOT_FOUND", "USER_NOT_FOUND":
+		statusCode = http.StatusNotFound
+	case "ENTITY_ALREADY_EXISTS":
+		statusCode = http.StatusConflict
+	case "CONCURRENCY_CONFLICT", "AGGREGATE_VERSION_MISMATCH":
+		statusCode = http.StatusConflict
+	case "INVALID_VALUE_OBJECT", "INVALID_EMAIL", "INVALID_ID", "INVALID_ENTITY_STATE":
+		statusCode = http.StatusBadRequest
+	case "BUSINESS_RULE_VIOLATION", "DOMAIN_INVARIANT_VIOLATION":
+		statusCode = http.StatusUnprocessableEntity
+	default:
+		statusCode = http.StatusInternalServerError
+	}
+	
+	response := ErrorResponse{
+		Error:     err.Message,
+		Code:      err.Code,
+		RequestID: requestID,
+	}
+	
+	writeErrorResponse(w, statusCode, response)
+}
+
+// HandleGenericError handles generic errors
+func HandleGenericError(w http.ResponseWriter, r *http.Request, err error, logger *logger.Logger) {
+	requestID := GetRequestID(r.Context())
+	
+	logger.Error("Generic error",
+		"error", err,
+		"request_id", requestID,
+		"path", r.URL.Path,
+		"method", r.Method,
+	)
+	
+	writeErrorResponse(w, http.StatusInternalServerError, ErrorResponse{
+		Error:     "An internal error occurred",
+		Code:      "INTERNAL_ERROR",
+		RequestID: requestID,
+	})
+}
+
+func writeErrorResponse(w http.ResponseWriter, statusCode int, response ErrorResponse) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(response)
+}
+{{- end}}

@@ -1,0 +1,398 @@
+package middleware
+
+import (
+{{- if eq .Framework "gin"}}
+	"net/http"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"net/http"
+	"strings"
+
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"strings"
+
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+	"strings"
+{{- else if eq .Framework "stdlib"}}
+	"net/http"
+	"strings"
+{{- end}}
+)
+
+{{- if eq .Framework "gin"}}
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Security headers
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		
+		// Remove server information
+		c.Header("X-Powered-By", "")
+		
+		c.Next()
+	}
+}
+
+// RateLimiter provides basic rate limiting (implement with proper rate limiter in production)
+func RateLimiter() gin.HandlerFunc {
+	// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate
+	// or github.com/ulule/limiter in production
+	return func(c *gin.Context) {
+		// Basic implementation would go here
+		c.Next()
+	}
+}
+
+// ValidateContentType ensures requests have appropriate content types
+func ValidateContentType() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Skip validation for GET, DELETE, HEAD, OPTIONS
+		if c.Request.Method == http.MethodGet || 
+		   c.Request.Method == http.MethodDelete || 
+		   c.Request.Method == http.MethodHead || 
+		   c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		
+		contentType := c.GetHeader("Content-Type")
+		if contentType == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "Content-Type header is required",
+			})
+			c.Abort()
+			return
+		}
+		
+		// Check for valid content types
+		validTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+		valid := false
+		for _, validType := range validTypes {
+			if strings.HasPrefix(strings.ToLower(contentType), validType) {
+				valid = true
+				break
+			}
+		}
+		
+		if !valid {
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{
+				"error": "Unsupported content type",
+			})
+			c.Abort()
+			return
+		}
+		
+		c.Next()
+	}
+}
+
+{{- else if eq .Framework "echo"}}
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Security headers
+			c.Response().Header().Set("X-Content-Type-Options", "nosniff")
+			c.Response().Header().Set("X-Frame-Options", "DENY")
+			c.Response().Header().Set("X-XSS-Protection", "1; mode=block")
+			c.Response().Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			c.Response().Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			c.Response().Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+			c.Response().Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+			
+			// Remove server information
+			c.Response().Header().Del("X-Powered-By")
+			
+			return next(c)
+		}
+	}
+}
+
+// RateLimiter provides basic rate limiting (implement with proper rate limiter in production)
+func RateLimiter() echo.MiddlewareFunc {
+	// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate
+	// or github.com/ulule/limiter in production
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Basic implementation would go here
+			return next(c)
+		}
+	}
+}
+
+// ValidateContentType ensures requests have appropriate content types
+func ValidateContentType() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip validation for GET, DELETE, HEAD, OPTIONS
+			if c.Request().Method == http.MethodGet || 
+			   c.Request().Method == http.MethodDelete || 
+			   c.Request().Method == http.MethodHead || 
+			   c.Request().Method == http.MethodOptions {
+				return next(c)
+			}
+			
+			contentType := c.Request().Header.Get("Content-Type")
+			if contentType == "" {
+				return c.JSON(http.StatusBadRequest, map[string]string{
+					"error": "Content-Type header is required",
+				})
+			}
+			
+			// Check for valid content types
+			validTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+			valid := false
+			for _, validType := range validTypes {
+				if strings.HasPrefix(strings.ToLower(contentType), validType) {
+					valid = true
+					break
+				}
+			}
+			
+			if !valid {
+				return c.JSON(http.StatusUnsupportedMediaType, map[string]string{
+					"error": "Unsupported content type",
+				})
+			}
+			
+			return next(c)
+		}
+	}
+}
+
+{{- else if eq .Framework "fiber"}}
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Security headers
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("X-Frame-Options", "DENY")
+		c.Set("X-XSS-Protection", "1; mode=block")
+		c.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+		c.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		
+		// Remove server information
+		c.Response().Header.Del("X-Powered-By")
+		c.Response().Header.Del("Server")
+		
+		return c.Next()
+	}
+}
+
+// RateLimiter provides basic rate limiting (implement with proper rate limiter in production)
+func RateLimiter() fiber.Handler {
+	// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate
+	// or github.com/ulule/limiter in production
+	return func(c *fiber.Ctx) error {
+		// Basic implementation would go here
+		return c.Next()
+	}
+}
+
+// ValidateContentType ensures requests have appropriate content types
+func ValidateContentType() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Skip validation for GET, DELETE, HEAD, OPTIONS
+		if c.Method() == fiber.MethodGet || 
+		   c.Method() == fiber.MethodDelete || 
+		   c.Method() == fiber.MethodHead || 
+		   c.Method() == fiber.MethodOptions {
+			return c.Next()
+		}
+		
+		contentType := c.Get("Content-Type")
+		if contentType == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": "Content-Type header is required",
+			})
+		}
+		
+		// Check for valid content types
+		validTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+		valid := false
+		for _, validType := range validTypes {
+			if strings.HasPrefix(strings.ToLower(contentType), validType) {
+				valid = true
+				break
+			}
+		}
+		
+		if !valid {
+			return c.Status(fiber.StatusUnsupportedMediaType).JSON(fiber.Map{
+				"error": "Unsupported content type",
+			})
+		}
+		
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Security headers
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+			w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+			
+			// Remove server information
+			w.Header().Del("X-Powered-By")
+			w.Header().Del("Server")
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimiter provides basic rate limiting (implement with proper rate limiter in production)
+func RateLimiter() func(http.Handler) http.Handler {
+	// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate
+	// or github.com/ulule/limiter in production
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Basic implementation would go here
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ValidateContentType ensures requests have appropriate content types
+func ValidateContentType() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip validation for GET, DELETE, HEAD, OPTIONS
+			if r.Method == http.MethodGet || 
+			   r.Method == http.MethodDelete || 
+			   r.Method == http.MethodHead || 
+			   r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			contentType := r.Header.Get("Content-Type")
+			if contentType == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"Content-Type header is required"}`))
+				return
+			}
+			
+			// Check for valid content types
+			validTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+			valid := false
+			for _, validType := range validTypes {
+				if strings.HasPrefix(strings.ToLower(contentType), validType) {
+					valid = true
+					break
+				}
+			}
+			
+			if !valid {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				w.Write([]byte(`{"error":"Unsupported content type"}`))
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+{{- else if eq .Framework "stdlib"}}
+// SecurityHeaders adds security headers to responses
+func SecurityHeaders() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Security headers
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("X-Frame-Options", "DENY")
+			w.Header().Set("X-XSS-Protection", "1; mode=block")
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+			w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+			w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+			
+			// Remove server information
+			w.Header().Del("X-Powered-By")
+			w.Header().Del("Server")
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RateLimiter provides basic rate limiting (implement with proper rate limiter in production)
+func RateLimiter() func(http.Handler) http.Handler {
+	// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate
+	// or github.com/ulule/limiter in production
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Basic implementation would go here
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// ValidateContentType ensures requests have appropriate content types
+func ValidateContentType() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Skip validation for GET, DELETE, HEAD, OPTIONS
+			if r.Method == http.MethodGet || 
+			   r.Method == http.MethodDelete || 
+			   r.Method == http.MethodHead || 
+			   r.Method == http.MethodOptions {
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			contentType := r.Header.Get("Content-Type")
+			if contentType == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				w.Write([]byte(`{"error":"Content-Type header is required"}`))
+				return
+			}
+			
+			// Check for valid content types
+			validTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+			valid := false
+			for _, validType := range validTypes {
+				if strings.HasPrefix(strings.ToLower(contentType), validType) {
+					valid = true
+					break
+				}
+			}
+			
+			if !valid {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnsupportedMediaType)
+				w.Write([]byte(`{"error":"Unsupported content type"}`))
+				return
+			}
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- end}}

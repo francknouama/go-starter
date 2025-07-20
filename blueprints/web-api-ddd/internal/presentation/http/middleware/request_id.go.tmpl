@@ -1,0 +1,181 @@
+package middleware
+
+import (
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+{{- else if eq .Framework "echo"}}
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
+{{- else if eq .Framework "chi"}}
+	"context"
+	"net/http"
+	"github.com/google/uuid"
+{{- else if eq .Framework "stdlib"}}
+	"context"
+	"net/http"
+	"github.com/google/uuid"
+{{- end}}
+)
+
+const (
+	// RequestIDKey is the key used to store request ID in context
+	RequestIDKey = "request-id"
+	// RequestIDHeader is the header name for request ID
+	RequestIDHeader = "X-Request-ID"
+)
+
+{{- if eq .Framework "gin"}}
+// RequestID middleware adds a unique request ID to each request
+func RequestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if request ID exists in header
+		requestID := c.GetHeader(RequestIDHeader)
+		if requestID == "" {
+			// Generate new UUID
+			requestID = uuid.New().String()
+		}
+		
+		// Set request ID in context and header
+		c.Set(RequestIDKey, requestID)
+		c.Header(RequestIDHeader, requestID)
+		
+		c.Next()
+	}
+}
+
+// GetRequestID retrieves the request ID from the context
+func GetRequestID(c *gin.Context) string {
+	if requestID, exists := c.Get(RequestIDKey); exists {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+{{- else if eq .Framework "echo"}}
+// RequestID middleware adds a unique request ID to each request
+func RequestID() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Check if request ID exists in header
+			requestID := c.Request().Header.Get(RequestIDHeader)
+			if requestID == "" {
+				// Generate new UUID
+				requestID = uuid.New().String()
+			}
+			
+			// Set request ID in context and header
+			c.Set(RequestIDKey, requestID)
+			c.Response().Header().Set(RequestIDHeader, requestID)
+			
+			return next(c)
+		}
+	}
+}
+
+// GetRequestID retrieves the request ID from the context
+func GetRequestID(c echo.Context) string {
+	if requestID := c.Get(RequestIDKey); requestID != nil {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+{{- else if eq .Framework "fiber"}}
+// RequestID middleware adds a unique request ID to each request
+func RequestID() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Check if request ID exists in header
+		requestID := c.Get(RequestIDHeader)
+		if requestID == "" {
+			// Generate new UUID
+			requestID = uuid.New().String()
+		}
+		
+		// Set request ID in context and header
+		c.Locals(RequestIDKey, requestID)
+		c.Set(RequestIDHeader, requestID)
+		
+		return c.Next()
+	}
+}
+
+// GetRequestID retrieves the request ID from the context
+func GetRequestID(c *fiber.Ctx) string {
+	if requestID := c.Locals(RequestIDKey); requestID != nil {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+{{- else if eq .Framework "chi"}}
+// RequestID middleware adds a unique request ID to each request
+func RequestID() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if request ID exists in header
+			requestID := r.Header.Get(RequestIDHeader)
+			if requestID == "" {
+				// Generate new UUID
+				requestID = uuid.New().String()
+			}
+			
+			// Set request ID in context and header
+			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+			w.Header().Set(RequestIDHeader, requestID)
+			
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// GetRequestID retrieves the request ID from the context
+func GetRequestID(ctx context.Context) string {
+	if requestID := ctx.Value(RequestIDKey); requestID != nil {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+{{- else if eq .Framework "stdlib"}}
+// RequestID middleware adds a unique request ID to each request
+func RequestID() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if request ID exists in header
+			requestID := r.Header.Get(RequestIDHeader)
+			if requestID == "" {
+				// Generate new UUID
+				requestID = uuid.New().String()
+			}
+			
+			// Set request ID in context and header
+			ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+			w.Header().Set(RequestIDHeader, requestID)
+			
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// GetRequestID retrieves the request ID from the context
+func GetRequestID(ctx context.Context) string {
+	if requestID := ctx.Value(RequestIDKey); requestID != nil {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+{{- end}}

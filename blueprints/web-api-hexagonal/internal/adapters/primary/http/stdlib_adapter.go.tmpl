@@ -135,9 +135,10 @@ func (s *StdlibAdapter) withAuth(authConfig middleware.AuthConfig, handler http.
 
 // withMiddleware wraps handlers with the middleware chain
 func (s *StdlibAdapter) withMiddleware(handler http.Handler) http.Handler {
-	// CORS middleware
-	corsConfig := middleware.DefaultCORSConfig()
-	handler = middleware.CORS(corsConfig)(handler)
+	// Apply middleware in reverse order (last added is executed first)
+	
+	// Error handler middleware (innermost)
+	handler = middleware.ErrorHandler(s.logger)(handler)
 	
 	// Logging middleware
 	loggingConfig := middleware.LoggingConfig{
@@ -145,6 +146,20 @@ func (s *StdlibAdapter) withMiddleware(handler http.Handler) http.Handler {
 		Logger:    s.logger,
 	}
 	handler = middleware.Logging(loggingConfig)(handler)
+	
+	// Content type validation middleware
+	handler = middleware.ContentTypeValidation()(handler)
+	
+	// CORS middleware
+	corsConfig := middleware.DefaultCORSConfig()
+	handler = middleware.CORS(corsConfig)(handler)
+	
+	// Security headers middleware
+	securityConfig := middleware.DefaultSecurityConfig()
+	handler = middleware.Security(securityConfig)(handler)
+	
+	// Request ID middleware (outermost)
+	handler = middleware.RequestID()(handler)
 	
 	return handler
 }
