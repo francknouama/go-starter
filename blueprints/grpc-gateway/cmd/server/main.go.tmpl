@@ -20,6 +20,7 @@ import (
 
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/middleware"
 	"{{.ModulePath}}/internal/server"
 	"{{.ModulePath}}/internal/services"
 	"{{.ModulePath}}/internal/repository"
@@ -28,7 +29,6 @@ import (
 	"{{.ModulePath}}/internal/database"
 	{{- end}}
 	{{- if ne .AuthType ""}}
-	"{{.ModulePath}}/internal/middleware"
 	"{{.ModulePath}}/internal/security"
 	{{- end}}
 
@@ -149,9 +149,14 @@ func startGRPCServer(ctx context.Context, cfg *config.Config, userService *servi
 		return fmt.Errorf("failed to listen on gRPC port %d: %w", cfg.Server.GRPCPort, err)
 	}
 
-	// Create gRPC server options
+	// Create gRPC server options with interceptor chain
 	serverOpts := []grpc.ServerOption{
-		grpc.UnaryInterceptor(server.UnaryLoggingInterceptor(appLogger)),
+		grpc.ChainUnaryInterceptor(
+			middleware.GRPCRequestIDInterceptor(appLogger),
+			server.UnaryLoggingInterceptor(appLogger),
+			middleware.GRPCSecurityInterceptor(appLogger),
+			middleware.GRPCErrorInterceptor(appLogger),
+		),
 	}
 
 	// Add TLS credentials if enabled
@@ -225,7 +230,14 @@ func startGatewayServer(ctx context.Context, cfg *config.Config, appLogger logge
 	gin.SetMode(gin.ReleaseMode)
 	
 	router := gin.New()
-	router.Use(gin.Recovery())
+	
+	// Add security middleware chain
+	router.Use(middleware.RequestID())
+	router.Use(middleware.RecoveryMiddleware(appLogger))
+	router.Use(middleware.SecurityHeaders())
+	router.Use(middleware.CORSConfig())
+	router.Use(middleware.ValidateContentType())
+	router.Use(middleware.ErrorHandler(appLogger))
 	
 	{{- if ne .AuthType ""}}
 	// Add authentication middleware to protected routes

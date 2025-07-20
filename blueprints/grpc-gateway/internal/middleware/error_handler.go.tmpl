@@ -1,0 +1,202 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"runtime/debug"
+	
+	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	
+	"{{.ModulePath}}/internal/logger"
+)
+
+// ErrorResponse represents a standardized error response
+type ErrorResponse struct {
+	Code      int32                  `json:"code"`
+	Message   string                 `json:"message"`
+	RequestID string                 `json:"request_id,omitempty"`
+	Details   []interface{}          `json:"details,omitempty"`
+}
+
+// ErrorHandler handles errors in a secure and consistent way for HTTP
+func ErrorHandler(logger logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		
+		// Check if there are any errors
+		if len(c.Errors) > 0 {
+			err := c.Errors.Last()
+			requestID := GetRequestID(c)
+			
+			// Log the error with request ID
+			logger.Error("Request error",
+				"error", err.Err,
+				"request_id", requestID,
+				"path", c.Request.URL.Path,
+				"method", c.Request.Method,
+			)
+			
+			// Convert to gRPC status if possible
+			if s, ok := status.FromError(err.Err); ok {
+				handleGRPCError(c, s, requestID)
+				return
+			}
+			
+			// Generic error - don't expose internal details
+			c.JSON(http.StatusInternalServerError, ErrorResponse{
+				Code:      int32(codes.Internal),
+				Message:   "An internal error occurred",
+				RequestID: requestID,
+				Details:   []interface{}{},
+			})
+		}
+	}
+}
+
+// RecoveryMiddleware recovers from panics and returns a proper error response
+func RecoveryMiddleware(logger logger.Logger) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				requestID := GetRequestID(c)
+				
+				// Log the panic with stack trace
+				logger.Error("Panic recovered",
+					"panic", err,
+					"request_id", requestID,
+					"path", c.Request.URL.Path,
+					"method", c.Request.Method,
+					"stack", string(debug.Stack()),
+				)
+				
+				// Return error response
+				c.JSON(http.StatusInternalServerError, ErrorResponse{
+					Code:      int32(codes.Internal),
+					Message:   "An internal error occurred",
+					RequestID: requestID,
+					Details:   []interface{}{},
+				})
+				
+				c.Abort()
+			}
+		}()
+		
+		c.Next()
+	}
+}
+
+// GRPCErrorInterceptor handles errors in gRPC calls
+func GRPCErrorInterceptor(logger logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		// Recover from panics
+		defer func() {
+			if r := recover(); r != nil {
+				requestID := GetRequestIDFromContext(ctx)
+				
+				logger.Error("gRPC panic recovered",
+					"panic", r,
+					"request_id", requestID,
+					"method", info.FullMethod,
+					"stack", string(debug.Stack()),
+				)
+				
+				err = status.Errorf(codes.Internal, "Internal server error")
+			}
+		}()
+		
+		// Call the handler
+		resp, err = handler(ctx, req)
+		
+		// Log errors
+		if err != nil {
+			requestID := GetRequestIDFromContext(ctx)
+			
+			// Check if it's already a gRPC status
+			if s, ok := status.FromError(err); ok {
+				// Log based on severity
+				if s.Code() == codes.Internal || s.Code() == codes.Unknown {
+					logger.Error("gRPC error",
+						"error", err,
+						"request_id", requestID,
+						"method", info.FullMethod,
+						"code", s.Code(),
+					)
+				} else {
+					logger.Warn("gRPC error",
+						"error", err,
+						"request_id", requestID,
+						"method", info.FullMethod,
+						"code", s.Code(),
+					)
+				}
+			} else {
+				// Convert to gRPC status
+				logger.Error("gRPC error",
+					"error", err,
+					"request_id", requestID,
+					"method", info.FullMethod,
+				)
+				err = status.Error(codes.Internal, "Internal server error")
+			}
+		}
+		
+		return resp, err
+	}
+}
+
+// handleGRPCError converts gRPC status to HTTP response
+func handleGRPCError(c *gin.Context, s *status.Status, requestID string) {
+	httpStatus := grpcToHTTPStatus(s.Code())
+	
+	c.JSON(httpStatus, ErrorResponse{
+		Code:      int32(s.Code()),
+		Message:   s.Message(),
+		RequestID: requestID,
+		Details:   s.Details(),
+	})
+}
+
+// grpcToHTTPStatus converts gRPC codes to HTTP status codes
+func grpcToHTTPStatus(code codes.Code) int {
+	switch code {
+	case codes.OK:
+		return http.StatusOK
+	case codes.Canceled:
+		return http.StatusRequestTimeout
+	case codes.Unknown:
+		return http.StatusInternalServerError
+	case codes.InvalidArgument:
+		return http.StatusBadRequest
+	case codes.DeadlineExceeded:
+		return http.StatusGatewayTimeout
+	case codes.NotFound:
+		return http.StatusNotFound
+	case codes.AlreadyExists:
+		return http.StatusConflict
+	case codes.PermissionDenied:
+		return http.StatusForbidden
+	case codes.ResourceExhausted:
+		return http.StatusTooManyRequests
+	case codes.FailedPrecondition:
+		return http.StatusPreconditionFailed
+	case codes.Aborted:
+		return http.StatusConflict
+	case codes.OutOfRange:
+		return http.StatusBadRequest
+	case codes.Unimplemented:
+		return http.StatusNotImplemented
+	case codes.Internal:
+		return http.StatusInternalServerError
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable
+	case codes.DataLoss:
+		return http.StatusInternalServerError
+	case codes.Unauthenticated:
+		return http.StatusUnauthorized
+	default:
+		return http.StatusInternalServerError
+	}
+}

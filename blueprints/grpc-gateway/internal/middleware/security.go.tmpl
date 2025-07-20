@@ -1,0 +1,158 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	
+	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	
+	"{{.ModulePath}}/internal/logger"
+)
+
+// SecurityHeaders adds security headers to HTTP responses
+func SecurityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Security headers
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("X-XSS-Protection", "1; mode=block")
+		c.Header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+		c.Header("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		
+		// Remove server information
+		c.Header("X-Powered-By", "")
+		
+		c.Next()
+	}
+}
+
+// ValidateContentType ensures requests have appropriate content types
+func ValidateContentType() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Skip validation for GET, DELETE, HEAD, OPTIONS
+		if c.Request.Method == http.MethodGet || 
+		   c.Request.Method == http.MethodDelete || 
+		   c.Request.Method == http.MethodHead || 
+		   c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
+		
+		contentType := c.GetHeader("Content-Type")
+		if contentType == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"code": int32(codes.InvalidArgument),
+				"message": "Content-Type header is required",
+				"details": []interface{}{},
+			})
+			c.Abort()
+			return
+		}
+		
+		// Check for valid content types (gRPC Gateway typically uses JSON)
+		validTypes := []string{"application/json", "application/grpc", "application/grpc+json", "application/grpc+proto"}
+		valid := false
+		for _, validType := range validTypes {
+			if strings.HasPrefix(strings.ToLower(contentType), validType) {
+				valid = true
+				break
+			}
+		}
+		
+		if !valid {
+			c.JSON(http.StatusUnsupportedMediaType, gin.H{
+				"code": int32(codes.InvalidArgument),
+				"message": "Unsupported content type",
+				"details": []interface{}{},
+			})
+			c.Abort()
+			return
+		}
+		
+		c.Next()
+	}
+}
+
+// RateLimiter provides basic rate limiting (implement with proper rate limiter in production)
+func RateLimiter() gin.HandlerFunc {
+	// This is a placeholder - use a proper rate limiter like golang.org/x/time/rate
+	// or github.com/ulule/limiter in production
+	return func(c *gin.Context) {
+		// Basic implementation would go here
+		// Consider using Redis for distributed rate limiting
+		c.Next()
+	}
+}
+
+// GRPCSecurityInterceptor adds security headers to gRPC responses
+func GRPCSecurityInterceptor(logger logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Add security headers to gRPC metadata
+		md := metadata.Pairs(
+			"x-content-type-options", "nosniff",
+			"x-frame-options", "DENY",
+			"x-xss-protection", "1; mode=block",
+			"strict-transport-security", "max-age=31536000; includeSubDomains",
+			"referrer-policy", "strict-origin-when-cross-origin",
+		)
+		
+		if err := grpc.SendHeader(ctx, md); err != nil {
+			logger.Warn("Failed to send security headers", "error", err)
+		}
+		
+		// Continue with the request
+		return handler(ctx, req)
+	}
+}
+
+// GRPCContentTypeValidator validates content types for gRPC requests
+func GRPCContentTypeValidator(logger logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// gRPC handles content type validation internally
+		// This interceptor can be used for additional validation if needed
+		
+		// Extract metadata
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Error(codes.InvalidArgument, "missing metadata")
+		}
+		
+		// Check for custom headers if needed
+		if contentType := md.Get("content-type"); len(contentType) > 0 {
+			// Validate content type if needed
+			ct := strings.ToLower(contentType[0])
+			if !strings.Contains(ct, "application/grpc") && !strings.Contains(ct, "application/json") {
+				return nil, status.Error(codes.InvalidArgument, "invalid content type")
+			}
+		}
+		
+		// Continue with the request
+		return handler(ctx, req)
+	}
+}
+
+// CORSConfig returns CORS configuration for Gin
+func CORSConfig() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
+		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, Accept, Origin, Cache-Control, X-Requested-With, X-Request-ID")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE, PATCH")
+		c.Writer.Header().Set("Access-Control-Expose-Headers", "Content-Length, X-Request-ID")
+		c.Writer.Header().Set("Access-Control-Max-Age", "86400")
+		
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		
+		c.Next()
+	}
+}

@@ -1,0 +1,96 @@
+package middleware
+
+import (
+	"context"
+	
+	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	
+	"{{.ModulePath}}/internal/logger"
+)
+
+const (
+	// RequestIDKey is the key used to store request ID in context
+	RequestIDKey = "request-id"
+	// RequestIDHeader is the header name for request ID
+	RequestIDHeader = "X-Request-ID"
+)
+
+// RequestID middleware adds a unique request ID to each HTTP request
+func RequestID() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// Check if request ID exists in header
+		requestID := c.GetHeader(RequestIDHeader)
+		if requestID == "" {
+			// Generate new UUID
+			requestID = uuid.New().String()
+		}
+		
+		// Set request ID in context and header
+		c.Set(RequestIDKey, requestID)
+		c.Header(RequestIDHeader, requestID)
+		
+		c.Next()
+	}
+}
+
+// GetRequestID retrieves the request ID from Gin context
+func GetRequestID(c *gin.Context) string {
+	if requestID, exists := c.Get(RequestIDKey); exists {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
+
+// GRPCRequestIDInterceptor adds request ID to gRPC requests
+func GRPCRequestIDInterceptor(logger logger.Logger) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Extract request ID from incoming metadata
+		requestID := ""
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if ids := md.Get(RequestIDHeader); len(ids) > 0 {
+				requestID = ids[0]
+			}
+		}
+		
+		// Generate new ID if not present
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+		
+		// Add request ID to context
+		ctx = context.WithValue(ctx, RequestIDKey, requestID)
+		
+		// Add request ID to outgoing metadata
+		md := metadata.Pairs(RequestIDHeader, requestID)
+		if err := grpc.SendHeader(ctx, md); err != nil {
+			logger.Warn("Failed to send request ID header", 
+				"error", err,
+				"request_id", requestID,
+			)
+		}
+		
+		// Log the request with ID
+		logger.Info("gRPC request",
+			"method", info.FullMethod,
+			"request_id", requestID,
+		)
+		
+		// Continue with the request
+		return handler(ctx, req)
+	}
+}
+
+// GetRequestIDFromContext retrieves request ID from context
+func GetRequestIDFromContext(ctx context.Context) string {
+	if requestID := ctx.Value(RequestIDKey); requestID != nil {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return ""
+}
