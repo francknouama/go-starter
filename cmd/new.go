@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/huh/spinner"
 	"github.com/charmbracelet/lipgloss"
@@ -14,6 +16,7 @@ import (
 	"github.com/francknouama/go-starter/internal/utils"
 	"github.com/francknouama/go-starter/pkg/types"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -29,6 +32,8 @@ var (
 	databaseORM    string
 	authType       string
 	advanced       bool
+	basic          bool
+	complexity     string
 	dryRun         bool
 	noGit          bool
 	randomName     bool
@@ -44,14 +49,20 @@ var newCmd = &cobra.Command{
 	Long: `Create a new Go project with the specified blueprint and configuration.
 
 Examples:
-  go-starter new my-api                                          # Interactive mode
-  go-starter new my-api --type=web-api --framework=gin           # Direct mode
-  go-starter new my-api --type=web-api --go-version=1.23         # With specific Go version
-  go-starter new my-api --type=web-api --logger=zap              # With specific logger
-  go-starter new my-cli --type=cli --logger=slog                 # CLI application
-  go-starter new my-lib --type=library                           # Go library
-  go-starter new --random-name --type=web-api                    # Generate random project name
-  go-starter new --random-name                                   # Fully interactive with random name
+  # Basic usage (beginner-friendly)
+  go-starter new my-api                                          # Interactive mode (basic)
+  go-starter new my-api --type=web-api --framework=gin           # Direct mode (basic)
+  go-starter new my-cli --type=cli --complexity=simple           # Simple CLI project
+  
+  # Advanced usage (all options)
+  go-starter new my-api --advanced                               # Interactive mode (advanced)
+  go-starter new my-api --type=web-api --logger=zap --advanced   # Direct mode (advanced)
+  go-starter new my-cli --complexity=standard                    # Standard CLI project
+  
+  # Complexity-based generation
+  go-starter new my-proto --complexity=simple                    # Minimal structure
+  go-starter new my-app --complexity=standard                    # Balanced structure
+  go-starter new my-enterprise --complexity=advanced             # Enterprise structure
 
 The command will guide you through the project configuration process
 or use the provided flags for direct project generation.`,
@@ -61,6 +72,9 @@ or use the provided flags for direct project generation.`,
 
 func init() {
 	rootCmd.AddCommand(newCmd)
+	
+	// Set custom help function for progressive disclosure
+	newCmd.SetHelpFunc(progressiveHelpFunc)
 
 	// Project configuration flags
 	newCmd.Flags().StringVar(&projectName, "name", "", "Project name")
@@ -75,8 +89,12 @@ func init() {
 	newCmd.Flags().StringVar(&databaseORM, "database-orm", "", "Database ORM/query builder (gorm, sqlx)")
 	newCmd.Flags().StringVar(&authType, "auth-type", "", "Authentication type (jwt, oauth2, session)")
 
+	// Progressive disclosure options
+	newCmd.Flags().BoolVar(&basic, "basic", false, "Show only essential options (default)")
+	newCmd.Flags().BoolVar(&advanced, "advanced", false, "Enable advanced configuration")
+	newCmd.Flags().StringVar(&complexity, "complexity", "", "Complexity level (simple, standard, advanced, expert)")
+	
 	// Generation options
-	newCmd.Flags().BoolVar(&advanced, "advanced", false, "Enable advanced configuration mode")
 	newCmd.Flags().BoolVar(&dryRun, "dry-run", false, "Preview project structure without creating files")
 	newCmd.Flags().BoolVar(&noGit, "no-git", false, "Skip git repository initialization")
 	newCmd.Flags().BoolVar(&randomName, "random-name", false, "Generate a random project name (GitHub-style)")
@@ -88,6 +106,16 @@ func init() {
 }
 
 func runNew(cmd *cobra.Command, args []string) error {
+	// Validate complexity flag if provided
+	if complexity != "" {
+		if _, err := prompts.ParseComplexityLevel(complexity); err != nil {
+			return fmt.Errorf("invalid complexity level: %w", err)
+		}
+	}
+	
+	// Determine disclosure mode based on flags
+	disclosureMode := prompts.DetermineDisclosureMode(basic, advanced, complexity)
+	
 	// Configure banner display
 	bannerConfig := ascii.GetBannerConfig(quiet, noBanner, bannerStyle)
 	
@@ -133,14 +161,41 @@ func runNew(cmd *cobra.Command, args []string) error {
 	// Use the new factory pattern with Bubble Tea UI and Survey fallback
 	prompter := prompts.NewDefault()
 
+	// Parse complexity level if provided
+	var complexityLevel prompts.ComplexityLevel
+	if complexity != "" {
+		complexityLevel, _ = prompts.ParseComplexityLevel(complexity)
+	}
+
+	// Adjust blueprint type based on complexity level BEFORE prompting
+	actualProjectType := projectType
+	actualFramework := framework
+	if complexity != "" && projectType != "" {
+		actualProjectType = prompts.SelectBlueprintForComplexity(projectType, complexityLevel)
+		
+		// Set defaults for CLI blueprints to avoid unnecessary prompts
+		if projectType == "cli" {
+			if framework == "" {
+				actualFramework = "cobra" // CLI blueprints use Cobra
+			}
+			if logger == "" {
+				logger = "slog" // Default to slog
+			}
+			// Set default module path if not provided
+			if projectModule == "" && projectName != "" {
+				projectModule = "github.com/username/" + projectName
+			}
+		}
+	}
+
 	// Get project configuration through interactive prompts or flags
-	config, err := prompter.GetProjectConfig(types.ProjectConfig{
+	initialConfig := types.ProjectConfig{
 		Name:         projectName,
 		Module:       projectModule,
-		Type:         projectType,
+		Type:         actualProjectType,
 		Architecture: architecture,
 		GoVersion:    goVersion,
-		Framework:    framework,
+		Framework:    actualFramework,
 		Logger:       logger,
 		Features: &types.Features{
 			Database: types.DatabaseConfig{
@@ -151,11 +206,25 @@ func runNew(cmd *cobra.Command, args []string) error {
 				Type: authType,
 			},
 		},
-	}, advanced)
+	}
+
+	// Use new disclosure-aware method if available, fallback to old method
+	var config types.ProjectConfig
+	var err error
+	if disclosurePrompter, ok := prompter.(interface {
+		GetProjectConfigWithDisclosure(types.ProjectConfig, prompts.DisclosureMode, prompts.ComplexityLevel) (types.ProjectConfig, error)
+	}); ok {
+		config, err = disclosurePrompter.GetProjectConfigWithDisclosure(initialConfig, disclosureMode, complexityLevel)
+	} else {
+		// Fallback to old method
+		config, err = prompter.GetProjectConfig(initialConfig, advanced)
+	}
 	if err != nil {
 		printErrorMessage("Failed to get project configuration", err)
 		return fmt.Errorf("failed to get project configuration: %w", err)
 	}
+
+	// Blueprint type was already adjusted before prompting
 
 	// Validate the configuration
 	if err := validateConfig(config); err != nil {
@@ -313,6 +382,166 @@ func printSuccessMessage(config types.ProjectConfig, result *types.GenerationRes
 		MarginLeft(2)
 
 	fmt.Println(tipStyle.Render("💡 Tip: Run 'make help' inside your project to see all available commands"))
+}
+
+// progressiveHelpFunc provides progressive disclosure for help output
+func progressiveHelpFunc(cmd *cobra.Command, args []string) {
+	// Parse disclosure mode from command line arguments
+	disclosureMode := parseDisclosureModeFromArgs(os.Args)
+	
+	if disclosureMode == prompts.DisclosureModeBasic {
+		printBasicHelp(cmd)
+	} else {
+		printAdvancedHelp(cmd)
+	}
+}
+
+// parseDisclosureModeFromArgs extracts disclosure mode from raw command line arguments
+func parseDisclosureModeFromArgs(args []string) prompts.DisclosureMode {
+	for i, arg := range args {
+		switch arg {
+		case "--advanced":
+			return prompts.DisclosureModeAdvanced
+		case "--basic":
+			return prompts.DisclosureModeBasic
+		case "--complexity":
+			// Check next argument for complexity value
+			if i+1 < len(args) {
+				switch args[i+1] {
+				case "advanced", "expert":
+					return prompts.DisclosureModeAdvanced
+				}
+			}
+		}
+		// Handle --complexity=value format
+		if strings.HasPrefix(arg, "--complexity=") {
+			value := strings.SplitN(arg, "=", 2)[1]
+			switch value {
+			case "advanced", "expert":
+				return prompts.DisclosureModeAdvanced
+			}
+		}
+	}
+	
+	// Default to basic mode for new users
+	return prompts.DisclosureModeBasic
+}
+
+// printBasicHelp renders help with only essential flags visible
+func printBasicHelp(cmd *cobra.Command) {
+	// Essential flags that beginners need to see
+	essentialFlags := map[string]bool{
+		"name":       true,
+		"type":       true,
+		"module":     true,
+		"framework":  true,
+		"logger":     true,
+		"go-version": true,
+		"output":     true,
+		"complexity": true,
+		"basic":      true,
+		"advanced":   true,
+		"dry-run":    true,
+		"help":       true,
+		"quiet":      true,
+		"no-git":     true,
+		"random-name": true,
+	}
+	
+	fmt.Print(buildCustomHelp(cmd, essentialFlags, true))
+}
+
+// printAdvancedHelp renders help with all flags visible
+func printAdvancedHelp(cmd *cobra.Command) {
+	fmt.Print(buildCustomHelp(cmd, nil, false))
+}
+
+// buildCustomHelp creates the help text with filtered flags
+func buildCustomHelp(cmd *cobra.Command, essentialFlags map[string]bool, isBasic bool) string {
+	// Use lipgloss for styling
+	titleStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	sectionStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
+	flagStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	descStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	hintStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Italic(true)
+	
+	var help strings.Builder
+	
+	// Title and description
+	help.WriteString(titleStyle.Render(cmd.Short) + "\n\n")
+	help.WriteString(cmd.Long + "\n\n")
+	
+	// Usage
+	help.WriteString(sectionStyle.Render("USAGE") + "\n")
+	help.WriteString(fmt.Sprintf("  %s [flags]\n", cmd.Use) + "\n")
+	
+	// Examples
+	if cmd.Example != "" {
+		help.WriteString(sectionStyle.Render("EXAMPLES") + "\n")
+		help.WriteString(cmd.Example + "\n\n")
+	}
+	
+	// Flags section
+	help.WriteString(sectionStyle.Render("FLAGS") + "\n")
+	
+	// Collect and filter flags
+	var flagLines []string
+	seenFlags := make(map[string]bool)
+	
+	// Process local flags first
+	cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+		// Skip if in basic mode and flag is not essential
+		if isBasic && essentialFlags != nil && !essentialFlags[flag.Name] {
+			return
+		}
+		
+		flagName := flagStyle.Render("--" + flag.Name)
+		if flag.Shorthand != "" {
+			flagName = flagStyle.Render("-" + flag.Shorthand + " --" + flag.Name)
+		}
+		
+		// Format flag line with proper spacing
+		flagLine := fmt.Sprintf("    %-20s %s", flagName, descStyle.Render(flag.Usage))
+		if flag.DefValue != "" && flag.DefValue != "false" {
+			flagLine += fmt.Sprintf(" (%s)", flag.DefValue)
+		}
+		flagLines = append(flagLines, flagLine)
+		seenFlags[flag.Name] = true
+	})
+	
+	// Add persistent flags that haven't been seen yet
+	cmd.InheritedFlags().VisitAll(func(flag *pflag.Flag) {
+		// Skip if already processed or if in basic mode and flag is not essential
+		if seenFlags[flag.Name] || (isBasic && essentialFlags != nil && !essentialFlags[flag.Name]) {
+			return
+		}
+		
+		flagName := flagStyle.Render("--" + flag.Name)
+		if flag.Shorthand != "" {
+			flagName = flagStyle.Render("-" + flag.Shorthand + " --" + flag.Name)
+		}
+		
+		flagLine := fmt.Sprintf("    %-20s %s", flagName, descStyle.Render(flag.Usage))
+		if flag.DefValue != "" && flag.DefValue != "false" {
+			flagLine += fmt.Sprintf(" (%s)", flag.DefValue)
+		}
+		flagLines = append(flagLines, flagLine)
+		seenFlags[flag.Name] = true
+	})
+	
+	// Sort and display flags
+	for _, line := range flagLines {
+		help.WriteString(line + "\n")
+	}
+	
+	// Add progressive disclosure hint
+	if isBasic {
+		help.WriteString("\n" + hintStyle.Render("💡 Use --advanced to see all available options") + "\n")
+	} else {
+		help.WriteString("\n" + hintStyle.Render("💡 Use --basic to see only essential options") + "\n")
+	}
+	
+	return help.String()
 }
 
 // isGoAvailable checks if Go is installed and available in PATH

@@ -30,6 +30,13 @@ func NewWithAdapter(adapter interfaces.SurveyAdapter) interfaces.Prompter {
 	}
 }
 
+// GetProjectConfigWithDisclosure prompts the user for project configuration using disclosure mode
+func (p *SurveyPrompter) GetProjectConfigWithDisclosure(initial types.ProjectConfig, mode interfaces.DisclosureMode, complexity interfaces.ComplexityLevel) (types.ProjectConfig, error) {
+	// Convert disclosure mode to advanced boolean for compatibility
+	advanced := mode == interfaces.DisclosureModeAdvanced
+	return p.GetProjectConfig(initial, advanced)
+}
+
 // GetProjectConfig prompts the user for project configuration using Survey
 func (p *SurveyPrompter) GetProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error) {
 	config := initial

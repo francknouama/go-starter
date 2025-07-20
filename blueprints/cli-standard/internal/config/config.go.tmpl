@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 )
 
@@ -42,6 +43,11 @@ func Load() (*Config, error) {
 	v.AddConfigPath("./configs")
 	v.AddConfigPath(".")
 	v.AddConfigPath("$HOME/.{{.ProjectName}}")
+	v.AddConfigPath("/etc/{{.ProjectName}}")
+	
+	// Support multiple config file formats
+	v.SetConfigName(".{{.ProjectName}}")
+	v.AddConfigPath("$HOME")
 
 	// Set environment variable prefix
 	v.SetEnvPrefix("{{upper .ProjectName}}")
@@ -61,6 +67,13 @@ func Load() (*Config, error) {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
 	}
+
+	// Enable hot reloading for enterprise features
+	v.WatchConfig()
+	v.OnConfigChange(func(e fsnotify.Event) {
+		fmt.Printf("Config file changed: %s\n", e.Name)
+		// Note: In production, you might want to reload config gracefully
+	})
 
 	var config Config
 	if err := v.Unmarshal(&config); err != nil {

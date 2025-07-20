@@ -1,0 +1,79 @@
+# {{.ProjectName}} Makefile
+
+# Variables
+BINARY_NAME={{.ProjectName}}
+VERSION=1.0.0
+BUILD_TIME=$(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+COMMIT=$(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+
+# Build flags
+LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.buildTime=$(BUILD_TIME)"
+
+# Default target
+.DEFAULT_GOAL := help
+
+.PHONY: help build clean test fmt vet install run
+
+## Show this help message
+help:
+	@echo 'Usage: make [target]'
+	@echo ''
+	@echo 'Targets:'
+	@awk '/^[a-zA-Z\-\_0-9]+:/ { \
+		helpMessage = match(lastLine, /^## (.*)/); \
+		if (helpMessage) { \
+			helpCommand = substr($$1, 0, index($$1, ":")-1); \
+			helpMessage = substr(lastLine, RSTART + 3, RLENGTH); \
+			printf "  %-20s %s\n", helpCommand, helpMessage; \
+		} \
+	} \
+	{ lastLine = $$0 }' $(MAKEFILE_LIST)
+
+## Build the application
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@go build $(LDFLAGS) -o bin/$(BINARY_NAME) .
+
+## Clean build artifacts
+clean:
+	@echo "Cleaning..."
+	@rm -rf bin/
+	@go clean
+
+## Run tests
+test:
+	@echo "Running tests..."
+	@go test -v ./...
+
+## Format code
+fmt:
+	@echo "Formatting code..."
+	@go fmt ./...
+
+## Run go vet
+vet:
+	@echo "Running go vet..."
+	@go vet ./...
+
+## Install the application
+install:
+	@echo "Installing $(BINARY_NAME)..."
+	@go install $(LDFLAGS) .
+
+## Run the application
+run:
+	@echo "Running $(BINARY_NAME)..."
+	@go run . $(ARGS)
+
+## Run checks (fmt, vet, test)
+check: fmt vet test
+	@echo "All checks passed!"
+
+## Build for multiple platforms
+build-all:
+	@echo "Building for multiple platforms..."
+	@mkdir -p bin
+	@GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-linux-amd64 .
+	@GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-amd64 .
+	@GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-darwin-arm64 .
+	@GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY_NAME)-windows-amd64.exe .

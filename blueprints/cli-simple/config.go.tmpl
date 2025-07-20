@@ -1,0 +1,105 @@
+package main
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+)
+
+// Config holds simple application configuration
+type Config struct {
+	// App settings
+	AppName string
+	Debug   bool
+	
+	// Output settings
+	Quiet  bool
+	Format string // "text" or "json"
+	
+	// Log level
+	LogLevel string // "debug", "info", "warn", "error"
+}
+
+// LoadConfig loads configuration from environment variables
+func LoadConfig() *Config {
+	config := &Config{
+		AppName:  "{{.ProjectName}}",
+		Debug:    getEnvBool("{{upper .ProjectName}}_DEBUG", false),
+		Quiet:    getEnvBool("{{upper .ProjectName}}_QUIET", false),
+		Format:   getEnvString("{{upper .ProjectName}}_FORMAT", "text"),
+		LogLevel: getEnvString("{{upper .ProjectName}}_LOG_LEVEL", "info"),
+	}
+	
+	// Validate configuration
+	if err := config.Validate(); err != nil {
+		slog.Error("Invalid configuration", "error", err)
+		os.Exit(1)
+	}
+	
+	return config
+}
+
+// Validate validates the configuration
+func (c *Config) Validate() error {
+	// Validate format
+	if c.Format != "text" && c.Format != "json" {
+		return fmt.Errorf("invalid format '%s', must be 'text' or 'json'", c.Format)
+	}
+	
+	// Validate log level
+	validLevels := []string{"debug", "info", "warn", "error"}
+	levelValid := false
+	for _, level := range validLevels {
+		if c.LogLevel == level {
+			levelValid = true
+			break
+		}
+	}
+	if !levelValid {
+		return fmt.Errorf("invalid log level '%s', must be one of: %s", 
+			c.LogLevel, strings.Join(validLevels, ", "))
+	}
+	
+	return nil
+}
+
+// GetLogLevel returns the slog.Level for the configured log level
+func (c *Config) GetLogLevel() slog.Level {
+	switch c.LogLevel {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+// Helper functions for environment variable parsing
+func getEnvString(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	
+	switch strings.ToLower(value) {
+	case "true", "1", "yes", "on":
+		return true
+	case "false", "0", "no", "off":
+		return false
+	default:
+		return defaultValue
+	}
+}

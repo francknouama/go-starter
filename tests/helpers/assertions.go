@@ -248,3 +248,153 @@ func AssertTestsRun(t *testing.T, projectPath string) {
 		t.Errorf("Tests should run successfully.\nTest output:\n%s\nError: %v", string(output), err)
 	}
 }
+
+// Additional helper functions for CLI-simple testing
+
+// AssertFileNotExists validates file does not exist
+func AssertFileNotExists(t *testing.T, filePath string) {
+	t.Helper()
+	_, err := os.Stat(filePath)
+	assert.True(t, os.IsNotExist(err), "File %s should not exist", filePath)
+}
+
+// AssertDirectoryNotExists validates directory does not exist
+func AssertDirectoryNotExists(t *testing.T, dirPath string) {
+	t.Helper()
+	_, err := os.Stat(dirPath)
+	assert.True(t, os.IsNotExist(err), "Directory %s should not exist", dirPath)
+}
+
+// AssertFileNotContains validates file does not contain specific content
+func AssertFileNotContains(t *testing.T, filePath string, unwantedContent string) {
+	t.Helper()
+	if !FileExists(filePath) {
+		return // If file doesn't exist, it doesn't contain the content
+	}
+	content, err := os.ReadFile(filePath)
+	assert.NoError(t, err)
+	assert.NotContains(t, string(content), unwantedContent, 
+		"File %s should not contain '%s'", filePath, unwantedContent)
+}
+
+// CountFiles counts files with specific extension in directory
+func CountFiles(t *testing.T, dirPath string, extension string) int {
+	t.Helper()
+	count := 0
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == extension {
+			count++
+		}
+		return nil
+	})
+	assert.NoError(t, err, "Failed to count files in %s", dirPath)
+	return count
+}
+
+// CountAllFiles counts all files in directory (excluding directories)
+func CountAllFiles(t *testing.T, dirPath string) int {
+	t.Helper()
+	count := 0
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			count++
+		}
+		return nil
+	})
+	assert.NoError(t, err, "Failed to count files in %s", dirPath)
+	return count
+}
+
+// ReadFile reads file content as string
+func ReadFile(t *testing.T, filePath string) string {
+	t.Helper()
+	content, err := os.ReadFile(filePath)
+	assert.NoError(t, err, "Failed to read file %s", filePath)
+	return string(content)
+}
+
+// CountLines counts lines in text content
+func CountLines(content string) int {
+	if content == "" {
+		return 0
+	}
+	return strings.Count(content, "\n") + 1
+}
+
+// CountDependencies counts dependencies in go.mod content
+func CountDependencies(goModContent string) int {
+	lines := strings.Split(goModContent, "\n")
+	count := 0
+	inRequireBlock := false
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "require (" {
+			inRequireBlock = true
+			continue
+		}
+		if line == ")" && inRequireBlock {
+			inRequireBlock = false
+			continue
+		}
+		if inRequireBlock && line != "" && !strings.Contains(line, "// indirect") {
+			count++
+		} else if strings.HasPrefix(line, "require ") && !strings.Contains(line, "// indirect") {
+			count++
+		}
+	}
+	return count
+}
+
+// FindGoFiles finds all .go files in directory
+func FindGoFiles(t *testing.T, dirPath string) []string {
+	t.Helper()
+	var files []string
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && filepath.Ext(path) == ".go" {
+			files = append(files, path)
+		}
+		return nil
+	})
+	assert.NoError(t, err, "Failed to find Go files in %s", dirPath)
+	return files
+}
+
+// CountInterfaces counts interface definitions in Go code
+func CountInterfaces(content string) int {
+	// Simple count of "type ... interface" patterns
+	return strings.Count(content, "interface{")
+}
+
+// GetMaxDirectoryDepth gets maximum directory depth in project
+func GetMaxDirectoryDepth(t *testing.T, dirPath string) int {
+	t.Helper()
+	maxDepth := 0
+	err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			relPath, err := filepath.Rel(dirPath, path)
+			if err != nil {
+				return err
+			}
+			depth := strings.Count(relPath, string(filepath.Separator))
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		}
+		return nil
+	})
+	assert.NoError(t, err, "Failed to calculate directory depth in %s", dirPath)
+	return maxDepth
+}

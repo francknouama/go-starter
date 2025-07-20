@@ -1,0 +1,94 @@
+name: "cli-simple"
+description: "Simple command-line application template with essential features only"
+type: "cli"
+architecture: "simple"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the project"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "Author"
+    description: "Project author"
+    type: "string"
+    required: false
+    default: ""
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+files:
+  # Core application files
+  - source: "main.go.tmpl"
+    destination: "main.go"
+
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+
+  # Commands
+  - source: "cmd/root.go.tmpl"
+    destination: "cmd/root.go"
+    
+  - source: "cmd/version.go.tmpl"
+    destination: "cmd/version.go"
+
+  # Simple configuration
+  - source: "config.go.tmpl"
+    destination: "config.go"
+
+  # Environment and Git
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+dependencies:
+  - module: "github.com/spf13/cobra"
+    version: "v1.8.0"
+
+post_hooks:
+  - name: "clean_dependencies"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+    
+  - name: "format_code"
+    command: "go fmt ./..."
+    work_dir: "{{.OutputPath}}"
+
+features:
+  - name: "essential_cli"
+    description: "Essential CLI features: help, version, quiet, output format"
+    enabled_when: "true"
+    
+  - name: "shell_completion"
+    description: "Shell completion support for bash, zsh, fish, powershell"
+    enabled_when: "true"
+
+validation:
+  - name: "go_version_compatibility"
+    description: "Ensure Go version is compatible"
+    value: "1.18"
+    
+  - name: "module_path_format"
+    description: "Validate module path format"
+    
+  - name: "project_name_format"
+    description: "Validate project name format"

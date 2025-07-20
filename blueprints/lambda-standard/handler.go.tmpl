@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-lambda-go/lambdacontext"
 	"{{.ModulePath}}/internal/logger"
 )
 
@@ -23,16 +25,66 @@ type Response struct {
 	Headers    map[string]string `json:"headers,omitempty"`
 }
 
-// HandleRequest is the Lambda function handler
+// HandleRequest is the Lambda function handler with comprehensive context handling
 func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error) {
-	appLogger.InfoWith("Lambda function invoked", logger.Fields{
-		"request_id": getRequestID(ctx),
-	})
+	// Get Lambda context information for proper logging
+	lc, _ := lambdacontext.FromContext(ctx)
+	requestID := lc.AwsRequestID
+	
+	// Check if we have sufficient time to process the request
+	deadline, hasDeadline := ctx.Deadline()
+	if hasDeadline {
+		timeLeft := time.Until(deadline)
+		appLogger.InfoWith("Lambda function invoked", logger.Fields{
+			"request_id":            requestID,
+			"invoked_function_arn":  lc.InvokedFunctionArn,
+			"time_remaining":        timeLeft.String(),
+		})
+
+		// Check if we have sufficient time (need at least 100ms buffer for cleanup)
+		if timeLeft < 100*time.Millisecond {
+			appLogger.WarnWith("Insufficient time to process request", logger.Fields{
+				"request_id":     requestID,
+				"time_remaining": timeLeft.String(),
+			})
+			return Response{
+				StatusCode: 408,
+				Body:       `{"error": "Request timeout: insufficient time to process"}`,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+			}, nil
+		}
+
+		// Log warning if we're approaching timeout
+		if timeLeft < 5*time.Second {
+			appLogger.WarnWith("Approaching Lambda timeout", logger.Fields{
+				"request_id":     requestID,
+				"time_remaining": timeLeft.String(),
+			})
+		}
+	} else {
+		appLogger.InfoWith("Lambda function invoked (no deadline)", logger.Fields{
+			"request_id":           requestID,
+			"invoked_function_arn": lc.InvokedFunctionArn,
+		})
+	}
+
+	// Create a context with timeout buffer for safe cleanup
+	processingCtx := ctx
+	if hasDeadline {
+		timeLeft := time.Until(deadline)
+		if timeLeft > 200*time.Millisecond {
+			// Reserve 100ms for cleanup, use 100ms less for processing
+			processingTimeout := timeLeft - 100*time.Millisecond
+			var cancel context.CancelFunc
+			processingCtx, cancel = context.WithTimeout(ctx, processingTimeout)
+			defer cancel()
+		}
+	}
 
 	// Try to parse as API Gateway request first
 	var apiEvent events.APIGatewayProxyRequest
 	if err := json.Unmarshal(event, &apiEvent); err == nil && apiEvent.HTTPMethod != "" {
-		return handleAPIGatewayRequest(ctx, apiEvent)
+		return handleAPIGatewayRequest(processingCtx, apiEvent)
 	}
 
 	// Fallback to direct invocation
@@ -40,20 +92,37 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 	if err := json.Unmarshal(event, &request); err != nil {
 		appLogger.ErrorWith("Failed to parse request", logger.Fields{
 			"error":      err.Error(),
-			"request_id": getRequestID(ctx),
+			"request_id": requestID,
 		})
 		return Response{
 			StatusCode: 400,
 			Body:       `{"error": "Invalid request format"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
 		}, nil
 	}
 
-	return handleDirectRequest(ctx, request)
+	return handleDirectRequest(processingCtx, request)
 }
 
-// handleAPIGatewayRequest handles API Gateway proxy requests
+// handleAPIGatewayRequest handles API Gateway proxy requests with context awareness
 func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRequest) (Response, error) {
 	requestID := getRequestID(ctx)
+	
+	// Check for context cancellation at start
+	select {
+	case <-ctx.Done():
+		appLogger.WarnWith("API Gateway request cancelled", logger.Fields{
+			"request_id": requestID,
+			"error":      ctx.Err().Error(),
+		})
+		return Response{
+			StatusCode: 408,
+			Body:       `{"error": "Request timeout"}`,
+			Headers:    map[string]string{"Content-Type": "application/json"},
+		}, nil
+	default:
+		// Continue processing
+	}
 	
 	appLogger.InfoWith("Handling API Gateway request", logger.Fields{
 		"method":     event.HTTPMethod,
@@ -110,9 +179,24 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 	}, nil
 }
 
-// handleDirectRequest handles direct Lambda invocations
+// handleDirectRequest handles direct Lambda invocations with context awareness
 func handleDirectRequest(ctx context.Context, request Request) (Response, error) {
 	requestID := getRequestID(ctx)
+	
+	// Check for context cancellation at start
+	select {
+	case <-ctx.Done():
+		appLogger.WarnWith("Direct request cancelled", logger.Fields{
+			"request_id": requestID,
+			"error":      ctx.Err().Error(),
+		})
+		return Response{
+			StatusCode: 408,
+			Body:       `{"error": "Request timeout"}`,
+		}, nil
+	default:
+		// Continue processing
+	}
 	
 	appLogger.InfoWith("Handling direct request", logger.Fields{
 		"name":       request.Name,
@@ -144,40 +228,95 @@ func handleDirectRequest(ctx context.Context, request Request) (Response, error)
 	}, nil
 }
 
-// processRequest contains the core business logic
+// processRequest contains the core business logic with context handling
 func processRequest(ctx context.Context, request Request) (map[string]interface{}, error) {
+	requestID := getRequestID(ctx)
+	
 	appLogger.DebugWith("Processing request", logger.Fields{
-		"name":    request.Name,
-		"message": request.Message,
+		"name":       request.Name,
+		"message":    request.Message,
+		"request_id": requestID,
 	})
+
+	// Check for context cancellation before starting processing
+	select {
+	case <-ctx.Done():
+		appLogger.WarnWith("Request cancelled before processing", logger.Fields{
+			"request_id": requestID,
+			"error":      ctx.Err().Error(),
+		})
+		return nil, ctx.Err()
+	default:
+		// Continue processing
+	}
 
 	// Add your business logic here
 	if request.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
 
-	result := map[string]interface{}{
-		"greeting":   fmt.Sprintf("Hello, %s!", request.Name),
-		"message":    request.Message,
-		"processed":  true,
-		"request_id": getRequestID(ctx),
-	}
+	// Simulate processing work with context awareness
+	processingComplete := make(chan map[string]interface{}, 1)
+	processingError := make(chan error, 1)
+	
+	go func() {
+		// Your actual business logic would go here
+		// This is a simple example that respects context cancellation
+		
+		// Check for cancellation during processing
+		select {
+		case <-ctx.Done():
+			processingError <- ctx.Err()
+			return
+		default:
+			// Simulate some work
+		}
 
-	if request.Meta != nil {
-		result["meta"] = request.Meta
-	}
+		result := map[string]interface{}{
+			"greeting":   fmt.Sprintf("Hello, %s!", request.Name),
+			"message":    request.Message,
+			"processed":  true,
+			"request_id": requestID,
+			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+		}
 
-	return result, nil
+		if request.Meta != nil {
+			result["meta"] = request.Meta
+		}
+
+		processingComplete <- result
+	}()
+
+	// Wait for either processing completion or context cancellation
+	select {
+	case <-ctx.Done():
+		appLogger.WarnWith("Request cancelled during processing", logger.Fields{
+			"request_id": requestID,
+			"error":      ctx.Err().Error(),
+		})
+		return nil, ctx.Err()
+	case err := <-processingError:
+		return nil, err
+	case result := <-processingComplete:
+		appLogger.DebugWith("Request processing completed", logger.Fields{
+			"request_id": requestID,
+		})
+		return result, nil
+	}
 }
 
-// getRequestID extracts the AWS request ID from context
+// getRequestID extracts the AWS request ID from Lambda context
 func getRequestID(ctx context.Context) string {
+	// Use proper AWS Lambda context to get request ID
+	lc, ok := lambdacontext.FromContext(ctx)
+	if ok && lc.AwsRequestID != "" {
+		return lc.AwsRequestID
+	}
+	
+	// Fallback for non-Lambda contexts (testing, local development)
 	if requestID, ok := ctx.Value("request_id").(string); ok {
 		return requestID
 	}
-	// Fallback for AWS Lambda context
-	if awsRequestID := ctx.Value("aws_request_id"); awsRequestID != nil {
-		return fmt.Sprintf("%v", awsRequestID)
-	}
+	
 	return "unknown"
 }

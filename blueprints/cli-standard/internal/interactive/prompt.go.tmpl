@@ -1,0 +1,221 @@
+package interactive
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/AlecAivazis/survey/v2"
+	"github.com/spf13/cobra"
+)
+
+// PromptOptions defines options for interactive prompts
+type PromptOptions struct {
+	Label        string
+	Help         string
+	Default      string
+	Required     bool
+	Validate     func(string) error
+	Choices      []string
+	AllowOther   bool
+}
+
+// Prompter provides interactive prompting capabilities
+type Prompter struct {
+	cmd *cobra.Command
+}
+
+// NewPrompter creates a new Prompter instance
+func NewPrompter(cmd *cobra.Command) *Prompter {
+	return &Prompter{
+		cmd: cmd,
+	}
+}
+
+// PromptString prompts for a string input
+func (p *Prompter) PromptString(opts PromptOptions) (string, error) {
+	prompt := &survey.Input{
+		Message: opts.Label,
+		Default: opts.Default,
+		Help:    opts.Help,
+	}
+
+	var result string
+	err := survey.AskOne(prompt, &result, survey.WithValidator(func(val interface{}) error {
+		str := val.(string)
+		if opts.Required && strings.TrimSpace(str) == "" {
+			return errors.New("this field is required")
+		}
+		if opts.Validate != nil {
+			return opts.Validate(str)
+		}
+		return nil
+	}))
+
+	return result, err
+}
+
+// PromptSelect prompts for selection from choices
+func (p *Prompter) PromptSelect(opts PromptOptions) (string, error) {
+	if len(opts.Choices) == 0 {
+		return "", errors.New("no choices provided for selection")
+	}
+
+	prompt := &survey.Select{
+		Message: opts.Label,
+		Options: opts.Choices,
+		Help:    opts.Help,
+	}
+
+	if opts.Default != "" {
+		prompt.Default = opts.Default
+	}
+
+	var result string
+	err := survey.AskOne(prompt, &result)
+	return result, err
+}
+
+// PromptMultiSelect prompts for multiple selections
+func (p *Prompter) PromptMultiSelect(opts PromptOptions) ([]string, error) {
+	if len(opts.Choices) == 0 {
+		return nil, errors.New("no choices provided for multi-selection")
+	}
+
+	prompt := &survey.MultiSelect{
+		Message: opts.Label,
+		Options: opts.Choices,
+		Help:    opts.Help,
+	}
+
+	var result []string
+	err := survey.AskOne(prompt, &result, survey.WithValidator(func(val interface{}) error {
+		selections := val.([]string)
+		if opts.Required && len(selections) == 0 {
+			return errors.New("at least one selection is required")
+		}
+		return nil
+	}))
+
+	return result, err
+}
+
+// PromptConfirm prompts for a yes/no confirmation
+func (p *Prompter) PromptConfirm(opts PromptOptions) (bool, error) {
+	prompt := &survey.Confirm{
+		Message: opts.Label,
+		Help:    opts.Help,
+	}
+
+	if opts.Default != "" {
+		prompt.Default = strings.ToLower(opts.Default) == "true" || opts.Default == "yes" || opts.Default == "y"
+	}
+
+	var result bool
+	err := survey.AskOne(prompt, &result)
+	return result, err
+}
+
+// PromptPassword prompts for a password input
+func (p *Prompter) PromptPassword(opts PromptOptions) (string, error) {
+	prompt := &survey.Password{
+		Message: opts.Label,
+		Help:    opts.Help,
+	}
+
+	var result string
+	err := survey.AskOne(prompt, &result, survey.WithValidator(func(val interface{}) error {
+		str := val.(string)
+		if opts.Required && strings.TrimSpace(str) == "" {
+			return errors.New("password is required")
+		}
+		if opts.Validate != nil {
+			return opts.Validate(str)
+		}
+		return nil
+	}))
+
+	return result, err
+}
+
+// PromptEditor prompts for multi-line text input using an editor
+func (p *Prompter) PromptEditor(opts PromptOptions) (string, error) {
+	prompt := &survey.Editor{
+		Message:       opts.Label,
+		Default:       opts.Default,
+		Help:          opts.Help,
+		HideDefault:   true,
+		AppendDefault: true,
+	}
+
+	var result string
+	err := survey.AskOne(prompt, &result, survey.WithValidator(func(val interface{}) error {
+		str := val.(string)
+		if opts.Required && strings.TrimSpace(str) == "" {
+			return errors.New("this field is required")
+		}
+		if opts.Validate != nil {
+			return opts.Validate(str)
+		}
+		return nil
+	}))
+
+	return result, err
+}
+
+// ValidateNotEmpty validates that a string is not empty
+func ValidateNotEmpty(val string) error {
+	if strings.TrimSpace(val) == "" {
+		return errors.New("value cannot be empty")
+	}
+	return nil
+}
+
+// ValidateEmail validates that a string is a valid email address
+func ValidateEmail(val string) error {
+	if strings.TrimSpace(val) == "" {
+		return nil // Allow empty if not required
+	}
+	if !strings.Contains(val, "@") || !strings.Contains(val, ".") {
+		return errors.New("please enter a valid email address")
+	}
+	return nil
+}
+
+// ValidateURL validates that a string is a valid URL
+func ValidateURL(val string) error {
+	if strings.TrimSpace(val) == "" {
+		return nil // Allow empty if not required
+	}
+	if !strings.HasPrefix(val, "http://") && !strings.HasPrefix(val, "https://") {
+		return errors.New("URL must start with http:// or https://")
+	}
+	return nil
+}
+
+// ValidateChoices validates that a value is one of the allowed choices
+func ValidateChoices(choices []string) func(string) error {
+	return func(val string) error {
+		for _, choice := range choices {
+			if val == choice {
+				return nil
+			}
+		}
+		return fmt.Errorf("value must be one of: %s", strings.Join(choices, ", "))
+	}
+}
+
+// RunInteractiveMode checks if interactive mode is enabled and provides helper functions
+func RunInteractiveMode(cmd *cobra.Command, setupFunc func(*Prompter) error) error {
+	interactive, _ := cmd.Flags().GetBool("interactive")
+	if !interactive {
+		return nil
+	}
+
+	fmt.Println("🎯 Interactive mode enabled")
+	fmt.Println("You will be prompted for all required information.")
+	fmt.Println()
+
+	prompter := NewPrompter(cmd)
+	return setupFunc(prompter)
+}

@@ -1,0 +1,411 @@
+package output
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"reflect"
+	"strings"
+	"text/tabwriter"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Format represents output format types
+type Format string
+
+const (
+	// FormatTable represents table output format
+	FormatTable Format = "table"
+	// FormatJSON represents JSON output format
+	FormatJSON Format = "json"
+	// FormatYAML represents YAML output format
+	FormatYAML Format = "yaml"
+)
+
+// Writer provides structured output capabilities
+type Writer struct {
+	format Format
+	writer io.Writer
+	quiet  bool
+	noColor bool
+}
+
+// NewWriter creates a new output writer
+func NewWriter(format Format, quiet, noColor bool) *Writer {
+	return &Writer{
+		format:  format,
+		writer:  os.Stdout,
+		quiet:   quiet,
+		noColor: noColor,
+	}
+}
+
+// SetWriter sets the output writer
+func (w *Writer) SetWriter(writer io.Writer) {
+	w.writer = writer
+}
+
+// Print outputs data in the configured format
+func (w *Writer) Print(data interface{}) error {
+	if w.quiet {
+		return nil
+	}
+
+	switch w.format {
+	case FormatJSON:
+		return w.printJSON(data)
+	case FormatYAML:
+		return w.printYAML(data)
+	case FormatTable:
+		return w.printTable(data)
+	default:
+		return fmt.Errorf("unsupported output format: %s", w.format)
+	}
+}
+
+// PrintSuccess prints a success message
+func (w *Writer) PrintSuccess(message string) {
+	if w.quiet {
+		return
+	}
+
+	switch w.format {
+	case FormatJSON:
+		data := map[string]interface{}{
+			"status":  "success",
+			"message": message,
+		}
+		w.printJSON(data)
+	case FormatYAML:
+		data := map[string]interface{}{
+			"status":  "success",
+			"message": message,
+		}
+		w.printYAML(data)
+	default:
+		if w.noColor {
+			fmt.Fprintf(w.writer, "✓ %s\n", message)
+		} else {
+			fmt.Fprintf(w.writer, "\033[32m✓\033[0m %s\n", message)
+		}
+	}
+}
+
+// PrintError prints an error message
+func (w *Writer) PrintError(err error) {
+	if w.quiet {
+		return
+	}
+
+	switch w.format {
+	case FormatJSON:
+		data := map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		}
+		w.printJSON(data)
+	case FormatYAML:
+		data := map[string]interface{}{
+			"status": "error",
+			"error":  err.Error(),
+		}
+		w.printYAML(data)
+	default:
+		if w.noColor {
+			fmt.Fprintf(w.writer, "✗ Error: %s\n", err.Error())
+		} else {
+			fmt.Fprintf(w.writer, "\033[31m✗\033[0m Error: %s\n", err.Error())
+		}
+	}
+}
+
+// PrintWarning prints a warning message
+func (w *Writer) PrintWarning(message string) {
+	if w.quiet {
+		return
+	}
+
+	switch w.format {
+	case FormatJSON:
+		data := map[string]interface{}{
+			"status":  "warning",
+			"message": message,
+		}
+		w.printJSON(data)
+	case FormatYAML:
+		data := map[string]interface{}{
+			"status":  "warning",
+			"message": message,
+		}
+		w.printYAML(data)
+	default:
+		if w.noColor {
+			fmt.Fprintf(w.writer, "⚠ Warning: %s\n", message)
+		} else {
+			fmt.Fprintf(w.writer, "\033[33m⚠\033[0m Warning: %s\n", message)
+		}
+	}
+}
+
+// PrintInfo prints an info message
+func (w *Writer) PrintInfo(message string) {
+	if w.quiet {
+		return
+	}
+
+	switch w.format {
+	case FormatJSON:
+		data := map[string]interface{}{
+			"status":  "info",
+			"message": message,
+		}
+		w.printJSON(data)
+	case FormatYAML:
+		data := map[string]interface{}{
+			"status":  "info",
+			"message": message,
+		}
+		w.printYAML(data)
+	default:
+		if w.noColor {
+			fmt.Fprintf(w.writer, "ℹ %s\n", message)
+		} else {
+			fmt.Fprintf(w.writer, "\033[34mℹ\033[0m %s\n", message)
+		}
+	}
+}
+
+// printJSON outputs data as JSON
+func (w *Writer) printJSON(data interface{}) error {
+	encoder := json.NewEncoder(w.writer)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(data)
+}
+
+// printYAML outputs data as YAML
+func (w *Writer) printYAML(data interface{}) error {
+	encoder := yaml.NewEncoder(w.writer)
+	defer encoder.Close()
+	return encoder.Encode(data)
+}
+
+// printTable outputs data as a table
+func (w *Writer) printTable(data interface{}) error {
+	if data == nil {
+		return nil
+	}
+
+	// Handle different data types
+	switch v := data.(type) {
+	case []map[string]interface{}:
+		return w.printTableFromMaps(v)
+	case map[string]interface{}:
+		return w.printTableFromMap(v)
+	case []interface{}:
+		return w.printTableFromSlice(v)
+	default:
+		return w.printTableFromStruct(data)
+	}
+}
+
+// printTableFromMaps prints a table from a slice of maps
+func (w *Writer) printTableFromMaps(data []map[string]interface{}) error {
+	if len(data) == 0 {
+		fmt.Fprintln(w.writer, "No data to display")
+		return nil
+	}
+
+	// Get all unique keys
+	keys := make(map[string]bool)
+	for _, row := range data {
+		for key := range row {
+			keys[key] = true
+		}
+	}
+
+	// Convert to sorted slice
+	var headers []string
+	for key := range keys {
+		headers = append(headers, key)
+	}
+
+	// Create tabwriter
+	tw := tabwriter.NewWriter(w.writer, 0, 0, 2, ' ', 0)
+
+	// Print headers
+	fmt.Fprintln(tw, strings.Join(headers, "\t"))
+
+	// Print separator
+	separators := make([]string, len(headers))
+	for i := range separators {
+		separators[i] = strings.Repeat("-", len(headers[i]))
+	}
+	fmt.Fprintln(tw, strings.Join(separators, "\t"))
+
+	// Print rows
+	for _, row := range data {
+		var values []string
+		for _, header := range headers {
+			if val, exists := row[header]; exists && val != nil {
+				values = append(values, fmt.Sprintf("%v", val))
+			} else {
+				values = append(values, "")
+			}
+		}
+		fmt.Fprintln(tw, strings.Join(values, "\t"))
+	}
+
+	return tw.Flush()
+}
+
+// printTableFromMap prints a table from a single map
+func (w *Writer) printTableFromMap(data map[string]interface{}) error {
+	tw := tabwriter.NewWriter(w.writer, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(tw, "Key\tValue")
+	fmt.Fprintln(tw, "---\t-----")
+
+	for key, value := range data {
+		fmt.Fprintf(tw, "%s\t%v\n", key, value)
+	}
+
+	return tw.Flush()
+}
+
+// printTableFromSlice prints a table from a slice
+func (w *Writer) printTableFromSlice(data []interface{}) error {
+	if len(data) == 0 {
+		fmt.Fprintln(w.writer, "No data to display")
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(w.writer, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(tw, "Index\tValue")
+	fmt.Fprintln(tw, "-----\t-----")
+
+	for i, value := range data {
+		fmt.Fprintf(tw, "%d\t%v\n", i, value)
+	}
+
+	return tw.Flush()
+}
+
+// printTableFromStruct prints a table from a struct using reflection
+func (w *Writer) printTableFromStruct(data interface{}) error {
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	if v.Kind() == reflect.Slice {
+		return w.printTableFromStructSlice(data)
+	}
+
+	if v.Kind() != reflect.Struct {
+		// Fallback to simple output
+		fmt.Fprintf(w.writer, "%v\n", data)
+		return nil
+	}
+
+	tw := tabwriter.NewWriter(w.writer, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(tw, "Field\tValue")
+	fmt.Fprintln(tw, "-----\t-----")
+
+	t := v.Type()
+	for i := 0; i < v.NumField(); i++ {
+		field := t.Field(i)
+		value := v.Field(i)
+
+		// Skip unexported fields
+		if !value.CanInterface() {
+			continue
+		}
+
+		fmt.Fprintf(tw, "%s\t%v\n", field.Name, value.Interface())
+	}
+
+	return tw.Flush()
+}
+
+// printTableFromStructSlice prints a table from a slice of structs
+func (w *Writer) printTableFromStructSlice(data interface{}) error {
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Slice || v.Len() == 0 {
+		fmt.Fprintln(w.writer, "No data to display")
+		return nil
+	}
+
+	// Get the struct type from the first element
+	firstElem := v.Index(0)
+	if firstElem.Kind() == reflect.Ptr {
+		firstElem = firstElem.Elem()
+	}
+
+	if firstElem.Kind() != reflect.Struct {
+		// Fallback to slice output
+		return w.printTableFromSlice(data.([]interface{}))
+	}
+
+	tw := tabwriter.NewWriter(w.writer, 0, 0, 2, ' ', 0)
+
+	// Print headers
+	t := firstElem.Type()
+	var headers []string
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		if firstElem.Field(i).CanInterface() {
+			headers = append(headers, field.Name)
+		}
+	}
+	fmt.Fprintln(tw, strings.Join(headers, "\t"))
+
+	// Print separator
+	separators := make([]string, len(headers))
+	for i, header := range headers {
+		separators[i] = strings.Repeat("-", len(header))
+	}
+	fmt.Fprintln(tw, strings.Join(separators, "\t"))
+
+	// Print rows
+	for i := 0; i < v.Len(); i++ {
+		elem := v.Index(i)
+		if elem.Kind() == reflect.Ptr {
+			elem = elem.Elem()
+		}
+
+		var values []string
+		fieldIndex := 0
+		for j := 0; j < elem.NumField(); j++ {
+			if elem.Field(j).CanInterface() {
+				values = append(values, fmt.Sprintf("%v", elem.Field(j).Interface()))
+				fieldIndex++
+			}
+		}
+		fmt.Fprintln(tw, strings.Join(values, "\t"))
+	}
+
+	return tw.Flush()
+}
+
+// IsValidFormat checks if the format is valid
+func IsValidFormat(format string) bool {
+	switch Format(format) {
+	case FormatTable, FormatJSON, FormatYAML:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidFormats returns all valid output formats
+func ValidFormats() []string {
+	return []string{string(FormatTable), string(FormatJSON), string(FormatYAML)}
+}

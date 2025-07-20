@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"{{.ModulePath}}/internal/handler"
@@ -27,34 +28,66 @@ import (
 	{{end}}
 )
 
-// Simple config for now - in production use viper or similar
+// Configuration structure for microservice
 type Config struct {
 	Port                  int
 	CommunicationProtocol string
 	ProjectName           string
+	Host                  string
+	LogLevel              string
 }
 
 func LoadConfig() *Config {
+	// Default values
 	port := 50051
+	protocol := "grpc"
+	host := "0.0.0.0"
+	logLevel := "info"
+
+	// Parse PORT environment variable
 	if p := os.Getenv("PORT"); p != "" {
-		// Simple parsing, in production use strconv.Atoi
-		port = 50051
+		if parsed, err := strconv.Atoi(p); err == nil {
+			port = parsed
+		} else {
+			log.Printf("Warning: Invalid PORT value '%s', using default %d", p, port)
+		}
 	}
 
-	protocol := "grpc"
+	// Parse PROTOCOL environment variable
 	if p := os.Getenv("PROTOCOL"); p != "" {
-		protocol = p
+		if p == "grpc" || p == "rest" {
+			protocol = p
+		} else {
+			log.Printf("Warning: Invalid PROTOCOL value '%s', using default '%s'", p, protocol)
+		}
+	}
+
+	// Parse HOST environment variable
+	if h := os.Getenv("HOST"); h != "" {
+		host = h
+	}
+
+	// Parse LOG_LEVEL environment variable
+	if l := os.Getenv("LOG_LEVEL"); l != "" {
+		logLevel = l
 	}
 
 	return &Config{
 		Port:                  port,
 		CommunicationProtocol: protocol,
 		ProjectName:           "{{.ProjectName}}",
+		Host:                  host,
+		LogLevel:              logLevel,
 	}
 }
 
 func main() {
 	cfg := LoadConfig()
+
+	// Log configuration for debugging
+	log.Printf("Starting {{.ProjectName}} microservice")
+	log.Printf("Configuration: Port=%d, Protocol=%s, Host=%s, LogLevel=%s",
+		cfg.Port, cfg.CommunicationProtocol, cfg.Host, cfg.LogLevel)
 
 	// Setup handler
 	svcHandler := handler.NewServiceHandler()
@@ -71,9 +104,10 @@ func main() {
 }
 
 func startGrpcServer(cfg *Config, svcHandler *handler.ServiceHandler) {
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
+	address := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	lis, err := net.Listen("tcp", address)
 	if err != nil {
-		log.Fatalf("failed to listen: %v", err)
+		log.Fatalf("failed to listen on %s: %v", address, err)
 	}
 
 	s := grpc.NewServer()
@@ -84,7 +118,7 @@ func startGrpcServer(cfg *Config, svcHandler *handler.ServiceHandler) {
 	pb.Register{{$serviceName}}Server(s, grpcServer)
 	reflection.Register(s) // Enable reflection for gRPCurl
 
-	log.Printf("gRPC server listening on port %d", cfg.Port)
+	log.Printf("gRPC server listening on %s", address)
 
 	{{if eq .ServiceDiscovery "consul"}}
 	consulClient, err := api.NewClient(api.DefaultConfig())
@@ -97,9 +131,9 @@ func startGrpcServer(cfg *Config, svcHandler *handler.ServiceHandler) {
 		ID:      serviceID,
 		Name:    cfg.ProjectName,
 		Port:    cfg.Port,
-		Address: "127.0.0.1", // Replace with actual host IP in production
+		Address: cfg.Host,
 		Check: &api.AgentServiceCheck{
-			GRPC:     fmt.Sprintf("127.0.0.1:%d", cfg.Port),
+			GRPC:     fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
 			Interval: "10s",
 			Timeout:  "1s",
 		},
@@ -134,10 +168,11 @@ func startRestServer(cfg *Config, svcHandler *handler.ServiceHandler) {
 	r := gin.Default()
 	server.SetupRoutes(r, svcHandler)
 
-	log.Printf("REST server listening on port %d", cfg.Port)
+	address := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	log.Printf("REST server listening on %s", address)
 
 	go func() {
-		if err := r.Run(fmt.Sprintf(":%d", cfg.Port)); err != nil {
+		if err := r.Run(address); err != nil {
 			log.Fatalf("failed to run REST server: %v", err)
 		}
 	}()

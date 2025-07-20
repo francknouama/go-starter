@@ -1,0 +1,74 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+var (
+	// Global flags
+	quiet        bool
+	outputFormat string
+)
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "{{.ProjectName}}",
+	Short: "A simple CLI application built with Go",
+	Long: `{{.ProjectName}} is a command-line application built with Go and Cobra.
+
+This is a simple CLI template that provides essential features:
+- Clean command structure
+- Standard CLI flags (--help, --version, --quiet, --output)
+- Shell completion support
+- Standard library logging (slog)
+
+Use --help with any command to get more information.`,
+
+	Run: func(cmd *cobra.Command, args []string) {
+		if !quiet {
+			output := map[string]interface{}{
+				"message": fmt.Sprintf("Welcome to %s!", "{{.ProjectName}}"),
+				"help":    "Use --help to see available commands",
+				"version": "Use --version to see the version",
+			}
+
+			if outputFormat == "json" {
+				if err := json.NewEncoder(os.Stdout).Encode(output); err != nil {
+					slog.Error("Failed to encode JSON output", "error", err)
+					os.Exit(1)
+				}
+			} else {
+				fmt.Printf("Welcome to %s!\n", "{{.ProjectName}}")
+				fmt.Println("Use --help to see available commands")
+				fmt.Println("Use --version to see the version")
+			}
+		}
+
+		slog.Info("Application started", 
+			"args", args,
+			"quiet", quiet,
+			"format", outputFormat,
+		)
+	},
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+// This is called by main.main(). It only needs to happen once to the rootCmd.
+func Execute() error {
+	return rootCmd.Execute()
+}
+
+func init() {
+	// Global flags
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "suppress non-essential output")
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "text", "output format (text|json)")
+
+	// Configure completion
+	rootCmd.CompletionOptions.DisableDefaultCmd = false
+	rootCmd.CompletionOptions.HiddenDefaultCmd = false
+}

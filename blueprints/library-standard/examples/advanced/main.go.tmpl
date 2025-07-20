@@ -3,36 +3,165 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"time"
+
+{{- if eq .Logger "slog"}}
+	"log/slog"
+{{- else if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{- else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{- else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+{{- else}}
+	"log/slog" // Default to slog if no logger specified
+{{- end}}
 
 	{{.ProjectName | replace "-" "_"}} "{{.ModulePath}}"
 )
 
+{{- if eq .Logger "slog"}}
 // slogAdapter adapts slog.Logger to our Logger interface
-type slogAdapter struct {
+type loggerAdapter struct {
 	logger *slog.Logger
 }
 
-func (s *slogAdapter) Info(msg string, fields ...any) {
+func (s *loggerAdapter) Info(msg string, fields ...any) {
 	s.logger.Info(msg, fields...)
 }
 
-func (s *slogAdapter) Error(msg string, fields ...any) {
+func (s *loggerAdapter) Error(msg string, fields ...any) {
 	s.logger.Error(msg, fields...)
 }
+{{- else if eq .Logger "zap"}}
+// zapAdapter adapts zap.Logger to our Logger interface
+type loggerAdapter struct {
+	logger *zap.Logger
+}
+
+func (z *loggerAdapter) Info(msg string, fields ...any) {
+	z.logger.Sugar().Infow(msg, fields...)
+}
+
+func (z *loggerAdapter) Error(msg string, fields ...any) {
+	z.logger.Sugar().Errorw(msg, fields...)
+}
+{{- else if eq .Logger "logrus"}}
+// logrusAdapter adapts logrus.Logger to our Logger interface
+type loggerAdapter struct {
+	logger *logrus.Logger
+}
+
+func (l *loggerAdapter) Info(msg string, fields ...any) {
+	if len(fields)%2 == 0 {
+		logFields := logrus.Fields{}
+		for i := 0; i < len(fields); i += 2 {
+			if key, ok := fields[i].(string); ok {
+				logFields[key] = fields[i+1]
+			}
+		}
+		l.logger.WithFields(logFields).Info(msg)
+	} else {
+		l.logger.Info(msg)
+	}
+}
+
+func (l *loggerAdapter) Error(msg string, fields ...any) {
+	if len(fields)%2 == 0 {
+		logFields := logrus.Fields{}
+		for i := 0; i < len(fields); i += 2 {
+			if key, ok := fields[i].(string); ok {
+				logFields[key] = fields[i+1]
+			}
+		}
+		l.logger.WithFields(logFields).Error(msg)
+	} else {
+		l.logger.Error(msg)
+	}
+}
+{{- else if eq .Logger "zerolog"}}
+// zerologAdapter adapts zerolog.Logger to our Logger interface
+type loggerAdapter struct {
+	logger zerolog.Logger
+}
+
+func (z *loggerAdapter) Info(msg string, fields ...any) {
+	event := z.logger.Info()
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			if key, ok := fields[i].(string); ok {
+				event = event.Interface(key, fields[i+1])
+			}
+		}
+	}
+	event.Msg(msg)
+}
+
+func (z *loggerAdapter) Error(msg string, fields ...any) {
+	event := z.logger.Error()
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			if key, ok := fields[i].(string); ok {
+				event = event.Interface(key, fields[i+1])
+			}
+		}
+	}
+	event.Msg(msg)
+}
+{{- else}}
+// slogAdapter adapts slog.Logger to our Logger interface (default)
+type loggerAdapter struct {
+	logger *slog.Logger
+}
+
+func (s *loggerAdapter) Info(msg string, fields ...any) {
+	s.logger.Info(msg, fields...)
+}
+
+func (s *loggerAdapter) Error(msg string, fields ...any) {
+	s.logger.Error(msg, fields...)
+}
+{{- end}}
 
 func main() {
 	fmt.Println("{{.ProjectName}} Advanced Example")
 	fmt.Println("===============================")
+	fmt.Printf("Using {{.Logger}} logger\n")
 
-	// Create a logger
-	logger := &slogAdapter{
+	// Create a logger based on the selected logger type
+{{- if eq .Logger "slog"}}
+	logger := &loggerAdapter{
 		logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 			Level: slog.LevelInfo,
 		})),
 	}
+{{- else if eq .Logger "zap"}}
+	zapLogger, _ := zap.NewDevelopment()
+	defer zapLogger.Sync()
+	logger := &loggerAdapter{
+		logger: zapLogger,
+	}
+{{- else if eq .Logger "logrus"}}
+	logrusLogger := logrus.New()
+	logrusLogger.SetOutput(os.Stdout)
+	logrusLogger.SetLevel(logrus.InfoLevel)
+	logger := &loggerAdapter{
+		logger: logrusLogger,
+	}
+{{- else if eq .Logger "zerolog"}}
+	zerologLogger := zerolog.New(os.Stdout).With().Timestamp().Logger()
+	logger := &loggerAdapter{
+		logger: zerologLogger,
+	}
+{{- else}}
+	// Default to slog
+	logger := &loggerAdapter{
+		logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelInfo,
+		})),
+	}
+{{- end}}
 
 	// Create a client with optional logging and custom timeout
 	client := {{.ProjectName | replace "-" "_"}}.New(

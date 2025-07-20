@@ -5,9 +5,56 @@ import (
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
+// DisclosureMode represents the level of detail shown to users
+type DisclosureMode int
+
+const (
+	DisclosureModeBasic DisclosureMode = iota
+	DisclosureModeAdvanced
+)
+
+// ComplexityLevel represents the complexity level of the project
+type ComplexityLevel int
+
+const (
+	ComplexitySimple ComplexityLevel = iota
+	ComplexityStandard
+	ComplexityAdvanced
+	ComplexityExpert
+)
+
+// String returns the string representation of the complexity level
+func (c ComplexityLevel) String() string {
+	switch c {
+	case ComplexitySimple:
+		return "simple"
+	case ComplexityStandard:
+		return "standard"
+	case ComplexityAdvanced:
+		return "advanced"
+	case ComplexityExpert:
+		return "expert"
+	default:
+		return "unknown"
+	}
+}
+
+// String returns the string representation of the disclosure mode
+func (d DisclosureMode) String() string {
+	switch d {
+	case DisclosureModeBasic:
+		return "basic"
+	case DisclosureModeAdvanced:
+		return "advanced"
+	default:
+		return "unknown"
+	}
+}
+
 // Prompter defines the interface for collecting user input during project generation
 type Prompter interface {
 	GetProjectConfig(initial types.ProjectConfig, advanced bool) (types.ProjectConfig, error)
+	GetProjectConfigWithDisclosure(initial types.ProjectConfig, mode DisclosureMode, complexity ComplexityLevel) (types.ProjectConfig, error)
 }
 
 // SelectionItem represents an item in a selection list

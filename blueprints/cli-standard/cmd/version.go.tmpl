@@ -1,41 +1,61 @@
 package cmd
 
 import (
-	"runtime"
-
 	"github.com/spf13/cobra"
 	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/output"
+	"{{.ModulePath}}/internal/version"
 )
 
-var (
-	// These will be set by build flags
-	version   = "dev"
-	commit    = "none"
-	date      = "unknown"
-	goVersion = runtime.Version()
-)
 
 // versionCmd represents the version command
 var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version information",
 	Long:  `Print the version information for {{.ProjectName}}.`,
-	Run: func(cmd *cobra.Command, args []string) {
-		appLogger.InfoWith("Version command executed", logger.Fields{
-			"version": version,
-			"commit":  commit,
-			"date":    date,
-		})
+	GroupID: "info",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !IsQuiet() {
+			appLogger.InfoWith("Version command executed", logger.Fields{
+				"version": version.GetVersion(),
+				"output":  GetOutputFormat(),
+			})
+		}
 		
-		cmd.Printf("{{.ProjectName}} version information:\n")
-		cmd.Printf("  Version:    %s\n", version)
-		cmd.Printf("  Commit:     %s\n", commit)
-		cmd.Printf("  Build Date: %s\n", date)
-		cmd.Printf("  Go Version: %s\n", goVersion)
-		cmd.Printf("  Logger:     {{.Logger}}\n")
+		// Create output writer
+		writer := output.NewWriter(
+			output.Format(GetOutputFormat()),
+			IsQuiet(),
+			cmd.Flag("no-color").Value.String() == "true",
+		)
+		
+		// Get version info based on output format
+		switch GetOutputFormat() {
+		case "json":
+			return writer.Print(version.GetBuildInfo())
+		case "yaml":
+			return writer.Print(version.GetBuildInfo())
+		default:
+			// Table format
+			if !IsQuiet() {
+				cmd.Printf("{{.ProjectName}} %s\n\n", version.GetFullVersion())
+				cmd.Print(version.FormatTable())
+				cmd.Print("\n")
+			}
+			return nil
+		}
 	},
 }
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
+	
+	// Add version-specific flags
+	versionCmd.Flags().BoolP("short", "s", false, "Show only version number")
+	versionCmd.Flags().Bool("build-info", false, "Show detailed build information")
+	
+	// Register flag completion
+	versionCmd.RegisterFlagCompletionFunc("output", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"table", "json", "yaml"}, cobra.ShellCompDirectiveDefault
+	})
 }

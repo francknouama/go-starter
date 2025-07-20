@@ -12,6 +12,7 @@ type SlogLogger struct {
 	logger *slog.Logger
 	level  Level
 	output io.Writer
+	quiet  bool
 }
 
 // NewSlogLogger creates a new slog-based logger
@@ -102,8 +103,9 @@ func (s *SlogLogger) WithFields(fields Fields) Logger {
 	}
 }
 
-// SetLevel sets the log level (note: slog level is set at handler creation)
-func (s *SlogLogger) SetLevel(level Level) {
+// SetLevel sets the log level using string (interface requirement)
+func (s *SlogLogger) SetLevel(levelStr string) {
+	level := ParseLevel(levelStr)
 	s.level = level
 	// Note: For slog, we'd need to recreate the handler to change level
 	// This is a simplified implementation
@@ -147,4 +149,25 @@ func fieldsToSlogArgs(fields Fields) []interface{} {
 		args = append(args, key, value)
 	}
 	return args
+}
+
+
+// SetFormat sets the logger format (no-op for slog)
+func (l *SlogLogger) SetFormat(format Format) {
+	// Note: Format changes require recreating the handler
+}
+
+// DisableColor disables colored output (no-op for slog)
+func (l *SlogLogger) DisableColor() {
+	// slog doesn't have built-in color support
+}
+
+// EnableColor enables colored output (no-op for slog)
+func (l *SlogLogger) EnableColor() {
+	// slog doesn't have built-in color support
+}
+
+// SetQuiet sets quiet mode
+func (l *SlogLogger) SetQuiet(quiet bool) {
+	l.quiet = quiet
 }

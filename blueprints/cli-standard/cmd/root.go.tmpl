@@ -10,9 +10,14 @@ import (
 )
 
 var (
-	cfgFile string
-	verbose bool
-	appLogger logger.Logger
+	cfgFile     string
+	verbose     bool
+	quiet       bool
+	noColor     bool
+	outputFormat string
+	advanced    bool
+	isInteractive bool
+	appLogger   logger.Logger
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -25,16 +30,26 @@ This application provides a foundation for building robust CLI tools with:
 - Structured logging ({{.Logger}})
 - Configuration management
 - Subcommand support
-- Environment variable integration`,
+- Environment variable integration
+- Professional CLI standards
+- Shell completion support
+- Interactive mode
+- Progressive disclosure`,
 	
-	Run: func(cmd *cobra.Command, args []string) {
-		appLogger.InfoWith("{{.ProjectName}} started", logger.Fields{
-			"args": args,
-			"logger": "{{.Logger}}",
-		})
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if !quiet {
+			appLogger.InfoWith("{{.ProjectName}} started", logger.Fields{
+				"args": args,
+				"logger": "{{.Logger}}",
+				"output": outputFormat,
+			})
+		}
 		
-		cmd.Printf("Welcome to %s!\n", "{{.ProjectName}}")
-		cmd.Println("Use --help to see available commands.")
+		if !quiet {
+			cmd.Printf("Welcome to %s!\n", "{{.ProjectName}}")
+			cmd.Println("Use --help to see available commands.")
+		}
+		return nil
 	},
 }
 
@@ -42,18 +57,91 @@ This application provides a foundation for building robust CLI tools with:
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute(log logger.Logger) error {
 	appLogger = log
+	
+	// Configure logger based on flags
+	if quiet {
+		// Disable all output in quiet mode
+		log.SetLevel("error")
+	}
+	if noColor {
+		// Disable colored output
+		log.DisableColor()
+	}
+	
 	return rootCmd.Execute()
+}
+
+// GetOutputFormat returns the current output format
+func GetOutputFormat() string {
+	return outputFormat
+}
+
+// IsQuiet returns whether quiet mode is enabled
+func IsQuiet() bool {
+	return quiet
+}
+
+// IsInteractive returns whether interactive mode is enabled
+func IsInteractive() bool {
+	return isInteractive
+}
+
+// IsAdvanced returns whether advanced mode is enabled
+func IsAdvanced() bool {
+	return advanced
 }
 
 func init() {
 	cobra.OnInitialize(initConfig)
 
-	// Global flags
+	// Setup command groups
+	rootCmd.AddGroup(&cobra.Group{
+		ID:    "manage",
+		Title: "Resource Management:",
+	})
+	rootCmd.AddGroup(&cobra.Group{
+		ID:    "info",
+		Title: "Information:",
+	})
+	rootCmd.AddGroup(&cobra.Group{
+		ID:    "config",
+		Title: "Configuration:",
+	})
+
+	// Set help command group
+	rootCmd.SetHelpCommandGroupID("info")
+
+	// Global flags - Professional CLI standards
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.{{.ProjectName}}.yaml)")
-	rootCmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "Suppress all output")
+	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "Disable colored output")
+	rootCmd.PersistentFlags().StringVarP(&outputFormat, "output", "o", "table", "Output format (table|json|yaml)")
+	
+	// Advanced features (Progressive disclosure)
+	rootCmd.PersistentFlags().BoolVar(&advanced, "advanced", false, "Show advanced options")
+	rootCmd.PersistentFlags().BoolVar(&isInteractive, "interactive", false, "Enable interactive mode")
+	
+	// Mark advanced flags as hidden by default
+	rootCmd.PersistentFlags().MarkHidden("advanced")
 	
 	// Bind flags to viper
 	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	viper.BindPFlag("quiet", rootCmd.PersistentFlags().Lookup("quiet"))
+	viper.BindPFlag("no-color", rootCmd.PersistentFlags().Lookup("no-color"))
+	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
+	viper.BindPFlag("interactive", rootCmd.PersistentFlags().Lookup("interactive"))
+	
+	// Validate output format
+	rootCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		validOutputs := []string{"table", "json", "yaml"}
+		for _, validOutput := range validOutputs {
+			if outputFormat == validOutput {
+				return nil
+			}
+		}
+		return fmt.Errorf("invalid output format: %s. Valid options are: %v", outputFormat, validOutputs)
+	}
 }
 
 // initConfig reads in config file and ENV variables.

@@ -1,0 +1,183 @@
+package errors
+
+import (
+	"fmt"
+	"strings"
+)
+
+// CLIError represents a CLI-specific error with context
+type CLIError struct {
+	Operation string
+	Err       error
+	Context   map[string]interface{}
+}
+
+// Error implements the error interface
+func (e *CLIError) Error() string {
+	if e.Context != nil && len(e.Context) > 0 {
+		var contextParts []string
+		for key, value := range e.Context {
+			contextParts = append(contextParts, fmt.Sprintf("%s=%v", key, value))
+		}
+		return fmt.Sprintf("%s failed: %v (context: %s)", e.Operation, e.Err, strings.Join(contextParts, ", "))
+	}
+	return fmt.Sprintf("%s failed: %v", e.Operation, e.Err)
+}
+
+// Unwrap implements the unwrapper interface for error chains
+func (e *CLIError) Unwrap() error {
+	return e.Err
+}
+
+// NewCLIError creates a new CLI error with context
+func NewCLIError(operation string, err error, context map[string]interface{}) *CLIError {
+	return &CLIError{
+		Operation: operation,
+		Err:       err,
+		Context:   context,
+	}
+}
+
+// ValidationError represents a validation error
+type ValidationError struct {
+	Field   string
+	Value   interface{}
+	Rule    string
+	Message string
+}
+
+// Error implements the error interface
+func (e *ValidationError) Error() string {
+	if e.Message != "" {
+		return e.Message
+	}
+	return fmt.Sprintf("validation failed for field '%s': %v does not satisfy rule '%s'", e.Field, e.Value, e.Rule)
+}
+
+// NewValidationError creates a new validation error
+func NewValidationError(field string, value interface{}, rule string, message string) *ValidationError {
+	return &ValidationError{
+		Field:   field,
+		Value:   value,
+		Rule:    rule,
+		Message: message,
+	}
+}
+
+// ConfigError represents a configuration-related error
+type ConfigError struct {
+	File    string
+	Setting string
+	Err     error
+}
+
+// Error implements the error interface
+func (e *ConfigError) Error() string {
+	if e.Setting != "" {
+		return fmt.Sprintf("configuration error in %s (setting: %s): %v", e.File, e.Setting, e.Err)
+	}
+	return fmt.Sprintf("configuration error in %s: %v", e.File, e.Err)
+}
+
+// Unwrap implements the unwrapper interface
+func (e *ConfigError) Unwrap() error {
+	return e.Err
+}
+
+// NewConfigError creates a new configuration error
+func NewConfigError(file, setting string, err error) *ConfigError {
+	return &ConfigError{
+		File:    file,
+		Setting: setting,
+		Err:     err,
+	}
+}
+
+// NetworkError represents a network-related error
+type NetworkError struct {
+	URL        string
+	Operation  string
+	StatusCode int
+	Err        error
+}
+
+// Error implements the error interface
+func (e *NetworkError) Error() string {
+	if e.StatusCode > 0 {
+		return fmt.Sprintf("network error during %s to %s (status: %d): %v", e.Operation, e.URL, e.StatusCode, e.Err)
+	}
+	return fmt.Sprintf("network error during %s to %s: %v", e.Operation, e.URL, e.Err)
+}
+
+// Unwrap implements the unwrapper interface
+func (e *NetworkError) Unwrap() error {
+	return e.Err
+}
+
+// NewNetworkError creates a new network error
+func NewNetworkError(url, operation string, statusCode int, err error) *NetworkError {
+	return &NetworkError{
+		URL:        url,
+		Operation:  operation,
+		StatusCode: statusCode,
+		Err:        err,
+	}
+}
+
+// Format formats errors consistently for CLI output
+func Format(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	switch e := err.(type) {
+	case *CLIError:
+		return fmt.Sprintf("❌ %s", e.Error())
+	case *ValidationError:
+		return fmt.Sprintf("⚠️  Validation Error: %s", e.Error())
+	case *ConfigError:
+		return fmt.Sprintf("🔧 Configuration Error: %s", e.Error())
+	case *NetworkError:
+		return fmt.Sprintf("🌐 Network Error: %s", e.Error())
+	default:
+		return fmt.Sprintf("❌ Error: %s", err.Error())
+	}
+}
+
+// FormatForJSON formats errors for JSON output (without emojis)
+func FormatForJSON(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	switch e := err.(type) {
+	case *CLIError:
+		return e.Error()
+	case *ValidationError:
+		return fmt.Sprintf("Validation Error: %s", e.Error())
+	case *ConfigError:
+		return fmt.Sprintf("Configuration Error: %s", e.Error())
+	case *NetworkError:
+		return fmt.Sprintf("Network Error: %s", e.Error())
+	default:
+		return err.Error()
+	}
+}
+
+// IsValidationError checks if an error is a validation error
+func IsValidationError(err error) bool {
+	_, ok := err.(*ValidationError)
+	return ok
+}
+
+// IsConfigError checks if an error is a configuration error
+func IsConfigError(err error) bool {
+	_, ok := err.(*ConfigError)
+	return ok
+}
+
+// IsNetworkError checks if an error is a network error
+func IsNetworkError(err error) bool {
+	_, ok := err.(*NetworkError)
+	return ok
+}

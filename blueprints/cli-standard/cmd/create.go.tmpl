@@ -7,7 +7,10 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+	"{{.ModulePath}}/internal/errors"
+	"{{.ModulePath}}/internal/interactive"
 	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/output"
 )
 
 // createCmd represents the create command
@@ -24,27 +27,50 @@ Available resource types:
 Examples:
   {{.ProjectName}} create project my-new-project
   {{.ProjectName}} create config --template basic
-  {{.ProjectName}} create task "Important task" --priority high`,
+  {{.ProjectName}} create task "Important task" --priority high
+  {{.ProjectName}} create --interactive`,
 	
-	Args: func(cmd *cobra.Command, args []string) error {
-		if len(args) < 1 {
-			return fmt.Errorf("requires at least 1 argument (resource type)")
-		}
-		
-		// Validate resource type
-		validResources := []string{"project", "config", "task"}
-		resourceType := args[0]
-		for _, valid := range validResources {
-			if resourceType == valid {
-				return nil
+	GroupID: "manage",
+	Args: cobra.MatchAll(
+		cobra.RangeArgs(0, 2),
+		func(cmd *cobra.Command, args []string) error {
+			// Allow no args if interactive mode
+			if len(args) == 0 {
+				interactive, _ := cmd.Flags().GetBool("interactive")
+				if interactive {
+					return nil
+				}
+				return fmt.Errorf("requires at least 1 argument (resource type) or use --interactive")
 			}
+			
+			// Validate resource type
+			validResources := []string{"project", "config", "task"}
+			resourceType := args[0]
+			for _, valid := range validResources {
+				if resourceType == valid {
+					return nil
+				}
+			}
+			
+			return errors.NewValidationError("resource_type", resourceType, 
+				"one_of", fmt.Sprintf("invalid resource type '%s'. Valid types: %s", 
+					resourceType, strings.Join(validResources, ", ")))
+		},
+	),
+	
+	RunE: func(cmd *cobra.Command, args []string) error {
+		// Handle interactive mode
+		if err := interactive.RunInteractiveMode(cmd, func(p *interactive.Prompter) error {
+			return runInteractiveCreate(cmd, p)
+		}); err != nil {
+			return err
 		}
 		
-		return fmt.Errorf("invalid resource type '%s'. Valid types: %s", 
-			resourceType, strings.Join(validResources, ", "))
-	},
-	
-	Run: func(cmd *cobra.Command, args []string) {
+		// Handle non-interactive mode
+		if len(args) == 0 {
+			return nil // Interactive mode handled above
+		}
+		
 		resourceType := args[0]
 		var name string
 		if len(args) > 1 {
@@ -57,115 +83,276 @@ Examples:
 		force, _ := cmd.Flags().GetBool("force")
 		dryRun, _ := cmd.Flags().GetBool("dry-run")
 		
-		appLogger.InfoWith("Creating resource", logger.Fields{
-			"type":     resourceType,
-			"name":     name,
-			"template": template,
-			"priority": priority,
-			"force":    force,
-			"dry_run":  dryRun,
-		})
+		if !IsQuiet() {
+			appLogger.InfoWith("Creating resource", logger.Fields{
+				"type":     resourceType,
+				"name":     name,
+				"template": template,
+				"priority": priority,
+				"force":    force,
+				"dry_run":  dryRun,
+			})
+		}
 		
 		switch resourceType {
 		case "project":
-			createProject(cmd, name, template, force, dryRun)
+			return createProject(cmd, name, template, force, dryRun)
 		case "config":
-			createConfig(cmd, name, template, force, dryRun)
+			return createConfig(cmd, name, template, force, dryRun)
 		case "task":
-			createTask(cmd, name, priority, force, dryRun)
+			return createTask(cmd, name, priority, force, dryRun)
 		default:
-			cmd.PrintErrf("Error: Unknown resource type '%s'\n", resourceType)
-			os.Exit(1)
+			return errors.NewValidationError("resource_type", resourceType, 
+				"unknown", fmt.Sprintf("Unknown resource type '%s'", resourceType))
 		}
 	},
 }
 
-func createProject(cmd *cobra.Command, name, template string, force, dryRun bool) {
+func createProject(cmd *cobra.Command, name, template string, force, dryRun bool) error {
 	if name == "" {
-		cmd.PrintErr("Error: Project name is required\n")
-		cmd.Printf("Usage: %s create project <name>\n", cmd.Root().Name())
-		os.Exit(1)
+		return errors.NewValidationError("name", name, "required", "Project name is required")
 	}
+	
+	// Create output writer
+	writer := output.NewWriter(
+		output.Format(GetOutputFormat()),
+		IsQuiet(),
+		cmd.Flag("no-color").Value.String() == "true",
+	)
 	
 	// Check if project already exists
 	if !force && projectExists(name) {
-		cmd.PrintErrf("Error: Project '%s' already exists. Use --force to overwrite.\n", name)
-		os.Exit(1)
+		err := fmt.Errorf("project '%s' already exists. Use --force to overwrite", name)
+		writer.PrintError(err)
+		return err
 	}
 	
 	if dryRun {
-		cmd.Printf("Would create project: %s (template: %s)\n", name, template)
-		return
+		writer.PrintInfo(fmt.Sprintf("Would create project: %s (template: %s)", name, template))
+		return nil
 	}
 	
 	// Create project logic here
-	cmd.Printf("✅ Created project: %s\n", name)
-	if template != "" {
-		cmd.Printf("   Template: %s\n", template)
+	writer.PrintSuccess(fmt.Sprintf("Created project: %s", name))
+	if template != "" && !IsQuiet() {
+		writer.PrintInfo(fmt.Sprintf("Template: %s", template))
 	}
 	
-	appLogger.InfoWith("Project created successfully", logger.Fields{
-		"name":     name,
-		"template": template,
-	})
+	if !IsQuiet() {
+		appLogger.InfoWith("Project created successfully", logger.Fields{
+			"name":     name,
+			"template": template,
+		})
+	}
+	return nil
 }
 
-func createConfig(cmd *cobra.Command, name, template string, force, dryRun bool) {
+func createConfig(cmd *cobra.Command, name, template string, force, dryRun bool) error {
 	configName := name
 	if configName == "" {
 		configName = fmt.Sprintf(".%s.yaml", cmd.Root().Name())
 	}
 	
+	// Create output writer
+	writer := output.NewWriter(
+		output.Format(GetOutputFormat()),
+		IsQuiet(),
+		cmd.Flag("no-color").Value.String() == "true",
+	)
+	
 	if !force && fileExists(configName) {
-		cmd.PrintErrf("Error: Config file '%s' already exists. Use --force to overwrite.\n", configName)
-		os.Exit(1)
+		err := fmt.Errorf("config file '%s' already exists. Use --force to overwrite", configName)
+		writer.PrintError(err)
+		return err
 	}
 	
 	if dryRun {
-		cmd.Printf("Would create config file: %s (template: %s)\n", configName, template)
-		return
+		writer.PrintInfo(fmt.Sprintf("Would create config file: %s (template: %s)", configName, template))
+		return nil
 	}
 	
 	// Create config file
 	configContent := generateConfigContent(template)
 	if err := writeFile(configName, configContent); err != nil {
-		cmd.PrintErrf("Error creating config file: %v\n", err)
-		os.Exit(1)
+		err = errors.NewCLIError("create config file", err, map[string]interface{}{
+			"file": configName,
+		})
+		writer.PrintError(err)
+		return err
 	}
 	
-	cmd.Printf("✅ Created config file: %s\n", configName)
-	if template != "" {
-		cmd.Printf("   Template: %s\n", template)
+	writer.PrintSuccess(fmt.Sprintf("Created config file: %s", configName))
+	if template != "" && !IsQuiet() {
+		writer.PrintInfo(fmt.Sprintf("Template: %s", template))
 	}
 	
-	appLogger.InfoWith("Config file created successfully", logger.Fields{
-		"name":     configName,
-		"template": template,
-	})
+	if !IsQuiet() {
+		appLogger.InfoWith("Config file created successfully", logger.Fields{
+			"name":     configName,
+			"template": template,
+		})
+	}
+	return nil
 }
 
-func createTask(cmd *cobra.Command, name, priority string, force, dryRun bool) {
+func createTask(cmd *cobra.Command, name, priority string, force, dryRun bool) error {
 	if name == "" {
-		cmd.PrintErr("Error: Task name is required\n")
-		cmd.Printf("Usage: %s create task <name>\n", cmd.Root().Name())
-		os.Exit(1)
+		return errors.NewValidationError("name", name, "required", "Task name is required")
 	}
 	
+	// Create output writer
+	writer := output.NewWriter(
+		output.Format(GetOutputFormat()),
+		IsQuiet(),
+		cmd.Flag("no-color").Value.String() == "true",
+	)
+	
 	if dryRun {
-		cmd.Printf("Would create task: %s (priority: %s)\n", name, priority)
-		return
+		writer.PrintInfo(fmt.Sprintf("Would create task: %s (priority: %s)", name, priority))
+		return nil
 	}
 	
 	// Create task logic here
-	cmd.Printf("✅ Created task: %s\n", name)
-	if priority != "" {
-		cmd.Printf("   Priority: %s\n", priority)
+	writer.PrintSuccess(fmt.Sprintf("Created task: %s", name))
+	if priority != "" && !IsQuiet() {
+		writer.PrintInfo(fmt.Sprintf("Priority: %s", priority))
 	}
 	
-	appLogger.InfoWith("Task created successfully", logger.Fields{
-		"name":     name,
-		"priority": priority,
+	if !IsQuiet() {
+		appLogger.InfoWith("Task created successfully", logger.Fields{
+			"name":     name,
+			"priority": priority,
+		})
+	}
+	return nil
+}
+
+// runInteractiveCreate handles interactive creation mode
+func runInteractiveCreate(cmd *cobra.Command, prompter *interactive.Prompter) error {
+	// Prompt for resource type
+	resourceType, err := prompter.PromptSelect(interactive.PromptOptions{
+		Label:    "What type of resource would you like to create?",
+		Choices:  []string{"project", "config", "task"},
+		Required: true,
+		Help:     "Select the type of resource to create",
 	})
+	if err != nil {
+		return err
+	}
+
+	switch resourceType {
+	case "project":
+		return runInteractiveProjectCreate(cmd, prompter)
+	case "config":
+		return runInteractiveConfigCreate(cmd, prompter)
+	case "task":
+		return runInteractiveTaskCreate(cmd, prompter)
+	}
+	
+	return nil
+}
+
+func runInteractiveProjectCreate(cmd *cobra.Command, prompter *interactive.Prompter) error {
+	// Prompt for project name
+	name, err := prompter.PromptString(interactive.PromptOptions{
+		Label:    "Project name:",
+		Required: true,
+		Validate: interactive.ValidateNotEmpty,
+		Help:     "Enter a name for your new project",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Prompt for template
+	template, err := prompter.PromptSelect(interactive.PromptOptions{
+		Label:   "Template:",
+		Choices: []string{"default", "basic", "advanced"},
+		Default: "default",
+		Help:    "Choose a project template",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Prompt for force option if project exists
+	force := false
+	if projectExists(name) {
+		force, err = prompter.PromptConfirm(interactive.PromptOptions{
+			Label:   fmt.Sprintf("Project '%s' already exists. Overwrite?", name),
+			Default: "false",
+			Help:    "Choose whether to overwrite the existing project",
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return createProject(cmd, name, template, force, false)
+}
+
+func runInteractiveConfigCreate(cmd *cobra.Command, prompter *interactive.Prompter) error {
+	// Prompt for config name (optional)
+	name, err := prompter.PromptString(interactive.PromptOptions{
+		Label:   "Config file name (optional):",
+		Default: fmt.Sprintf(".%s.yaml", cmd.Root().Name()),
+		Help:    "Enter a name for the config file or press Enter for default",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Prompt for template
+	template, err := prompter.PromptSelect(interactive.PromptOptions{
+		Label:   "Template:",
+		Choices: []string{"default", "basic", "advanced"},
+		Default: "default",
+		Help:    "Choose a configuration template",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Prompt for force option if file exists
+	force := false
+	if fileExists(name) {
+		force, err = prompter.PromptConfirm(interactive.PromptOptions{
+			Label:   fmt.Sprintf("Config file '%s' already exists. Overwrite?", name),
+			Default: "false",
+			Help:    "Choose whether to overwrite the existing config file",
+		})
+		if err != nil {
+			return err
+		}
+	}
+
+	return createConfig(cmd, name, template, force, false)
+}
+
+func runInteractiveTaskCreate(cmd *cobra.Command, prompter *interactive.Prompter) error {
+	// Prompt for task name
+	name, err := prompter.PromptString(interactive.PromptOptions{
+		Label:    "Task name:",
+		Required: true,
+		Validate: interactive.ValidateNotEmpty,
+		Help:     "Enter a name for your new task",
+	})
+	if err != nil {
+		return err
+	}
+
+	// Prompt for priority
+	priority, err := prompter.PromptSelect(interactive.PromptOptions{
+		Label:   "Priority:",
+		Choices: []string{"low", "normal", "high", "urgent"},
+		Default: "normal",
+		Help:    "Choose the task priority level",
+	})
+	if err != nil {
+		return err
+	}
+
+	return createTask(cmd, name, priority, false, false)
 }
 
 // Helper functions
@@ -253,9 +440,28 @@ func init() {
 	createCmd.Flags().StringP("priority", "p", "normal", "Priority level (low, normal, high, urgent)")
 	createCmd.Flags().BoolP("force", "f", false, "Overwrite existing resources")
 	createCmd.Flags().BoolP("dry-run", "n", false, "Show what would be created without actually creating")
+	createCmd.Flags().BoolP("interactive", "i", false, "Use interactive mode")
 	
 	// Bind flags to viper for configuration file support
 	viper.BindPFlag("create.template", createCmd.Flags().Lookup("template"))
 	viper.BindPFlag("create.priority", createCmd.Flags().Lookup("priority"))
 	viper.BindPFlag("create.force", createCmd.Flags().Lookup("force"))
+	viper.BindPFlag("create.interactive", createCmd.Flags().Lookup("interactive"))
+	
+	// Register completion functions
+	createCmd.RegisterFlagCompletionFunc("template", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"default", "basic", "advanced"}, cobra.ShellCompDirectiveDefault
+	})
+	
+	createCmd.RegisterFlagCompletionFunc("priority", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return []string{"low", "normal", "high", "urgent"}, cobra.ShellCompDirectiveDefault
+	})
+	
+	// Dynamic completion for resource types
+	createCmd.ValidArgsFunction = func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return []string{"project", "config", "task"}, cobra.ShellCompDirectiveDefault
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
 }

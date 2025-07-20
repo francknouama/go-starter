@@ -82,21 +82,17 @@ func (s *authService) Register(req models.RegisterRequest) (*models.User, error)
 		return nil, err
 	}
 
-	// Create user request
+	// Create user request with hashed password
 	createReq := models.CreateUserRequest{
-		Name:  req.Name,
-		Email: req.Email,
+		Name:     req.Name,
+		Email:    req.Email,
+		Password: hashedPassword, // Pass the hashed password to be persisted
 	}
 
 	user, err := s.userService.CreateUser(createReq)
 	if err != nil {
 		return nil, err
 	}
-
-	// TODO: In a real implementation, password should be saved to the database
-	// This would require extending the repository to handle passwords properly
-	// For now, we set it in memory for the response but it won't be persisted
-	user.Password = hashedPassword
 
 	// Remove password from response for security
 	user.Password = ""

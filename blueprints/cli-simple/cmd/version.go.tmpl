@@ -1,0 +1,47 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"runtime"
+
+	"github.com/spf13/cobra"
+)
+
+// versionCmd represents the version command
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version information",
+	Long: `Print the version information for {{.ProjectName}}.
+
+This command displays the version, build information, and Go runtime details.`,
+
+	Run: func(cmd *cobra.Command, args []string) {
+		versionInfo := map[string]interface{}{
+			"version":    "1.0.0",
+			"commit":     "unknown",
+			"built":      "unknown",
+			"go_version": runtime.Version(),
+			"os":         runtime.GOOS,
+			"arch":       runtime.GOARCH,
+		}
+
+		if outputFormat == "json" {
+			if err := json.NewEncoder(os.Stdout).Encode(versionInfo); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+				os.Exit(1)
+			}
+		} else {
+			fmt.Printf("%s version %s\n", "{{.ProjectName}}", versionInfo["version"])
+			fmt.Printf("Built with %s for %s/%s\n", 
+				versionInfo["go_version"], 
+				versionInfo["os"], 
+				versionInfo["arch"])
+		}
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(versionCmd)
+}

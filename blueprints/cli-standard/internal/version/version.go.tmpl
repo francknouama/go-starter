@@ -1,0 +1,171 @@
+package version
+
+import (
+	"encoding/json"
+	"fmt"
+	"runtime"
+	"time"
+)
+
+var (
+	// Version is the current version of the application
+	// This will be set by ldflags during build
+	Version = "dev"
+	
+	// Commit is the git commit hash
+	// This will be set by ldflags during build
+	Commit = "unknown"
+	
+	// Date is the build date
+	// This will be set by ldflags during build
+	Date = "unknown"
+	
+	// BuiltBy indicates who/what built the binary
+	// This will be set by ldflags during build
+	BuiltBy = "unknown"
+)
+
+// BuildInfo contains build information
+type BuildInfo struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit"`
+	Date      string `json:"date"`
+	BuiltBy   string `json:"builtBy"`
+	GoVersion string `json:"goVersion"`
+	Platform  string `json:"platform"`
+	Arch      string `json:"arch"`
+}
+
+// GetBuildInfo returns current build information
+func GetBuildInfo() BuildInfo {
+	return BuildInfo{
+		Version:   Version,
+		Commit:    Commit,
+		Date:      Date,
+		BuiltBy:   BuiltBy,
+		GoVersion: runtime.Version(),
+		Platform:  runtime.GOOS,
+		Arch:      runtime.GOARCH,
+	}
+}
+
+// GetVersion returns the current version
+func GetVersion() string {
+	return Version
+}
+
+// GetFullVersion returns the version with commit info
+func GetFullVersion() string {
+	if Commit != "unknown" && len(Commit) > 7 {
+		return fmt.Sprintf("%s (commit: %s)", Version, Commit[:7])
+	}
+	return Version
+}
+
+// FormatTable returns build info formatted as a table
+func FormatTable() string {
+	info := GetBuildInfo()
+	
+	return fmt.Sprintf(`Version:    %s
+Commit:     %s
+Date:       %s
+Built by:   %s
+Go version: %s
+Platform:   %s/%s`,
+		info.Version,
+		info.Commit,
+		info.Date,
+		info.BuiltBy,
+		info.GoVersion,
+		info.Platform,
+		info.Arch,
+	)
+}
+
+// FormatJSON returns build info formatted as JSON
+func FormatJSON() (string, error) {
+	info := GetBuildInfo()
+	data, err := json.MarshalIndent(info, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// FormatYAML returns build info formatted as YAML
+func FormatYAML() string {
+	info := GetBuildInfo()
+	
+	return fmt.Sprintf(`version: %s
+commit: %s
+date: %s
+builtBy: %s
+goVersion: %s
+platform: %s
+arch: %s`,
+		info.Version,
+		info.Commit,
+		info.Date,
+		info.BuiltBy,
+		info.GoVersion,
+		info.Platform,
+		info.Arch,
+	)
+}
+
+// IsDevVersion returns true if this is a development version
+func IsDevVersion() bool {
+	return Version == "dev" || Version == "" || Version == "unknown"
+}
+
+// ParseBuildDate parses the build date and returns a time.Time
+func ParseBuildDate() (time.Time, error) {
+	if Date == "unknown" || Date == "" {
+		return time.Time{}, fmt.Errorf("build date is unknown")
+	}
+	
+	// Try different date formats
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	
+	for _, format := range formats {
+		if t, err := time.Parse(format, Date); err == nil {
+			return t, nil
+		}
+	}
+	
+	return time.Time{}, fmt.Errorf("unable to parse build date: %s", Date)
+}
+
+// GetAge returns the age of the build
+func GetAge() (time.Duration, error) {
+	buildTime, err := ParseBuildDate()
+	if err != nil {
+		return 0, err
+	}
+	
+	return time.Since(buildTime), nil
+}
+
+// FormatAge returns a human-readable age of the build
+func FormatAge() string {
+	age, err := GetAge()
+	if err != nil {
+		return "unknown"
+	}
+	
+	days := int(age.Hours() / 24)
+	hours := int(age.Hours()) % 24
+	
+	if days > 0 {
+		return fmt.Sprintf("%d days, %d hours ago", days, hours)
+	} else if hours > 0 {
+		return fmt.Sprintf("%d hours ago", hours)
+	} else {
+		return "less than an hour ago"
+	}
+}
