@@ -49,6 +49,11 @@ func (r *RouterService) SetAuthUseCase(authUseCase *usecases.AuthUseCase) {
 
 // setupMiddleware configures global middleware
 func (r *RouterService) setupMiddleware() {
+	// Security middleware - applied first for maximum protection
+	r.router.Use(middleware.RequestID())
+	r.router.Use(middleware.SecurityHeaders())
+	r.router.Use(middleware.ValidationMiddleware())
+
 	// Recovery middleware
 	r.router.Use(middleware.Recovery(r.logger))
 
@@ -57,9 +62,6 @@ func (r *RouterService) setupMiddleware() {
 
 	// Request logging middleware
 	r.router.Use(middleware.RequestLogger(r.logger))
-
-	// Security headers middleware
-	r.router.Use(middleware.SecurityHeaders())
 }
 
 // RegisterHealthRoutes registers health check routes

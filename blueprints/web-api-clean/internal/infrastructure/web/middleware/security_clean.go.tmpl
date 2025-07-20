@@ -1,0 +1,127 @@
+package middleware
+
+import (
+	"fmt"
+	"math/rand"
+	"net/http"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/domain/ports"
+)
+
+// SecurityHeaders returns security headers middleware
+func SecurityHeaders() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		// Set security headers
+		ctx.SetHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none';")
+		ctx.SetHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+		ctx.SetHeader("X-XSS-Protection", "1; mode=block")
+		ctx.SetHeader("X-Frame-Options", "DENY")
+		ctx.SetHeader("X-Content-Type-Options", "nosniff")
+		ctx.SetHeader("Referrer-Policy", "strict-origin-when-cross-origin")
+	}
+}
+
+// RequestID returns request ID middleware
+func RequestID() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		// Check for existing request ID
+		requestID := ctx.GetHeader("X-Request-ID")
+		if requestID == "" {
+			// Generate new request ID
+			requestID = fmt.Sprintf("%d-%d", time.Now().UnixNano(), rand.Intn(1000000))
+		}
+		
+		// Set request ID in response header and context
+		ctx.SetHeader("X-Request-ID", requestID)
+		ctx.Set("request_id", requestID)
+	}
+}
+
+// ValidationMiddleware returns input validation middleware
+func ValidationMiddleware() ports.HTTPHandler {
+	return func(ctx ports.HTTPContext) {
+		req := ctx.GetRequest()
+		
+		// Validate content type for requests with body
+		if req.ContentLength > 0 {
+			contentType := req.Header.Get("Content-Type")
+			if contentType == "" {
+				ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+					"error": "Request validation failed",
+					"code":  "VALIDATION_ERROR",
+					"details": "content-type header required",
+				})
+				ctx.Abort()
+				return
+			}
+			
+			// Check allowed content types
+			baseType := strings.Split(contentType, ";")[0]
+			baseType = strings.TrimSpace(strings.ToLower(baseType))
+			
+			allowedTypes := []string{"application/json", "application/x-www-form-urlencoded", "multipart/form-data"}
+			isAllowed := false
+			for _, allowed := range allowedTypes {
+				if strings.ToLower(allowed) == baseType {
+					isAllowed = true
+					break
+				}
+			}
+			
+			if !isAllowed {
+				ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+					"error": "Request validation failed",
+					"code":  "VALIDATION_ERROR",
+					"details": fmt.Sprintf("unsupported content type: %s", baseType),
+				})
+				ctx.Abort()
+				return
+			}
+		}
+		
+		// Validate request size (10 MB limit)
+		maxSize := int64(10 << 20)
+		if req.ContentLength > maxSize {
+			ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+				"error": "Request validation failed", 
+				"code":  "VALIDATION_ERROR",
+				"details": "request body too large",
+			})
+			ctx.Abort()
+			return
+		}
+		
+		// Validate URI length (2 KB limit)
+		if len(req.RequestURI) > 2048 {
+			ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR", 
+				"details": "URI too long",
+			})
+			ctx.Abort()
+			return
+		}
+		
+		// Validate HTTP method
+		allowedMethods := []string{"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}
+		isAllowedMethod := false
+		for _, allowed := range allowedMethods {
+			if strings.ToUpper(allowed) == strings.ToUpper(req.Method) {
+				isAllowedMethod = true
+				break
+			}
+		}
+		
+		if !isAllowedMethod {
+			ctx.JSON(http.StatusMethodNotAllowed, map[string]interface{}{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR",
+				"details": fmt.Sprintf("method not allowed: %s", req.Method),
+			})
+			ctx.Abort()
+			return
+		}
+	}
+}
