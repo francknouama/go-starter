@@ -1,0 +1,210 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 1' # Weekly security scan on Mondays
+
+env:
+  GO_VERSION: '{{.GoVersion}}'
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: {{"{{"}} env.GO_VERSION {{"}}"}}
+
+      # Static Application Security Testing (SAST)
+      - name: Run Gosec Security Scanner
+        uses: securego/gosec@master
+        with:
+          args: '-fmt sarif -out gosec-results.sarif ./...'
+          
+      - name: Upload Gosec results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gosec-results.sarif
+
+      # Dependency Vulnerability Scanning
+      - name: Run Nancy (Go dependency check)
+        run: |
+          go install github.com/sonatype-nexus-community/nancy@latest
+          go list -json -deps ./... | nancy sleuth
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+      # License Compliance Check
+      - name: Check Go licenses
+        run: |
+          go install github.com/google/go-licenses@latest
+          go-licenses check ./... --ignore github.com/{{.ModulePath}} || true
+
+      # Secret Scanning
+      - name: Run Gitleaks (Secret Scanner)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: {{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+
+      # Container Security (if Dockerfile exists)
+      {{if .Features.Deployment.Docker}}
+      - name: Run Hadolint (Dockerfile Linter)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          failure-threshold: warning
+
+      - name: Build Docker image for scanning
+        run: docker build -t {{.ProjectName}}:scan .
+
+      - name: Run Trivy on Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '{{.ProjectName}}:scan'
+          format: 'sarif'
+          output: 'docker-trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          
+      - name: Upload Docker Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: docker-trivy-results.sarif
+      {{end}}
+
+      # OWASP Dependency Check
+      - name: Run OWASP Dependency Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: '{{.ProjectName}}'
+          path: '.'
+          format: 'HTML'
+          args: >
+            --enableRetired
+            --enableExperimental
+            
+      - name: Upload OWASP results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: owasp-dependency-check-report
+          path: reports/
+
+  code-quality:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: {{"{{"}} env.GO_VERSION {{"}}"}}
+
+      # Code Quality Metrics
+      - name: Run Go Report Card
+        run: |
+          go install github.com/gojp/goreportcard/cmd/goreportcard-cli@latest
+          goreportcard-cli -v
+
+      - name: Run Staticcheck
+        uses: dominikh/staticcheck-action@v1
+        with:
+          version: "latest"
+          install-go: false
+
+      - name: Run Ineffassign
+        run: |
+          go install github.com/gordonklaus/ineffassign@latest
+          ineffassign ./...
+
+      - name: Run Misspell
+        run: |
+          go install github.com/client9/misspell/cmd/misspell@latest
+          misspell -error .
+
+      - name: Check for dead code
+        run: |
+          go install golang.org/x/tools/cmd/deadcode@latest
+          deadcode -test ./...
+
+  security-policy:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check Security Policy
+        run: |
+          if [ ! -f "SECURITY.md" ]; then
+            echo "::warning::No SECURITY.md file found. Consider adding a security policy."
+          fi
+
+      - name: Check for sensitive file changes
+        run: |
+          # Check if PR modifies sensitive files
+          SENSITIVE_FILES=".env|.env.*|*secret*|*private*|*key*|*credential*"
+          
+          git diff --name-only origin/main..HEAD | grep -E "$SENSITIVE_FILES" && {
+            echo "::error::This PR modifies potentially sensitive files. Please review carefully."
+            exit 1
+          } || true
+
+  security-summary:
+    needs: [security-scan, code-quality, security-policy]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Security Scan Summary
+        run: |
+          echo "## Security Scan Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "{{"{{"}} needs.security-scan.result {{"}}"}}" == "success" ]; then
+            echo "✅ Security scans passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Security scans failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          if [ "{{"{{"}} needs.code-quality.result {{"}}"}}" == "success" ]; then
+            echo "✅ Code quality checks passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Code quality checks failed" >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Next Steps" >> $GITHUB_STEP_SUMMARY
+          echo "- Review any security findings in the Security tab" >> $GITHUB_STEP_SUMMARY
+          echo "- Check artifact uploads for detailed reports" >> $GITHUB_STEP_SUMMARY

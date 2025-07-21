@@ -1,6 +1,8 @@
-# CLI Integration Tests
+# CLI Command Integration Tests
 
-This directory contains comprehensive integration tests for the go-starter CLI tool, organized into focused test files that cover all aspects of CLI functionality.
+This directory contains comprehensive integration tests for the go-starter CLI tool command interface, organized into focused test files that cover all aspects of CLI functionality.
+
+**Note**: For blueprint-specific CLI tests (testing generated CLI projects), see `../blueprints/cli/` directory.
 
 ## Test Organization
 

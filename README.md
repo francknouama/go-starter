@@ -77,17 +77,17 @@ go-starter new my-project
 cd my-project && make run
 ```
 
-**Alternative installation:** [Download binaries](docs/INSTALLATION.md) • [All methods](docs/INSTALLATION.md)
+**Alternative installation:** [Download binaries](docs/guides/INSTALLATION.md) • [All methods](docs/guides/INSTALLATION.md)
 
 ## 📚 Documentation
 
 | Guide | Description |
 |-------|-------------|
-| 🚀 **[Quick Start](docs/GETTING_STARTED.md)** | Your first project in 5 minutes |
-| ⚙️ **[Installation](docs/INSTALLATION.md)** | All installation methods |
-| 📖 **[Project Types](docs/PROJECT_TYPES.md)** | Choose the right template |
-| 📊 **[Logger Guide](docs/LOGGER_GUIDE.md)** | Master the logger selector |
-| 🔧 **[Configuration](docs/CONFIGURATION.md)** | Customize your setup |
+| 🚀 **[Quick Start](docs/guides/GETTING_STARTED.md)** | Your first project in 5 minutes |
+| ⚙️ **[Installation](docs/guides/INSTALLATION.md)** | All installation methods |
+| 📖 **[Project Types](docs/references/PROJECT_TYPES.md)** | Choose the right template |
+| 📊 **[Logger Guide](docs/references/LOGGER_GUIDE.md)** | Master the logger selector |
+| 🔧 **[Configuration](docs/guides/CONFIGURATION.md)** | Customize your setup |
 | 📋 **[Complete Docs](docs/README.md)** | Full documentation index |
 
 ## 🛣️ What's Next

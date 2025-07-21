@@ -1,15 +1,15 @@
 package cli
 
 import (
-	"os/exec"
-	"strings"
 	"testing"
 )
 
 // TestCLI_Help_RootCommand tests the root help command functionality
 // Verifies that the main help command displays expected content including
-// tool name, examples section, and supported templates section
+// tool name, examples section, and supported blueprints section
 func TestCLI_Help_RootCommand(t *testing.T) {
+	binary := GetTestBinary(t)
+
 	tests := []struct {
 		name     string
 		args     []string
@@ -17,8 +17,8 @@ func TestCLI_Help_RootCommand(t *testing.T) {
 	}{
 		{
 			name:     "full help flag",
-			args:     []string{"--help"},
-			contains: []string{"go-starter", "EXAMPLES:", "SUPPORTED TEMPLATES:"},
+			args:     Args.Help(),
+			contains: []string{"go-starter", "EXAMPLES:", "SUPPORTED BLUEPRINTS:"},
 		},
 		{
 			name:     "short help flag",
@@ -27,23 +27,15 @@ func TestCLI_Help_RootCommand(t *testing.T) {
 		},
 	}
 
-	binary := buildTestBinary(t)
-	defer cleanupBinary(t, binary)
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(binary, tt.args...)
-			output, err := cmd.CombinedOutput()
+			result := binary.ExecuteFastCommand(t, tt.args...)
+			
+			AssertSuccess(t, result, "help command should succeed")
+			AssertNoPanic(t, result, "help command should not panic")
 
-			if err != nil {
-				t.Fatalf("Help command failed: %v\nOutput: %s", err, output)
-			}
-
-			outputStr := string(output)
-			for _, contain := range tt.contains {
-				if !strings.Contains(outputStr, contain) {
-					t.Errorf("Help output does not contain '%s'\nOutput: %s", contain, outputStr)
-				}
+			for _, expected := range tt.contains {
+				AssertContains(t, result, expected, "help output should contain expected content")
 			}
 		})
 	}
@@ -52,6 +44,8 @@ func TestCLI_Help_RootCommand(t *testing.T) {
 // TestCLI_Help_SubCommands tests help functionality for individual subcommands
 // Ensures each subcommand provides appropriate help information
 func TestCLI_Help_SubCommands(t *testing.T) {
+	binary := GetTestBinary(t)
+
 	tests := []struct {
 		name     string
 		args     []string
@@ -59,13 +53,13 @@ func TestCLI_Help_SubCommands(t *testing.T) {
 	}{
 		{
 			name:     "new command help",
-			args:     []string{"new", "--help"},
+			args:     Args.NewHelp(),
 			contains: []string{"new", "project"},
 		},
 		{
 			name:     "list command help",
 			args:     []string{"list", "--help"},
-			contains: []string{"list", "templates"},
+			contains: []string{"list", "blueprints"},
 		},
 		{
 			name:     "version command help",
@@ -74,23 +68,15 @@ func TestCLI_Help_SubCommands(t *testing.T) {
 		},
 	}
 
-	binary := buildTestBinary(t)
-	defer cleanupBinary(t, binary)
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(binary, tt.args...)
-			output, err := cmd.CombinedOutput()
+			result := binary.ExecuteFastCommand(t, tt.args...)
+			
+			AssertSuccess(t, result, "subcommand help should succeed")
+			AssertNoPanic(t, result, "help command should not panic")
 
-			if err != nil {
-				t.Fatalf("Subcommand help failed: %v\nOutput: %s", err, output)
-			}
-
-			outputStr := string(output)
-			for _, contain := range tt.contains {
-				if !strings.Contains(outputStr, contain) {
-					t.Errorf("Subcommand help does not contain '%s'\nOutput: %s", contain, outputStr)
-				}
+			for _, expected := range tt.contains {
+				AssertContains(t, result, expected, "subcommand help should contain expected content")
 			}
 		})
 	}
@@ -99,63 +85,59 @@ func TestCLI_Help_SubCommands(t *testing.T) {
 // TestCLI_Help_CommandStructure tests the overall help command structure
 // Verifies that help commands provide consistent formatting and expected sections
 func TestCLI_Help_CommandStructure(t *testing.T) {
-	binary := buildTestBinary(t)
-	defer cleanupBinary(t, binary)
+	binary := GetTestBinary(t)
 
-	cmd := exec.Command(binary, "--help")
-	output, err := cmd.CombinedOutput()
-
-	if err != nil {
-		t.Fatalf("Help command failed: %v\nOutput: %s", err, output)
+	tests := []struct {
+		name     string
+		args     []string
+		sections []string
+	}{
+		{
+			name:     "root help structure",
+			args:     Args.Help(),
+			sections: []string{"USAGE", "COMMANDS", "FLAGS"},
+		},
+		{
+			name:     "new command structure", 
+			args:     Args.NewHelp(),
+			sections: []string{"USAGE", "FLAGS"},
+		},
 	}
 
-	outputStr := string(output)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := binary.ExecuteFastCommand(t, tt.args...)
+			
+			AssertSuccess(t, result, "help command should succeed")
+			AssertNoPanic(t, result, "help command should not panic")
 
-	// Test for consistent help structure
-	expectedSections := []string{
-		"USAGE",
-		"COMMANDS",
-		"FLAGS",
-	}
-
-	for _, section := range expectedSections {
-		if !strings.Contains(outputStr, section) {
-			t.Errorf("Help output should contain '%s' section\nOutput: %s", section, outputStr)
-		}
-	}
-
-	// Test that help output is not empty
-	if len(strings.TrimSpace(outputStr)) == 0 {
-		t.Error("Help output should not be empty")
+			for _, section := range tt.sections {
+				AssertContains(t, result, section, "help should contain standard sections")
+			}
+		})
 	}
 }
 
-// TestCLI_Help_ExitCodes tests that help commands exit with appropriate codes
-// Help commands should always exit with code 0 (success)
-func TestCLI_Help_ExitCodes(t *testing.T) {
+// TestCLI_Help_ErrorCases tests help command error scenarios
+// Verifies graceful handling of invalid help requests
+func TestCLI_Help_ErrorCases(t *testing.T) {
+	binary := GetTestBinary(t)
+
 	tests := []struct {
 		name string
 		args []string
 	}{
-		{"root help", []string{"--help"}},
-		{"short help", []string{"-h"}},
-		{"new help", []string{"new", "--help"}},
-		{"list help", []string{"list", "--help"}},
-		{"version help", []string{"version", "--help"}},
+		{"invalid command help", []string{"invalid-command", "--help"}},
+		{"malformed help flag", []string{"---help"}},
 	}
-
-	binary := buildTestBinary(t)
-	defer cleanupBinary(t, binary)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cmd := exec.Command(binary, tt.args...)
-			_, err := cmd.CombinedOutput()
-
-			// Help commands should always succeed (exit code 0)
-			if err != nil {
-				t.Errorf("Help command should exit with code 0, but failed: %v", err)
-			}
+			result := binary.ExecuteFastCommand(t, tt.args...)
+			
+			// These should fail gracefully
+			AssertFailure(t, result, "invalid help command should fail")
+			AssertNoPanic(t, result, "invalid command should not panic")
 		})
 	}
 }

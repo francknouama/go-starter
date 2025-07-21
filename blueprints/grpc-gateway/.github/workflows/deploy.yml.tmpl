@@ -1,0 +1,293 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAME: {{"{{"}} github.repository {{"}}"}}
+  GO_VERSION: '{{.GoVersion}}'
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image-tag: {{"{{"}} steps.meta.outputs.tags {{"}}"}}
+      image-digest: {{"{{"}} steps.build.outputs.digest {{"}}"}}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: {{"{{"}} env.GO_VERSION {{"}}"}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: {{"{{"}} secrets.DOCKER_USERNAME {{"}}"}}
+          password: {{"{{"}} secrets.DOCKER_PASSWORD {{"}}"}}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: {{"{{"}} env.REGISTRY {{"}}"}}/{{"{{"}} env.IMAGE_NAME {{"}}"}}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{`{{version}}`}}
+            type=semver,pattern={{`{{major}}.{{minor}}`}}
+            type=sha,prefix={{`{{branch}}`}}-
+
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: {{"{{"}} steps.meta.outputs.tags {{"}}"}}
+          labels: {{"{{"}} steps.meta.outputs.labels {{"}}"}}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GO_VERSION={{"{{"}} env.GO_VERSION {{"}}"}}
+
+  deploy-staging:
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy to Staging
+        run: |
+          echo "Deploying to staging environment"
+          # Add your staging deployment logic here
+          # Examples:
+          # - kubectl apply -f k8s/staging/
+          # - docker stack deploy -c docker-compose.staging.yml
+          # - aws ecs update-service --cluster staging --service grpc-gateway
+
+      {{if .Features.Deployment.Kubernetes}}
+      - name: Deploy to Kubernetes (Staging)
+        env:
+          KUBE_CONFIG: {{"{{"}} secrets.STAGING_KUBE_CONFIG {{"}}"}}
+        run: |
+          echo "{{"{{"}} env.KUBE_CONFIG {{"}}"}}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+          
+          # Update image in deployment
+          kubectl set image deployment/{{.ProjectName}}-grpc grpc={{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}} -n staging
+          kubectl set image deployment/{{.ProjectName}}-gateway gateway={{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}} -n staging
+          
+          # Wait for rollout to complete
+          kubectl rollout status deployment/{{.ProjectName}}-grpc -n staging
+          kubectl rollout status deployment/{{.ProjectName}}-gateway -n staging
+          
+          rm kubeconfig
+      {{end}}
+
+      {{if .Features.Deployment.DockerSwarm}}
+      - name: Deploy to Docker Swarm (Staging)
+        env:
+          DOCKER_HOST: {{"{{"}} secrets.STAGING_DOCKER_HOST {{"}}"}}
+          DOCKER_CERT_PATH: ./certs
+        run: |
+          # Set up Docker certificates
+          echo "{{"{{"}} secrets.STAGING_DOCKER_CA {{"}}"}}" | base64 -d > ./certs/ca.pem
+          echo "{{"{{"}} secrets.STAGING_DOCKER_CERT {{"}}"}}" | base64 -d > ./certs/cert.pem
+          echo "{{"{{"}} secrets.STAGING_DOCKER_KEY {{"}}"}}" | base64 -d > ./certs/key.pem
+          
+          # Update service
+          docker service update \
+            --image {{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}} \
+            --update-parallelism 1 \
+            --update-delay 10s \
+            {{.ProjectName}}_grpc-gateway
+          
+          # Clean up certificates
+          rm -rf ./certs
+      {{end}}
+
+      - name: Run Smoke Tests
+        run: |
+          # Wait for service to be ready
+          sleep 30
+          
+          # Test gRPC endpoint
+          grpcurl -plaintext staging.example.com:50051 list
+          
+          # Test REST gateway endpoint
+          curl -f http://staging.example.com:8080/healthz || exit 1
+          curl -f http://staging.example.com:8080/api/v1/health || exit 1
+
+  deploy-production:
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: {{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+        with:
+          tag_name: {{"{{"}} github.ref {{"}}"}}
+          release_name: Release {{"{{"}} github.ref {{"}}"}}
+          draft: false
+          prerelease: false
+
+      {{if .Features.Deployment.Kubernetes}}
+      - name: Deploy to Kubernetes (Production) - Canary
+        env:
+          KUBE_CONFIG: {{"{{"}} secrets.PROD_KUBE_CONFIG {{"}}"}}
+        run: |
+          echo "{{"{{"}} env.KUBE_CONFIG {{"}}"}}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+          
+          # Deploy canary version (10% traffic)
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: {{.ProjectName}}-canary
+            namespace: production
+          spec:
+            selector:
+              app: {{.ProjectName}}
+              version: canary
+            ports:
+              - name: grpc
+                port: 50051
+              - name: http
+                port: 8080
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: {{.ProjectName}}-canary
+            namespace: production
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: {{.ProjectName}}
+                version: canary
+            template:
+              metadata:
+                labels:
+                  app: {{.ProjectName}}
+                  version: canary
+              spec:
+                containers:
+                - name: grpc-gateway
+                  image: {{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}}
+                  ports:
+                    - containerPort: 50051
+                      name: grpc
+                    - containerPort: 8080
+                      name: http
+                  env:
+                    - name: ENVIRONMENT
+                      value: production
+                  livenessProbe:
+                    httpGet:
+                      path: /healthz
+                      port: 8080
+                    initialDelaySeconds: 30
+                    periodSeconds: 10
+                  readinessProbe:
+                    httpGet:
+                      path: /readyz
+                      port: 8080
+                    initialDelaySeconds: 5
+                    periodSeconds: 5
+          EOF
+          
+          # Wait for canary to be ready
+          kubectl rollout status deployment/{{.ProjectName}}-canary -n production
+          
+          # Run canary tests
+          echo "Running canary tests..."
+          sleep 60  # Monitor for 1 minute
+          
+          # If successful, proceed with full deployment
+          echo "Canary deployment successful, proceeding with full rollout"
+          kubectl set image deployment/{{.ProjectName}}-grpc grpc={{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}} -n production
+          kubectl set image deployment/{{.ProjectName}}-gateway gateway={{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}} -n production
+          
+          # Wait for rollout
+          kubectl rollout status deployment/{{.ProjectName}}-grpc -n production
+          kubectl rollout status deployment/{{.ProjectName}}-gateway -n production
+          
+          # Clean up canary
+          kubectl delete deployment {{.ProjectName}}-canary -n production
+          kubectl delete service {{.ProjectName}}-canary -n production
+          
+          rm kubeconfig
+      {{end}}
+
+      - name: Update API Documentation
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          # Generate OpenAPI spec from proto files
+          make generate-openapi
+          
+          # Upload to documentation service
+          # curl -X POST https://api-docs.example.com/upload \
+          #   -H "Authorization: Bearer {{"{{"}} secrets.API_DOCS_TOKEN {{"}}"}}" \
+          #   -F "spec=@openapi.yaml" \
+          #   -F "version={{"{{"}} github.ref_name {{"}}"}}"
+
+      - name: Notify Deployment
+        if: always()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: {{"{{"}} job.status {{"}}"}}
+          text: |
+            Deployment to {{"{{"}} github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'production' {{"}}"}} {{"{{"}} job.status {{"}}"}}
+            Image: {{"{{"}} needs.build-and-push.outputs.image-tag {{"}}"}}
+          webhook_url: {{"{{"}} secrets.SLACK_WEBHOOK {{"}}"}}
+
+  rollback:
+    if: failure() && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    needs: [deploy-staging, deploy-production]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Rollback Deployment
+        run: |
+          echo "Rolling back deployment due to failure"
+          # Add rollback logic here
+          # kubectl rollout undo deployment/{{.ProjectName}} -n production
+          # docker service rollback {{.ProjectName}}_grpc-gateway

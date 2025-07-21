@@ -2,40 +2,65 @@
 
 Welcome to the comprehensive go-starter documentation. Find everything you need to master Go project generation.
 
+## 📁 Documentation Structure
+
+```
+docs/
+├── guides/           # User and developer guides
+├── references/       # API and command references  
+├── project-plans/    # Project roadmaps and plans
+├── migration-guides/ # Migration and transition guides
+└── audits/          # Blueprint audits and reports
+```
+
 ## 🚀 Getting Started
 
 **New to go-starter?** Start here:
 
-- 📖 **[Getting Started Guide](GETTING_STARTED.md)** - Your first project in 5 minutes
-- ⚙️ **[Installation Guide](INSTALLATION.md)** - All installation methods
-- 🏃‍♂️ **[Quick Reference](QUICK_REFERENCE_CARD.md)** - Common commands and patterns
+- 📖 **[Getting Started Guide](guides/GETTING_STARTED.md)** - Your first project in 5 minutes
+- ⚙️ **[Installation Guide](guides/INSTALLATION.md)** - All installation methods
+- 🏃‍♂️ **[Quick Reference](references/QUICK_REFERENCE_CARD.md)** - Common commands and patterns
 
-## 📚 Core Guides
+## 📚 User Guides
+
+### Essential Guides
+- 🏗️ **[Development Guide](guides/DEVELOPMENT.md)** - Setting up your development environment
+- ⚙️ **[Configuration Guide](guides/CONFIGURATION.md)** - Global settings and profiles
+- 🧪 **[Testing Guide](guides/TESTING_GUIDE.md)** - Test your generated projects
+- 🔧 **[Troubleshooting Guide](guides/TROUBLESHOOTING.md)** - Solve common issues
+- ❓ **[FAQ](guides/FAQ.md)** - Frequently asked questions
+
+## 📖 References
 
 ### Project Creation
-- 📖 **[Project Types Guide](PROJECT_TYPES.md)** - Choose the right template (Web API, CLI, Library, Lambda)
-- 🏗️ **[Blueprint Guide](BLUEPRINTS.md)** - Deep dive into project templates
-- 📊 **[Blueprint Comparison](BLUEPRINT_COMPARISON.md)** - Side-by-side feature comparison
+- 📖 **[Project Types Guide](references/PROJECT_TYPES.md)** - Choose the right template (Web API, CLI, Library, Lambda)
+- 🏗️ **[Blueprint Guide](references/BLUEPRINTS.md)** - Deep dive into project templates
+- 📊 **[Blueprint Comparison](references/BLUEPRINT_COMPARISON.md)** - Side-by-side feature comparison
 
 ### Configuration & Customization
-- ⚙️ **[Configuration Guide](CONFIGURATION.md)** - Global settings and profiles
-- 📊 **[Logger Guide](LOGGER_GUIDE.md)** - Master the unique logger selector system
-- 🗃️ **[ORM Guide](ORM_GUIDE.md)** - Database and ORM selection
+- 📊 **[Logger Guide](references/LOGGER_GUIDE.md)** - Master the unique logger selector system
+- 🗃️ **[ORM Guide](references/ORM_GUIDE.md)** - Database and ORM selection
+- 📝 **[Quick Reference](references/QUICK_REFERENCE.md)** - Command cheatsheet
 
-## 🔧 Advanced Topics
+## 🗺️ Project Plans
 
-### Development & Testing
-- 🧪 **[Testing Guide](TESTING_GUIDE.md)** - Test your generated projects
-- 📝 **[TDD Enforcement](TDD-ENFORCEMENT.md)** - Test-driven development practices
+- 🎯 **[Phase 2 Completion Plan](project-plans/PHASE_2_COMPLETION_PLAN.md)** - Current development status (95% complete)
+- 🌐 **[Phase 3 Web UI Plan](project-plans/PHASE_3_WEB_UI_DEVELOPMENT_PLAN.md)** - Web interface development roadmap  
+- 🚀 **[CI/CD Infrastructure Plan](project-plans/CI_CD_INFRASTRUCTURE_IMPROVEMENT_PLAN.md)** - Deployment automation plans
 
-### Workflow & Productivity
-- 📋 **[Task Master Guide](TASK_MASTER_GUIDE.md)** - Organize development with AI-powered task management
-- 📝 **[Quick Reference](QUICK_REFERENCE.md)** - Command cheatsheet
+## 🔄 Migration Guides
+
+- 🛠️ **[CLI Migration Guide](migration-guides/CLI_MIGRATION_GUIDE.md)** - Upgrading CLI blueprints
+- ⚡ **[CLI Over-Engineering Resolution](migration-guides/CLI_OVER_ENGINEERING_COMPLETE_RESOLUTION.md)** - Simplification strategies
+- 📝 **[TDD Enforcement](migration-guides/TDD-ENFORCEMENT.md)** - Test-driven development practices
+- 📋 **[Task Master Guide](migration-guides/TASK_MASTER_GUIDE.md)** - AI-powered task management
+
+## 🔍 Audit Reports
+
+Comprehensive blueprint quality assessments and improvement reports are available in the [audits/](audits/) directory.
 
 ## 🆘 Help & Support
 
-- ❓ **[FAQ](FAQ.md)** - Frequently asked questions
-- 🔧 **[Troubleshooting Guide](TROUBLESHOOTING.md)** - Solve common issues
 - 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** - Found a bug?
 - 💬 **[Discussions](https://github.com/francknouama/go-starter/discussions)** - Community support
 

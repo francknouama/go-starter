@@ -1,51 +1,179 @@
-name: Deploy to AWS Lambda
+name: Deploy Lambda Function
 
 on:
   push:
     branches: [ main ]
     tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+        - dev
+        - staging
+        - prod
+
+env:
+  GO_VERSION: "{{.GoVersion}}"
+  AWS_REGION: us-east-1
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: 
+      name: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'dev') || 'staging' }}
+    
     steps:
     - uses: actions/checkout@v4
-
+    
     - name: Set up Go
       uses: actions/setup-go@v4
       with:
-        go-version: {{.GoVersion}}
-
-    - name: Build Lambda function
-      run: |
-        GOOS=linux GOARCH=amd64 go build -o bin/{{.ProjectName}} .
-        zip -j bin/{{.ProjectName}}.zip bin/{{.ProjectName}}
-
+        go-version: ${{ env.GO_VERSION }}
+    
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v4
       with:
-        aws-access-key-id: ${{`{{ secrets.AWS_ACCESS_KEY_ID }}`}}
-        aws-secret-access-key: ${{`{{ secrets.AWS_SECRET_ACCESS_KEY }}`}}
-        aws-region: ${{`{{ secrets.AWS_REGION }}`}}
-
-    - name: Deploy to Lambda
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+    
+    - name: Set up SAM CLI
+      uses: aws-actions/setup-sam@v2
+      with:
+        use-installer: true
+    
+    - name: Cache SAM dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.aws-sam
+        key: ${{ runner.os }}-sam-${{ hashFiles('**/template.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-sam-
+    
+    - name: Build SAM application
+      run: sam build --use-container
+    
+    - name: Run integration tests
       run: |
-        aws lambda update-function-code \
-          --function-name {{.ProjectName}} \
-          --zip-file fileb://bin/{{.ProjectName}}.zip
-
-    - name: Update Lambda configuration
+        # Run any integration tests here
+        echo "Running integration tests..."
+        go test -v -tags=integration ./...
+    
+    - name: Deploy to AWS
       run: |
-        aws lambda update-function-configuration \
-          --function-name {{.ProjectName}} \
-          --timeout 30 \
-          --memory-size 128
-
-    - name: Test Lambda function
+        ENV_NAME="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'dev') || 'staging' }}"
+        STACK_NAME="{{.ProjectName}}-${ENV_NAME}"
+        
+        sam deploy \
+          --stack-name "${STACK_NAME}" \
+          --s3-bucket "${{ secrets.SAM_DEPLOYMENT_BUCKET }}" \
+          --s3-prefix "{{.ProjectName}}/${ENV_NAME}" \
+          --parameter-overrides Environment="${ENV_NAME}" \
+          --capabilities CAPABILITY_IAM \
+          --no-confirm-changeset \
+          --no-fail-on-empty-changeset \
+          --tags \
+            Project="{{.ProjectName}}" \
+            Environment="${ENV_NAME}" \
+            ManagedBy="SAM" \
+            GitCommit="${GITHUB_SHA}" \
+            GitBranch="${GITHUB_REF#refs/heads/}" \
+            DeployedAt="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    
+    - name: Get stack outputs
+      id: stack-outputs
       run: |
-        aws lambda invoke \
-          --function-name {{.ProjectName}} \
-          --payload '{"key": "value"}' \
-          --cli-binary-format raw-in-base64-out \
-          response.json
-        cat response.json
+        ENV_NAME="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'dev') || 'staging' }}"
+        STACK_NAME="{{.ProjectName}}-${ENV_NAME}"
+        
+        API_URL=$(aws cloudformation describe-stacks \
+          --stack-name "${STACK_NAME}" \
+          --query 'Stacks[0].Outputs[?OutputKey==`{{.ProjectName | replace "-" ""}}Api`].OutputValue' \
+          --output text)
+        
+        FUNCTION_ARN=$(aws cloudformation describe-stacks \
+          --stack-name "${STACK_NAME}" \
+          --query 'Stacks[0].Outputs[?OutputKey==`{{.ProjectName | replace "-" ""}}FunctionArn`].OutputValue' \
+          --output text)
+        
+        DASHBOARD_URL=$(aws cloudformation describe-stacks \
+          --stack-name "${STACK_NAME}" \
+          --query 'Stacks[0].Outputs[?OutputKey==`{{.ProjectName | replace "-" ""}}Dashboard`].OutputValue' \
+          --output text)
+        
+        echo "api-url=${API_URL}" >> $GITHUB_OUTPUT
+        echo "function-arn=${FUNCTION_ARN}" >> $GITHUB_OUTPUT
+        echo "dashboard-url=${DASHBOARD_URL}" >> $GITHUB_OUTPUT
+    
+    - name: Run smoke tests
+      run: |
+        API_URL="${{ steps.stack-outputs.outputs.api-url }}"
+        echo "Running smoke tests against ${API_URL}"
+        
+        # Test API endpoint
+        curl -f "${API_URL}" || exit 1
+        
+        # Test health endpoint if available
+        curl -f "${API_URL}/health" || echo "Health endpoint not available"
+        
+        # Test with sample payload
+        curl -f -X POST "${API_URL}/invoke" \
+          -H "Content-Type: application/json" \
+          -d '{"name": "deployment-test", "message": "smoke test"}' || exit 1
+    
+    - name: Update deployment status
+      if: always()
+      run: |
+        ENV_NAME="${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'dev') || 'staging' }}"
+        
+        if [ "${{ job.status }}" == "success" ]; then
+          echo "✅ Deployment to ${ENV_NAME} successful!"
+          echo "🔗 API URL: ${{ steps.stack-outputs.outputs.api-url }}"
+          echo "📊 Dashboard: ${{ steps.stack-outputs.outputs.dashboard-url }}"
+        else
+          echo "❌ Deployment to ${ENV_NAME} failed!"
+        fi
+
+  post-deploy:
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: success()
+    
+    steps:
+    - name: Notify Slack
+      if: ${{ secrets.SLACK_WEBHOOK_URL }}
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
+        fields: repo,message,commit,author,action,eventName,ref,workflow
+        text: |
+          🚀 {{.ProjectName}} deployed successfully!
+          Environment: ${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'dev') || 'staging' }}
+          API URL: ${{ needs.deploy.outputs.api-url }}
+    
+    - name: Create GitHub release
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body: |
+          ## Changes
+          
+          ${{ github.event.head_commit.message }}
+          
+          ## Deployment Information
+          
+          - **Environment**: Production
+          - **API URL**: ${{ needs.deploy.outputs.api-url }}
+          - **Dashboard**: ${{ needs.deploy.outputs.dashboard-url }}
+          - **Function ARN**: ${{ needs.deploy.outputs.function-arn }}
+        draft: false
+        prerelease: false

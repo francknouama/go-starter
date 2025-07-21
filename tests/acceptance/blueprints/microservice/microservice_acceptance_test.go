@@ -2,19 +2,14 @@ package microservice
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cucumber/godog"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -131,8 +126,12 @@ func (suite *MicroserviceAcceptanceTestSuite) InitializeMicroserviceScenarios(sc
 	// This is a comprehensive foundation that can be extended
 
 	// Scenario hooks
-	sc.Before(ctx.beforeScenario)
-	sc.After(ctx.afterScenario)
+	sc.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
+		return ctx, suite.ctx.beforeScenario(sc)
+	})
+	sc.After(func(ctx context.Context, sc *godog.Scenario, err error) (context.Context, error) {
+		return ctx, suite.ctx.afterScenario(sc, err)
+	})
 }
 
 // TestMicroserviceStandardGeneration tests basic microservice generation

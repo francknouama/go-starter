@@ -1,0 +1,286 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  GO_VERSION: '{{.GoVersion}}'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: {{"{{"}} steps.create_release.outputs.upload_url {{"}}"}}
+      release_id: {{"{{"}} steps.create_release.outputs.id {{"}}"}}
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set release version
+        id: version
+        run: |
+          if [ "${{"{{"}} github.event_name {{"}}"}}" = "workflow_dispatch" ]; then
+            echo "version={{"{{"}} github.event.inputs.tag {{"}}"}}" >> $GITHUB_OUTPUT
+          else
+            echo "version={{"{{"}} github.ref_name {{"}}"}}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate Release Notes
+        id: release_notes
+        run: |
+          # Generate release notes from git history
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # First release
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --reverse)
+          else
+            # Subsequent release
+            COMMITS=$(git log --pretty=format:"- %s (%h)" ${PREVIOUS_TAG}..HEAD)
+          fi
+          
+          # Create release notes
+          cat > release_notes.md << EOF
+          ## What's Changed
+          
+          $COMMITS
+          
+          {{if .Features.Deployment.Docker}}
+          ## Docker Images
+          
+          \`\`\`bash
+          docker pull {{.ProjectName}}:{{"{{"}} steps.version.outputs.version {{"}}"}}
+          \`\`\`
+          {{end}}
+          
+          ## Installation
+          
+          {{if eq .ProjectType "cli"}}
+          ### Go Install (Recommended)
+          \`\`\`bash
+          go install {{.ModulePath}}@{{"{{"}} steps.version.outputs.version {{"}}"}}
+          \`\`\`
+          
+          ### Download Binary
+          Download the appropriate binary for your platform from the assets below.
+          {{else}}
+          ### Docker
+          \`\`\`bash
+          docker run -p 8080:8080 {{.ProjectName}}:{{"{{"}} steps.version.outputs.version {{"}}"}}
+          \`\`\`
+          
+          ### Source
+          \`\`\`bash
+          git clone {{.ModulePath}}.git
+          cd {{.ProjectName}}
+          git checkout {{"{{"}} steps.version.outputs.version {{"}}"}}
+          go build -o {{.ProjectName}} .
+          \`\`\`
+          {{end}}
+          
+          **Full Changelog**: https://github.com/{{.ModulePath}}/compare/${PREVIOUS_TAG}...{{"{{"}} steps.version.outputs.version {{"}}"}}
+          EOF
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: {{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+        with:
+          tag_name: {{"{{"}} steps.version.outputs.version {{"}}"}}
+          release_name: {{"{{"}} steps.version.outputs.version {{"}}"}}
+          body_path: release_notes.md
+          draft: false
+          prerelease: {{"{{"}} contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') {{"}}"}}
+
+  {{if eq .ProjectType "cli"}}
+  build-binaries:
+    needs: create-release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: {{"{{"}} env.GO_VERSION {{"}}"}}
+
+      - name: Build binary
+        env:
+          GOOS: {{"{{"}} matrix.goos {{"}}"}}
+          GOARCH: {{"{{"}} matrix.goarch {{"}}"}}
+          CGO_ENABLED: 0
+        run: |
+          BINARY_NAME="{{.ProjectName}}"
+          if [ "${{"{{"}} matrix.goos {{"}}"}}" = "windows" ]; then
+            BINARY_NAME="${BINARY_NAME}.exe"
+          fi
+          
+          go build -ldflags="-w -s -X main.version={{"{{"}} github.ref_name {{"}}"}}" -o "${BINARY_NAME}" .
+          
+          # Create archive
+          ARCHIVE_NAME="{{.ProjectName}}-{{"{{"}} github.ref_name {{"}}"}}-{{"{{"}} matrix.goos {{"}}"}}-{{"{{"}} matrix.goarch {{"}}"}}"
+          
+          if [ "${{"{{"}} matrix.goos {{"}}"}}" = "windows" ]; then
+            zip "${ARCHIVE_NAME}.zip" "${BINARY_NAME}"
+          else
+            tar -czf "${ARCHIVE_NAME}.tar.gz" "${BINARY_NAME}"
+          fi
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: {{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+        with:
+          upload_url: {{"{{"}} needs.create-release.outputs.upload_url {{"}}"}}
+          asset_path: ./{{.ProjectName}}-{{"{{"}} github.ref_name {{"}}"}}-{{"{{"}} matrix.goos {{"}}"}}-{{"{{"}} matrix.goarch {{"}}"}}{{"{{"}} matrix.goos == 'windows' && '.zip' || '.tar.gz' {{"}}"}}
+          asset_name: {{.ProjectName}}-{{"{{"}} github.ref_name {{"}}"}}-{{"{{"}} matrix.goos {{"}}"}}-{{"{{"}} matrix.goarch {{"}}"}}{{"{{"}} matrix.goos == 'windows' && '.zip' || '.tar.gz' {{"}}"}}
+          asset_content_type: application/octet-stream
+  {{else}}
+  build-docker:
+    needs: create-release
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: {{"{{"}} secrets.DOCKER_USERNAME {{"}}"}}
+          password: {{"{{"}} secrets.DOCKER_PASSWORD {{"}}"}}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: {{.ProjectName}}
+          tags: |
+            type=semver,pattern={{`{{version}}`}}
+            type=semver,pattern={{`{{major}}.{{minor}}`}}
+            type=semver,pattern={{`{{major}}`}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: {{"{{"}} steps.meta.outputs.tags {{"}}"}}
+          labels: {{"{{"}} steps.meta.outputs.labels {{"}}"}}
+          build-args: |
+            VERSION={{"{{"}} github.ref_name {{"}}"}}
+            GO_VERSION={{"{{"}} env.GO_VERSION {{"}}"}}
+  {{end}}
+
+  {{if .Features.Deployment.Kubernetes}}
+  update-manifests:
+    needs: [create-release{{if ne .ProjectType "cli"}}, build-docker{{end}}]
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update Kubernetes manifests
+        run: |
+          # Update image tags in Kubernetes manifests
+          find k8s/ -name "*.yaml" -o -name "*.yml" | xargs sed -i "s|{{.ProjectName}}:.*|{{.ProjectName}}:{{"{{"}} github.ref_name {{"}}"}}|g"
+
+      - name: Create Pull Request with manifest updates
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: {{"{{"}} secrets.GITHUB_TOKEN {{"}}"}}
+          commit-message: 'chore: update manifests for {{"{{"}} github.ref_name {{"}}"}}'
+          title: 'Update Kubernetes manifests for {{"{{"}} github.ref_name {{"}}"}}'
+          body: |
+            Automated update of Kubernetes manifests for release {{"{{"}} github.ref_name {{"}}"}}
+            
+            Changes:
+            - Updated image tags to {{"{{"}} github.ref_name {{"}}"}}
+          branch: chore/update-manifests-{{"{{"}} github.ref_name {{"}}"}}
+          delete-branch: true
+  {{end}}
+
+  publish-packages:
+    needs: create-release
+    runs-on: ubuntu-latest
+    if: {{"{{"}} !contains(github.ref_name, 'alpha') && !contains(github.ref_name, 'beta') && !contains(github.ref_name, 'rc') {{"}}"}}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      {{if eq .ProjectType "library"}}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: {{"{{"}} env.GO_VERSION {{"}}"}}
+
+      - name: Go mod tidy
+        run: go mod tidy
+
+      - name: Create Go module proxy entry
+        run: |
+          # Go modules are automatically available via proxy.golang.org
+          # This step validates that the module can be fetched
+          go list -m {{.ModulePath}}@{{"{{"}} github.ref_name {{"}}"}}
+      {{end}}
+
+      {{if .Features.Registry.NPM}}
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: {{"{{"}} secrets.NPM_TOKEN {{"}}"}}
+      {{end}}
+
+  notify-release:
+    needs: [create-release{{if eq .ProjectType "cli"}}, build-binaries{{else}}, build-docker{{end}}]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Notify Success
+        if: {{"{{"}} needs.create-release.result == 'success' {{"}}"}}
+        run: |
+          echo "🎉 Release {{"{{"}} github.ref_name {{"}}"}} published successfully!"
+          
+          # Send notification to Slack/Discord/etc
+          # curl -X POST -H 'Content-type: application/json' \
+          #   --data '{"text":"🚀 New release {{"{{"}} github.ref_name {{"}}"}} is now available!"}' \
+          #   ${{"{{"}} secrets.SLACK_WEBHOOK_URL {{"}}"}}
+
+      - name: Notify Failure
+        if: {{"{{"}} needs.create-release.result == 'failure' {{"}}"}}
+        run: |
+          echo "❌ Release {{"{{"}} github.ref_name {{"}}"}} failed!"
+          # Add failure notification logic

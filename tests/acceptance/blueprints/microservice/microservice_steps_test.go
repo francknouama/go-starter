@@ -2,7 +2,6 @@ package microservice
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -10,9 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"testing"
 	"time"
 
 	"github.com/cucumber/godog"
@@ -756,15 +753,16 @@ func (ctx *MicroserviceTestContext) cleanup() {
 
 // Scenario hooks
 
-func (ctx *MicroserviceTestContext) beforeScenario(sc *godog.Scenario) {
+func (ctx *MicroserviceTestContext) beforeScenario(sc *godog.Scenario) error {
 	// Reset state before each scenario
 	ctx.testData = make(map[string]interface{})
 	ctx.scenarios = make(map[string]interface{})
 	ctx.lastResponse = nil
 	ctx.lastResponseBody = nil
+	return nil
 }
 
-func (ctx *MicroserviceTestContext) afterScenario(sc *godog.Scenario, err error) {
+func (ctx *MicroserviceTestContext) afterScenario(sc *godog.Scenario, err error) error {
 	// Cleanup after each scenario
 	if err != nil {
 		fmt.Printf("Scenario failed: %s - %v\n", sc.Name, err)
@@ -783,4 +781,5 @@ func (ctx *MicroserviceTestContext) afterScenario(sc *godog.Scenario, err error)
 		ctx.serviceProcess.Wait()
 		ctx.serviceProcess = nil
 	}
+	return nil
 }
