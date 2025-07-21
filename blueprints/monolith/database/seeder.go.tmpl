@@ -1,0 +1,466 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+	{{- end}}
+
+	"{{.ModulePath}}/models"
+)
+
+// Seeder handles database seeding for development and testing
+type Seeder struct {
+	db *DB
+}
+
+// NewSeeder creates a new seeder instance
+func NewSeeder(db *DB) *Seeder {
+	return &Seeder{db: db}
+}
+
+// Run executes all seeders
+func (s *Seeder) Run() error {
+	ctx := context.Background()
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Starting database seeding")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Starting database seeding")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Starting database seeding")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Starting database seeding")
+	{{- end}}
+
+	// Seed users
+	if err := s.seedUsers(ctx); err != nil {
+		return fmt.Errorf("failed to seed users: %w", err)
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Database seeding completed successfully")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Database seeding completed successfully")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Database seeding completed successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Database seeding completed successfully")
+	{{- end}}
+
+	return nil
+}
+
+// seedUsers creates initial user accounts for development
+func (s *Seeder) seedUsers(ctx context.Context) error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Seeding users")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Seeding users")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Seeding users")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Seeding users")
+	{{- end}}
+
+	users := []models.User{
+		{
+			FirstName:  "Admin",
+			LastName:   "User",
+			Email:      "admin@{{.ProjectName}}.com",
+			Username:   "admin",
+			Password:   "Admin123!@#", // Will be hashed automatically
+			IsActive:   true,
+			IsVerified: true,
+			Timezone:   "UTC",
+			Language:   "en",
+			Theme:      "light",
+		},
+		{
+			FirstName:  "John",
+			LastName:   "Doe",
+			Email:      "john.doe@example.com",
+			Username:   "johndoe",
+			Password:   "Password123!",
+			Bio:        "Software developer and tech enthusiast",
+			Location:   "San Francisco, CA",
+			Website:    "https://johndoe.dev",
+			IsActive:   true,
+			IsVerified: true,
+			Timezone:   "America/Los_Angeles",
+			Language:   "en",
+			Theme:      "dark",
+		},
+		{
+			FirstName:  "Jane",
+			LastName:   "Smith",
+			Email:      "jane.smith@example.com",
+			Username:   "janesmith",
+			Password:   "SecurePass456!",
+			Bio:        "UX Designer with a passion for creating beautiful interfaces",
+			Location:   "New York, NY",
+			IsActive:   true,
+			IsVerified: true,
+			Timezone:   "America/New_York",
+			Language:   "en",
+			Theme:      "auto",
+		},
+		{
+			FirstName:    "Bob",
+			LastName:     "Johnson",
+			Email:        "bob.johnson@example.com",
+			Username:     "bobjohnson",
+			Password:     "MyPassword789!",
+			Bio:          "Product manager focused on building great user experiences",
+			Location:     "Austin, TX",
+			IsActive:     true,
+			IsVerified:   false, // Unverified user for testing
+			Timezone:     "America/Chicago",
+			Language:     "en",
+			Theme:        "light",
+		},
+		{
+			FirstName:   "Alice",
+			LastName:    "Wilson",
+			Email:       "alice.wilson@example.com",
+			Username:    "alicewilson",
+			Password:    "StrongPass012!",
+			Bio:         "DevOps engineer specializing in cloud infrastructure",
+			Location:    "Seattle, WA",
+			Website:     "https://alice-wilson.tech",
+			IsActive:    false, // Inactive user for testing
+			IsVerified:  true,
+			Timezone:    "America/Los_Angeles",
+			Language:    "en",
+			Theme:       "dark",
+		},
+	}
+
+	for _, user := range users {
+		if err := s.createUserIfNotExists(ctx, &user); err != nil {
+			return fmt.Errorf("failed to create user %s: %w", user.Email, err)
+		}
+	}
+
+	return nil
+}
+
+// createUserIfNotExists creates a user only if it doesn't already exist
+func (s *Seeder) createUserIfNotExists(ctx context.Context, user *models.User) error {
+	// Check if user already exists
+	{{- if eq .DatabaseORM "gorm"}}
+	var existingUser models.User
+	result := s.db.DB.Where("email = ?", user.Email).First(&existingUser)
+	if result.Error == nil {
+		// User exists, skip
+		{{- if eq .LoggerType "slog"}}
+		slog.Debug("User already exists, skipping", "email", user.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Debug("User already exists, skipping", zap.String("email", user.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", user.Email).Debug("User already exists, skipping")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Debug().Str("email", user.Email).Msg("User already exists, skipping")
+		{{- end}}
+		return nil
+	}
+
+	// Validate user before creating
+	if validationErrors := user.Validate(); validationErrors.HasErrors() {
+		return fmt.Errorf("user validation failed: %v", validationErrors)
+	}
+
+	// Create the user
+	if err := s.db.DB.Create(user).Error; err != nil {
+		return fmt.Errorf("failed to create user in database: %w", err)
+	}
+
+	{{- else if eq .DatabaseORM "sqlx"}}
+	// Check if user exists
+	var count int
+	err := s.db.DB.Get(&count, "SELECT COUNT(*) FROM users WHERE email = ?", user.Email)
+	if err != nil {
+		return fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	if count > 0 {
+		// User exists, skip
+		{{- if eq .LoggerType "slog"}}
+		slog.Debug("User already exists, skipping", "email", user.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Debug("User already exists, skipping", zap.String("email", user.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", user.Email).Debug("User already exists, skipping")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Debug().Str("email", user.Email).Msg("User already exists, skipping")
+		{{- end}}
+		return nil
+	}
+
+	// Validate user before creating
+	if validationErrors := user.Validate(); validationErrors.HasErrors() {
+		return fmt.Errorf("user validation failed: %v", validationErrors)
+	}
+
+	// Hash password manually (since we're not using GORM hooks)
+	hashedPassword, err := user.HashPassword(user.Password)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+	user.Password = hashedPassword
+
+	// Set timestamps
+	user.UpdateTimestamps()
+
+	// Insert user
+	query := `
+		INSERT INTO users (
+			first_name, last_name, email, username, password, salt, bio, 
+			location, website, is_active, is_verified, timezone, language, 
+			theme, created_at, updated_at
+		) VALUES (
+			:first_name, :last_name, :email, :username, :password, :salt, :bio,
+			:location, :website, :is_active, :is_verified, :timezone, :language,
+			:theme, :created_at, :updated_at
+		)`
+
+	if _, err := s.db.DB.NamedExec(query, user); err != nil {
+		return fmt.Errorf("failed to insert user: %w", err)
+	}
+
+	{{- else}}
+	// Raw SQL implementation
+	var count int
+	err := s.db.DB.QueryRow("SELECT COUNT(*) FROM users WHERE email = ?", user.Email).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("failed to check if user exists: %w", err)
+	}
+
+	if count > 0 {
+		// User exists, skip
+		{{- if eq .LoggerType "slog"}}
+		slog.Debug("User already exists, skipping", "email", user.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Debug("User already exists, skipping", zap.String("email", user.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", user.Email).Debug("User already exists, skipping")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Debug().Str("email", user.Email).Msg("User already exists, skipping")
+		{{- end}}
+		return nil
+	}
+
+	// Validate user before creating
+	if validationErrors := user.Validate(); validationErrors.HasErrors() {
+		return fmt.Errorf("user validation failed: %v", validationErrors)
+	}
+
+	// Hash password manually
+	hashedPassword, err := user.HashPassword(user.Password)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+	user.Password = hashedPassword
+
+	// Set timestamps
+	user.UpdateTimestamps()
+
+	// Insert user
+	query := `
+		INSERT INTO users (
+			first_name, last_name, email, username, password, salt, bio, 
+			location, website, is_active, is_verified, timezone, language, 
+			theme, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+
+	_, err = s.db.DB.Exec(query,
+		user.FirstName, user.LastName, user.Email, user.Username,
+		user.Password, user.Salt, user.Bio, user.Location, user.Website,
+		user.IsActive, user.IsVerified, user.Timezone, user.Language,
+		user.Theme, user.CreatedAt, user.UpdatedAt,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to insert user: %w", err)
+	}
+	{{- end}}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Created user", "email", user.Email, "username", user.Username)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Created user", zap.String("email", user.Email), zap.String("username", user.Username))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{"email": user.Email, "username": user.Username}).Info("Created user")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("email", user.Email).Str("username", user.Username).Msg("Created user")
+	{{- end}}
+
+	return nil
+}
+
+// SeedTestData creates additional test data for development
+func (s *Seeder) SeedTestData() error {
+	ctx := context.Background()
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Seeding additional test data")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Seeding additional test data")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Seeding additional test data")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Seeding additional test data")
+	{{- end}}
+
+	// Create bulk users for testing pagination, search, etc.
+	users := s.generateBulkUsers(50)
+	
+	for _, user := range users {
+		if err := s.createUserIfNotExists(ctx, &user); err != nil {
+			return fmt.Errorf("failed to create test user %s: %w", user.Email, err)
+		}
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Test data seeding completed", "users_created", len(users))
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Test data seeding completed", zap.Int("users_created", len(users)))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithField("users_created", len(users)).Info("Test data seeding completed")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int("users_created", len(users)).Msg("Test data seeding completed")
+	{{- end}}
+
+	return nil
+}
+
+// generateBulkUsers creates a slice of test users
+func (s *Seeder) generateBulkUsers(count int) []models.User {
+	firstNames := []string{
+		"James", "Mary", "Michael", "Patricia", "Robert", "Jennifer", "William", "Linda",
+		"David", "Elizabeth", "Richard", "Barbara", "Joseph", "Susan", "Thomas", "Jessica",
+		"Christopher", "Sarah", "Daniel", "Karen", "Paul", "Nancy", "Mark", "Lisa",
+		"Donald", "Betty", "George", "Helen", "Kenneth", "Sandra", "Steven", "Donna",
+	}
+
+	lastNames := []string{
+		"Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis",
+		"Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas",
+		"Taylor", "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson", "White",
+		"Harris", "Sanchez", "Clark", "Ramirez", "Lewis", "Robinson", "Walker", "Young",
+	}
+
+	locations := []string{
+		"New York, NY", "Los Angeles, CA", "Chicago, IL", "Houston, TX", "Phoenix, AZ",
+		"Philadelphia, PA", "San Antonio, TX", "San Diego, CA", "Dallas, TX", "San Jose, CA",
+		"Austin, TX", "Jacksonville, FL", "Fort Worth, TX", "Columbus, OH", "Charlotte, NC",
+		"San Francisco, CA", "Indianapolis, IN", "Seattle, WA", "Denver, CO", "Boston, MA",
+	}
+
+	themes := []string{"light", "dark", "auto"}
+	languages := []string{"en", "es", "fr", "de", "it", "pt", "ja", "ko", "zh"}
+
+	var users []models.User
+
+	for i := 0; i < count; i++ {
+		firstName := firstNames[i%len(firstNames)]
+		lastName := lastNames[i%len(lastNames)]
+		
+		user := models.User{
+			FirstName:  firstName,
+			LastName:   lastName,
+			Email:      fmt.Sprintf("%s.%s%d@testuser.com", strings.ToLower(firstName), strings.ToLower(lastName), i),
+			Username:   fmt.Sprintf("%s%s%d", strings.ToLower(firstName), strings.ToLower(lastName), i),
+			Password:   "TestPassword123!",
+			Bio:        fmt.Sprintf("Test user bio for %s %s", firstName, lastName),
+			Location:   locations[i%len(locations)],
+			IsActive:   i%10 != 0, // 90% active users
+			IsVerified: i%5 != 0,  // 80% verified users
+			Timezone:   "UTC",
+			Language:   languages[i%len(languages)],
+			Theme:      themes[i%len(themes)],
+		}
+
+		// Add some variety to test data
+		if i%3 == 0 {
+			user.Website = fmt.Sprintf("https://%s-%s.dev", strings.ToLower(firstName), strings.ToLower(lastName))
+		}
+
+		// Some users have date of birth
+		if i%4 == 0 {
+			dob := time.Now().AddDate(-25-i%30, -i%12, -i%28)
+			user.DateOfBirth = &dob
+		}
+
+		users = append(users, user)
+	}
+
+	return users
+}
+
+// CleanTestData removes all test data (useful for cleaning up after tests)
+func (s *Seeder) CleanTestData() error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Warn("Cleaning test data - this will remove all test users!")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Warn("Cleaning test data - this will remove all test users!")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Warn("Cleaning test data - this will remove all test users!")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Warn().Msg("Cleaning test data - this will remove all test users!")
+	{{- end}}
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// Delete test users (those with @testuser.com emails)
+	result := s.db.DB.Where("email LIKE ?", "%@testuser.com").Delete(&models.User{})
+	if result.Error != nil {
+		return fmt.Errorf("failed to delete test users: %w", result.Error)
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Cleaned test data", "users_deleted", result.RowsAffected)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Cleaned test data", zap.Int64("users_deleted", result.RowsAffected))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithField("users_deleted", result.RowsAffected).Info("Cleaned test data")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int64("users_deleted", result.RowsAffected).Msg("Cleaned test data")
+	{{- end}}
+
+	{{- else}}
+	// Delete test users (those with @testuser.com emails)
+	result, err := s.db.DB.Exec("DELETE FROM users WHERE email LIKE ?", "%@testuser.com")
+	if err != nil {
+		return fmt.Errorf("failed to delete test users: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Cleaned test data", "users_deleted", rowsAffected)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Cleaned test data", zap.Int64("users_deleted", rowsAffected))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithField("users_deleted", rowsAffected).Info("Cleaned test data")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int64("users_deleted", rowsAffected).Msg("Cleaned test data")
+	{{- end}}
+	{{- end}}
+
+	return nil
+}
+
+// Helper function to convert string to lowercase
+func strings.ToLower(s string) string {
+	return strings.ToLower(s)
+}
+{{- end}}

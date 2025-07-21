@@ -1,0 +1,182 @@
+# Application Configuration
+APP_NAME={{.ProjectName}}
+APP_ENV=development
+APP_DEBUG=true
+APP_PORT=8080
+APP_HOST=0.0.0.0
+APP_URL=http://localhost:8080
+
+# Security
+APP_KEY=your-32-character-secret-key-here
+{{- if ne .AuthType "" }}
+SESSION_SECRET=your-session-secret-key-minimum-32-chars
+SESSION_NAME={{.ProjectName}}_session
+SESSION_LIFETIME=86400  # 24 hours in seconds
+SESSION_SECURE=false    # Set to true in production with HTTPS
+SESSION_HTTP_ONLY=true
+SESSION_SAME_SITE=lax   # Options: lax, strict, none
+{{- end }}
+
+{{- if ne .DatabaseDriver "" }}
+
+# Database Configuration
+DATABASE_DRIVER={{.DatabaseDriver}}
+{{- if eq .DatabaseDriver "postgres" }}
+DATABASE_HOST=localhost
+DATABASE_PORT=5432
+DATABASE_NAME={{.ProjectName}}_development
+DATABASE_USER=postgres
+DATABASE_PASSWORD=password
+DATABASE_SSL_MODE=disable  # Options: disable, require, verify-ca, verify-full
+DATABASE_URL=postgres://${DATABASE_USER}:${DATABASE_PASSWORD}@${DATABASE_HOST}:${DATABASE_PORT}/${DATABASE_NAME}?sslmode=${DATABASE_SSL_MODE}
+{{- else if eq .DatabaseDriver "mysql" }}
+DATABASE_HOST=localhost
+DATABASE_PORT=3306
+DATABASE_NAME={{.ProjectName}}_development
+DATABASE_USER=root
+DATABASE_PASSWORD=password
+DATABASE_CHARSET=utf8mb4
+DATABASE_PARSE_TIME=true
+DATABASE_URL=${DATABASE_USER}:${DATABASE_PASSWORD}@tcp(${DATABASE_HOST}:${DATABASE_PORT})/${DATABASE_NAME}?charset=${DATABASE_CHARSET}&parseTime=${DATABASE_PARSE_TIME}
+{{- else if eq .DatabaseDriver "sqlite" }}
+DATABASE_PATH=./data/{{.ProjectName}}.db
+DATABASE_URL=file:${DATABASE_PATH}?cache=shared&mode=rwc
+{{- end }}
+
+# Database Connection Pool
+DATABASE_MAX_CONNECTIONS=25
+DATABASE_MAX_IDLE_CONNECTIONS=5
+DATABASE_CONNECTION_MAX_LIFETIME=300  # 5 minutes in seconds
+{{- end }}
+
+{{- if eq .SessionStore "redis" }}
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=
+REDIS_DB=0
+REDIS_URL=redis://:${REDIS_PASSWORD}@${REDIS_HOST}:${REDIS_PORT}/${REDIS_DB}
+
+# Redis Pool Configuration
+REDIS_MAX_CONNECTIONS=10
+REDIS_MIN_IDLE_CONNECTIONS=3
+REDIS_CONNECTION_TIMEOUT=10  # seconds
+{{- end }}
+
+{{- if eq .AuthType "oauth2" }}
+
+# OAuth2 Providers
+# Google OAuth
+OAUTH_GOOGLE_CLIENT_ID=your-google-client-id
+OAUTH_GOOGLE_CLIENT_SECRET=your-google-client-secret
+OAUTH_GOOGLE_REDIRECT_URL=${APP_URL}/auth/google/callback
+
+# GitHub OAuth
+OAUTH_GITHUB_CLIENT_ID=your-github-client-id
+OAUTH_GITHUB_CLIENT_SECRET=your-github-client-secret
+OAUTH_GITHUB_REDIRECT_URL=${APP_URL}/auth/github/callback
+{{- end }}
+
+{{- if eq .AuthType "jwt" }}
+
+# JWT Configuration
+JWT_SECRET=your-jwt-secret-key-minimum-32-chars
+JWT_EXPIRY=86400        # 24 hours in seconds
+JWT_REFRESH_EXPIRY=604800  # 7 days in seconds
+JWT_ISSUER={{.ProjectName}}
+{{- end }}
+
+# Logging Configuration
+LOG_LEVEL=debug         # Options: debug, info, warn, error
+LOG_FORMAT=json         # Options: json, text
+LOG_OUTPUT=stdout       # Options: stdout, file, both
+LOG_FILE_PATH=./logs/app.log
+LOG_FILE_MAX_SIZE=100   # MB
+LOG_FILE_MAX_AGE=30     # days
+LOG_FILE_MAX_BACKUPS=10
+
+# Email Configuration (SMTP)
+MAIL_DRIVER=smtp
+MAIL_HOST=smtp.mailtrap.io
+MAIL_PORT=2525
+MAIL_USERNAME=
+MAIL_PASSWORD=
+MAIL_ENCRYPTION=tls     # Options: tls, ssl, none
+MAIL_FROM_ADDRESS=noreply@{{.ProjectName}}.com
+MAIL_FROM_NAME={{.ProjectName}}
+
+# Rate Limiting
+RATE_LIMIT_ENABLED=true
+RATE_LIMIT_REQUESTS=100
+RATE_LIMIT_WINDOW=60    # seconds
+RATE_LIMIT_BY=ip        # Options: ip, user, api_key
+
+# CORS Configuration
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+CORS_ALLOWED_METHODS=GET,POST,PUT,DELETE,OPTIONS
+CORS_ALLOWED_HEADERS=Accept,Authorization,Content-Type,X-CSRF-Token
+CORS_EXPOSED_HEADERS=X-Total-Count,X-Page-Count
+CORS_ALLOW_CREDENTIALS=true
+CORS_MAX_AGE=86400      # 24 hours in seconds
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+
+# Asset Pipeline
+ASSET_PIPELINE={{.AssetPipeline}}
+ASSET_HOST=            # CDN URL if using CDN
+ASSET_PREFIX=/assets
+{{- if eq .AssetPipeline "vite" }}
+VITE_DEV_SERVER_URL=http://localhost:5173
+{{- else if eq .AssetPipeline "webpack" }}
+WEBPACK_DEV_SERVER_URL=http://localhost:3000
+{{- end }}
+{{- end }}
+
+# Storage Configuration
+STORAGE_DRIVER=local    # Options: local, s3
+STORAGE_PATH=./storage
+UPLOAD_MAX_SIZE=10      # MB
+UPLOAD_ALLOWED_TYPES=image/jpeg,image/png,image/gif,application/pdf
+
+# AWS S3 Configuration (if STORAGE_DRIVER=s3)
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
+AWS_BUCKET=
+AWS_ENDPOINT=          # For S3-compatible services
+
+# Cache Configuration
+CACHE_DRIVER=memory    # Options: memory, redis
+CACHE_PREFIX={{.ProjectName}}_cache
+CACHE_TTL=3600        # 1 hour in seconds
+
+# Security Headers
+SECURITY_HSTS_ENABLED=false  # Enable in production with HTTPS
+SECURITY_HSTS_MAX_AGE=31536000
+SECURITY_HSTS_INCLUDE_SUBDOMAINS=true
+SECURITY_HSTS_PRELOAD=true
+SECURITY_CSP_ENABLED=true
+SECURITY_CSP_DIRECTIVES="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';"
+
+# Monitoring
+MONITORING_ENABLED=true
+MONITORING_METRICS_PATH=/metrics
+MONITORING_HEALTH_PATH=/health
+MONITORING_READY_PATH=/ready
+
+# Feature Flags
+FEATURE_REGISTRATION_ENABLED=true
+FEATURE_API_ENABLED=true
+FEATURE_WEBSOCKET_ENABLED=false
+
+# Development Tools
+DEV_SEEDER_ENABLED=true
+DEV_QUERY_LOGGING=true
+DEV_SLOW_QUERY_THRESHOLD=100  # milliseconds
+
+# External Services
+SENTRY_DSN=
+ANALYTICS_ID=
+RECAPTCHA_SITE_KEY=
+RECAPTCHA_SECRET_KEY=

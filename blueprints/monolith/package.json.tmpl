@@ -1,0 +1,93 @@
+{
+  "name": "{{.ProjectName}}-assets",
+  "version": "1.0.0",
+  "description": "Asset build pipeline for {{.ProjectName}}",
+  "private": true,
+  "scripts": {
+{{- if eq .AssetPipeline "vite" }}
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "watch": "vite build --watch",
+{{- else if eq .AssetPipeline "webpack" }}
+    "dev": "webpack serve --mode development",
+    "build": "webpack --mode production",
+    "watch": "webpack --mode development --watch",
+    "analyze": "webpack-bundle-analyzer dist/static/js/*.js",
+{{- else if eq .AssetPipeline "esbuild" }}
+    "dev": "node esbuild.config.js --watch",
+    "build": "node esbuild.config.js",
+    "watch": "node esbuild.config.js --watch",
+{{- end }}
+    "lint": "eslint static/js/**/*.js",
+    "lint:fix": "eslint static/js/**/*.js --fix",
+    "format": "prettier --write static/**/*.{js,css,scss,json}",
+    "format:check": "prettier --check static/**/*.{js,css,scss,json}",
+    "clean": "rimraf dist public/build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+{{- if eq .AssetPipeline "vite" }}
+    "vite": "^5.0.0",
+    "@vitejs/plugin-legacy": "^5.0.0",
+    "terser": "^5.24.0",
+{{- else if eq .AssetPipeline "webpack" }}
+    "webpack": "^5.89.0",
+    "webpack-cli": "^5.1.4",
+    "webpack-dev-server": "^4.15.1",
+    "webpack-bundle-analyzer": "^4.10.1",
+    "html-webpack-plugin": "^5.5.4",
+    "mini-css-extract-plugin": "^2.7.6",
+    "css-loader": "^6.8.1",
+    "sass-loader": "^13.3.2",
+    "babel-loader": "^9.1.3",
+    "@babel/core": "^7.23.5",
+    "@babel/preset-env": "^7.23.5",
+    "terser-webpack-plugin": "^5.3.9",
+    "css-minimizer-webpack-plugin": "^5.0.1",
+{{- else if eq .AssetPipeline "esbuild" }}
+    "esbuild": "^0.19.8",
+    "esbuild-sass-plugin": "^2.16.0",
+{{- end }}
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "postcss-cli": "^11.0.0",
+    "tailwindcss": "^3.3.6",
+    "sass": "^1.69.5",
+    "eslint": "^8.55.0",
+    "eslint-config-prettier": "^9.1.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.3",
+    "rimraf": "^5.0.5",
+    "@types/node": "^20.10.4"
+  },
+  "dependencies": {
+    "alpinejs": "^3.13.3",
+    "htmx.org": "^1.9.8",
+    "stimulus": "^3.2.2"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead",
+    "not ie 11"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "keywords": [
+    "{{.ProjectName}}",
+    "assets",
+    "build",
+{{- if eq .AssetPipeline "vite" }}
+    "vite"
+{{- else if eq .AssetPipeline "webpack" }}
+    "webpack"
+{{- else if eq .AssetPipeline "esbuild" }}
+    "esbuild"
+{{- end }}
+  ],
+  "author": "{{.ProjectName}} Team",
+  "license": "MIT"
+}

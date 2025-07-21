@@ -1,0 +1,480 @@
+package middleware
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"net/http"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+)
+
+// Security middleware implements OWASP security headers and protection
+{{- if eq .Framework "gin"}}
+func Security(cfg *config.Config) gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		// Generate nonce for CSP
+		nonce := generateNonce()
+		c.Set("nonce", nonce)
+
+		// Security Headers (OWASP recommendations)
+		setSecurityHeaders(c.Writer, cfg, nonce)
+
+		// CSRF Protection (skip for API endpoints)
+		if !strings.HasPrefix(c.Request.URL.Path, "/api/") {
+			if err := validateCSRF(c.Request, c.Writer, cfg); err != nil {
+				c.HTML(http.StatusForbidden, "errors/403.html", gin.H{
+					"title": "Forbidden",
+					"error": "CSRF token validation failed",
+				})
+				c.Abort()
+				return
+			}
+		}
+
+		// Rate limiting for sensitive endpoints
+		if isSensitiveEndpoint(c.Request.URL.Path) {
+			if !checkRateLimit(c.ClientIP(), c.Request.URL.Path) {
+				c.HTML(http.StatusTooManyRequests, "errors/429.html", gin.H{
+					"title": "Too Many Requests",
+					"error": "Rate limit exceeded",
+				})
+				c.Abort()
+				return
+			}
+		}
+
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+func Security(cfg *config.Config) echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Generate nonce for CSP
+			nonce := generateNonce()
+			c.Set("nonce", nonce)
+
+			// Security Headers (OWASP recommendations)
+			setSecurityHeaders(c.Response().Writer, cfg, nonce)
+
+			// CSRF Protection (skip for API endpoints)
+			if !strings.HasPrefix(c.Request().URL.Path, "/api/") {
+				if err := validateCSRF(c.Request(), c.Response().Writer, cfg); err != nil {
+					return c.Render(http.StatusForbidden, "errors/403.html", map[string]interface{}{
+						"title": "Forbidden",
+						"error": "CSRF token validation failed",
+					})
+				}
+			}
+
+			// Rate limiting for sensitive endpoints
+			if isSensitiveEndpoint(c.Request().URL.Path) {
+				if !checkRateLimit(c.RealIP(), c.Request().URL.Path) {
+					return c.Render(http.StatusTooManyRequests, "errors/429.html", map[string]interface{}{
+						"title": "Too Many Requests",
+						"error": "Rate limit exceeded",
+					})
+				}
+			}
+
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+func Security(cfg *config.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Generate nonce for CSP
+		nonce := generateNonce()
+		c.Locals("nonce", nonce)
+
+		// Security Headers (OWASP recommendations)
+		setSecurityHeadersFiber(c, cfg, nonce)
+
+		// CSRF Protection (skip for API endpoints)
+		if !strings.HasPrefix(c.Path(), "/api/") {
+			if err := validateCSRFFiber(c, cfg); err != nil {
+				return c.Status(http.StatusForbidden).Render("errors/403", fiber.Map{
+					"title": "Forbidden",
+					"error": "CSRF token validation failed",
+				})
+			}
+		}
+
+		// Rate limiting for sensitive endpoints
+		if isSensitiveEndpoint(c.Path()) {
+			if !checkRateLimit(c.IP(), c.Path()) {
+				return c.Status(http.StatusTooManyRequests).Render("errors/429", fiber.Map{
+					"title": "Too Many Requests",
+					"error": "Rate limit exceeded",
+				})
+			}
+		}
+
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+func Security(cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Generate nonce for CSP
+			nonce := generateNonce()
+			r = r.WithContext(context.WithValue(r.Context(), "nonce", nonce))
+
+			// Security Headers (OWASP recommendations)
+			setSecurityHeaders(w, cfg, nonce)
+
+			// CSRF Protection (skip for API endpoints)
+			if !strings.HasPrefix(r.URL.Path, "/api/") {
+				if err := validateCSRF(r, w, cfg); err != nil {
+					http.Error(w, "CSRF token validation failed", http.StatusForbidden)
+					return
+				}
+			}
+
+			// Rate limiting for sensitive endpoints
+			if isSensitiveEndpoint(r.URL.Path) {
+				if !checkRateLimit(getClientIP(r), r.URL.Path) {
+					http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
+					return
+				}
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+{{- end}}
+
+// setSecurityHeaders sets OWASP recommended security headers
+{{- if eq .Framework "fiber"}}
+func setSecurityHeadersFiber(c *fiber.Ctx, cfg *config.Config, nonce string) {
+	// Content Security Policy with nonce
+	cspPolicy := buildCSPPolicy(cfg, nonce)
+	c.Set("Content-Security-Policy", cspPolicy)
+
+	// OWASP Security Headers
+	c.Set("X-Content-Type-Options", "nosniff")
+	c.Set("X-Frame-Options", "DENY")
+	c.Set("X-XSS-Protection", "1; mode=block")
+	c.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	c.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+	// Strict Transport Security (HTTPS only)
+	if cfg.App.Environment == "production" {
+		c.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+	}
+
+	// Prevent MIME sniffing
+	c.Set("X-Download-Options", "noopen")
+
+	// Cache control for sensitive pages
+	if isSensitivePage(c.Path()) {
+		c.Set("Cache-Control", "no-store, no-cache, must-revalidate, private")
+		c.Set("Pragma", "no-cache")
+		c.Set("Expires", "0")
+	}
+}
+{{- else}}
+func setSecurityHeaders(w http.ResponseWriter, cfg *config.Config, nonce string) {
+	// Content Security Policy with nonce
+	cspPolicy := buildCSPPolicy(cfg, nonce)
+	w.Header().Set("Content-Security-Policy", cspPolicy)
+
+	// OWASP Security Headers
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-XSS-Protection", "1; mode=block")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.Header().Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+
+	// Strict Transport Security (HTTPS only)
+	if cfg.App.Environment == "production" {
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+	}
+
+	// Prevent MIME sniffing
+	w.Header().Set("X-Download-Options", "noopen")
+
+	// Cache control for sensitive pages
+	// Note: URL path would need to be passed separately in this context
+}
+{{- end}}
+
+// buildCSPPolicy builds a Content Security Policy header
+func buildCSPPolicy(cfg *config.Config, nonce string) string {
+	var policy strings.Builder
+
+	// Default policy - restrict everything by default
+	policy.WriteString("default-src 'self'; ")
+
+	// Scripts - allow nonce and 'unsafe-inline' only for development
+	policy.WriteString("script-src 'self' 'nonce-")
+	policy.WriteString(nonce)
+	policy.WriteString("'")
+	if cfg.App.Environment == "development" {
+		policy.WriteString(" 'unsafe-inline'")
+	}
+	policy.WriteString("; ")
+
+	// Styles - allow nonce and inline styles
+	policy.WriteString("style-src 'self' 'nonce-")
+	policy.WriteString(nonce)
+	policy.WriteString("' 'unsafe-inline' https://fonts.googleapis.com; ")
+
+	// Images - allow self and data URIs
+	policy.WriteString("img-src 'self' data: https:; ")
+
+	// Fonts - allow self and Google Fonts
+	policy.WriteString("font-src 'self' https://fonts.gstatic.com; ")
+
+	// Connect - allow self for AJAX calls
+	policy.WriteString("connect-src 'self'; ")
+
+	// Media - allow self
+	policy.WriteString("media-src 'self'; ")
+
+	// Objects - block all
+	policy.WriteString("object-src 'none'; ")
+
+	// Forms - allow self
+	policy.WriteString("form-action 'self'; ")
+
+	// Frames - block all external frames
+	policy.WriteString("frame-ancestors 'none'; ")
+
+	// Base URI - restrict to self
+	policy.WriteString("base-uri 'self'; ")
+
+	// Upgrade insecure requests in production
+	if cfg.App.Environment == "production" {
+		policy.WriteString("upgrade-insecure-requests; ")
+	}
+
+	return policy.String()
+}
+
+// generateNonce generates a cryptographically secure nonce
+func generateNonce() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to timestamp-based nonce (less secure but functional)
+		return strconv.FormatInt(time.Now().UnixNano(), 36)
+	}
+	return base64.StdEncoding.EncodeToString(bytes)
+}
+
+// validateCSRF validates CSRF tokens for state-changing requests
+{{- if eq .Framework "fiber"}}
+func validateCSRFFiber(c *fiber.Ctx, cfg *config.Config) error {
+	method := c.Method()
+	
+	// Only validate CSRF for state-changing HTTP methods
+	if method == "GET" || method == "HEAD" || method == "OPTIONS" {
+		return nil
+	}
+
+	// Get CSRF token from form or header
+	token := c.FormValue("csrf_token")
+	if token == "" {
+		token = c.Get("X-CSRF-Token")
+	}
+
+	// Get expected token from session
+	expectedToken := getCSRFTokenFromSession(c)
+	if expectedToken == "" {
+		return generateAndSetCSRFToken(c)
+	}
+
+	// Validate token
+	if token != expectedToken {
+		return fmt.Errorf("invalid CSRF token")
+	}
+
+	return nil
+}
+{{- else}}
+func validateCSRF(r *http.Request, w http.ResponseWriter, cfg *config.Config) error {
+	// Only validate CSRF for state-changing HTTP methods
+	if r.Method == "GET" || r.Method == "HEAD" || r.Method == "OPTIONS" {
+		return nil
+	}
+
+	// Get CSRF token from form or header
+	token := r.FormValue("csrf_token")
+	if token == "" {
+		token = r.Header.Get("X-CSRF-Token")
+	}
+
+	// Get expected token from session
+	expectedToken := getCSRFTokenFromSession(r)
+	if expectedToken == "" {
+		return generateAndSetCSRFToken(w, r)
+	}
+
+	// Validate token
+	if token != expectedToken {
+		return fmt.Errorf("invalid CSRF token")
+	}
+
+	return nil
+}
+{{- end}}
+
+// Rate limiting implementation (simple in-memory store)
+var (
+	rateLimitStore = make(map[string][]time.Time)
+	rateLimitMutex = sync.RWMutex{}
+)
+
+// checkRateLimit implements simple rate limiting
+func checkRateLimit(clientIP, endpoint string) bool {
+	rateLimitMutex.Lock()
+	defer rateLimitMutex.Unlock()
+
+	key := clientIP + ":" + endpoint
+	now := time.Now()
+	window := time.Minute * 15 // 15-minute window
+	maxRequests := 10          // Max 10 requests per window
+
+	// Get existing requests
+	requests, exists := rateLimitStore[key]
+	if !exists {
+		requests = make([]time.Time, 0)
+	}
+
+	// Clean old requests outside the window
+	filtered := make([]time.Time, 0)
+	for _, req := range requests {
+		if now.Sub(req) < window {
+			filtered = append(filtered, req)
+		}
+	}
+
+	// Check if limit exceeded
+	if len(filtered) >= maxRequests {
+		return false
+	}
+
+	// Add current request
+	filtered = append(filtered, now)
+	rateLimitStore[key] = filtered
+
+	return true
+}
+
+// isSensitiveEndpoint checks if an endpoint is sensitive and needs rate limiting
+func isSensitiveEndpoint(path string) bool {
+	sensitiveEndpoints := []string{
+		"/auth/login",
+		"/auth/register",
+		"/auth/forgot-password",
+		"/auth/reset-password",
+		"/contact",
+	}
+
+	for _, endpoint := range sensitiveEndpoints {
+		if strings.HasPrefix(path, endpoint) {
+			return true
+		}
+	}
+	return false
+}
+
+// isSensitivePage checks if a page contains sensitive information
+func isSensitivePage(path string) bool {
+	sensitivePages := []string{
+		"/dashboard",
+		"/profile",
+		"/settings",
+		"/admin",
+	}
+
+	for _, page := range sensitivePages {
+		if strings.HasPrefix(path, page) {
+			return true
+		}
+	}
+	return false
+}
+
+{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+// CSRF token management functions
+{{- if eq .Framework "fiber"}}
+func getCSRFTokenFromSession(c *fiber.Ctx) string {
+	sess := c.Locals("session")
+	if sess == nil {
+		return ""
+	}
+	// Implementation depends on session store
+	return ""
+}
+
+func generateAndSetCSRFToken(c *fiber.Ctx) error {
+	token := generateNonce()
+	sess := c.Locals("session")
+	if sess == nil {
+		return fmt.Errorf("no session available")
+	}
+	// Implementation depends on session store
+	return nil
+}
+{{- else}}
+func getCSRFTokenFromSession(r *http.Request) string {
+	// Implementation depends on session management choice
+	// This is a placeholder - actual implementation would depend on
+	// the session store being used (gorilla/sessions, etc.)
+	return ""
+}
+
+func generateAndSetCSRFToken(w http.ResponseWriter, r *http.Request) error {
+	token := generateNonce()
+	// Implementation depends on session management choice
+	// This would store the token in the session
+	return nil
+}
+{{- end}}
+{{- end}}
+
+{{- if eq .Framework "chi"}}
+// getClientIP gets the real client IP address
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff != "" {
+		// Take the first IP in the list
+		ips := strings.Split(xff, ",")
+		return strings.TrimSpace(ips[0])
+	}
+
+	// Check X-Real-IP header
+	xri := r.Header.Get("X-Real-IP")
+	if xri != "" {
+		return xri
+	}
+
+	// Fall back to RemoteAddr
+	ip := r.RemoteAddr
+	if idx := strings.LastIndex(ip, ":"); idx != -1 {
+		ip = ip[:idx]
+	}
+	return ip
+}
+{{- end}}

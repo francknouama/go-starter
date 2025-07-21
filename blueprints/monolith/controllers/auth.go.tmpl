@@ -1,0 +1,929 @@
+{{- if ne .AuthType ""}}
+package controllers
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strings"
+	"time"
+	"unicode"
+
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"net/http"
+	{{- end}}
+
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+	{{- end}}
+
+	"golang.org/x/crypto/bcrypt"
+	{{- if eq .AuthType "jwt"}}
+	"github.com/golang-jwt/jwt/v5"
+	{{- end}}
+	{{- if eq .AuthType "oauth2"}}
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
+	"golang.org/x/oauth2/github"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	"{{.ModulePath}}/models"
+	{{- end}}
+	"{{.ModulePath}}/middleware"
+	"{{.ModulePath}}/services"
+)
+
+// AuthController handles authentication and authorization
+type AuthController struct {
+	*BaseController
+	AuthService *services.AuthService
+	{{- if eq .AuthType "oauth2"}}
+	GoogleConfig *oauth2.Config
+	GithubConfig *oauth2.Config
+	{{- end}}
+}
+
+// NewAuthController creates a new authentication controller
+func NewAuthController(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) *AuthController {
+	ac := &AuthController{
+		BaseController: NewBaseController(cfg{{if ne .DatabaseDriver ""}}, db{{end}}),
+		AuthService:    services.NewAuthService(cfg{{if ne .DatabaseDriver ""}}, db{{end}}),
+	}
+
+	{{- if eq .AuthType "oauth2"}}
+	// Initialize OAuth2 configurations
+	ac.GoogleConfig = &oauth2.Config{
+		ClientID:     cfg.Auth.GoogleClientID,
+		ClientSecret: cfg.Auth.GoogleClientSecret,
+		RedirectURL:  cfg.App.URL + "/auth/google/callback",
+		Scopes:       []string{"openid", "profile", "email"},
+		Endpoint:     google.Endpoint,
+	}
+
+	ac.GithubConfig = &oauth2.Config{
+		ClientID:     cfg.Auth.GithubClientID,
+		ClientSecret: cfg.Auth.GithubClientSecret,
+		RedirectURL:  cfg.App.URL + "/auth/github/callback",
+		Scopes:       []string{"user:email"},
+		Endpoint:     github.Endpoint,
+	}
+	{{- end}}
+
+	return ac
+}
+
+// LoginForm represents the login form data
+type LoginForm struct {
+	Email      string `form:"email" validate:"required,email,max=255"`
+	Password   string `form:"password" validate:"required,min=1,max=128"`
+	RememberMe bool   `form:"remember_me"`
+	CSRFToken  string `form:"csrf_token" validate:"required"`
+}
+
+{{- if ne .AuthType "oauth2"}}
+// RegisterForm represents the registration form data
+type RegisterForm struct {
+	Name            string `form:"name" validate:"required,min=2,max=100"`
+	Email           string `form:"email" validate:"required,email,max=255"`
+	Password        string `form:"password" validate:"required,min=8,max=128"`
+	PasswordConfirm string `form:"password_confirm" validate:"required"`
+	Terms           bool   `form:"terms" validate:"required"`
+	CSRFToken       string `form:"csrf_token" validate:"required"`
+}
+{{- end}}
+
+// ForgotPasswordForm represents the forgot password form
+type ForgotPasswordForm struct {
+	Email     string `form:"email" validate:"required,email,max=255"`
+	CSRFToken string `form:"csrf_token" validate:"required"`
+}
+
+// ResetPasswordForm represents the reset password form
+type ResetPasswordForm struct {
+	Token           string `form:"token" validate:"required"`
+	Password        string `form:"password" validate:"required,min=8,max=128"`
+	PasswordConfirm string `form:"password_confirm" validate:"required"`
+	CSRFToken       string `form:"csrf_token" validate:"required"`
+}
+
+{{- if eq .Framework "gin"}}
+
+// LoginForm renders the login page
+func (ac *AuthController) LoginForm(c *gin.Context) {
+	// Check if user is already authenticated
+	if middleware.IsAuthenticated(c) {
+		ac.Redirect(c, "/dashboard")
+		return
+	}
+
+	ac.SetPageTitle(c, "Sign In")
+	ac.Render(c, "auth/login.html", gin.H{
+		"OAuthEnabled": ac.Config.Auth.Type == "oauth2",
+		"RegisterEnabled": ac.Config.Auth.Type != "oauth2",
+	})
+}
+
+// Login handles login form submission
+func (ac *AuthController) Login(c *gin.Context) {
+	// Rate limiting check
+	if !ac.checkLoginRateLimit(c.ClientIP()) {
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Login rate limit exceeded", "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Login rate limit exceeded", zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Warn("Login rate limit exceeded")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Str("ip", c.ClientIP()).Msg("Login rate limit exceeded")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Too many login attempts. Please try again later.")
+		return
+	}
+
+	var form LoginForm
+	if err := c.ShouldBind(&form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Login form binding error", "error", err, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Login form binding error", zap.Error(err), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{"ip": c.ClientIP()}).Error("Login form binding error: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("ip", c.ClientIP()).Msg("Login form binding error")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Invalid form data. Please try again.")
+		return
+	}
+
+	// Validate and sanitize input
+	if err := ac.validateLoginForm(form); err != nil {
+		ac.RedirectWithFlash(c, "/auth/login", err.Error())
+		return
+	}
+
+	// Authenticate user
+	user, err := ac.AuthService.AuthenticateUser(form.Email, form.Password)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Login failed", "email", form.Email, "ip", c.ClientIP(), "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Login failed", zap.String("email", form.Email), zap.String("ip", c.ClientIP()), zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{
+			"email": form.Email,
+			"ip": c.ClientIP(),
+		}).Warn("Login failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Err(err).Str("email", form.Email).Str("ip", c.ClientIP()).Msg("Login failed")
+		{{- end}}
+		
+		// Generic error message to prevent user enumeration
+		ac.RedirectWithFlash(c, "/auth/login", "Invalid email or password.")
+		return
+	}
+
+	// Set user session
+	{{- if eq .AuthType "session" or eq .AuthType "oauth2"}}
+	middleware.SetUserSession(c, user.ID, user.Email)
+	{{- else if eq .AuthType "jwt"}}
+	token, err := ac.generateJWTToken(user)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("JWT token generation failed", "error", err, "user_id", user.ID)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("JWT token generation failed", zap.Error(err), zap.Int("user_id", user.ID))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("user_id", user.ID).Error("JWT token generation failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Int("user_id", user.ID).Msg("JWT token generation failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+	
+	// Set JWT token in secure cookie
+	c.SetCookie("auth_token", token, int(ac.Config.Auth.JWTExpiry.Seconds()), "/", "", ac.Config.Session.Secure, true)
+	{{- end}}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("User logged in successfully", "user_id", user.ID, "email", user.Email, "ip", c.ClientIP())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("User logged in successfully", zap.Int("user_id", user.ID), zap.String("email", user.Email), zap.String("ip", c.ClientIP()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"user_id": user.ID,
+		"email": user.Email,
+		"ip": c.ClientIP(),
+	}).Info("User logged in successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int("user_id", user.ID).Str("email", user.Email).Str("ip", c.ClientIP()).Msg("User logged in successfully")
+	{{- end}}
+
+	// Redirect to intended page or dashboard
+	redirectURL := c.DefaultQuery("redirect", "/dashboard")
+	ac.Redirect(c, redirectURL)
+}
+
+{{- if ne .AuthType "oauth2"}}
+// RegisterForm renders the registration page
+func (ac *AuthController) RegisterForm(c *gin.Context) {
+	// Check if user is already authenticated
+	if middleware.IsAuthenticated(c) {
+		ac.Redirect(c, "/dashboard")
+		return
+	}
+
+	ac.SetPageTitle(c, "Create Account")
+	ac.Render(c, "auth/register.html", gin.H{})
+}
+
+// Register handles registration form submission
+func (ac *AuthController) Register(c *gin.Context) {
+	var form RegisterForm
+	if err := c.ShouldBind(&form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Registration form binding error", "error", err, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Registration form binding error", zap.Error(err), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Error("Registration form binding error: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("ip", c.ClientIP()).Msg("Registration form binding error")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/register", "Invalid form data. Please try again.")
+		return
+	}
+
+	// Validate and sanitize input
+	if err := ac.validateRegisterForm(form); err != nil {
+		ac.RedirectWithFlash(c, "/auth/register", err.Error())
+		return
+	}
+
+	// Create user
+	user, err := ac.AuthService.CreateUser(form.Name, form.Email, form.Password)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("User registration failed", "error", err, "email", form.Email, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("User registration failed", zap.Error(err), zap.String("email", form.Email), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{
+			"email": form.Email,
+			"ip": c.ClientIP(),
+		}).Error("User registration failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("email", form.Email).Str("ip", c.ClientIP()).Msg("User registration failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/register", "Registration failed. Email may already be in use.")
+		return
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("User registered successfully", "user_id", user.ID, "email", user.Email, "ip", c.ClientIP())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("User registered successfully", zap.Int("user_id", user.ID), zap.String("email", user.Email), zap.String("ip", c.ClientIP()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"user_id": user.ID,
+		"email": user.Email,
+		"ip": c.ClientIP(),
+	}).Info("User registered successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int("user_id", user.ID).Str("email", user.Email).Str("ip", c.ClientIP()).Msg("User registered successfully")
+	{{- end}}
+
+	// Auto-login after registration
+	{{- if eq .AuthType "session"}}
+	middleware.SetUserSession(c, user.ID, user.Email)
+	{{- else if eq .AuthType "jwt"}}
+	token, _ := ac.generateJWTToken(user)
+	c.SetCookie("auth_token", token, int(ac.Config.Auth.JWTExpiry.Seconds()), "/", "", ac.Config.Session.Secure, true)
+	{{- end}}
+
+	ac.RedirectWithFlash(c, "/dashboard", "Welcome! Your account has been created successfully.")
+}
+{{- end}}
+
+// Logout handles user logout
+func (ac *AuthController) Logout(c *gin.Context) {
+	userID, _ := middleware.GetUserID(c)
+	
+	{{- if eq .AuthType "session" or eq .AuthType "oauth2"}}
+	middleware.ClearUserSession(c)
+	{{- else if eq .AuthType "jwt"}}
+	// Clear JWT cookie
+	c.SetCookie("auth_token", "", -1, "/", "", ac.Config.Session.Secure, true)
+	{{- end}}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("User logged out", "user_id", userID, "ip", c.ClientIP())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("User logged out", zap.Int("user_id", userID), zap.String("ip", c.ClientIP()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"user_id": userID,
+		"ip": c.ClientIP(),
+	}).Info("User logged out")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int("user_id", userID).Str("ip", c.ClientIP()).Msg("User logged out")
+	{{- end}}
+
+	ac.RedirectWithFlash(c, "/auth/login", "You have been logged out successfully.")
+}
+
+{{- if eq .AuthType "oauth2"}}
+// GoogleLogin initiates Google OAuth login
+func (ac *AuthController) GoogleLogin(c *gin.Context) {
+	state := ac.generateOAuthState()
+	middleware.SetOAuthState(c, state)
+	
+	url := ac.GoogleConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	ac.Redirect(c, url)
+}
+
+// GoogleCallback handles Google OAuth callback
+func (ac *AuthController) GoogleCallback(c *gin.Context) {
+	state := c.Query("state")
+	code := c.Query("code")
+	
+	// Validate state parameter
+	if !middleware.ValidateOAuthState(c, state) {
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Invalid OAuth state parameter", "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Invalid OAuth state parameter", zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Warn("Invalid OAuth state parameter")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Str("ip", c.ClientIP()).Msg("Invalid OAuth state parameter")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+
+	// Exchange code for token
+	token, err := ac.GoogleConfig.Exchange(c.Request.Context(), code)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Google OAuth token exchange failed", "error", err, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Google OAuth token exchange failed", zap.Error(err), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Error("Google OAuth token exchange failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("ip", c.ClientIP()).Msg("Google OAuth token exchange failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+
+	// Get user info from Google
+	user, err := ac.AuthService.HandleGoogleOAuth(token)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Google OAuth user creation failed", "error", err, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Google OAuth user creation failed", zap.Error(err), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Error("Google OAuth user creation failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("ip", c.ClientIP()).Msg("Google OAuth user creation failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+
+	// Set user session
+	middleware.SetUserSession(c, user.ID, user.Email)
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("User logged in via Google OAuth", "user_id", user.ID, "email", user.Email, "ip", c.ClientIP())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("User logged in via Google OAuth", zap.Int("user_id", user.ID), zap.String("email", user.Email), zap.String("ip", c.ClientIP()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"user_id": user.ID,
+		"email": user.Email,
+		"ip": c.ClientIP(),
+	}).Info("User logged in via Google OAuth")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int("user_id", user.ID).Str("email", user.Email).Str("ip", c.ClientIP()).Msg("User logged in via Google OAuth")
+	{{- end}}
+
+	ac.Redirect(c, "/dashboard")
+}
+
+// GithubLogin initiates GitHub OAuth login
+func (ac *AuthController) GithubLogin(c *gin.Context) {
+	state := ac.generateOAuthState()
+	middleware.SetOAuthState(c, state)
+	
+	url := ac.GithubConfig.AuthCodeURL(state)
+	ac.Redirect(c, url)
+}
+
+// GithubCallback handles GitHub OAuth callback
+func (ac *AuthController) GithubCallback(c *gin.Context) {
+	state := c.Query("state")
+	code := c.Query("code")
+	
+	// Validate state parameter
+	if !middleware.ValidateOAuthState(c, state) {
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Invalid OAuth state parameter", "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Invalid OAuth state parameter", zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Warn("Invalid OAuth state parameter")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Str("ip", c.ClientIP()).Msg("Invalid OAuth state parameter")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+
+	// Exchange code for token
+	token, err := ac.GithubConfig.Exchange(c.Request.Context(), code)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("GitHub OAuth token exchange failed", "error", err, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("GitHub OAuth token exchange failed", zap.Error(err), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Error("GitHub OAuth token exchange failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("ip", c.ClientIP()).Msg("GitHub OAuth token exchange failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+
+	// Get user info from GitHub
+	user, err := ac.AuthService.HandleGitHubOAuth(token)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("GitHub OAuth user creation failed", "error", err, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("GitHub OAuth user creation failed", zap.Error(err), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("ip", c.ClientIP()).Error("GitHub OAuth user creation failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("ip", c.ClientIP()).Msg("GitHub OAuth user creation failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/login", "Authentication failed. Please try again.")
+		return
+	}
+
+	// Set user session
+	middleware.SetUserSession(c, user.ID, user.Email)
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("User logged in via GitHub OAuth", "user_id", user.ID, "email", user.Email, "ip", c.ClientIP())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("User logged in via GitHub OAuth", zap.Int("user_id", user.ID), zap.String("email", user.Email), zap.String("ip", c.ClientIP()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"user_id": user.ID,
+		"email": user.Email,
+		"ip": c.ClientIP(),
+	}).Info("User logged in via GitHub OAuth")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Int("user_id", user.ID).Str("email", user.Email).Str("ip", c.ClientIP()).Msg("User logged in via GitHub OAuth")
+	{{- end}}
+
+	ac.Redirect(c, "/dashboard")
+}
+{{- end}}
+
+// ForgotPasswordForm renders the forgot password page
+func (ac *AuthController) ForgotPasswordForm(c *gin.Context) {
+	ac.SetPageTitle(c, "Forgot Password")
+	ac.Render(c, "auth/forgot-password.html", gin.H{})
+}
+
+// ForgotPassword handles forgot password form submission
+func (ac *AuthController) ForgotPassword(c *gin.Context) {
+	var form ForgotPasswordForm
+	if err := c.ShouldBind(&form); err != nil {
+		ac.RedirectWithFlash(c, "/auth/forgot-password", "Invalid form data. Please try again.")
+		return
+	}
+
+	// Validate and sanitize input
+	if err := ac.validateForgotPasswordForm(form); err != nil {
+		ac.RedirectWithFlash(c, "/auth/forgot-password", err.Error())
+		return
+	}
+
+	// Generate and send reset token
+	err := ac.AuthService.SendPasswordResetEmail(form.Email)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Password reset email failed", "error", err, "email", form.Email, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Password reset email failed", zap.Error(err), zap.String("email", form.Email), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{
+			"email": form.Email,
+			"ip": c.ClientIP(),
+		}).Error("Password reset email failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("email", form.Email).Str("ip", c.ClientIP()).Msg("Password reset email failed")
+		{{- end}}
+	}
+
+	// Always show success message to prevent user enumeration
+	ac.RedirectWithFlash(c, "/auth/login", "If the email exists, a password reset link has been sent.")
+}
+
+// ResetPasswordForm renders the password reset page
+func (ac *AuthController) ResetPasswordForm(c *gin.Context) {
+	token := c.Query("token")
+	if token == "" {
+		ac.RedirectWithFlash(c, "/auth/forgot-password", "Invalid reset token.")
+		return
+	}
+
+	ac.SetPageTitle(c, "Reset Password")
+	ac.Render(c, "auth/reset-password.html", gin.H{
+		"Token": token,
+	})
+}
+
+// ResetPassword handles password reset form submission
+func (ac *AuthController) ResetPassword(c *gin.Context) {
+	var form ResetPasswordForm
+	if err := c.ShouldBind(&form); err != nil {
+		ac.RedirectWithFlash(c, "/auth/forgot-password", "Invalid form data. Please try again.")
+		return
+	}
+
+	// Validate and sanitize input
+	if err := ac.validateResetPasswordForm(form); err != nil {
+		ac.RedirectWithFlash(c, "/auth/reset-password?token="+form.Token, err.Error())
+		return
+	}
+
+	// Reset password
+	err := ac.AuthService.ResetPassword(form.Token, form.Password)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Password reset failed", "error", err, "token", form.Token, "ip", c.ClientIP())
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Password reset failed", zap.Error(err), zap.String("token", form.Token), zap.String("ip", c.ClientIP()))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{
+			"token": form.Token,
+			"ip": c.ClientIP(),
+		}).Error("Password reset failed: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("token", form.Token).Str("ip", c.ClientIP()).Msg("Password reset failed")
+		{{- end}}
+		
+		ac.RedirectWithFlash(c, "/auth/forgot-password", "Invalid or expired reset token.")
+		return
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Password reset successfully", "token", form.Token, "ip", c.ClientIP())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Password reset successfully", zap.String("token", form.Token), zap.String("ip", c.ClientIP()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"token": form.Token,
+		"ip": c.ClientIP(),
+	}).Info("Password reset successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("token", form.Token).Str("ip", c.ClientIP()).Msg("Password reset successfully")
+	{{- end}}
+
+	ac.RedirectWithFlash(c, "/auth/login", "Your password has been reset successfully. Please log in.")
+}
+
+{{- end}}
+
+// Helper methods and validation functions
+
+// validateLoginForm validates login form with security best practices
+func (ac *AuthController) validateLoginForm(form LoginForm) error {
+	// Basic required field validation
+	if form.Email == "" || form.Password == "" {
+		return fmt.Errorf("email and password are required")
+	}
+
+	// Email format validation
+	if !ac.isValidEmail(form.Email) {
+		return fmt.Errorf("invalid email format")
+	}
+
+	// Email length validation
+	if len(form.Email) > 255 {
+		return fmt.Errorf("email is too long")
+	}
+
+	// Password length validation
+	if len(form.Password) > 128 {
+		return fmt.Errorf("password is too long")
+	}
+
+	// Sanitize email (normalize and trim)
+	form.Email = strings.ToLower(strings.TrimSpace(form.Email))
+
+	return nil
+}
+
+{{- if ne .AuthType "oauth2"}}
+// validateRegisterForm validates registration form with enhanced security
+func (ac *AuthController) validateRegisterForm(form RegisterForm) error {
+	// Basic required field validation
+	if form.Name == "" || form.Email == "" || form.Password == "" {
+		return fmt.Errorf("all fields are required")
+	}
+
+	// Terms acceptance validation
+	if !form.Terms {
+		return fmt.Errorf("you must accept the terms and conditions")
+	}
+
+	// Name validation
+	if err := ac.validateName(form.Name); err != nil {
+		return err
+	}
+
+	// Email validation
+	if err := ac.validateEmailAdvanced(form.Email); err != nil {
+		return err
+	}
+
+	// Password validation
+	if err := ac.validatePassword(form.Password); err != nil {
+		return err
+	}
+
+	// Password confirmation validation
+	if form.Password != form.PasswordConfirm {
+		return fmt.Errorf("passwords do not match")
+	}
+
+	return nil
+}
+{{- end}}
+
+// validateForgotPasswordForm validates forgot password form
+func (ac *AuthController) validateForgotPasswordForm(form ForgotPasswordForm) error {
+	if form.Email == "" {
+		return fmt.Errorf("email is required")
+	}
+
+	if !ac.isValidEmail(form.Email) {
+		return fmt.Errorf("invalid email format")
+	}
+
+	return nil
+}
+
+// validateResetPasswordForm validates reset password form
+func (ac *AuthController) validateResetPasswordForm(form ResetPasswordForm) error {
+	if form.Token == "" {
+		return fmt.Errorf("reset token is required")
+	}
+
+	if form.Password == "" {
+		return fmt.Errorf("password is required")
+	}
+
+	if err := ac.validatePassword(form.Password); err != nil {
+		return err
+	}
+
+	if form.Password != form.PasswordConfirm {
+		return fmt.Errorf("passwords do not match")
+	}
+
+	return nil
+}
+
+// Advanced validation functions implementing security best practices
+
+// validateName validates and sanitizes user names
+func (ac *AuthController) validateName(name string) error {
+	name = strings.TrimSpace(name)
+	
+	if len(name) < 2 {
+		return fmt.Errorf("name must be at least 2 characters long")
+	}
+	
+	if len(name) > 100 {
+		return fmt.Errorf("name must be less than 100 characters")
+	}
+
+	// Check for valid characters (letters, spaces, hyphens, apostrophes)
+	validNameRegex := regexp.MustCompile(`^[a-zA-Z\s\-'\.]+$`)
+	if !validNameRegex.MatchString(name) {
+		return fmt.Errorf("name contains invalid characters")
+	}
+
+	// Check for excessive repeated characters or spaces
+	if strings.Contains(name, "  ") || strings.Contains(name, "--") {
+		return fmt.Errorf("name contains invalid character sequences")
+	}
+
+	return nil
+}
+
+// validateEmailAdvanced implements comprehensive email validation
+func (ac *AuthController) validateEmailAdvanced(email string) error {
+	email = strings.ToLower(strings.TrimSpace(email))
+	
+	if len(email) == 0 {
+		return fmt.Errorf("email is required")
+	}
+	
+	if len(email) > 255 {
+		return fmt.Errorf("email is too long")
+	}
+
+	// RFC 5322 compliant email regex (simplified but robust)
+	emailRegex := regexp.MustCompile(`^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$`)
+	if !emailRegex.MatchString(email) {
+		return fmt.Errorf("invalid email format")
+	}
+
+	// Additional security checks
+	if strings.Contains(email, "..") {
+		return fmt.Errorf("invalid email format")
+	}
+
+	// Check for common disposable email patterns (basic check)
+	disposableDomains := []string{"10minutemail", "tempmail", "guerrillamail", "mailinator"}
+	for _, domain := range disposableDomains {
+		if strings.Contains(email, domain) {
+			return fmt.Errorf("disposable email addresses are not allowed")
+		}
+	}
+
+	return nil
+}
+
+// validatePassword implements OWASP password validation guidelines
+func (ac *AuthController) validatePassword(password string) error {
+	if len(password) < ac.Config.Auth.PasswordMinLength {
+		return fmt.Errorf("password must be at least %d characters long", ac.Config.Auth.PasswordMinLength)
+	}
+	
+	if len(password) > 128 {
+		return fmt.Errorf("password is too long")
+	}
+
+	// Check for required character types
+	var (
+		hasUpper   = false
+		hasLower   = false
+		hasNumber  = false
+		hasSpecial = false
+	)
+
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsNumber(char):
+			hasNumber = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+
+	var missing []string
+	if !hasUpper {
+		missing = append(missing, "uppercase letter")
+	}
+	if !hasLower {
+		missing = append(missing, "lowercase letter")
+	}
+	if !hasNumber {
+		missing = append(missing, "number")
+	}
+	if !hasSpecial {
+		missing = append(missing, "special character")
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("password must contain at least one %s", strings.Join(missing, ", "))
+	}
+
+	// Check for common weak patterns
+	lowercasePassword := strings.ToLower(password)
+	weakPatterns := []string{
+		"password", "123456", "qwerty", "abc123", "admin", "letmein",
+		"welcome", "monkey", "dragon", "master", "shadow", "login",
+	}
+
+	for _, pattern := range weakPatterns {
+		if strings.Contains(lowercasePassword, pattern) {
+			return fmt.Errorf("password contains common weak patterns")
+		}
+	}
+
+	// Check for repeated characters
+	repeatCount := 1
+	for i := 1; i < len(password); i++ {
+		if password[i] == password[i-1] {
+			repeatCount++
+			if repeatCount > 3 {
+				return fmt.Errorf("password contains too many repeated characters")
+			}
+		} else {
+			repeatCount = 1
+		}
+	}
+
+	return nil
+}
+
+// isValidEmail provides basic email validation
+func (ac *AuthController) isValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email) && len(email) <= 255
+}
+
+// Security helper functions
+
+// checkLoginRateLimit implements rate limiting for login attempts
+func (ac *AuthController) checkLoginRateLimit(clientIP string) bool {
+	// This would typically use Redis or similar for distributed rate limiting
+	// For now, implementing a basic in-memory rate limiter
+	return ac.AuthService.CheckLoginRateLimit(clientIP)
+}
+
+{{- if eq .AuthType "jwt"}}
+// generateJWTToken generates a JWT token for the user
+func (ac *AuthController) generateJWTToken(user *models.User) (string, error) {
+	claims := jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"exp":     time.Now().Add(ac.Config.Auth.JWTExpiry).Unix(),
+		"iat":     time.Now().Unix(),
+		"iss":     ac.Config.App.Name,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(ac.Config.Auth.JWTSecret))
+}
+{{- end}}
+
+{{- if eq .AuthType "oauth2"}}
+// generateOAuthState generates a secure random state for OAuth
+func (ac *AuthController) generateOAuthState() string {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to time-based state (less secure but functional)
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return base64.URLEncoding.EncodeToString(bytes)
+}
+{{- end}}
+
+// hashPassword hashes a password using bcrypt
+func (ac *AuthController) hashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	return string(bytes), err
+}
+
+// verifyPassword verifies a password against its hash
+func (ac *AuthController) verifyPassword(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+{{- end}}

@@ -1,0 +1,243 @@
+const esbuild = require('esbuild');
+const { sassPlugin } = require('esbuild-sass-plugin');
+const path = require('path');
+const fs = require('fs');
+
+const isDevelopment = process.env.NODE_ENV === 'development';
+const isProduction = !isDevelopment;
+const shouldWatch = process.argv.includes('--watch');
+
+// Clean output directory
+const outputDir = 'public/build';
+if (fs.existsSync(outputDir)) {
+  fs.rmSync(outputDir, { recursive: true, force: true });
+}
+
+// Ensure output directory exists
+fs.mkdirSync(outputDir, { recursive: true });
+
+// Build configuration
+const buildConfig = {
+  // Entry points
+  entryPoints: {
+    'js/main': 'static/js/main.js',
+    'css/main': 'static/css/main.css',
+  },
+
+  // Output configuration
+  outdir: outputDir,
+  bundle: true,
+  splitting: true,
+  format: 'esm',
+  platform: 'browser',
+  target: ['es2015', 'chrome80', 'firefox78', 'safari13'],
+
+  // Asset handling
+  assetNames: 'assets/[name]-[hash]',
+  chunkNames: 'chunks/[name]-[hash]',
+  entryNames: '[dir]/[name]-[hash]',
+
+  // Source maps
+  sourcemap: isDevelopment ? 'inline' : 'external',
+  
+  // Minification
+  minify: isProduction,
+  treeShaking: true,
+
+  // Define global constants
+  define: {
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'development'),
+    '__APP_VERSION__': JSON.stringify(process.env.npm_package_version || '1.0.0'),
+    '__BUILD_TIME__': JSON.stringify(new Date().toISOString()),
+  },
+
+  // External dependencies (don't bundle these)
+  external: [],
+
+  // Loader configuration
+  loader: {
+    '.png': 'file',
+    '.jpg': 'file',
+    '.jpeg': 'file',
+    '.gif': 'file',
+    '.svg': 'file',
+    '.webp': 'file',
+    '.avif': 'file',
+    '.woff': 'file',
+    '.woff2': 'file',
+    '.eot': 'file',
+    '.ttf': 'file',
+    '.otf': 'file',
+  },
+
+  // Plugins
+  plugins: [
+    // SASS/SCSS plugin
+    sassPlugin({
+      filter: /\.(s[ac]ss|css)$/,
+      type: 'css',
+      cache: true,
+      quietDeps: true,
+      loadPaths: ['node_modules'],
+      style: isProduction ? 'compressed' : 'expanded',
+      sourceMap: isDevelopment,
+      transform: async (source, resolveDir) => {
+        // Add PostCSS processing
+        const postcss = require('postcss');
+        const tailwindcss = require('tailwindcss');
+        const autoprefixer = require('autoprefixer');
+
+        const result = await postcss([
+          tailwindcss,
+          autoprefixer,
+        ]).process(source, {
+          from: undefined,
+          to: undefined,
+        });
+
+        return result.css;
+      },
+    }),
+
+    // Copy static assets plugin
+    {
+      name: 'copy-static-assets',
+      setup(build) {
+        build.onEnd(async () => {
+          const staticDir = 'static';
+          const publicDir = 'public/build';
+
+          // Copy images
+          if (fs.existsSync(path.join(staticDir, 'images'))) {
+            await copyDirectory(
+              path.join(staticDir, 'images'),
+              path.join(publicDir, 'images')
+            );
+          }
+
+          // Copy fonts
+          if (fs.existsSync(path.join(staticDir, 'fonts'))) {
+            await copyDirectory(
+              path.join(staticDir, 'fonts'),
+              path.join(publicDir, 'fonts')
+            );
+          }
+
+          // Copy other assets
+          if (fs.existsSync(path.join(staticDir, 'assets'))) {
+            await copyDirectory(
+              path.join(staticDir, 'assets'),
+              path.join(publicDir, 'assets')
+            );
+          }
+        });
+      },
+    },
+
+    // Manifest generator plugin
+    {
+      name: 'manifest-generator',
+      setup(build) {
+        build.onEnd(async (result) => {
+          if (result.errors.length > 0) return;
+
+          const manifest = {};
+          const outputFiles = result.outputFiles || [];
+
+          // Generate manifest for asset versioning
+          for (const file of outputFiles) {
+            const relativePath = path.relative(outputDir, file.path);
+            const originalName = relativePath.replace(/-[a-f0-9]{8}/, '');
+            manifest[originalName] = relativePath;
+          }
+
+          // Write manifest file
+          fs.writeFileSync(
+            path.join(outputDir, 'manifest.json'),
+            JSON.stringify(manifest, null, 2)
+          );
+
+          console.log('✅ Build completed successfully');
+          console.log(`📦 Output: ${outputDir}`);
+          console.log(`📄 Files: ${Object.keys(manifest).length}`);
+        });
+      },
+    },
+
+    // Development server plugin
+    ...(isDevelopment && shouldWatch ? [{
+      name: 'dev-server',
+      setup(build) {
+        build.onEnd(() => {
+          console.log('🔄 Assets rebuilt, Go server will serve updated files');
+        });
+      },
+    }] : []),
+  ],
+
+  // Error handling
+  logLevel: 'info',
+  color: true,
+  metafile: isProduction,
+};
+
+// Helper function to copy directories recursively
+async function copyDirectory(src, dest) {
+  await fs.promises.mkdir(dest, { recursive: true });
+  const entries = await fs.promises.readdir(src, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+
+    if (entry.isDirectory()) {
+      await copyDirectory(srcPath, destPath);
+    } else {
+      await fs.promises.copyFile(srcPath, destPath);
+    }
+  }
+}
+
+// Build function
+async function build() {
+  try {
+    if (shouldWatch) {
+      // Watch mode
+      const context = await esbuild.context(buildConfig);
+      await context.watch();
+      console.log('👀 Watching for changes...');
+      
+      // Keep the process alive
+      process.on('SIGINT', async () => {
+        await context.dispose();
+        process.exit(0);
+      });
+    } else {
+      // Single build
+      const result = await esbuild.build(buildConfig);
+      
+      if (isProduction && result.metafile) {
+        // Write metafile for analysis
+        fs.writeFileSync(
+          path.join(outputDir, 'metafile.json'),
+          JSON.stringify(result.metafile, null, 2)
+        );
+        
+        // Bundle analysis
+        const analysis = await esbuild.analyzeMetafile(result.metafile);
+        console.log('\n📊 Bundle Analysis:');
+        console.log(analysis);
+      }
+    }
+  } catch (error) {
+    console.error('❌ Build failed:', error);
+    process.exit(1);
+  }
+}
+
+// Run build
+if (require.main === module) {
+  build();
+}
+
+module.exports = { build, buildConfig };

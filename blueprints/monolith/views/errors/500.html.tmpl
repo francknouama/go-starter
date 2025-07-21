@@ -1,0 +1,390 @@
+{{define "title"}}Server Error - {{.Config.App.Name}}{{end}}
+
+{{define "content"}}
+<div class="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-md w-full space-y-8 text-center">
+        <!-- 500 Illustration -->
+        <div class="mb-8">
+            <svg class="mx-auto h-32 w-32 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.464 0L4.35 16.5c-.77.833.192 2.5 1.732 2.5z"></path>
+            </svg>
+        </div>
+
+        <!-- Error Message -->
+        <div>
+            <h1 class="text-6xl font-bold text-gray-900 dark:text-white mb-4">500</h1>
+            <h2 class="text-2xl font-semibold text-gray-700 dark:text-gray-300 mb-4">
+                Internal Server Error
+            </h2>
+            <p class="text-gray-600 dark:text-gray-400 mb-8 leading-relaxed">
+                Something went wrong on our end. We're working to fix the issue. Please try again later or contact support if the problem persists.
+            </p>
+        </div>
+
+        <!-- Error ID (for support reference) -->
+        {{- if .ErrorID}}
+        <div class="bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-6">
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-1">Error Reference ID:</p>
+            <code class="text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded">
+                {{.ErrorID}}
+            </code>
+            <p class="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                Please include this ID when contacting support.
+            </p>
+        </div>
+        {{- end}}
+
+        <!-- Action Buttons -->
+        <div class="space-y-4">
+            <button onclick="retryPage()" 
+                    class="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+                    id="retry-button">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+                <span id="retry-text">Try Again</span>
+                <span id="retry-loading" class="hidden">
+                    <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Retrying...
+                </span>
+            </button>
+            
+            <button onclick="goBack()" 
+                    class="w-full flex justify-center py-3 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                </svg>
+                Go Back
+            </button>
+            
+            <a href="/" 
+               class="w-full inline-flex justify-center py-3 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
+                <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                </svg>
+                Go Home
+            </a>
+        </div>
+
+        <!-- Contact Support -->
+        <div class="mt-8">
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Need immediate assistance?
+            </p>
+            <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                <a href="/contact" 
+                   class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 4.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                    </svg>
+                    Contact Support
+                </a>
+                
+                {{- if .Config.Social.Twitter}}
+                <a href="{{.Config.Social.Twitter}}" 
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M23.953 4.57a10 10 0 01-2.825.775 4.958 4.958 0 002.163-2.723c-.951.555-2.005.959-3.127 1.184a4.92 4.92 0 00-8.384 4.482C7.69 8.095 4.067 6.13 1.64 3.162a4.822 4.822 0 00-.666 2.475c0 1.71.87 3.213 2.188 4.096a4.904 4.904 0 01-2.228-.616v.06a4.923 4.923 0 003.946 4.827 4.996 4.996 0 01-2.212.085 4.936 4.936 0 004.604 3.417 9.867 9.867 0 01-6.102 2.105c-.39 0-.779-.023-1.17-.067a13.995 13.995 0 007.557 2.209c9.053 0 13.998-7.496 13.998-13.985 0-.21 0-.42-.015-.63A9.935 9.935 0 0024 4.59z"/>
+                    </svg>
+                    Twitter Support
+                </a>
+                {{- end}}
+            </div>
+        </div>
+
+        <!-- Status Page Link -->
+        {{- if .Config.StatusPage}}
+        <div class="mt-6">
+            <a href="{{.Config.StatusPage}}" 
+               target="_blank"
+               rel="noopener noreferrer"
+               class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline">
+                Check System Status
+            </a>
+        </div>
+        {{- end}}
+
+        <!-- Server Status (if available) -->
+        {{- if .ServerStatus}}
+        <div class="mt-8 p-4 bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg text-left">
+            <h4 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">
+                📊 System Status
+            </h4>
+            <div class="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                    <span class="text-gray-600 dark:text-gray-400">Server Time:</span>
+                    <span class="block font-mono text-gray-800 dark:text-gray-200">
+                        {{.ServerStatus.Timestamp | date "15:04:05 MST"}}
+                    </span>
+                </div>
+                <div>
+                    <span class="text-gray-600 dark:text-gray-400">Response Time:</span>
+                    <span class="block font-mono text-gray-800 dark:text-gray-200">
+                        {{.ServerStatus.ResponseTime}}ms
+                    </span>
+                </div>
+                {{- if .ServerStatus.Version}}
+                <div>
+                    <span class="text-gray-600 dark:text-gray-400">Version:</span>
+                    <span class="block font-mono text-gray-800 dark:text-gray-200">
+                        {{.ServerStatus.Version}}
+                    </span>
+                </div>
+                {{- end}}
+                <div>
+                    <span class="text-gray-600 dark:text-gray-400">Load:</span>
+                    <span class="block font-mono text-gray-800 dark:text-gray-200">
+                        {{.ServerStatus.Load | default "Normal"}}
+                    </span>
+                </div>
+            </div>
+        </div>
+        {{- end}}
+
+        <!-- Debug Information (Development Only) -->
+        {{- if eq .Config.App.Environment "development"}}
+        <div class="mt-8 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-left">
+            <h4 class="text-sm font-semibold text-red-800 dark:text-red-200 mb-2">
+                🐛 Debug Information (Development Mode)
+            </h4>
+            <div class="text-xs text-red-700 dark:text-red-300 space-y-1">
+                {{- if .Error}}
+                <div><strong>Error:</strong> {{.Error}}</div>
+                {{- end}}
+                {{- if .StackTrace}}
+                <details class="mt-2">
+                    <summary class="cursor-pointer font-medium">Stack Trace</summary>
+                    <pre class="mt-2 text-xs bg-red-100 dark:bg-red-900/40 p-2 rounded border overflow-x-auto">{{.StackTrace}}</pre>
+                </details>
+                {{- end}}
+                <div><strong>Requested URL:</strong> {{.Request.URL}}</div>
+                <div><strong>Method:</strong> {{.Request.Method}}</div>
+                <div><strong>User Agent:</strong> {{.Request.UserAgent}}</div>
+                <div><strong>Timestamp:</strong> {{now | date "2006-01-02 15:04:05"}}</div>
+                {{- if .Request.Referer}}
+                <div><strong>Referer:</strong> {{.Request.Referer}}</div>
+                {{- end}}
+            </div>
+        </div>
+        {{- end}}
+
+        <!-- Automatic Retry Counter -->
+        <div class="mt-6">
+            <p class="text-xs text-gray-500 dark:text-gray-500" id="retry-info">
+                Page will automatically retry in <span id="countdown">30</span> seconds
+            </p>
+            <button onclick="cancelAutoRetry()" 
+                    class="mt-2 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline"
+                    id="cancel-retry">
+                Cancel auto-retry
+            </button>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+    let autoRetryTimer;
+    let countdownTimer;
+    let retryCount = 0;
+    const maxRetries = 3;
+
+    function goBack() {
+        if (window.history.length > 1 && document.referrer) {
+            window.history.back();
+        } else {
+            window.location.href = '/';
+        }
+    }
+
+    function retryPage() {
+        const retryButton = document.getElementById('retry-button');
+        const retryText = document.getElementById('retry-text');
+        const retryLoading = document.getElementById('retry-loading');
+        
+        // Show loading state
+        retryButton.disabled = true;
+        retryText.classList.add('hidden');
+        retryLoading.classList.remove('hidden');
+        
+        // Cancel auto-retry
+        cancelAutoRetry();
+        
+        // Increment retry count
+        retryCount++;
+        
+        // Add retry count to URL for server tracking
+        const url = new URL(window.location);
+        url.searchParams.set('retry', retryCount);
+        
+        // Reload with exponential backoff
+        const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000);
+        setTimeout(() => {
+            window.location.href = url.toString();
+        }, delay);
+    }
+
+    function startAutoRetry() {
+        let seconds = 30;
+        const countdownEl = document.getElementById('countdown');
+        const retryInfoEl = document.getElementById('retry-info');
+        const cancelBtn = document.getElementById('cancel-retry');
+        
+        // Update countdown every second
+        countdownTimer = setInterval(() => {
+            seconds--;
+            if (countdownEl) {
+                countdownEl.textContent = seconds;
+            }
+            
+            if (seconds <= 0) {
+                clearInterval(countdownTimer);
+                retryPage();
+            }
+        }, 1000);
+        
+        // Set the auto-retry timer
+        autoRetryTimer = setTimeout(() => {
+            retryPage();
+        }, 30000);
+    }
+
+    function cancelAutoRetry() {
+        if (autoRetryTimer) {
+            clearTimeout(autoRetryTimer);
+            autoRetryTimer = null;
+        }
+        if (countdownTimer) {
+            clearInterval(countdownTimer);
+            countdownTimer = null;
+        }
+        
+        const retryInfoEl = document.getElementById('retry-info');
+        const cancelBtn = document.getElementById('cancel-retry');
+        
+        if (retryInfoEl) {
+            retryInfoEl.style.display = 'none';
+        }
+        if (cancelBtn) {
+            cancelBtn.style.display = 'none';
+        }
+    }
+
+    // Initialize auto-retry on page load
+    document.addEventListener('DOMContentLoaded', function() {
+        // Only start auto-retry if this isn't a repeated failure
+        const urlParams = new URLSearchParams(window.location.search);
+        const retryParam = parseInt(urlParams.get('retry') || '0');
+        
+        if (retryParam < maxRetries) {
+            startAutoRetry();
+        } else {
+            // Hide auto-retry UI for repeated failures
+            const retryInfoEl = document.getElementById('retry-info');
+            const cancelBtn = document.getElementById('cancel-retry');
+            if (retryInfoEl) retryInfoEl.style.display = 'none';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+        }
+    });
+
+    // Track 500 errors for analytics (if analytics is enabled)
+    if (typeof gtag !== 'undefined') {
+        gtag('event', 'server_error', {
+            'page_title': '500 - Server Error',
+            'page_location': window.location.href,
+            {{- if .ErrorID}}
+            'error_id': '{{.ErrorID}}',
+            {{- end}}
+            'custom_map': {
+                'custom_parameter_1': 'server_error'
+            }
+        });
+    }
+
+    // Report server errors (if error reporting is enabled)
+    {{- if .Config.ErrorReporting.Enabled}}
+    fetch('/api/errors/report', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            {{- if .CSRFToken}}
+            'X-CSRF-Token': '{{.CSRFToken}}',
+            {{- end}}
+        },
+        body: JSON.stringify({
+            type: '500_error',
+            {{- if .ErrorID}}
+            error_id: '{{.ErrorID}}',
+            {{- end}}
+            url: window.location.href,
+            referrer: document.referrer,
+            user_agent: navigator.userAgent,
+            timestamp: new Date().toISOString()
+        })
+    }).catch(err => {
+        console.warn('Could not report 500 error:', err);
+    });
+    {{- end}}
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'r' && e.ctrlKey) {
+            e.preventDefault();
+            retryPage();
+        } else if (e.key === 'Escape') {
+            cancelAutoRetry();
+        }
+    });
+</script>
+{{end}}
+
+{{define "head"}}
+<!-- 500 page specific meta tags -->
+<meta name="robots" content="noindex, nofollow">
+<link rel="canonical" href="{{.Config.App.URL}}/500">
+
+<!-- Prevent this page from being cached -->
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
+
+<!-- Custom 500 styling -->
+<style {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+    /* Custom animations for 500 page */
+    @keyframes shake {
+        0%, 100% { transform: translateX(0); }
+        10%, 30%, 50%, 70%, 90% { transform: translateX(-2px); }
+        20%, 40%, 60%, 80% { transform: translateX(2px); }
+    }
+    
+    .shake {
+        animation: shake 0.5s ease-in-out;
+    }
+    
+    /* Error illustration pulse */
+    @keyframes pulse-red {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.7; }
+    }
+    
+    .pulse-red {
+        animation: pulse-red 2s ease-in-out infinite;
+    }
+    
+    /* Loading spinner for retry button */
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+    
+    .animate-spin {
+        animation: spin 1s linear infinite;
+    }
+</style>
+{{end}}

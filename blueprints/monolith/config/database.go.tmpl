@@ -1,0 +1,622 @@
+package config
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+{{- if eq .DatabaseORM "gorm" }}
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+{{- if eq .DatabaseDriver "postgres" }}
+	"gorm.io/driver/postgres"
+{{- else if eq .DatabaseDriver "mysql" }}
+	"gorm.io/driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite" }}
+	"gorm.io/driver/sqlite"
+{{- end }}
+{{- else if eq .DatabaseORM "sqlx" }}
+	"github.com/jmoiron/sqlx"
+{{- if eq .DatabaseDriver "postgres" }}
+	_ "github.com/lib/pq"
+{{- else if eq .DatabaseDriver "mysql" }}
+	_ "github.com/go-sql-driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite" }}
+	_ "github.com/mattn/go-sqlite3"
+{{- end }}
+{{- else }}
+{{- if eq .DatabaseDriver "postgres" }}
+	_ "github.com/lib/pq"
+{{- else if eq .DatabaseDriver "mysql" }}
+	_ "github.com/go-sql-driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite" }}
+	_ "github.com/mattn/go-sqlite3"
+{{- end }}
+{{- end }}
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+{{- end }}
+)
+
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Driver                   string
+	DSN                      string
+	MaxOpenConnections       int
+	MaxIdleConnections       int
+	ConnectionMaxLifetime    time.Duration
+	ConnectionMaxIdleTime    time.Duration
+	SlowQueryThreshold       time.Duration
+	PrepareStmt              bool
+	DisableForeignKeyChecks  bool
+}
+
+// Database interface for abstraction
+type Database interface {
+{{- if eq .DatabaseORM "gorm" }}
+	DB() *gorm.DB
+{{- else if eq .DatabaseORM "sqlx" }}
+	DB() *sqlx.DB
+{{- else }}
+	DB() *sql.DB
+{{- end }}
+	Close() error
+	Ping(ctx context.Context) error
+	Stats() sql.DBStats
+	HealthCheck(ctx context.Context) error
+}
+
+// database struct implements Database interface
+type database struct {
+{{- if eq .DatabaseORM "gorm" }}
+	db *gorm.DB
+{{- else if eq .DatabaseORM "sqlx" }}
+	db *sqlx.DB
+{{- else }}
+	db *sql.DB
+{{- end }}
+{{- if eq .LoggerType "slog" }}
+	logger *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger zerolog.Logger
+{{- end }}
+}
+
+// NewDatabaseConfig creates database configuration from environment
+func NewDatabaseConfig() *DatabaseConfig {
+	cfg := &DatabaseConfig{
+		Driver:                  getEnv("DATABASE_DRIVER", "{{.DatabaseDriver}}"),
+		DSN:                     getEnv("DATABASE_URL", ""),
+		MaxOpenConnections:      getEnvAsInt("DATABASE_MAX_CONNECTIONS", 25),
+		MaxIdleConnections:      getEnvAsInt("DATABASE_MAX_IDLE_CONNECTIONS", 5),
+		ConnectionMaxLifetime:   time.Duration(getEnvAsInt("DATABASE_CONNECTION_MAX_LIFETIME", 300)) * time.Second,
+		ConnectionMaxIdleTime:   time.Duration(getEnvAsInt("DATABASE_CONNECTION_MAX_IDLE_TIME", 60)) * time.Second,
+		SlowQueryThreshold:      time.Duration(getEnvAsInt("DATABASE_SLOW_QUERY_THRESHOLD", 100)) * time.Millisecond,
+		PrepareStmt:             getEnvAsBool("DATABASE_PREPARE_STMT", true),
+		DisableForeignKeyChecks: getEnvAsBool("DATABASE_DISABLE_FOREIGN_KEY_CHECKS", false),
+	}
+
+	// Build DSN if not provided
+	if cfg.DSN == "" {
+		cfg.DSN = buildDSN(cfg.Driver)
+	}
+
+	return cfg
+}
+
+// NewDatabase creates a new database connection
+func NewDatabase(cfg *DatabaseConfig, {{if eq .LoggerType "slog"}}logger *slog.Logger{{else if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "zerolog"}}logger zerolog.Logger{{end}}) (Database, error) {
+{{- if eq .DatabaseORM "gorm" }}
+	// Configure GORM logger
+	gormLogLevel := logger.Silent
+	if getEnvAsBool("DATABASE_LOG_QUERIES", false) || getEnv("APP_ENV", "production") == "development" {
+		gormLogLevel = logger.Info
+	}
+
+	gormConfig := &gorm.Config{
+		PrepareStmt:                              cfg.PrepareStmt,
+		DisableForeignKeyConstraintWhenMigrating: cfg.DisableForeignKeyChecks,
+		Logger: logger.New(
+			&gormLogger{logger: logger},
+			logger.Config{
+				SlowThreshold:             cfg.SlowQueryThreshold,
+				LogLevel:                  gormLogLevel,
+				IgnoreRecordNotFoundError: true,
+				Colorful:                  false,
+			},
+		),
+		NowFunc: func() time.Time {
+			return time.Now().UTC()
+		},
+	}
+
+	var db *gorm.DB
+	var err error
+
+	switch cfg.Driver {
+{{- if eq .DatabaseDriver "postgres" }}
+	case "postgres":
+		db, err = gorm.Open(postgres.Open(cfg.DSN), gormConfig)
+{{- else if eq .DatabaseDriver "mysql" }}
+	case "mysql":
+		db, err = gorm.Open(mysql.Open(cfg.DSN), gormConfig)
+{{- else if eq .DatabaseDriver "sqlite" }}
+	case "sqlite":
+		db, err = gorm.Open(sqlite.Open(cfg.DSN), gormConfig)
+{{- end }}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying SQL database
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database instance: %w", err)
+	}
+
+{{- else if eq .DatabaseORM "sqlx" }}
+	// Map driver names for sqlx
+	driverName := cfg.Driver
+	if cfg.Driver == "sqlite" {
+		driverName = "sqlite3"
+	}
+
+	db, err := sqlx.Connect(driverName, cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying SQL database for configuration
+	sqlDB := db.DB
+
+{{- else }}
+	// Map driver names
+	driverName := cfg.Driver
+	if cfg.Driver == "sqlite" {
+		driverName = "sqlite3"
+	}
+
+	db, err := sql.Open(driverName, cfg.DSN)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	sqlDB := db
+{{- end }}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConnections)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConnections)
+	sqlDB.SetConnMaxLifetime(cfg.ConnectionMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(cfg.ConnectionMaxIdleTime)
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+{{- if eq .LoggerType "slog" }}
+	logger.Info("database connected successfully",
+		slog.String("driver", cfg.Driver),
+		slog.Int("max_connections", cfg.MaxOpenConnections),
+	)
+{{- else if eq .LoggerType "zap" }}
+	logger.Info("database connected successfully",
+		zap.String("driver", cfg.Driver),
+		zap.Int("max_connections", cfg.MaxOpenConnections),
+	)
+{{- else if eq .LoggerType "logrus" }}
+	logger.WithFields(logrus.Fields{
+		"driver":          cfg.Driver,
+		"max_connections": cfg.MaxOpenConnections,
+	}).Info("database connected successfully")
+{{- else if eq .LoggerType "zerolog" }}
+	logger.Info().
+		Str("driver", cfg.Driver).
+		Int("max_connections", cfg.MaxOpenConnections).
+		Msg("database connected successfully")
+{{- end }}
+
+{{- if eq .DatabaseDriver "sqlite" }}
+	// Enable foreign keys for SQLite
+	if _, err := sqlDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
+		return nil, fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+{{- end }}
+
+	return &database{
+		db:     db,
+		logger: logger,
+	}, nil
+}
+
+// DB returns the database instance
+{{- if eq .DatabaseORM "gorm" }}
+func (d *database) DB() *gorm.DB {
+	return d.db
+}
+{{- else if eq .DatabaseORM "sqlx" }}
+func (d *database) DB() *sqlx.DB {
+	return d.db
+}
+{{- else }}
+func (d *database) DB() *sql.DB {
+	return d.db
+}
+{{- end }}
+
+// Close closes the database connection
+func (d *database) Close() error {
+{{- if eq .DatabaseORM "gorm" }}
+	sqlDB, err := d.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+{{- else if eq .DatabaseORM "sqlx" }}
+	return d.db.Close()
+{{- else }}
+	return d.db.Close()
+{{- end }}
+}
+
+// Ping verifies the database connection
+func (d *database) Ping(ctx context.Context) error {
+{{- if eq .DatabaseORM "gorm" }}
+	sqlDB, err := d.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+{{- else if eq .DatabaseORM "sqlx" }}
+	return d.db.PingContext(ctx)
+{{- else }}
+	return d.db.PingContext(ctx)
+{{- end }}
+}
+
+// Stats returns database statistics
+func (d *database) Stats() sql.DBStats {
+{{- if eq .DatabaseORM "gorm" }}
+	sqlDB, _ := d.db.DB()
+	return sqlDB.Stats()
+{{- else if eq .DatabaseORM "sqlx" }}
+	return d.db.Stats()
+{{- else }}
+	return d.db.Stats()
+{{- end }}
+}
+
+// HealthCheck performs a comprehensive health check
+func (d *database) HealthCheck(ctx context.Context) error {
+	// Check if we can ping the database
+	if err := d.Ping(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	// Check connection pool health
+	stats := d.Stats()
+	if stats.OpenConnections > stats.MaxOpenConnections*90/100 {
+{{- if eq .LoggerType "slog" }}
+		d.logger.Warn("database connection pool near capacity",
+			slog.Int("open_connections", stats.OpenConnections),
+			slog.Int("max_connections", stats.MaxOpenConnections),
+		)
+{{- else if eq .LoggerType "zap" }}
+		d.logger.Warn("database connection pool near capacity",
+			zap.Int("open_connections", stats.OpenConnections),
+			zap.Int("max_connections", stats.MaxOpenConnections),
+		)
+{{- else if eq .LoggerType "logrus" }}
+		d.logger.WithFields(logrus.Fields{
+			"open_connections": stats.OpenConnections,
+			"max_connections":  stats.MaxOpenConnections,
+		}).Warn("database connection pool near capacity")
+{{- else if eq .LoggerType "zerolog" }}
+		d.logger.Warn().
+			Int("open_connections", stats.OpenConnections).
+			Int("max_connections", stats.MaxOpenConnections).
+			Msg("database connection pool near capacity")
+{{- end }}
+	}
+
+	// Perform a simple query to ensure database is responsive
+{{- if eq .DatabaseORM "gorm" }}
+	var result int
+	if err := d.db.Raw("SELECT 1").Scan(&result).Error; err != nil {
+		return fmt.Errorf("database query failed: %w", err)
+	}
+{{- else if eq .DatabaseORM "sqlx" }}
+	var result int
+	if err := d.db.GetContext(ctx, &result, "SELECT 1"); err != nil {
+		return fmt.Errorf("database query failed: %w", err)
+	}
+{{- else }}
+	var result int
+	if err := d.db.QueryRowContext(ctx, "SELECT 1").Scan(&result); err != nil {
+		return fmt.Errorf("database query failed: %w", err)
+	}
+{{- end }}
+
+	return nil
+}
+
+// buildDSN builds a DSN from environment variables
+func buildDSN(driver string) string {
+	switch driver {
+{{- if eq .DatabaseDriver "postgres" }}
+	case "postgres":
+		host := getEnv("DATABASE_HOST", "localhost")
+		port := getEnv("DATABASE_PORT", "5432")
+		user := getEnv("DATABASE_USER", "postgres")
+		password := getEnv("DATABASE_PASSWORD", "")
+		dbname := getEnv("DATABASE_NAME", "{{.ProjectName}}_development")
+		sslmode := getEnv("DATABASE_SSL_MODE", "disable")
+		
+		dsn := fmt.Sprintf("host=%s port=%s user=%s dbname=%s sslmode=%s",
+			host, port, user, dbname, sslmode)
+		
+		if password != "" {
+			dsn += fmt.Sprintf(" password=%s", password)
+		}
+		
+		// Add additional parameters
+		if timezone := getEnv("DATABASE_TIMEZONE", "UTC"); timezone != "" {
+			dsn += fmt.Sprintf(" TimeZone=%s", timezone)
+		}
+		
+		return dsn
+{{- else if eq .DatabaseDriver "mysql" }}
+	case "mysql":
+		host := getEnv("DATABASE_HOST", "localhost")
+		port := getEnv("DATABASE_PORT", "3306")
+		user := getEnv("DATABASE_USER", "root")
+		password := getEnv("DATABASE_PASSWORD", "")
+		dbname := getEnv("DATABASE_NAME", "{{.ProjectName}}_development")
+		charset := getEnv("DATABASE_CHARSET", "utf8mb4")
+		parseTime := getEnvAsBool("DATABASE_PARSE_TIME", true)
+		loc := getEnv("DATABASE_LOC", "UTC")
+		
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=%s&parseTime=%t&loc=%s",
+			user, password, host, port, dbname, charset, parseTime, loc)
+		
+		// Add additional parameters
+		dsn += "&interpolateParams=true&multiStatements=true"
+		
+		return dsn
+{{- else if eq .DatabaseDriver "sqlite" }}
+	case "sqlite":
+		path := getEnv("DATABASE_PATH", "./data/{{.ProjectName}}.db")
+		return fmt.Sprintf("file:%s?cache=shared&mode=rwc&_foreign_keys=1", path)
+{{- end }}
+	default:
+		return ""
+	}
+}
+
+{{- if eq .DatabaseORM "gorm" }}
+// gormLogger adapts our logger to GORM's logger interface
+type gormLogger struct {
+{{- if eq .LoggerType "slog" }}
+	logger *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger zerolog.Logger
+{{- end }}
+}
+
+func (l *gormLogger) LogMode(level logger.LogLevel) logger.Interface {
+	return l
+}
+
+func (l *gormLogger) Info(ctx context.Context, msg string, data ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	l.logger.InfoContext(ctx, fmt.Sprintf(msg, data...))
+{{- else if eq .LoggerType "zap" }}
+	l.logger.Info(fmt.Sprintf(msg, data...))
+{{- else if eq .LoggerType "logrus" }}
+	l.logger.Infof(msg, data...)
+{{- else if eq .LoggerType "zerolog" }}
+	l.logger.Info().Msgf(msg, data...)
+{{- end }}
+}
+
+func (l *gormLogger) Warn(ctx context.Context, msg string, data ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	l.logger.WarnContext(ctx, fmt.Sprintf(msg, data...))
+{{- else if eq .LoggerType "zap" }}
+	l.logger.Warn(fmt.Sprintf(msg, data...))
+{{- else if eq .LoggerType "logrus" }}
+	l.logger.Warnf(msg, data...)
+{{- else if eq .LoggerType "zerolog" }}
+	l.logger.Warn().Msgf(msg, data...)
+{{- end }}
+}
+
+func (l *gormLogger) Error(ctx context.Context, msg string, data ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	l.logger.ErrorContext(ctx, fmt.Sprintf(msg, data...))
+{{- else if eq .LoggerType "zap" }}
+	l.logger.Error(fmt.Sprintf(msg, data...))
+{{- else if eq .LoggerType "logrus" }}
+	l.logger.Errorf(msg, data...)
+{{- else if eq .LoggerType "zerolog" }}
+	l.logger.Error().Msgf(msg, data...)
+{{- end }}
+}
+
+func (l *gormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+	elapsed := time.Since(begin)
+	sql, rows := fc()
+
+	switch {
+	case err != nil && err != gorm.ErrRecordNotFound:
+{{- if eq .LoggerType "slog" }}
+		l.logger.ErrorContext(ctx, "database query error",
+			slog.String("sql", sql),
+			slog.Duration("duration", elapsed),
+			slog.String("error", err.Error()),
+		)
+{{- else if eq .LoggerType "zap" }}
+		l.logger.Error("database query error",
+			zap.String("sql", sql),
+			zap.Duration("duration", elapsed),
+			zap.Error(err),
+		)
+{{- else if eq .LoggerType "logrus" }}
+		l.logger.WithFields(logrus.Fields{
+			"sql":      sql,
+			"duration": elapsed,
+			"error":    err,
+		}).Error("database query error")
+{{- else if eq .LoggerType "zerolog" }}
+		l.logger.Error().
+			Str("sql", sql).
+			Dur("duration", elapsed).
+			Err(err).
+			Msg("database query error")
+{{- end }}
+	case elapsed > 100*time.Millisecond:
+{{- if eq .LoggerType "slog" }}
+		l.logger.WarnContext(ctx, "slow database query",
+			slog.String("sql", sql),
+			slog.Duration("duration", elapsed),
+			slog.Int64("rows", rows),
+		)
+{{- else if eq .LoggerType "zap" }}
+		l.logger.Warn("slow database query",
+			zap.String("sql", sql),
+			zap.Duration("duration", elapsed),
+			zap.Int64("rows", rows),
+		)
+{{- else if eq .LoggerType "logrus" }}
+		l.logger.WithFields(logrus.Fields{
+			"sql":      sql,
+			"duration": elapsed,
+			"rows":     rows,
+		}).Warn("slow database query")
+{{- else if eq .LoggerType "zerolog" }}
+		l.logger.Warn().
+			Str("sql", sql).
+			Dur("duration", elapsed).
+			Int64("rows", rows).
+			Msg("slow database query")
+{{- end }}
+	default:
+		if getEnvAsBool("DATABASE_LOG_QUERIES", false) {
+{{- if eq .LoggerType "slog" }}
+			l.logger.DebugContext(ctx, "database query",
+				slog.String("sql", sql),
+				slog.Duration("duration", elapsed),
+				slog.Int64("rows", rows),
+			)
+{{- else if eq .LoggerType "zap" }}
+			l.logger.Debug("database query",
+				zap.String("sql", sql),
+				zap.Duration("duration", elapsed),
+				zap.Int64("rows", rows),
+			)
+{{- else if eq .LoggerType "logrus" }}
+			l.logger.WithFields(logrus.Fields{
+				"sql":      sql,
+				"duration": elapsed,
+				"rows":     rows,
+			}).Debug("database query")
+{{- else if eq .LoggerType "zerolog" }}
+			l.logger.Debug().
+				Str("sql", sql).
+				Dur("duration", elapsed).
+				Int64("rows", rows).
+				Msg("database query")
+{{- end }}
+		}
+	}
+}
+{{- end }}
+
+// WithTransaction executes a function within a database transaction
+{{- if eq .DatabaseORM "gorm" }}
+func WithTransaction(db *gorm.DB, fn func(*gorm.DB) error) error {
+	tx := db.Begin()
+	if tx.Error != nil {
+		return tx.Error
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		tx.Rollback()
+		return err
+	}
+
+	return tx.Commit().Error
+}
+{{- else if eq .DatabaseORM "sqlx" }}
+func WithTransaction(db *sqlx.DB, fn func(*sqlx.Tx) error) error {
+	tx, err := db.Beginx()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			_ = tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+{{- else }}
+func WithTransaction(db *sql.DB, fn func(*sql.Tx) error) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			_ = tx.Rollback()
+			panic(r)
+		}
+	}()
+
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+
+	return tx.Commit()
+}
+{{- end }}

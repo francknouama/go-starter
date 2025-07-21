@@ -1,0 +1,341 @@
+{{define "auth-title"}}Sign In{{end}}
+
+{{define "auth-subtitle"}}
+<p class="mt-2 text-center text-sm text-gray-600 dark:text-gray-400">
+    Or 
+    <a href="/auth/register" class="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300">
+        create a new account
+    </a>
+</p>
+{{end}}
+
+{{define "content"}}
+<form class="space-y-6" action="/auth/login" method="POST" data-validate="true">
+    {{- if .CSRFToken}}
+    <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+    {{- end}}
+    
+    <!-- Email Field -->
+    <div>
+        <label for="email" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Email address
+        </label>
+        <div class="mt-1">
+            <input id="email" 
+                   name="email" 
+                   type="email" 
+                   autocomplete="email" 
+                   required 
+                   autofocus
+                   value="{{.OldInput.email}}"
+                   class="appearance-none block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm {{if .Errors.email}}border-red-500 dark:border-red-400{{end}}"
+                   placeholder="Enter your email address"
+                   aria-describedby="{{if .Errors.email}}email-error{{end}} email-description">
+            {{- if .Errors.email}}
+            <p class="mt-2 text-sm text-red-600 dark:text-red-400" id="email-error" role="alert">
+                {{.Errors.email}}
+            </p>
+            {{- end}}
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400" id="email-description">
+                We'll never share your email with anyone else.
+            </p>
+        </div>
+    </div>
+
+    <!-- Password Field -->
+    <div>
+        <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Password
+        </label>
+        <div class="mt-1 relative">
+            <input id="password" 
+                   name="password" 
+                   type="password" 
+                   autocomplete="current-password" 
+                   required
+                   class="appearance-none block w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 dark:placeholder-gray-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm {{if .Errors.password}}border-red-500 dark:border-red-400{{end}}"
+                   placeholder="Enter your password"
+                   aria-describedby="{{if .Errors.password}}password-error{{end}}">
+            
+            <!-- Show/Hide Password Toggle -->
+            <button type="button" 
+                    class="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    onclick="togglePassword('password')"
+                    tabindex="-1"
+                    aria-label="Toggle password visibility">
+                <svg id="password-show-icon" class="h-5 w-5 text-gray-400 hover:text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                </svg>
+                <svg id="password-hide-icon" class="h-5 w-5 text-gray-400 hover:text-gray-500 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.878 9.878L3 3m6.878 6.878L21 21"></path>
+                </svg>
+            </button>
+            
+            {{- if .Errors.password}}
+            <p class="mt-2 text-sm text-red-600 dark:text-red-400" id="password-error" role="alert">
+                {{.Errors.password}}
+            </p>
+            {{- end}}
+        </div>
+    </div>
+
+    <!-- Remember Me and Forgot Password -->
+    <div class="flex items-center justify-between">
+        <div class="flex items-center">
+            <input id="remember-me" 
+                   name="remember" 
+                   type="checkbox" 
+                   class="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700">
+            <label for="remember-me" class="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+                Remember me
+            </label>
+        </div>
+
+        <div class="text-sm">
+            <a href="/auth/forgot-password" class="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300">
+                Forgot your password?
+            </a>
+        </div>
+    </div>
+
+    <!-- Submit Button -->
+    <div>
+        <button type="submit" 
+                class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                id="submit-button">
+            <span class="absolute left-0 inset-y-0 flex items-center pl-3">
+                <svg class="h-5 w-5 text-blue-500 group-hover:text-blue-400" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                    <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path>
+                </svg>
+            </span>
+            <span id="submit-text">Sign in</span>
+            <span id="submit-loading" class="hidden">
+                <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Signing in...
+            </span>
+        </button>
+    </div>
+
+    {{- if eq .AuthType "oauth2"}}
+    <!-- OAuth Divider -->
+    <div class="mt-6">
+        <div class="relative">
+            <div class="absolute inset-0 flex items-center">
+                <div class="w-full border-t border-gray-300 dark:border-gray-600"></div>
+            </div>
+            <div class="relative flex justify-center text-sm">
+                <span class="px-2 bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400">Or continue with</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- OAuth Buttons -->
+    <div class="mt-6 grid grid-cols-1 gap-3">
+        {{- if .Config.OAuth.Google.Enabled}}
+        <a href="/auth/google" 
+           class="w-full inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-sm font-medium text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+            <svg class="w-5 h-5" viewBox="0 0 24 24">
+                <path fill="#4285f4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34a853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#fbbc05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+                <path fill="#ea4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+            </svg>
+            <span class="ml-2">Continue with Google</span>
+        </a>
+        {{- end}}
+
+        {{- if .Config.OAuth.GitHub.Enabled}}
+        <a href="/auth/github" 
+           class="w-full inline-flex justify-center py-2 px-4 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm bg-white dark:bg-gray-700 text-sm font-medium text-gray-500 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path>
+            </svg>
+            <span class="ml-2">Continue with GitHub</span>
+        </a>
+        {{- end}}
+    </div>
+    {{- end}}
+</form>
+
+<!-- Account Creation Help -->
+<div class="mt-6 text-center">
+    <p class="text-sm text-gray-600 dark:text-gray-400">
+        Don't have an account?
+        <a href="/auth/register" class="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300">
+            Sign up for free
+        </a>
+    </p>
+</div>
+
+<!-- Security Notice -->
+<div class="mt-4 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-md">
+    <div class="flex">
+        <div class="flex-shrink-0">
+            <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path>
+            </svg>
+        </div>
+        <div class="ml-3">
+            <p class="text-sm text-blue-800 dark:text-blue-200">
+                <strong>Secure Login:</strong> Your connection is encrypted and your data is protected.
+            </p>
+        </div>
+    </div>
+</div>
+{{end}}
+
+{{define "scripts"}}
+<script {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+    // Password visibility toggle
+    function togglePassword(fieldId) {
+        const field = document.getElementById(fieldId);
+        const showIcon = document.getElementById(fieldId + '-show-icon');
+        const hideIcon = document.getElementById(fieldId + '-hide-icon');
+        
+        if (field.type === 'password') {
+            field.type = 'text';
+            showIcon.classList.add('hidden');
+            hideIcon.classList.remove('hidden');
+        } else {
+            field.type = 'password';
+            showIcon.classList.remove('hidden');
+            hideIcon.classList.add('hidden');
+        }
+    }
+
+    // Form submission handling
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.querySelector('form[data-validate="true"]');
+        const submitButton = document.getElementById('submit-button');
+        const submitText = document.getElementById('submit-text');
+        const submitLoading = document.getElementById('submit-loading');
+
+        if (form) {
+            form.addEventListener('submit', function(e) {
+                // Show loading state
+                submitButton.disabled = true;
+                submitText.classList.add('hidden');
+                submitLoading.classList.remove('hidden');
+
+                // Basic client-side validation
+                const email = form.querySelector('input[name="email"]').value;
+                const password = form.querySelector('input[name="password"]').value;
+
+                if (!email || !password) {
+                    e.preventDefault();
+                    showFormError('Please fill in all required fields.');
+                    resetSubmitButton();
+                    return;
+                }
+
+                // Email validation
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(email)) {
+                    e.preventDefault();
+                    showFormError('Please enter a valid email address.');
+                    resetSubmitButton();
+                    return;
+                }
+            });
+        }
+
+        function resetSubmitButton() {
+            submitButton.disabled = false;
+            submitText.classList.remove('hidden');
+            submitLoading.classList.add('hidden');
+        }
+
+        function showFormError(message) {
+            // Create or update error message
+            let errorDiv = form.querySelector('.form-error');
+            if (!errorDiv) {
+                errorDiv = document.createElement('div');
+                errorDiv.className = 'form-error bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4 mb-4';
+                form.insertBefore(errorDiv, form.firstChild);
+            }
+            
+            errorDiv.innerHTML = `
+                <div class="flex">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-red-400" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path>
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm text-red-800 dark:text-red-200">${message}</p>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Auto-focus email field if empty
+        const emailField = document.getElementById('email');
+        if (emailField && !emailField.value) {
+            emailField.focus();
+        }
+
+        // Caps lock detection
+        document.addEventListener('keydown', function(e) {
+            const capsLockOn = e.getModifierState('CapsLock');
+            const passwordField = document.getElementById('password');
+            
+            if (capsLockOn && document.activeElement === passwordField) {
+                showCapsLockWarning(true);
+            } else {
+                showCapsLockWarning(false);
+            }
+        });
+
+        function showCapsLockWarning(show) {
+            let warning = document.getElementById('caps-lock-warning');
+            
+            if (show && !warning) {
+                warning = document.createElement('p');
+                warning.id = 'caps-lock-warning';
+                warning.className = 'mt-1 text-sm text-yellow-600 dark:text-yellow-400';
+                warning.innerHTML = '⚠️ Caps Lock is on';
+                
+                const passwordField = document.getElementById('password');
+                passwordField.parentNode.appendChild(warning);
+            } else if (!show && warning) {
+                warning.remove();
+            }
+        }
+
+        // Remember form data on input
+        const inputs = form.querySelectorAll('input[type="email"], input[type="text"]');
+        inputs.forEach(input => {
+            input.addEventListener('input', function() {
+                if (this.type !== 'password') {
+                    localStorage.setItem('login_' + this.name, this.value);
+                }
+            });
+            
+            // Restore saved data
+            const savedValue = localStorage.getItem('login_' + input.name);
+            if (savedValue && !input.value) {
+                input.value = savedValue;
+            }
+        });
+
+        // Clear saved data on successful form submission
+        form.addEventListener('submit', function() {
+            // Only clear if form validation passes
+            setTimeout(() => {
+                inputs.forEach(input => {
+                    localStorage.removeItem('login_' + input.name);
+                });
+            }, 100);
+        });
+    });
+
+    // Security: Disable autocomplete for sensitive browsers
+    if (navigator.userAgent.includes('Chrome') && window.location.protocol === 'https:') {
+        document.getElementById('password').setAttribute('autocomplete', 'current-password');
+    }
+</script>
+{{end}}

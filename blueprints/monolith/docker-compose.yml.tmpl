@@ -1,0 +1,165 @@
+version: '3.8'
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: {{.ProjectName}}_app
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      - APP_ENV=${APP_ENV:-development}
+      - APP_PORT=${APP_PORT:-8080}
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "postgres" }}
+      - DATABASE_URL=postgres://postgres:password@db:5432/{{.ProjectName}}_development?sslmode=disable
+{{- else if eq .DatabaseDriver "mysql" }}
+      - DATABASE_URL=root:password@tcp(db:3306)/{{.ProjectName}}_development?charset=utf8mb4&parseTime=true
+{{- else if eq .DatabaseDriver "sqlite" }}
+      - DATABASE_URL=file:/app/data/{{.ProjectName}}.db?cache=shared&mode=rwc
+{{- end }}
+{{- end }}
+{{- if eq .SessionStore "redis" }}
+      - REDIS_URL=redis://:@redis:6379/0
+{{- end }}
+    volumes:
+      - ./logs:/app/logs
+      - ./uploads:/app/uploads
+{{- if eq .DatabaseDriver "sqlite" }}
+      - ./data:/app/data
+{{- end }}
+    depends_on:
+{{- if ne .DatabaseDriver "" }}
+{{- if ne .DatabaseDriver "sqlite" }}
+      - db
+{{- end }}
+{{- end }}
+{{- if eq .SessionStore "redis" }}
+      - redis
+{{- end }}
+    networks:
+      - {{.ProjectName}}_network
+{{- if eq .APP_ENV "development" }}
+    command: air
+{{- end }}
+
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "postgres" }}
+  db:
+    image: postgres:16-alpine
+    container_name: {{.ProjectName}}_db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB={{.ProjectName}}_development
+    ports:
+      - "${DATABASE_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - {{.ProjectName}}_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+{{- else if eq .DatabaseDriver "mysql" }}
+  db:
+    image: mysql:8.0
+    container_name: {{.ProjectName}}_db
+    restart: unless-stopped
+    environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_DATABASE={{.ProjectName}}_development
+      - MYSQL_USER={{.ProjectName}}
+      - MYSQL_PASSWORD=password
+    ports:
+      - "${DATABASE_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./database/init:/docker-entrypoint-initdb.d
+    networks:
+      - {{.ProjectName}}_network
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ppassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- end }}
+{{- end }}
+
+{{- if eq .SessionStore "redis" }}
+  redis:
+    image: redis:7-alpine
+    container_name: {{.ProjectName}}_redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - {{.ProjectName}}_network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- end }}
+
+{{- if eq .APP_ENV "development" }}
+  mailhog:
+    image: mailhog/mailhog:latest
+    container_name: {{.ProjectName}}_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - {{.ProjectName}}_network
+{{- end }}
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+{{- if eq .APP_ENV "development" }}
+  assets:
+    image: node:18-alpine
+    container_name: {{.ProjectName}}_assets
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    command: npm run dev
+    ports:
+{{- if eq .AssetPipeline "vite" }}
+      - "5173:5173"
+{{- else if eq .AssetPipeline "webpack" }}
+      - "3000:3000"
+{{- end }}
+    networks:
+      - {{.ProjectName}}_network
+{{- end }}
+{{- end }}
+
+networks:
+  {{.ProjectName}}_network:
+    driver: bridge
+
+volumes:
+{{- if eq .DatabaseDriver "postgres" }}
+  postgres_data:
+{{- else if eq .DatabaseDriver "mysql" }}
+  mysql_data:
+{{- end }}
+{{- if eq .SessionStore "redis" }}
+  redis_data:
+{{- end }}
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+  node_modules:
+{{- end }}

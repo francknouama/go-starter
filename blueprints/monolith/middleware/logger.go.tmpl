@@ -1,0 +1,869 @@
+package middleware
+
+import (
+	"bytes"
+	"io"
+	"strconv"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/hlog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5/middleware"
+	{{- end}}
+)
+
+// LoggerConfig represents logger middleware configuration
+type LoggerConfig struct {
+	// Skip logging for specific paths
+	SkipPaths []string
+	
+	// Skip logging for health check endpoints
+	SkipHealthCheck bool
+	
+	// Log request body (be careful with sensitive data)
+	LogRequestBody bool
+	
+	// Log response body (be careful with large responses)
+	LogResponseBody bool
+	
+	// Maximum body size to log (in bytes)
+	MaxBodySize int64
+	
+	// Include request headers in logs
+	LogHeaders bool
+	
+	// Include query parameters in logs
+	LogQueryParams bool
+	
+	// Custom fields to add to every log entry
+	CustomFields map[string]interface{}
+}
+
+// DefaultLoggerConfig returns default logger configuration
+func DefaultLoggerConfig() *LoggerConfig {
+	return &LoggerConfig{
+		SkipPaths: []string{
+			"/health",
+			"/healthz",
+			"/ping",
+			"/metrics",
+			"/favicon.ico",
+		},
+		SkipHealthCheck:  true,
+		LogRequestBody:   false,
+		LogResponseBody:  false,
+		MaxBodySize:      1024 * 1024, // 1MB
+		LogHeaders:       false,
+		LogQueryParams:   true,
+		CustomFields:     make(map[string]interface{}),
+	}
+}
+
+// RequestLoggerMiddleware provides request logging middleware for different frameworks
+type RequestLoggerMiddleware struct {
+	config *LoggerConfig
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger
+	{{- else}}
+	logger *slog.Logger
+	{{- end}}
+}
+
+// NewRequestLoggerMiddleware creates a new request logger middleware
+func NewRequestLoggerMiddleware(
+	config *LoggerConfig,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *RequestLoggerMiddleware {
+	if config == nil {
+		config = DefaultLoggerConfig()
+	}
+
+	return &RequestLoggerMiddleware{
+		config: config,
+		logger: logger,
+	}
+}
+
+{{- if eq .Framework "gin"}}
+
+// Handler returns Gin logger middleware
+func (m *RequestLoggerMiddleware) Handler() gin.HandlerFunc {
+	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		// Skip logging for configured paths
+		if m.shouldSkipPath(param.Path) {
+			return ""
+		}
+
+		// Extract additional information
+		requestID := param.Keys["request_id"]
+		userID := param.Keys["user_id"]
+
+		{{- if eq .LoggerType "zap"}}
+		fields := []zapcore.Field{
+			zap.String("method", param.Method),
+			zap.String("path", param.Path),
+			zap.String("query", param.Request.URL.RawQuery),
+			zap.Int("status", param.StatusCode),
+			zap.Duration("latency", param.Latency),
+			zap.String("ip", param.ClientIP),
+			zap.String("user_agent", param.Request.UserAgent()),
+			zap.Int("body_size", param.BodySize),
+		}
+
+		if requestID != nil {
+			fields = append(fields, zap.Any("request_id", requestID))
+		}
+		if userID != nil {
+			fields = append(fields, zap.Any("user_id", userID))
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			fields = append(fields, zap.Any(key, value))
+		}
+
+		// Log level based on status code
+		if param.StatusCode >= 400 {
+			if param.StatusCode >= 500 {
+				m.logger.Error("HTTP Request", fields...)
+			} else {
+				m.logger.Warn("HTTP Request", fields...)
+			}
+		} else {
+			m.logger.Info("HTTP Request", fields...)
+		}
+		{{- else if eq .LoggerType "logrus"}}
+		fields := logrus.Fields{
+			"method":     param.Method,
+			"path":       param.Path,
+			"query":      param.Request.URL.RawQuery,
+			"status":     param.StatusCode,
+			"latency_ms": param.Latency.Milliseconds(),
+			"ip":         param.ClientIP,
+			"user_agent": param.Request.UserAgent(),
+			"body_size":  param.BodySize,
+		}
+
+		if requestID != nil {
+			fields["request_id"] = requestID
+		}
+		if userID != nil {
+			fields["user_id"] = userID
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			fields[key] = value
+		}
+
+		entry := m.logger.WithFields(fields)
+
+		// Log level based on status code
+		if param.StatusCode >= 400 {
+			if param.StatusCode >= 500 {
+				entry.Error("HTTP Request")
+			} else {
+				entry.Warn("HTTP Request")
+			}
+		} else {
+			entry.Info("HTTP Request")
+		}
+		{{- else if eq .LoggerType "zerolog"}}
+		event := m.logger.Info()
+		if param.StatusCode >= 400 {
+			if param.StatusCode >= 500 {
+				event = m.logger.Error()
+			} else {
+				event = m.logger.Warn()
+			}
+		}
+
+		event = event.
+			Str("method", param.Method).
+			Str("path", param.Path).
+			Str("query", param.Request.URL.RawQuery).
+			Int("status", param.StatusCode).
+			Dur("latency", param.Latency).
+			Str("ip", param.ClientIP).
+			Str("user_agent", param.Request.UserAgent()).
+			Int("body_size", param.BodySize)
+
+		if requestID != nil {
+			event = event.Interface("request_id", requestID)
+		}
+		if userID != nil {
+			event = event.Interface("user_id", userID)
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			event = event.Interface(key, value)
+		}
+
+		event.Msg("HTTP Request")
+		{{- else}}
+		attrs := []slog.Attr{
+			slog.String("method", param.Method),
+			slog.String("path", param.Path),
+			slog.String("query", param.Request.URL.RawQuery),
+			slog.Int("status", param.StatusCode),
+			slog.Duration("latency", param.Latency),
+			slog.String("ip", param.ClientIP),
+			slog.String("user_agent", param.Request.UserAgent()),
+			slog.Int("body_size", param.BodySize),
+		}
+
+		if requestID != nil {
+			attrs = append(attrs, slog.Any("request_id", requestID))
+		}
+		if userID != nil {
+			attrs = append(attrs, slog.Any("user_id", userID))
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			attrs = append(attrs, slog.Any(key, value))
+		}
+
+		// Log level based on status code
+		if param.StatusCode >= 400 {
+			if param.StatusCode >= 500 {
+				m.logger.LogAttrs(param.Request.Context(), slog.LevelError, "HTTP Request", attrs...)
+			} else {
+				m.logger.LogAttrs(param.Request.Context(), slog.LevelWarn, "HTTP Request", attrs...)
+			}
+		} else {
+			m.logger.LogAttrs(param.Request.Context(), slog.LevelInfo, "HTTP Request", attrs...)
+		}
+		{{- end}}
+
+		return ""
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+
+// Handler returns Echo logger middleware
+func (m *RequestLoggerMiddleware) Handler() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if m.shouldSkipPath(c.Request().URL.Path) {
+				return next(c)
+			}
+
+			start := time.Now()
+			
+			// Process request
+			err := next(c)
+
+			// Calculate latency
+			latency := time.Since(start)
+			
+			// Get response info
+			req := c.Request()
+			res := c.Response()
+			
+			// Extract additional information
+			requestID := c.Get("request_id")
+			userID := c.Get("user_id")
+
+			{{- if eq .LoggerType "zap"}}
+			fields := []zapcore.Field{
+				zap.String("method", req.Method),
+				zap.String("path", req.URL.Path),
+				zap.String("query", req.URL.RawQuery),
+				zap.Int("status", res.Status),
+				zap.Duration("latency", latency),
+				zap.String("ip", c.RealIP()),
+				zap.String("user_agent", req.UserAgent()),
+				zap.Int64("body_size", res.Size),
+			}
+
+			if requestID != nil {
+				fields = append(fields, zap.Any("request_id", requestID))
+			}
+			if userID != nil {
+				fields = append(fields, zap.Any("user_id", userID))
+			}
+
+			// Add custom fields
+			for key, value := range m.config.CustomFields {
+				fields = append(fields, zap.Any(key, value))
+			}
+
+			// Log level based on status code
+			if res.Status >= 400 {
+				if res.Status >= 500 {
+					m.logger.Error("HTTP Request", fields...)
+				} else {
+					m.logger.Warn("HTTP Request", fields...)
+				}
+			} else {
+				m.logger.Info("HTTP Request", fields...)
+			}
+			{{- else if eq .LoggerType "logrus"}}
+			fields := logrus.Fields{
+				"method":     req.Method,
+				"path":       req.URL.Path,
+				"query":      req.URL.RawQuery,
+				"status":     res.Status,
+				"latency_ms": latency.Milliseconds(),
+				"ip":         c.RealIP(),
+				"user_agent": req.UserAgent(),
+				"body_size":  res.Size,
+			}
+
+			if requestID != nil {
+				fields["request_id"] = requestID
+			}
+			if userID != nil {
+				fields["user_id"] = userID
+			}
+
+			// Add custom fields
+			for key, value := range m.config.CustomFields {
+				fields[key] = value
+			}
+
+			entry := m.logger.WithFields(fields)
+
+			// Log level based on status code
+			if res.Status >= 400 {
+				if res.Status >= 500 {
+					entry.Error("HTTP Request")
+				} else {
+					entry.Warn("HTTP Request")
+				}
+			} else {
+				entry.Info("HTTP Request")
+			}
+			{{- else if eq .LoggerType "zerolog"}}
+			event := m.logger.Info()
+			if res.Status >= 400 {
+				if res.Status >= 500 {
+					event = m.logger.Error()
+				} else {
+					event = m.logger.Warn()
+				}
+			}
+
+			event = event.
+				Str("method", req.Method).
+				Str("path", req.URL.Path).
+				Str("query", req.URL.RawQuery).
+				Int("status", res.Status).
+				Dur("latency", latency).
+				Str("ip", c.RealIP()).
+				Str("user_agent", req.UserAgent()).
+				Int64("body_size", res.Size)
+
+			if requestID != nil {
+				event = event.Interface("request_id", requestID)
+			}
+			if userID != nil {
+				event = event.Interface("user_id", userID)
+			}
+
+			// Add custom fields
+			for key, value := range m.config.CustomFields {
+				event = event.Interface(key, value)
+			}
+
+			event.Msg("HTTP Request")
+			{{- else}}
+			attrs := []slog.Attr{
+				slog.String("method", req.Method),
+				slog.String("path", req.URL.Path),
+				slog.String("query", req.URL.RawQuery),
+				slog.Int("status", res.Status),
+				slog.Duration("latency", latency),
+				slog.String("ip", c.RealIP()),
+				slog.String("user_agent", req.UserAgent()),
+				slog.Int64("body_size", res.Size),
+			}
+
+			if requestID != nil {
+				attrs = append(attrs, slog.Any("request_id", requestID))
+			}
+			if userID != nil {
+				attrs = append(attrs, slog.Any("user_id", userID))
+			}
+
+			// Add custom fields
+			for key, value := range m.config.CustomFields {
+				attrs = append(attrs, slog.Any(key, value))
+			}
+
+			// Log level based on status code
+			if res.Status >= 400 {
+				if res.Status >= 500 {
+					m.logger.LogAttrs(req.Context(), slog.LevelError, "HTTP Request", attrs...)
+				} else {
+					m.logger.LogAttrs(req.Context(), slog.LevelWarn, "HTTP Request", attrs...)
+				}
+			} else {
+				m.logger.LogAttrs(req.Context(), slog.LevelInfo, "HTTP Request", attrs...)
+			}
+			{{- end}}
+
+			return err
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+
+// Handler returns Fiber logger middleware
+func (m *RequestLoggerMiddleware) Handler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		if m.shouldSkipPath(c.Path()) {
+			return c.Next()
+		}
+
+		start := time.Now()
+		
+		// Process request
+		err := c.Next()
+
+		// Calculate latency
+		latency := time.Since(start)
+		
+		// Extract additional information
+		requestID := c.Locals("request_id")
+		userID := c.Locals("user_id")
+
+		{{- if eq .LoggerType "zap"}}
+		fields := []zapcore.Field{
+			zap.String("method", c.Method()),
+			zap.String("path", c.Path()),
+			zap.String("query", c.Request().URI().QueryArgs().String()),
+			zap.Int("status", c.Response().StatusCode()),
+			zap.Duration("latency", latency),
+			zap.String("ip", c.IP()),
+			zap.String("user_agent", c.Get("User-Agent")),
+			zap.Int("body_size", len(c.Response().Body())),
+		}
+
+		if requestID != nil {
+			fields = append(fields, zap.Any("request_id", requestID))
+		}
+		if userID != nil {
+			fields = append(fields, zap.Any("user_id", userID))
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			fields = append(fields, zap.Any(key, value))
+		}
+
+		// Log level based on status code
+		status := c.Response().StatusCode()
+		if status >= 400 {
+			if status >= 500 {
+				m.logger.Error("HTTP Request", fields...)
+			} else {
+				m.logger.Warn("HTTP Request", fields...)
+			}
+		} else {
+			m.logger.Info("HTTP Request", fields...)
+		}
+		{{- else if eq .LoggerType "logrus"}}
+		fields := logrus.Fields{
+			"method":     c.Method(),
+			"path":       c.Path(),
+			"query":      c.Request().URI().QueryArgs().String(),
+			"status":     c.Response().StatusCode(),
+			"latency_ms": latency.Milliseconds(),
+			"ip":         c.IP(),
+			"user_agent": c.Get("User-Agent"),
+			"body_size":  len(c.Response().Body()),
+		}
+
+		if requestID != nil {
+			fields["request_id"] = requestID
+		}
+		if userID != nil {
+			fields["user_id"] = userID
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			fields[key] = value
+		}
+
+		entry := m.logger.WithFields(fields)
+
+		// Log level based on status code
+		status := c.Response().StatusCode()
+		if status >= 400 {
+			if status >= 500 {
+				entry.Error("HTTP Request")
+			} else {
+				entry.Warn("HTTP Request")
+			}
+		} else {
+			entry.Info("HTTP Request")
+		}
+		{{- else if eq .LoggerType "zerolog"}}
+		status := c.Response().StatusCode()
+		event := m.logger.Info()
+		if status >= 400 {
+			if status >= 500 {
+				event = m.logger.Error()
+			} else {
+				event = m.logger.Warn()
+			}
+		}
+
+		event = event.
+			Str("method", c.Method()).
+			Str("path", c.Path()).
+			Str("query", c.Request().URI().QueryArgs().String()).
+			Int("status", status).
+			Dur("latency", latency).
+			Str("ip", c.IP()).
+			Str("user_agent", c.Get("User-Agent")).
+			Int("body_size", len(c.Response().Body()))
+
+		if requestID != nil {
+			event = event.Interface("request_id", requestID)
+		}
+		if userID != nil {
+			event = event.Interface("user_id", userID)
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			event = event.Interface(key, value)
+		}
+
+		event.Msg("HTTP Request")
+		{{- else}}
+		attrs := []slog.Attr{
+			slog.String("method", c.Method()),
+			slog.String("path", c.Path()),
+			slog.String("query", c.Request().URI().QueryArgs().String()),
+			slog.Int("status", c.Response().StatusCode()),
+			slog.Duration("latency", latency),
+			slog.String("ip", c.IP()),
+			slog.String("user_agent", c.Get("User-Agent")),
+			slog.Int("body_size", len(c.Response().Body())),
+		}
+
+		if requestID != nil {
+			attrs = append(attrs, slog.Any("request_id", requestID))
+		}
+		if userID != nil {
+			attrs = append(attrs, slog.Any("user_id", userID))
+		}
+
+		// Add custom fields
+		for key, value := range m.config.CustomFields {
+			attrs = append(attrs, slog.Any(key, value))
+		}
+
+		// Log level based on status code
+		status := c.Response().StatusCode()
+		if status >= 400 {
+			if status >= 500 {
+				m.logger.LogAttrs(c.Context(), slog.LevelError, "HTTP Request", attrs...)
+			} else {
+				m.logger.LogAttrs(c.Context(), slog.LevelWarn, "HTTP Request", attrs...)
+			}
+		} else {
+			m.logger.LogAttrs(c.Context(), slog.LevelInfo, "HTTP Request", attrs...)
+		}
+		{{- end}}
+
+		return err
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+
+// Handler returns Chi logger middleware
+func (m *RequestLoggerMiddleware) Handler() func(next http.Handler) http.Handler {
+	return middleware.RequestLogger(&ChiLogFormatter{
+		middleware: m,
+	})
+}
+
+// ChiLogFormatter implements chi's LogFormatter interface
+type ChiLogFormatter struct {
+	middleware *RequestLoggerMiddleware
+}
+
+// NewLogEntry creates a new log entry for a request
+func (f *ChiLogFormatter) NewLogEntry(r *http.Request) middleware.LogEntry {
+	return &ChiLogEntry{
+		middleware: f.middleware,
+		request:    r,
+		startTime:  time.Now(),
+	}
+}
+
+// ChiLogEntry implements chi's LogEntry interface
+type ChiLogEntry struct {
+	middleware *RequestLoggerMiddleware
+	request    *http.Request
+	startTime  time.Time
+}
+
+// Write logs the request after completion
+func (e *ChiLogEntry) Write(status, bytes int, header http.Header, elapsed time.Duration, extra interface{}) {
+	if e.middleware.shouldSkipPath(e.request.URL.Path) {
+		return
+	}
+
+	// Extract additional information
+	requestID := e.request.Context().Value("request_id")
+	userID := e.request.Context().Value("user_id")
+
+	{{- if eq .LoggerType "zap"}}
+	fields := []zapcore.Field{
+		zap.String("method", e.request.Method),
+		zap.String("path", e.request.URL.Path),
+		zap.String("query", e.request.URL.RawQuery),
+		zap.Int("status", status),
+		zap.Duration("latency", elapsed),
+		zap.String("ip", e.request.RemoteAddr),
+		zap.String("user_agent", e.request.UserAgent()),
+		zap.Int("body_size", bytes),
+	}
+
+	if requestID != nil {
+		fields = append(fields, zap.Any("request_id", requestID))
+	}
+	if userID != nil {
+		fields = append(fields, zap.Any("user_id", userID))
+	}
+
+	// Add custom fields
+	for key, value := range e.middleware.config.CustomFields {
+		fields = append(fields, zap.Any(key, value))
+	}
+
+	// Log level based on status code
+	if status >= 400 {
+		if status >= 500 {
+			e.middleware.logger.Error("HTTP Request", fields...)
+		} else {
+			e.middleware.logger.Warn("HTTP Request", fields...)
+		}
+	} else {
+		e.middleware.logger.Info("HTTP Request", fields...)
+	}
+	{{- else if eq .LoggerType "logrus"}}
+	fields := logrus.Fields{
+		"method":     e.request.Method,
+		"path":       e.request.URL.Path,
+		"query":      e.request.URL.RawQuery,
+		"status":     status,
+		"latency_ms": elapsed.Milliseconds(),
+		"ip":         e.request.RemoteAddr,
+		"user_agent": e.request.UserAgent(),
+		"body_size":  bytes,
+	}
+
+	if requestID != nil {
+		fields["request_id"] = requestID
+	}
+	if userID != nil {
+		fields["user_id"] = userID
+	}
+
+	// Add custom fields
+	for key, value := range e.middleware.config.CustomFields {
+		fields[key] = value
+	}
+
+	entry := e.middleware.logger.WithFields(fields)
+
+	// Log level based on status code
+	if status >= 400 {
+		if status >= 500 {
+			entry.Error("HTTP Request")
+		} else {
+			entry.Warn("HTTP Request")
+		}
+	} else {
+		entry.Info("HTTP Request")
+	}
+	{{- else if eq .LoggerType "zerolog"}}
+	event := e.middleware.logger.Info()
+	if status >= 400 {
+		if status >= 500 {
+			event = e.middleware.logger.Error()
+		} else {
+			event = e.middleware.logger.Warn()
+		}
+	}
+
+	event = event.
+		Str("method", e.request.Method).
+		Str("path", e.request.URL.Path).
+		Str("query", e.request.URL.RawQuery).
+		Int("status", status).
+		Dur("latency", elapsed).
+		Str("ip", e.request.RemoteAddr).
+		Str("user_agent", e.request.UserAgent()).
+		Int("body_size", bytes)
+
+	if requestID != nil {
+		event = event.Interface("request_id", requestID)
+	}
+	if userID != nil {
+		event = event.Interface("user_id", userID)
+	}
+
+	// Add custom fields
+	for key, value := range e.middleware.config.CustomFields {
+		event = event.Interface(key, value)
+	}
+
+	event.Msg("HTTP Request")
+	{{- else}}
+	attrs := []slog.Attr{
+		slog.String("method", e.request.Method),
+		slog.String("path", e.request.URL.Path),
+		slog.String("query", e.request.URL.RawQuery),
+		slog.Int("status", status),
+		slog.Duration("latency", elapsed),
+		slog.String("ip", e.request.RemoteAddr),
+		slog.String("user_agent", e.request.UserAgent()),
+		slog.Int("body_size", bytes),
+	}
+
+	if requestID != nil {
+		attrs = append(attrs, slog.Any("request_id", requestID))
+	}
+	if userID != nil {
+		attrs = append(attrs, slog.Any("user_id", userID))
+	}
+
+	// Add custom fields
+	for key, value := range e.middleware.config.CustomFields {
+		attrs = append(attrs, slog.Any(key, value))
+	}
+
+	// Log level based on status code
+	if status >= 400 {
+		if status >= 500 {
+			e.middleware.logger.LogAttrs(e.request.Context(), slog.LevelError, "HTTP Request", attrs...)
+		} else {
+			e.middleware.logger.LogAttrs(e.request.Context(), slog.LevelWarn, "HTTP Request", attrs...)
+		}
+	} else {
+		e.middleware.logger.LogAttrs(e.request.Context(), slog.LevelInfo, "HTTP Request", attrs...)
+	}
+	{{- end}}
+}
+
+// Panic logs panics
+func (e *ChiLogEntry) Panic(v interface{}, stack []byte) {
+	{{- if eq .LoggerType "zap"}}
+	e.middleware.logger.Error("HTTP Request Panic",
+		zap.String("method", e.request.Method),
+		zap.String("path", e.request.URL.Path),
+		zap.Any("panic", v),
+		zap.String("stack", string(stack)),
+	)
+	{{- else if eq .LoggerType "logrus"}}
+	e.middleware.logger.WithFields(logrus.Fields{
+		"method": e.request.Method,
+		"path":   e.request.URL.Path,
+		"panic":  v,
+		"stack":  string(stack),
+	}).Error("HTTP Request Panic")
+	{{- else if eq .LoggerType "zerolog"}}
+	e.middleware.logger.Error().
+		Str("method", e.request.Method).
+		Str("path", e.request.URL.Path).
+		Interface("panic", v).
+		Str("stack", string(stack)).
+		Msg("HTTP Request Panic")
+	{{- else}}
+	e.middleware.logger.LogAttrs(e.request.Context(), slog.LevelError, "HTTP Request Panic",
+		slog.String("method", e.request.Method),
+		slog.String("path", e.request.URL.Path),
+		slog.Any("panic", v),
+		slog.String("stack", string(stack)),
+	)
+	{{- end}}
+}
+
+{{- end}}
+
+// shouldSkipPath checks if logging should be skipped for the given path
+func (m *RequestLoggerMiddleware) shouldSkipPath(path string) bool {
+	for _, skipPath := range m.config.SkipPaths {
+		if path == skipPath {
+			return true
+		}
+	}
+	return false
+}
+
+// AddSkipPath adds a path to skip logging
+func (m *RequestLoggerMiddleware) AddSkipPath(path string) {
+	for _, existing := range m.config.SkipPaths {
+		if existing == path {
+			return // Already exists
+		}
+	}
+	m.config.SkipPaths = append(m.config.SkipPaths, path)
+}
+
+// RemoveSkipPath removes a path from skip logging
+func (m *RequestLoggerMiddleware) RemoveSkipPath(path string) {
+	for i, existing := range m.config.SkipPaths {
+		if existing == path {
+			m.config.SkipPaths = append(m.config.SkipPaths[:i], m.config.SkipPaths[i+1:]...)
+			break
+		}
+	}
+}
+
+// SetCustomField sets a custom field to be included in all log entries
+func (m *RequestLoggerMiddleware) SetCustomField(key string, value interface{}) {
+	m.config.CustomFields[key] = value
+}
+
+// RemoveCustomField removes a custom field
+func (m *RequestLoggerMiddleware) RemoveCustomField(key string) {
+	delete(m.config.CustomFields, key)
+}
+
+// GetConfig returns the current logger configuration
+func (m *RequestLoggerMiddleware) GetConfig() *LoggerConfig {
+	return m.config
+}

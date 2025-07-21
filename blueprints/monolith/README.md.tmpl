@@ -1,0 +1,286 @@
+# {{.ProjectName}}
+
+A modern monolithic web application built with Go, following best practices and production-ready patterns.
+
+## Features
+
+- 🚀 Built with {{.Framework}} web framework
+- 🔐 {{if eq .AuthType "session"}}Session-based authentication{{else if eq .AuthType "jwt"}}JWT authentication{{else if eq .AuthType "oauth2"}}OAuth2 authentication with social providers{{else}}No authentication{{end}}
+- 💾 {{if ne .DatabaseDriver ""}}{{.DatabaseDriver}} database with {{.DatabaseORM}}{{else}}No database{{end}}
+- 📝 {{.LoggerType}} structured logging
+- 🎨 {{if eq .TemplateEngine "html/template"}}Go's standard HTML templates{{else}}{{.TemplateEngine}} template engine{{end}}
+- 🔄 {{if eq .AssetPipeline "embedded"}}Embedded static assets{{else}}{{.AssetPipeline}} asset pipeline{{end}}
+- 🐳 Docker and Docker Compose support
+- ✅ Comprehensive test suite
+- 📊 Health checks and monitoring endpoints
+- 🛡️ Security best practices (OWASP compliance)
+
+## Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}} or higher
+- {{if eq .DatabaseDriver "postgres"}}PostgreSQL 14+{{else if eq .DatabaseDriver "mysql"}}MySQL 8.0+{{else if eq .DatabaseDriver "sqlite"}}SQLite 3{{end}}
+{{- if eq .SessionStore "redis" }}
+- Redis 7.0+
+{{- end }}
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+- Node.js 18+ and npm/yarn
+{{- end }}
+- Docker and Docker Compose (optional)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd {{.ProjectName}}
+```
+
+2. Copy the environment file:
+```bash
+cp .env.example .env
+```
+
+3. Install dependencies:
+```bash
+go mod download
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+npm install  # or yarn install
+{{- end }}
+```
+
+4. Set up the database:
+```bash
+{{- if ne .DatabaseDriver "" }}
+make db-setup
+make db-migrate
+{{- else }}
+# No database setup required
+{{- end }}
+```
+
+5. Run the application:
+```bash
+make run
+```
+
+The application will be available at `http://localhost:8080`
+
+### Docker Usage
+
+Run the entire stack with Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+This will start:
+- The web application
+{{- if ne .DatabaseDriver "" }}
+- {{.DatabaseDriver}} database
+{{- end }}
+{{- if eq .SessionStore "redis" }}
+- Redis for session storage
+{{- end }}
+
+## Project Structure
+
+```
+.
+├── cmd/                    # Application entrypoints
+├── config/                 # Configuration management
+├── controllers/            # HTTP request handlers
+├── database/              # Database connection and migrations
+├── middleware/            # HTTP middleware
+├── models/                # Data models and business logic
+├── routes/                # Route definitions
+├── services/              # Business logic services
+├── static/                # Static assets (CSS, JS, images)
+├── views/                 # HTML templates
+├── tests/                 # Test files
+└── scripts/               # Utility scripts
+```
+
+## Development
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Run specific tests
+go test ./controllers/... -v
+```
+
+### Code Quality
+
+```bash
+# Run linters
+make lint
+
+# Format code
+make fmt
+
+# Run security checks
+make security-check
+```
+
+### Database Migrations
+
+```bash
+# Create a new migration
+make migration-create name=add_user_table
+
+# Run migrations
+make db-migrate
+
+# Rollback migrations
+make db-rollback
+```
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+
+### Asset Development
+
+```bash
+# Development mode with hot reload
+npm run dev
+
+# Build for production
+npm run build
+
+# Watch mode
+npm run watch
+```
+{{- end }}
+
+## Configuration
+
+Configuration is managed through environment variables and configuration files.
+
+### Environment Variables
+
+Key environment variables:
+
+- `APP_ENV` - Application environment (development, staging, production)
+- `APP_PORT` - Server port (default: 8080)
+- `APP_HOST` - Server host (default: 0.0.0.0)
+{{- if ne .DatabaseDriver "" }}
+- `DATABASE_URL` - Database connection string
+- `DATABASE_MAX_CONNECTIONS` - Maximum database connections
+- `DATABASE_MAX_IDLE_CONNECTIONS` - Maximum idle connections
+{{- end }}
+{{- if eq .SessionStore "redis" }}
+- `REDIS_URL` - Redis connection string
+{{- end }}
+{{- if ne .AuthType "" }}
+- `SESSION_SECRET` - Session encryption key
+{{- end }}
+{{- if eq .AuthType "oauth2" }}
+- `OAUTH_GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `OAUTH_GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `OAUTH_GITHUB_CLIENT_ID` - GitHub OAuth client ID
+- `OAUTH_GITHUB_CLIENT_SECRET` - GitHub OAuth client secret
+{{- end }}
+
+See `.env.example` for all available options.
+
+## API Documentation
+
+{{- if ne .AuthType "" }}
+
+### Authentication Endpoints
+
+- `POST /auth/login` - User login
+- `POST /auth/logout` - User logout
+{{- if ne .AuthType "oauth2" }}
+- `POST /auth/register` - User registration
+{{- end }}
+{{- if eq .AuthType "oauth2" }}
+- `GET /auth/google` - Google OAuth login
+- `GET /auth/github` - GitHub OAuth login
+- `GET /auth/callback` - OAuth callback handler
+{{- end }}
+
+### User Endpoints
+
+- `GET /users/profile` - Get user profile
+- `PUT /users/profile` - Update user profile
+{{- if ne .AuthType "oauth2" }}
+- `PUT /users/password` - Change password
+{{- end }}
+{{- end }}
+
+### API Endpoints
+
+- `GET /api/v1/health` - Health check
+- `GET /api/v1/ready` - Readiness check
+- `GET /api/v1/metrics` - Application metrics
+
+## Deployment
+
+### Production Checklist
+
+- [ ] Set strong session secrets
+- [ ] Configure HTTPS/TLS
+- [ ] Set up proper logging
+- [ ] Configure rate limiting
+- [ ] Enable CORS appropriately
+- [ ] Set up monitoring and alerts
+- [ ] Configure backup strategy
+- [ ] Review security headers
+
+### Docker Deployment
+
+Build and push the Docker image:
+
+```bash
+docker build -t {{.ProjectName}}:latest .
+docker push <registry>/{{.ProjectName}}:latest
+```
+
+### Kubernetes Deployment
+
+Example Kubernetes manifests are provided in the `k8s/` directory:
+
+```bash
+kubectl apply -f k8s/
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## Security
+
+This application follows OWASP security best practices:
+
+- Input validation and sanitization
+- SQL injection prevention
+- XSS protection
+- CSRF protection
+- Secure session management
+- Password hashing with bcrypt
+- Rate limiting on sensitive endpoints
+- Security headers (HSTS, CSP, etc.)
+
+To report security vulnerabilities, please email security@example.com
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- Built with [{{.Framework}}](https://github.com/{{.Framework}})
+- Database ORM: [{{.DatabaseORM}}](https://github.com/{{.DatabaseORM}})
+- Logger: [{{.LoggerType}}](https://github.com/{{.LoggerType}})

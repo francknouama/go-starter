@@ -1,0 +1,438 @@
+-- Migration: 001_create_users
+-- Description: Create users table with comprehensive fields for authentication and user management
+-- Created: {{ "{{" }}.Now.Format "2006-01-02 15:04:05"{{ "}}" }}
+
+{{- if eq .DatabaseDriver "postgres" }}
+
+-- PostgreSQL specific migration
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    email_verified_at TIMESTAMP WITH TIME ZONE NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL DEFAULT '',
+    last_name VARCHAR(100) NOT NULL DEFAULT '',
+    avatar_url VARCHAR(500) NULL,
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    is_admin BOOLEAN NOT NULL DEFAULT false,
+    last_login_at TIMESTAMP WITH TIME ZONE NULL,
+    last_login_ip INET NULL,
+    login_count INTEGER NOT NULL DEFAULT 0,
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP WITH TIME ZONE NULL,
+    two_factor_enabled BOOLEAN NOT NULL DEFAULT false,
+    two_factor_secret VARCHAR(255) NULL,
+    backup_codes TEXT[] NULL,
+    remember_token VARCHAR(255) NULL,
+    password_reset_token VARCHAR(255) NULL,
+    password_reset_expires_at TIMESTAMP WITH TIME ZONE NULL,
+    email_verification_token VARCHAR(255) NULL,
+    email_verification_expires_at TIMESTAMP WITH TIME ZONE NULL,
+    preferences JSONB NULL DEFAULT '{}',
+    metadata JSONB NULL DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    deleted_at TIMESTAMP WITH TIME ZONE NULL
+);
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email_verified ON users(email_verified_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token) WHERE password_reset_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email_verification_token ON users(email_verification_token) WHERE email_verification_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_remember_token ON users(remember_token) WHERE remember_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- Create function to automatically update the updated_at column
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Create trigger to automatically update updated_at
+CREATE TRIGGER update_users_updated_at 
+    BEFORE UPDATE ON users 
+    FOR EACH ROW 
+    EXECUTE FUNCTION update_updated_at_column();
+
+-- Create partial index for soft deletes
+CREATE INDEX IF NOT EXISTS idx_users_active_records ON users(id) WHERE deleted_at IS NULL;
+
+-- Add constraints
+ALTER TABLE users ADD CONSTRAINT chk_users_email_format 
+    CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$');
+
+ALTER TABLE users ADD CONSTRAINT chk_users_password_hash_length 
+    CHECK (LENGTH(password_hash) >= 60);
+
+ALTER TABLE users ADD CONSTRAINT chk_users_first_name_length 
+    CHECK (LENGTH(TRIM(first_name)) >= 1);
+
+ALTER TABLE users ADD CONSTRAINT chk_users_last_name_length 
+    CHECK (LENGTH(TRIM(last_name)) >= 1);
+
+ALTER TABLE users ADD CONSTRAINT chk_users_failed_attempts_positive 
+    CHECK (failed_login_attempts >= 0);
+
+ALTER TABLE users ADD CONSTRAINT chk_users_login_count_positive 
+    CHECK (login_count >= 0);
+
+{{- else if eq .DatabaseDriver "mysql" }}
+
+-- MySQL specific migration
+CREATE TABLE IF NOT EXISTS users (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    email_verified_at TIMESTAMP NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    first_name VARCHAR(100) NOT NULL DEFAULT '',
+    last_name VARCHAR(100) NOT NULL DEFAULT '',
+    avatar_url VARCHAR(500) NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+    last_login_at TIMESTAMP NULL,
+    last_login_ip VARCHAR(45) NULL,
+    login_count INT UNSIGNED NOT NULL DEFAULT 0,
+    failed_login_attempts INT UNSIGNED NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP NULL,
+    two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    two_factor_secret VARCHAR(255) NULL,
+    backup_codes JSON NULL,
+    remember_token VARCHAR(255) NULL,
+    password_reset_token VARCHAR(255) NULL,
+    password_reset_expires_at TIMESTAMP NULL,
+    email_verification_token VARCHAR(255) NULL,
+    email_verification_expires_at TIMESTAMP NULL,
+    preferences JSON NULL,
+    metadata JSON NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    
+    -- Add constraints
+    CONSTRAINT chk_users_email_format 
+        CHECK (email REGEXP '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$'),
+    CONSTRAINT chk_users_password_hash_length 
+        CHECK (CHAR_LENGTH(password_hash) >= 60),
+    CONSTRAINT chk_users_first_name_length 
+        CHECK (CHAR_LENGTH(TRIM(first_name)) >= 1),
+    CONSTRAINT chk_users_last_name_length 
+        CHECK (CHAR_LENGTH(TRIM(last_name)) >= 1)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Create indexes for performance
+CREATE INDEX idx_users_email ON users(email, deleted_at);
+CREATE INDEX idx_users_email_verified ON users(email_verified_at, deleted_at);
+CREATE INDEX idx_users_active ON users(is_active, deleted_at);
+CREATE INDEX idx_users_last_login ON users(last_login_at, deleted_at);
+CREATE INDEX idx_users_password_reset_token ON users(password_reset_token);
+CREATE INDEX idx_users_email_verification_token ON users(email_verification_token);
+CREATE INDEX idx_users_remember_token ON users(remember_token);
+CREATE INDEX idx_users_created_at ON users(created_at, deleted_at);
+CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+
+{{- else if eq .DatabaseDriver "sqlite" }}
+
+-- SQLite specific migration
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL UNIQUE,
+    email_verified_at DATETIME NULL,
+    password_hash TEXT NOT NULL,
+    first_name TEXT NOT NULL DEFAULT '',
+    last_name TEXT NOT NULL DEFAULT '',
+    avatar_url TEXT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    is_admin BOOLEAN NOT NULL DEFAULT 0,
+    last_login_at DATETIME NULL,
+    last_login_ip TEXT NULL,
+    login_count INTEGER NOT NULL DEFAULT 0,
+    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+    locked_until DATETIME NULL,
+    two_factor_enabled BOOLEAN NOT NULL DEFAULT 0,
+    two_factor_secret TEXT NULL,
+    backup_codes TEXT NULL, -- JSON stored as TEXT
+    remember_token TEXT NULL,
+    password_reset_token TEXT NULL,
+    password_reset_expires_at DATETIME NULL,
+    email_verification_token TEXT NULL,
+    email_verification_expires_at DATETIME NULL,
+    preferences TEXT NULL, -- JSON stored as TEXT
+    metadata TEXT NULL, -- JSON stored as TEXT
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME NULL,
+    
+    -- Add constraints
+    CHECK (email LIKE '%@%.%'),
+    CHECK (LENGTH(password_hash) >= 60),
+    CHECK (LENGTH(TRIM(first_name)) >= 1),
+    CHECK (LENGTH(TRIM(last_name)) >= 1),
+    CHECK (failed_login_attempts >= 0),
+    CHECK (login_count >= 0)
+);
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email_verified ON users(email_verified_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_last_login ON users(last_login_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token) WHERE password_reset_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_email_verification_token ON users(email_verification_token) WHERE email_verification_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_remember_token ON users(remember_token) WHERE remember_token IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at) WHERE deleted_at IS NOT NULL;
+
+-- Create trigger to automatically update updated_at
+CREATE TRIGGER IF NOT EXISTS update_users_updated_at 
+    AFTER UPDATE ON users
+    FOR EACH ROW
+    WHEN NEW.updated_at <= OLD.updated_at
+BEGIN
+    UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+
+{{- end }}
+
+-- Create user sessions table for session-based authentication
+{{- if or (eq .AuthType "session") (eq .AuthType "oauth2") }}
+
+{{- if eq .DatabaseDriver "postgres" }}
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id VARCHAR(255) PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ip_address INET NULL,
+    user_agent TEXT NULL,
+    payload TEXT NOT NULL,
+    last_activity TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity ON user_sessions(last_activity);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
+
+{{- else if eq .DatabaseDriver "mysql" }}
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id VARCHAR(255) PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL,
+    ip_address VARCHAR(45) NULL,
+    user_agent TEXT NULL,
+    payload TEXT NOT NULL,
+    last_activity TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NULL,
+    
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX idx_user_sessions_last_activity ON user_sessions(last_activity);
+CREATE INDEX idx_user_sessions_expires_at ON user_sessions(expires_at);
+
+{{- else if eq .DatabaseDriver "sqlite" }}
+
+CREATE TABLE IF NOT EXISTS user_sessions (
+    id TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ip_address TEXT NULL,
+    user_agent TEXT NULL,
+    payload TEXT NOT NULL,
+    last_activity DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_last_activity ON user_sessions(last_activity);
+CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at);
+
+{{- end }}
+{{- end }}
+
+-- Create login history table for audit purposes
+{{- if eq .DatabaseDriver "postgres" }}
+
+CREATE TABLE IF NOT EXISTS login_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NULL REFERENCES users(id) ON DELETE SET NULL,
+    email VARCHAR(255) NOT NULL,
+    ip_address INET NULL,
+    user_agent TEXT NULL,
+    success BOOLEAN NOT NULL,
+    failure_reason VARCHAR(255) NULL,
+    country_code VARCHAR(2) NULL,
+    city VARCHAR(100) NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_history_user_id ON login_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_login_history_email ON login_history(email);
+CREATE INDEX IF NOT EXISTS idx_login_history_success ON login_history(success);
+CREATE INDEX IF NOT EXISTS idx_login_history_created_at ON login_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_login_history_ip_address ON login_history(ip_address);
+
+{{- else if eq .DatabaseDriver "mysql" }}
+
+CREATE TABLE IF NOT EXISTS login_history (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    email VARCHAR(255) NOT NULL,
+    ip_address VARCHAR(45) NULL,
+    user_agent TEXT NULL,
+    success BOOLEAN NOT NULL,
+    failure_reason VARCHAR(255) NULL,
+    country_code VARCHAR(2) NULL,
+    city VARCHAR(100) NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE INDEX idx_login_history_user_id ON login_history(user_id);
+CREATE INDEX idx_login_history_email ON login_history(email);
+CREATE INDEX idx_login_history_success ON login_history(success);
+CREATE INDEX idx_login_history_created_at ON login_history(created_at);
+CREATE INDEX idx_login_history_ip_address ON login_history(ip_address);
+
+{{- else if eq .DatabaseDriver "sqlite" }}
+
+CREATE TABLE IF NOT EXISTS login_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NULL REFERENCES users(id) ON DELETE SET NULL,
+    email TEXT NOT NULL,
+    ip_address TEXT NULL,
+    user_agent TEXT NULL,
+    success BOOLEAN NOT NULL,
+    failure_reason TEXT NULL,
+    country_code TEXT NULL,
+    city TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_history_user_id ON login_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_login_history_email ON login_history(email);
+CREATE INDEX IF NOT EXISTS idx_login_history_success ON login_history(success);
+CREATE INDEX IF NOT EXISTS idx_login_history_created_at ON login_history(created_at);
+CREATE INDEX IF NOT EXISTS idx_login_history_ip_address ON login_history(ip_address);
+
+{{- end }}
+
+-- Insert default admin user (password: admin123 - change in production!)
+{{- if eq .DatabaseDriver "postgres" }}
+
+INSERT INTO users (
+    email, 
+    password_hash, 
+    first_name, 
+    last_name, 
+    is_admin, 
+    email_verified_at
+) VALUES (
+    'admin@{{.ProjectName}}.com',
+    '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe', -- admin123
+    'Admin',
+    'User',
+    true,
+    NOW()
+) ON CONFLICT (email) DO NOTHING;
+
+{{- else if eq .DatabaseDriver "mysql" }}
+
+INSERT IGNORE INTO users (
+    email, 
+    password_hash, 
+    first_name, 
+    last_name, 
+    is_admin, 
+    email_verified_at
+) VALUES (
+    'admin@{{.ProjectName}}.com',
+    '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe', -- admin123
+    'Admin',
+    'User',
+    1,
+    NOW()
+);
+
+{{- else if eq .DatabaseDriver "sqlite" }}
+
+INSERT OR IGNORE INTO users (
+    email, 
+    password_hash, 
+    first_name, 
+    last_name, 
+    is_admin, 
+    email_verified_at
+) VALUES (
+    'admin@{{.ProjectName}}.com',
+    '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe', -- admin123
+    'Admin',
+    'User',
+    1,
+    CURRENT_TIMESTAMP
+);
+
+{{- end }}
+
+-- Add comments for documentation
+{{- if eq .DatabaseDriver "postgres" }}
+
+COMMENT ON TABLE users IS 'User accounts and authentication data';
+COMMENT ON COLUMN users.id IS 'Primary key - auto-incrementing user ID';
+COMMENT ON COLUMN users.email IS 'User email address - must be unique and valid format';
+COMMENT ON COLUMN users.email_verified_at IS 'Timestamp when email was verified, NULL if not verified';
+COMMENT ON COLUMN users.password_hash IS 'Bcrypt hashed password - minimum 60 characters';
+COMMENT ON COLUMN users.first_name IS 'User first name - required, minimum 1 character';
+COMMENT ON COLUMN users.last_name IS 'User last name - required, minimum 1 character';
+COMMENT ON COLUMN users.avatar_url IS 'URL to user avatar image';
+COMMENT ON COLUMN users.is_active IS 'Whether user account is active and can login';
+COMMENT ON COLUMN users.is_admin IS 'Whether user has admin privileges';
+COMMENT ON COLUMN users.last_login_at IS 'Timestamp of last successful login';
+COMMENT ON COLUMN users.last_login_ip IS 'IP address of last successful login';
+COMMENT ON COLUMN users.login_count IS 'Total number of successful logins';
+COMMENT ON COLUMN users.failed_login_attempts IS 'Current count of consecutive failed login attempts';
+COMMENT ON COLUMN users.locked_until IS 'Account locked until this timestamp due to failed attempts';
+COMMENT ON COLUMN users.two_factor_enabled IS 'Whether 2FA is enabled for this user';
+COMMENT ON COLUMN users.two_factor_secret IS 'TOTP secret for 2FA (encrypted)';
+COMMENT ON COLUMN users.backup_codes IS 'Array of backup codes for 2FA recovery';
+COMMENT ON COLUMN users.remember_token IS 'Token for remember me functionality';
+COMMENT ON COLUMN users.password_reset_token IS 'Token for password reset (expires)';
+COMMENT ON COLUMN users.password_reset_expires_at IS 'When password reset token expires';
+COMMENT ON COLUMN users.email_verification_token IS 'Token for email verification (expires)';
+COMMENT ON COLUMN users.email_verification_expires_at IS 'When email verification token expires';
+COMMENT ON COLUMN users.preferences IS 'User preferences as JSON object';
+COMMENT ON COLUMN users.metadata IS 'Additional user metadata as JSON object';
+COMMENT ON COLUMN users.created_at IS 'When user account was created';
+COMMENT ON COLUMN users.updated_at IS 'When user account was last updated (auto-updated)';
+COMMENT ON COLUMN users.deleted_at IS 'Soft delete timestamp - NULL if not deleted';
+
+{{- if or (eq .AuthType "session") (eq .AuthType "oauth2") }}
+COMMENT ON TABLE user_sessions IS 'Active user sessions for session-based authentication';
+COMMENT ON COLUMN user_sessions.id IS 'Session ID - random string identifier';
+COMMENT ON COLUMN user_sessions.user_id IS 'Foreign key to users table';
+COMMENT ON COLUMN user_sessions.ip_address IS 'IP address where session originated';
+COMMENT ON COLUMN user_sessions.user_agent IS 'Browser user agent string';
+COMMENT ON COLUMN user_sessions.payload IS 'Serialized session data';
+COMMENT ON COLUMN user_sessions.last_activity IS 'Last time session was accessed';
+COMMENT ON COLUMN user_sessions.expires_at IS 'When session expires and becomes invalid';
+{{- end }}
+
+COMMENT ON TABLE login_history IS 'Audit log of all login attempts (successful and failed)';
+COMMENT ON COLUMN login_history.user_id IS 'Foreign key to users table (NULL if user deleted)';
+COMMENT ON COLUMN login_history.email IS 'Email address used in login attempt';
+COMMENT ON COLUMN login_history.success IS 'Whether login attempt was successful';
+COMMENT ON COLUMN login_history.failure_reason IS 'Reason for login failure (if applicable)';
+COMMENT ON COLUMN login_history.country_code IS 'Country code derived from IP address';
+COMMENT ON COLUMN login_history.city IS 'City derived from IP address';
+
+{{- end }}

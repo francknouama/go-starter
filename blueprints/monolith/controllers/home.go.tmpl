@@ -1,0 +1,884 @@
+package controllers
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"net/http"
+	{{- end}}
+
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	{{- end}}
+)
+
+// HomeController handles home page and public pages
+type HomeController struct {
+	*BaseController
+}
+
+// NewHomeController creates a new home controller
+func NewHomeController(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) *HomeController {
+	return &HomeController{
+		BaseController: NewBaseController(cfg{{if ne .DatabaseDriver ""}}, db{{end}}),
+	}
+}
+
+// HomePageData represents data for the home page
+type HomePageData struct {
+	Welcome     string
+	Features    []Feature
+	Stats       Stats
+	Testimonials []Testimonial
+	CallToAction CallToAction
+}
+
+// Feature represents a feature highlight
+type Feature struct {
+	Icon        string
+	Title       string
+	Description string
+	Link        string
+}
+
+// Stats represents application statistics
+type Stats struct {
+	Users       int
+	Projects    int
+	Downloads   int
+	Uptime      string
+}
+
+// Testimonial represents user testimonials
+type Testimonial struct {
+	Name     string
+	Company  string
+	Message  string
+	Avatar   string
+	Rating   int
+}
+
+// CallToAction represents call-to-action data
+type CallToAction struct {
+	Title       string
+	Description string
+	ButtonText  string
+	ButtonLink  string
+}
+
+// ContactForm represents contact form data
+type ContactForm struct {
+	Name    string `form:"name" validate:"required,min=2,max=100"`
+	Email   string `form:"email" validate:"required,email"`
+	Subject string `form:"subject" validate:"required,min=5,max=200"`
+	Message string `form:"message" validate:"required,min=10,max=2000"`
+}
+
+{{- if eq .Framework "gin"}}
+
+// Index renders the home page
+func (hc *HomeController) Index(c *gin.Context) {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Home page accessed", "ip", c.ClientIP(), "user_agent", c.GetHeader("User-Agent"))
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Home page accessed", 
+		zap.String("ip", c.ClientIP()), 
+		zap.String("user_agent", c.GetHeader("User-Agent")))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"ip": c.ClientIP(),
+		"user_agent": c.GetHeader("User-Agent"),
+	}).Info("Home page accessed")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("ip", c.ClientIP()).
+		Str("user_agent", c.GetHeader("User-Agent")).
+		Msg("Home page accessed")
+	{{- end}}
+
+	data := hc.buildHomePageData(c)
+	hc.SetPageTitle(c, "Welcome")
+	hc.Render(c, "home/index.html", data)
+}
+
+// About renders the about page
+func (hc *HomeController) About(c *gin.Context) {
+	aboutData := map[string]interface{}{
+		"Mission":     "To provide excellent software solutions",
+		"Vision":      "Building the future of technology",
+		"Values":      []string{"Innovation", "Quality", "Integrity", "Collaboration"},
+		"TeamSize":    50,
+		"YearFounded": 2020,
+		"Locations":   []string{"San Francisco", "New York", "London"},
+	}
+
+	hc.SetPageTitle(c, "About Us")
+	hc.Render(c, "home/about.html", aboutData)
+}
+
+// Contact renders the contact page
+func (hc *HomeController) Contact(c *gin.Context) {
+	contactData := map[string]interface{}{
+		"Phone":   "+1 (555) 123-4567",
+		"Email":   "contact@{{.ProjectName}}.com",
+		"Address": "123 Business St, Suite 100, San Francisco, CA 94105",
+		"Hours":   "Monday - Friday: 9:00 AM - 6:00 PM PST",
+		"SocialMedia": map[string]string{
+			"twitter":   "https://twitter.com/{{.ProjectName}}",
+			"linkedin":  "https://linkedin.com/company/{{.ProjectName}}",
+			"github":    "https://github.com/{{.ProjectName}}",
+		},
+	}
+
+	hc.SetPageTitle(c, "Contact Us")
+	hc.Render(c, "home/contact.html", contactData)
+}
+
+// ContactSubmit handles contact form submission
+func (hc *HomeController) ContactSubmit(c *gin.Context) {
+	var form ContactForm
+	
+	// Bind form data
+	if err := c.ShouldBind(&form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Contact form binding error", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Contact form binding error", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Error("Contact form binding error: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Msg("Contact form binding error")
+		{{- end}}
+		
+		hc.RedirectWithFlash(c, "/contact", "Please fill out all required fields correctly.")
+		return
+	}
+
+	// Validate form
+	if err := hc.validateContactForm(form); err != nil {
+		hc.RedirectWithFlash(c, "/contact", err.Error())
+		return
+	}
+
+	// Process contact form (send email, save to database, etc.)
+	if err := hc.processContactForm(form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Failed to process contact form", "error", err, "email", form.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Failed to process contact form", zap.Error(err), zap.String("email", form.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", form.Email).Error("Failed to process contact form: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("email", form.Email).Msg("Failed to process contact form")
+		{{- end}}
+		
+		hc.RedirectWithFlash(c, "/contact", "Sorry, there was an error sending your message. Please try again.")
+		return
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Contact form submitted successfully", "email", form.Email, "subject", form.Subject)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Contact form submitted successfully", zap.String("email", form.Email), zap.String("subject", form.Subject))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"email": form.Email,
+		"subject": form.Subject,
+	}).Info("Contact form submitted successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("email", form.Email).
+		Str("subject", form.Subject).
+		Msg("Contact form submitted successfully")
+	{{- end}}
+
+	hc.RedirectWithFlash(c, "/contact", "Thank you for your message! We'll get back to you soon.")
+}
+
+// Dashboard renders the user dashboard (protected route)
+func (hc *HomeController) Dashboard(c *gin.Context) {
+	user, authenticated := hc.GetCurrentUser(c)
+	if !authenticated {
+		hc.Redirect(c, "/auth/login")
+		return
+	}
+
+	dashboardData := hc.buildDashboardData(c, user)
+	hc.SetPageTitle(c, "Dashboard")
+	hc.Render(c, "home/dashboard.html", dashboardData)
+}
+
+{{- else if eq .Framework "echo"}}
+
+// Index renders the home page
+func (hc *HomeController) Index(c echo.Context) error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Home page accessed", "ip", c.RealIP(), "user_agent", c.Request().UserAgent())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Home page accessed", 
+		zap.String("ip", c.RealIP()), 
+		zap.String("user_agent", c.Request().UserAgent()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"ip": c.RealIP(),
+		"user_agent": c.Request().UserAgent(),
+	}).Info("Home page accessed")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("ip", c.RealIP()).
+		Str("user_agent", c.Request().UserAgent()).
+		Msg("Home page accessed")
+	{{- end}}
+
+	data := hc.buildHomePageDataEcho(c)
+	hc.SetPageTitle(c, "Welcome")
+	return hc.Render(c, "home/index.html", data)
+}
+
+// About renders the about page
+func (hc *HomeController) About(c echo.Context) error {
+	aboutData := map[string]interface{}{
+		"Mission":     "To provide excellent software solutions",
+		"Vision":      "Building the future of technology",
+		"Values":      []string{"Innovation", "Quality", "Integrity", "Collaboration"},
+		"TeamSize":    50,
+		"YearFounded": 2020,
+		"Locations":   []string{"San Francisco", "New York", "London"},
+	}
+
+	hc.SetPageTitle(c, "About Us")
+	return hc.Render(c, "home/about.html", aboutData)
+}
+
+// Contact renders the contact page
+func (hc *HomeController) Contact(c echo.Context) error {
+	contactData := map[string]interface{}{
+		"Phone":   "+1 (555) 123-4567",
+		"Email":   "contact@{{.ProjectName}}.com",
+		"Address": "123 Business St, Suite 100, San Francisco, CA 94105",
+		"Hours":   "Monday - Friday: 9:00 AM - 6:00 PM PST",
+		"SocialMedia": map[string]string{
+			"twitter":   "https://twitter.com/{{.ProjectName}}",
+			"linkedin":  "https://linkedin.com/company/{{.ProjectName}}",
+			"github":    "https://github.com/{{.ProjectName}}",
+		},
+	}
+
+	hc.SetPageTitle(c, "Contact Us")
+	return hc.Render(c, "home/contact.html", contactData)
+}
+
+// ContactSubmit handles contact form submission
+func (hc *HomeController) ContactSubmit(c echo.Context) error {
+	var form ContactForm
+	
+	// Bind form data
+	if err := c.Bind(&form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Contact form binding error", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Contact form binding error", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Error("Contact form binding error: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Msg("Contact form binding error")
+		{{- end}}
+		
+		return hc.RedirectWithFlash(c, "/contact", "Please fill out all required fields correctly.")
+	}
+
+	// Validate form
+	if err := hc.validateContactForm(form); err != nil {
+		return hc.RedirectWithFlash(c, "/contact", err.Error())
+	}
+
+	// Process contact form
+	if err := hc.processContactForm(form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Failed to process contact form", "error", err, "email", form.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Failed to process contact form", zap.Error(err), zap.String("email", form.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", form.Email).Error("Failed to process contact form: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("email", form.Email).Msg("Failed to process contact form")
+		{{- end}}
+		
+		return hc.RedirectWithFlash(c, "/contact", "Sorry, there was an error sending your message. Please try again.")
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Contact form submitted successfully", "email", form.Email, "subject", form.Subject)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Contact form submitted successfully", zap.String("email", form.Email), zap.String("subject", form.Subject))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"email": form.Email,
+		"subject": form.Subject,
+	}).Info("Contact form submitted successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("email", form.Email).
+		Str("subject", form.Subject).
+		Msg("Contact form submitted successfully")
+	{{- end}}
+
+	return hc.RedirectWithFlash(c, "/contact", "Thank you for your message! We'll get back to you soon.")
+}
+
+// Dashboard renders the user dashboard
+func (hc *HomeController) Dashboard(c echo.Context) error {
+	user, authenticated := hc.GetCurrentUser(c)
+	if !authenticated {
+		return hc.Redirect(c, "/auth/login")
+	}
+
+	dashboardData := hc.buildDashboardDataEcho(c, user)
+	hc.SetPageTitle(c, "Dashboard")
+	return hc.Render(c, "home/dashboard.html", dashboardData)
+}
+
+{{- else if eq .Framework "fiber"}}
+
+// Index renders the home page
+func (hc *HomeController) Index(c *fiber.Ctx) error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Home page accessed", "ip", c.IP(), "user_agent", c.Get("User-Agent"))
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Home page accessed", 
+		zap.String("ip", c.IP()), 
+		zap.String("user_agent", c.Get("User-Agent")))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"ip": c.IP(),
+		"user_agent": c.Get("User-Agent"),
+	}).Info("Home page accessed")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("ip", c.IP()).
+		Str("user_agent", c.Get("User-Agent")).
+		Msg("Home page accessed")
+	{{- end}}
+
+	data := hc.buildHomePageDataFiber(c)
+	hc.SetPageTitle(c, "Welcome")
+	return hc.Render(c, "home/index.html", data)
+}
+
+// About renders the about page
+func (hc *HomeController) About(c *fiber.Ctx) error {
+	aboutData := map[string]interface{}{
+		"Mission":     "To provide excellent software solutions",
+		"Vision":      "Building the future of technology",
+		"Values":      []string{"Innovation", "Quality", "Integrity", "Collaboration"},
+		"TeamSize":    50,
+		"YearFounded": 2020,
+		"Locations":   []string{"San Francisco", "New York", "London"},
+	}
+
+	hc.SetPageTitle(c, "About Us")
+	return hc.Render(c, "home/about.html", aboutData)
+}
+
+// Contact renders the contact page
+func (hc *HomeController) Contact(c *fiber.Ctx) error {
+	contactData := map[string]interface{}{
+		"Phone":   "+1 (555) 123-4567",
+		"Email":   "contact@{{.ProjectName}}.com",
+		"Address": "123 Business St, Suite 100, San Francisco, CA 94105",
+		"Hours":   "Monday - Friday: 9:00 AM - 6:00 PM PST",
+		"SocialMedia": map[string]string{
+			"twitter":   "https://twitter.com/{{.ProjectName}}",
+			"linkedin":  "https://linkedin.com/company/{{.ProjectName}}",
+			"github":    "https://github.com/{{.ProjectName}}",
+		},
+	}
+
+	hc.SetPageTitle(c, "Contact Us")
+	return hc.Render(c, "home/contact.html", contactData)
+}
+
+// ContactSubmit handles contact form submission
+func (hc *HomeController) ContactSubmit(c *fiber.Ctx) error {
+	var form ContactForm
+	
+	// Parse form data
+	if err := c.BodyParser(&form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Contact form parsing error", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Contact form parsing error", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Error("Contact form parsing error: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Msg("Contact form parsing error")
+		{{- end}}
+		
+		return hc.RedirectWithFlash(c, "/contact", "Please fill out all required fields correctly.")
+	}
+
+	// Validate form
+	if err := hc.validateContactForm(form); err != nil {
+		return hc.RedirectWithFlash(c, "/contact", err.Error())
+	}
+
+	// Process contact form
+	if err := hc.processContactForm(form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Failed to process contact form", "error", err, "email", form.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Failed to process contact form", zap.Error(err), zap.String("email", form.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", form.Email).Error("Failed to process contact form: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("email", form.Email).Msg("Failed to process contact form")
+		{{- end}}
+		
+		return hc.RedirectWithFlash(c, "/contact", "Sorry, there was an error sending your message. Please try again.")
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Contact form submitted successfully", "email", form.Email, "subject", form.Subject)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Contact form submitted successfully", zap.String("email", form.Email), zap.String("subject", form.Subject))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"email": form.Email,
+		"subject": form.Subject,
+	}).Info("Contact form submitted successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("email", form.Email).
+		Str("subject", form.Subject).
+		Msg("Contact form submitted successfully")
+	{{- end}}
+
+	return hc.RedirectWithFlash(c, "/contact", "Thank you for your message! We'll get back to you soon.")
+}
+
+// Dashboard renders the user dashboard
+func (hc *HomeController) Dashboard(c *fiber.Ctx) error {
+	user, authenticated := hc.GetCurrentUser(c)
+	if !authenticated {
+		return hc.Redirect(c, "/auth/login")
+	}
+
+	dashboardData := hc.buildDashboardDataFiber(c, user)
+	hc.SetPageTitle(c, "Dashboard")
+	return hc.Render(c, "home/dashboard.html", dashboardData)
+}
+
+{{- else if eq .Framework "chi"}}
+
+// Index renders the home page
+func (hc *HomeController) Index(w http.ResponseWriter, r *http.Request) {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Home page accessed", "ip", r.RemoteAddr, "user_agent", r.UserAgent())
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Home page accessed", 
+		zap.String("ip", r.RemoteAddr), 
+		zap.String("user_agent", r.UserAgent()))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"ip": r.RemoteAddr,
+		"user_agent": r.UserAgent(),
+	}).Info("Home page accessed")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("ip", r.RemoteAddr).
+		Str("user_agent", r.UserAgent()).
+		Msg("Home page accessed")
+	{{- end}}
+
+	data := hc.buildHomePageDataChi(r)
+	r = hc.SetPageTitle(r, "Welcome")
+	hc.Render(w, r, "home/index.html", data)
+}
+
+// About renders the about page
+func (hc *HomeController) About(w http.ResponseWriter, r *http.Request) {
+	aboutData := map[string]interface{}{
+		"Mission":     "To provide excellent software solutions",
+		"Vision":      "Building the future of technology",
+		"Values":      []string{"Innovation", "Quality", "Integrity", "Collaboration"},
+		"TeamSize":    50,
+		"YearFounded": 2020,
+		"Locations":   []string{"San Francisco", "New York", "London"},
+	}
+
+	r = hc.SetPageTitle(r, "About Us")
+	hc.Render(w, r, "home/about.html", aboutData)
+}
+
+// Contact renders the contact page
+func (hc *HomeController) Contact(w http.ResponseWriter, r *http.Request) {
+	contactData := map[string]interface{}{
+		"Phone":   "+1 (555) 123-4567",
+		"Email":   "contact@{{.ProjectName}}.com",
+		"Address": "123 Business St, Suite 100, San Francisco, CA 94105",
+		"Hours":   "Monday - Friday: 9:00 AM - 6:00 PM PST",
+		"SocialMedia": map[string]string{
+			"twitter":   "https://twitter.com/{{.ProjectName}}",
+			"linkedin":  "https://linkedin.com/company/{{.ProjectName}}",
+			"github":    "https://github.com/{{.ProjectName}}",
+		},
+	}
+
+	r = hc.SetPageTitle(r, "Contact Us")
+	hc.Render(w, r, "home/contact.html", contactData)
+}
+
+// ContactSubmit handles contact form submission
+func (hc *HomeController) ContactSubmit(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Contact form parsing error", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Contact form parsing error", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Error("Contact form parsing error: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Msg("Contact form parsing error")
+		{{- end}}
+		
+		hc.RedirectWithFlash(w, r, "/contact", "Please fill out all required fields correctly.")
+		return
+	}
+
+	form := ContactForm{
+		Name:    r.FormValue("name"),
+		Email:   r.FormValue("email"),
+		Subject: r.FormValue("subject"),
+		Message: r.FormValue("message"),
+	}
+
+	// Validate form
+	if err := hc.validateContactForm(form); err != nil {
+		hc.RedirectWithFlash(w, r, "/contact", err.Error())
+		return
+	}
+
+	// Process contact form
+	if err := hc.processContactForm(form); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Failed to process contact form", "error", err, "email", form.Email)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Failed to process contact form", zap.Error(err), zap.String("email", form.Email))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithField("email", form.Email).Error("Failed to process contact form: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Str("email", form.Email).Msg("Failed to process contact form")
+		{{- end}}
+		
+		hc.RedirectWithFlash(w, r, "/contact", "Sorry, there was an error sending your message. Please try again.")
+		return
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Contact form submitted successfully", "email", form.Email, "subject", form.Subject)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Contact form submitted successfully", zap.String("email", form.Email), zap.String("subject", form.Subject))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"email": form.Email,
+		"subject": form.Subject,
+	}).Info("Contact form submitted successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("email", form.Email).
+		Str("subject", form.Subject).
+		Msg("Contact form submitted successfully")
+	{{- end}}
+
+	hc.RedirectWithFlash(w, r, "/contact", "Thank you for your message! We'll get back to you soon.")
+}
+
+// Dashboard renders the user dashboard
+func (hc *HomeController) Dashboard(w http.ResponseWriter, r *http.Request) {
+	user, authenticated := hc.GetCurrentUser(r)
+	if !authenticated {
+		hc.Redirect(w, r, "/auth/login")
+		return
+	}
+
+	dashboardData := hc.buildDashboardDataChi(r, user)
+	r = hc.SetPageTitle(r, "Dashboard")
+	hc.Render(w, r, "home/dashboard.html", dashboardData)
+}
+
+{{- end}}
+
+// Helper methods (framework-agnostic business logic)
+
+// buildHomePageData builds data for the home page
+{{- if eq .Framework "gin"}}
+func (hc *HomeController) buildHomePageData(c *gin.Context) HomePageData {
+{{- else if eq .Framework "echo"}}
+func (hc *HomeController) buildHomePageDataEcho(c echo.Context) HomePageData {
+{{- else if eq .Framework "fiber"}}
+func (hc *HomeController) buildHomePageDataFiber(c *fiber.Ctx) HomePageData {
+{{- else if eq .Framework "chi"}}
+func (hc *HomeController) buildHomePageDataChi(r *http.Request) HomePageData {
+{{- end}}
+	return HomePageData{
+		Welcome: fmt.Sprintf("Welcome to %s", hc.Config.App.Name),
+		Features: []Feature{
+			{
+				Icon:        "🚀",
+				Title:       "Fast & Efficient",
+				Description: "Built with performance in mind using modern Go patterns",
+				Link:        "/features/performance",
+			},
+			{
+				Icon:        "🔒",
+				Title:       "Secure by Default",
+				Description: "OWASP security best practices implemented out of the box",
+				Link:        "/features/security",
+			},
+			{
+				Icon:        "📱",
+				Title:       "Responsive Design",
+				Description: "Beautiful interfaces that work on all devices",
+				Link:        "/features/design",
+			},
+			{
+				Icon:        "⚡",
+				Title:       "Real-time Updates",
+				Description: "WebSocket support for instant notifications",
+				Link:        "/features/realtime",
+			},
+		},
+		Stats: hc.getApplicationStats(),
+		Testimonials: []Testimonial{
+			{
+				Name:    "Sarah Johnson",
+				Company: "TechCorp Inc.",
+				Message: "This platform has transformed how we work. Highly recommended!",
+				Avatar:  "/static/images/avatars/sarah.jpg",
+				Rating:  5,
+			},
+			{
+				Name:    "Michael Chen",
+				Company: "StartupXYZ",
+				Message: "Amazing developer experience and great documentation.",
+				Avatar:  "/static/images/avatars/michael.jpg",
+				Rating:  5,
+			},
+		},
+		CallToAction: CallToAction{
+			Title:       "Ready to Get Started?",
+			Description: "Join thousands of developers who trust our platform",
+			ButtonText:  "Sign Up Free",
+			ButtonLink:  "/auth/register",
+		},
+	}
+}
+
+// buildDashboardData builds data for the dashboard
+{{- if eq .Framework "gin"}}
+func (hc *HomeController) buildDashboardData(c *gin.Context, user interface{}) map[string]interface{} {
+{{- else if eq .Framework "echo"}}
+func (hc *HomeController) buildDashboardDataEcho(c echo.Context, user interface{}) map[string]interface{} {
+{{- else if eq .Framework "fiber"}}
+func (hc *HomeController) buildDashboardDataFiber(c *fiber.Ctx, user interface{}) map[string]interface{} {
+{{- else if eq .Framework "chi"}}
+func (hc *HomeController) buildDashboardDataChi(r *http.Request, user interface{}) map[string]interface{} {
+{{- end}}
+	return map[string]interface{}{
+		"User":        user,
+		"Projects":    hc.getUserProjects(user),
+		"Notifications": hc.getUserNotifications(user),
+		"RecentActivity": hc.getRecentActivity(user),
+		"QuickActions": []map[string]string{
+			{"title": "Create Project", "url": "/projects/new", "icon": "plus"},
+			{"title": "View Analytics", "url": "/analytics", "icon": "chart"},
+			{"title": "Account Settings", "url": "/settings", "icon": "cog"},
+		},
+	}
+}
+
+// validateContactForm validates the contact form
+func (hc *HomeController) validateContactForm(form ContactForm) error {
+	errors := hc.ValidateRequired(map[string]string{
+		"name":    form.Name,
+		"email":   form.Email,
+		"subject": form.Subject,
+		"message": form.Message,
+	})
+
+	if len(errors.Errors) > 0 {
+		return errors
+	}
+
+	// Validate email format
+	if !hc.ValidateEmail(form.Email) {
+		return fmt.Errorf("please enter a valid email address")
+	}
+
+	// Validate message length
+	if len(form.Message) < 10 {
+		return fmt.Errorf("message must be at least 10 characters long")
+	}
+
+	if len(form.Message) > 2000 {
+		return fmt.Errorf("message must be less than 2000 characters")
+	}
+
+	return nil
+}
+
+// processContactForm processes the contact form submission
+func (hc *HomeController) processContactForm(form ContactForm) error {
+	// Here you would:
+	// 1. Save to database if needed
+	// 2. Send email notification
+	// 3. Trigger any webhooks
+	// 4. Add to CRM system, etc.
+
+	{{- if ne .DatabaseDriver ""}}
+	// Example: Save to database
+	// if err := hc.DB.SaveContactForm(form); err != nil {
+	//     return fmt.Errorf("failed to save contact form: %w", err)
+	// }
+	{{- end}}
+
+	// Example: Send email (would use actual email service)
+	return hc.sendContactEmail(form)
+}
+
+// sendContactEmail sends the contact form as an email
+func (hc *HomeController) sendContactEmail(form ContactForm) error {
+	// This would integrate with your email service
+	// For now, we'll just log it
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Contact email would be sent",
+		"to", "admin@{{.ProjectName}}.com",
+		"from", form.Email,
+		"subject", form.Subject)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Contact email would be sent",
+		zap.String("to", "admin@{{.ProjectName}}.com"),
+		zap.String("from", form.Email),
+		zap.String("subject", form.Subject))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{
+		"to":      "admin@{{.ProjectName}}.com",
+		"from":    form.Email,
+		"subject": form.Subject,
+	}).Info("Contact email would be sent")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("to", "admin@{{.ProjectName}}.com").
+		Str("from", form.Email).
+		Str("subject", form.Subject).
+		Msg("Contact email would be sent")
+	{{- end}}
+
+	return nil
+}
+
+// getApplicationStats returns application statistics
+func (hc *HomeController) getApplicationStats() Stats {
+	{{- if ne .DatabaseDriver ""}}
+	// In a real application, these would come from the database
+	// users, _ := hc.DB.CountUsers()
+	// projects, _ := hc.DB.CountProjects()
+	{{- end}}
+
+	return Stats{
+		Users:     1250,
+		Projects:  5640,
+		Downloads: 125000,
+		Uptime:    "99.9%",
+	}
+}
+
+// getUserProjects gets projects for the current user
+func (hc *HomeController) getUserProjects(user interface{}) []map[string]interface{} {
+	{{- if ne .DatabaseDriver ""}}
+	// In a real application, this would query the database
+	// return hc.DB.GetUserProjects(userID)
+	{{- end}}
+
+	// Mock data for demonstration
+	return []map[string]interface{}{
+		{
+			"id":          1,
+			"name":        "Project Alpha",
+			"description": "A revolutionary new application",
+			"status":      "active",
+			"created_at":  time.Now().AddDate(0, -2, 0),
+		},
+		{
+			"id":          2,
+			"name":        "Project Beta",
+			"description": "An experimental feature set",
+			"status":      "development",
+			"created_at":  time.Now().AddDate(0, -1, 0),
+		},
+	}
+}
+
+// getUserNotifications gets notifications for the current user
+func (hc *HomeController) getUserNotifications(user interface{}) []map[string]interface{} {
+	// Mock data for demonstration
+	return []map[string]interface{}{
+		{
+			"id":      1,
+			"type":    "info",
+			"title":   "Welcome!",
+			"message": "Thanks for joining our platform",
+			"read":    false,
+			"created_at": time.Now().Add(-1 * time.Hour),
+		},
+		{
+			"id":      2,
+			"type":    "success",
+			"title":   "Project Created",
+			"message": "Your project has been successfully created",
+			"read":    true,
+			"created_at": time.Now().Add(-24 * time.Hour),
+		},
+	}
+}
+
+// getRecentActivity gets recent activity for the current user
+func (hc *HomeController) getRecentActivity(user interface{}) []map[string]interface{} {
+	// Mock data for demonstration
+	return []map[string]interface{}{
+		{
+			"action":     "login",
+			"description": "Signed in from San Francisco, CA",
+			"timestamp":   time.Now().Add(-30 * time.Minute),
+		},
+		{
+			"action":     "project_update",
+			"description": "Updated Project Alpha configuration",
+			"timestamp":   time.Now().Add(-2 * time.Hour),
+		},
+		{
+			"action":     "profile_update",
+			"description": "Updated profile information",
+			"timestamp":   time.Now().Add(-24 * time.Hour),
+		},
+	}
+}

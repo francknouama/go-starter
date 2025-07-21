@@ -1,0 +1,538 @@
+package middleware
+
+import (
+	"fmt"
+	"net/http"
+	"runtime"
+	"strings"
+
+	"{{.ModulePath}}/internal/config"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5/middleware"
+	{{- end}}
+)
+
+// RecoveryConfig represents recovery middleware configuration
+type RecoveryConfig struct {
+	// Skip recovery for specific paths
+	SkipPaths []string
+	
+	// Include stack trace in logs
+	LogStackTrace bool
+	
+	// Include stack trace in response (development only)
+	ShowStackTrace bool
+	
+	// Maximum stack trace depth
+	MaxStackDepth int
+	
+	// Custom error response format
+	ErrorResponseFormat string // "json" or "html"
+	
+	// Custom error handler
+	ErrorHandler func(error, interface{}) interface{}
+	
+	// Include request details in panic logs
+	LogRequestDetails bool
+}
+
+// DefaultRecoveryConfig returns default recovery configuration
+func DefaultRecoveryConfig() *RecoveryConfig {
+	return &RecoveryConfig{
+		SkipPaths:           []string{},
+		LogStackTrace:       true,
+		ShowStackTrace:      false, // Only in development
+		MaxStackDepth:       10,
+		ErrorResponseFormat: "json",
+		ErrorHandler:        nil,
+		LogRequestDetails:   true,
+	}
+}
+
+// RecoveryMiddleware provides panic recovery middleware for different frameworks
+type RecoveryMiddleware struct {
+	config *RecoveryConfig
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger
+	{{- else}}
+	logger *slog.Logger
+	{{- end}}
+	isDevelopment bool
+}
+
+// NewRecoveryMiddleware creates a new recovery middleware
+func NewRecoveryMiddleware(
+	config *RecoveryConfig,
+	appConfig *config.Config,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *RecoveryMiddleware {
+	if config == nil {
+		config = DefaultRecoveryConfig()
+	}
+
+	// Enable stack trace in development
+	isDev := appConfig.App.Environment == "development"
+	if isDev {
+		config.ShowStackTrace = true
+	}
+
+	return &RecoveryMiddleware{
+		config:        config,
+		logger:        logger,
+		isDevelopment: isDev,
+	}
+}
+
+{{- if eq .Framework "gin"}}
+
+// Handler returns Gin recovery middleware
+func (m *RecoveryMiddleware) Handler() gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+		if m.shouldSkipPath(c.Request.URL.Path) {
+			c.AbortWithStatus(http.StatusInternalServerError)
+			return
+		}
+
+		// Generate error details
+		err := m.formatPanicError(recovered)
+		stack := m.getStackTrace()
+		requestDetails := m.getRequestDetails(c.Request)
+
+		// Log panic
+		m.logPanic(err, recovered, stack, requestDetails)
+
+		// Send error response
+		response := m.buildErrorResponse(err, stack)
+		
+		c.Header("Content-Type", "application/json")
+		c.JSON(http.StatusInternalServerError, response)
+		c.Abort()
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+
+// Handler returns Echo recovery middleware
+func (m *RecoveryMiddleware) Handler() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					if m.shouldSkipPath(c.Request().URL.Path) {
+						c.NoContent(http.StatusInternalServerError)
+						return
+					}
+
+					// Generate error details
+					err := m.formatPanicError(recovered)
+					stack := m.getStackTrace()
+					requestDetails := m.getRequestDetails(c.Request())
+
+					// Log panic
+					m.logPanic(err, recovered, stack, requestDetails)
+
+					// Send error response
+					response := m.buildErrorResponse(err, stack)
+					
+					c.Response().Header().Set("Content-Type", "application/json")
+					c.JSON(http.StatusInternalServerError, response)
+				}
+			}()
+			
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+
+// Handler returns Fiber recovery middleware
+func (m *RecoveryMiddleware) Handler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				if m.shouldSkipPath(c.Path()) {
+					c.Status(http.StatusInternalServerError).Send(nil)
+					return
+				}
+
+				// Generate error details
+				err := m.formatPanicError(recovered)
+				stack := m.getStackTrace()
+				requestDetails := m.getFiberRequestDetails(c)
+
+				// Log panic
+				m.logPanic(err, recovered, stack, requestDetails)
+
+				// Send error response
+				response := m.buildErrorResponse(err, stack)
+				
+				c.Status(http.StatusInternalServerError).JSON(response)
+			}
+		}()
+		
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+
+// Handler returns Chi recovery middleware
+func (m *RecoveryMiddleware) Handler() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					if m.shouldSkipPath(r.URL.Path) {
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+
+					// Generate error details
+					err := m.formatPanicError(recovered)
+					stack := m.getStackTrace()
+					requestDetails := m.getRequestDetails(r)
+
+					// Log panic
+					m.logPanic(err, recovered, stack, requestDetails)
+
+					// Send error response
+					response := m.buildErrorResponse(err, stack)
+					
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					
+					// Convert response to JSON
+					if responseJSON, jsonErr := json.Marshal(response); jsonErr == nil {
+						w.Write(responseJSON)
+					} else {
+						w.Write([]byte(`{"error":"Internal server error","code":"INTERNAL_ERROR"}`))
+					}
+				}
+			}()
+			
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+{{- end}}
+
+// formatPanicError formats the panic value into an error
+func (m *RecoveryMiddleware) formatPanicError(recovered interface{}) error {
+	switch v := recovered.(type) {
+	case error:
+		return v
+	case string:
+		return fmt.Errorf("panic: %s", v)
+	default:
+		return fmt.Errorf("panic: %v", v)
+	}
+}
+
+// getStackTrace captures the stack trace
+func (m *RecoveryMiddleware) getStackTrace() []string {
+	if !m.config.LogStackTrace && !m.config.ShowStackTrace {
+		return nil
+	}
+
+	var stack []string
+	for i := 2; i < m.config.MaxStackDepth+2; i++ { // Skip runtime.Callers and this function
+		pc, file, line, ok := runtime.Caller(i)
+		if !ok {
+			break
+		}
+
+		// Get function name
+		fn := runtime.FuncForPC(pc)
+		var name string
+		if fn != nil {
+			name = fn.Name()
+		} else {
+			name = "unknown"
+		}
+
+		// Format stack frame
+		frame := fmt.Sprintf("%s:%d %s", file, line, name)
+		stack = append(stack, frame)
+	}
+
+	return stack
+}
+
+// getRequestDetails extracts request details for logging
+func (m *RecoveryMiddleware) getRequestDetails(r *http.Request) map[string]interface{} {
+	if !m.config.LogRequestDetails {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"method":     r.Method,
+		"url":        r.URL.String(),
+		"user_agent": r.UserAgent(),
+		"remote_addr": r.RemoteAddr,
+	}
+
+	// Add request ID if available
+	if requestID := r.Header.Get("X-Request-ID"); requestID != "" {
+		details["request_id"] = requestID
+	}
+
+	// Add user ID if available from context
+	if userID := r.Context().Value("user_id"); userID != nil {
+		details["user_id"] = userID
+	}
+
+	return details
+}
+
+{{- if eq .Framework "fiber"}}
+// getFiberRequestDetails extracts request details for Fiber
+func (m *RecoveryMiddleware) getFiberRequestDetails(c *fiber.Ctx) map[string]interface{} {
+	if !m.config.LogRequestDetails {
+		return nil
+	}
+
+	details := map[string]interface{}{
+		"method":      c.Method(),
+		"url":         c.OriginalURL(),
+		"user_agent":  c.Get("User-Agent"),
+		"remote_addr": c.IP(),
+	}
+
+	// Add request ID if available
+	if requestID := c.Get("X-Request-ID"); requestID != "" {
+		details["request_id"] = requestID
+	}
+
+	// Add user ID if available from locals
+	if userID := c.Locals("user_id"); userID != nil {
+		details["user_id"] = userID
+	}
+
+	return details
+}
+{{- end}}
+
+// logPanic logs the panic with all relevant information
+func (m *RecoveryMiddleware) logPanic(err error, recovered interface{}, stack []string, requestDetails map[string]interface{}) {
+	{{- if eq .LoggerType "zap"}}
+	fields := []zap.Field{
+		zap.Error(err),
+		zap.Any("panic_value", recovered),
+	}
+
+	if stack != nil {
+		fields = append(fields, zap.Strings("stack_trace", stack))
+	}
+
+	if requestDetails != nil {
+		for key, value := range requestDetails {
+			fields = append(fields, zap.Any(key, value))
+		}
+	}
+
+	m.logger.Error("Panic recovered", fields...)
+	{{- else if eq .LoggerType "logrus"}}
+	logFields := logrus.Fields{
+		"error":       err.Error(),
+		"panic_value": recovered,
+	}
+
+	if stack != nil {
+		logFields["stack_trace"] = stack
+	}
+
+	if requestDetails != nil {
+		for key, value := range requestDetails {
+			logFields[key] = value
+		}
+	}
+
+	m.logger.WithFields(logFields).Error("Panic recovered")
+	{{- else if eq .LoggerType "zerolog"}}
+	event := m.logger.Error().
+		Err(err).
+		Interface("panic_value", recovered)
+
+	if stack != nil {
+		event = event.Strs("stack_trace", stack)
+	}
+
+	if requestDetails != nil {
+		for key, value := range requestDetails {
+			event = event.Interface(key, value)
+		}
+	}
+
+	event.Msg("Panic recovered")
+	{{- else}}
+	attrs := []slog.Attr{
+		slog.Any("error", err.Error()),
+		slog.Any("panic_value", recovered),
+	}
+
+	if stack != nil {
+		attrs = append(attrs, slog.Any("stack_trace", stack))
+	}
+
+	if requestDetails != nil {
+		for key, value := range requestDetails {
+			attrs = append(attrs, slog.Any(key, value))
+		}
+	}
+
+	m.logger.LogAttrs(context.Background(), slog.LevelError, "Panic recovered", attrs...)
+	{{- end}}
+}
+
+// buildErrorResponse builds the error response
+func (m *RecoveryMiddleware) buildErrorResponse(err error, stack []string) map[string]interface{} {
+	response := map[string]interface{}{
+		"error":   "Internal server error",
+		"code":    "INTERNAL_ERROR",
+		"message": "An unexpected error occurred. Please try again later.",
+	}
+
+	// Add stack trace in development
+	if m.config.ShowStackTrace && m.isDevelopment {
+		response["debug"] = map[string]interface{}{
+			"error":       err.Error(),
+			"stack_trace": stack,
+		}
+	}
+
+	// Apply custom error handler if provided
+	if m.config.ErrorHandler != nil {
+		if customResponse := m.config.ErrorHandler(err, stack); customResponse != nil {
+			if customMap, ok := customResponse.(map[string]interface{}); ok {
+				return customMap
+			}
+		}
+	}
+
+	return response
+}
+
+// shouldSkipPath checks if recovery should be skipped for the given path
+func (m *RecoveryMiddleware) shouldSkipPath(path string) bool {
+	for _, skipPath := range m.config.SkipPaths {
+		if path == skipPath {
+			return true
+		}
+	}
+	return false
+}
+
+// AddSkipPath adds a path to skip recovery
+func (m *RecoveryMiddleware) AddSkipPath(path string) {
+	for _, existing := range m.config.SkipPaths {
+		if existing == path {
+			return // Already exists
+		}
+	}
+	m.config.SkipPaths = append(m.config.SkipPaths, path)
+}
+
+// RemoveSkipPath removes a path from skip recovery
+func (m *RecoveryMiddleware) RemoveSkipPath(path string) {
+	for i, existing := range m.config.SkipPaths {
+		if existing == path {
+			m.config.SkipPaths = append(m.config.SkipPaths[:i], m.config.SkipPaths[i+1:]...)
+			break
+		}
+	}
+}
+
+// SetErrorHandler sets a custom error handler
+func (m *RecoveryMiddleware) SetErrorHandler(handler func(error, interface{}) interface{}) {
+	m.config.ErrorHandler = handler
+}
+
+// GetConfig returns the current recovery configuration
+func (m *RecoveryMiddleware) GetConfig() *RecoveryConfig {
+	return m.config
+}
+
+// PanicReporter is a utility for manually reporting panics
+type PanicReporter struct {
+	middleware *RecoveryMiddleware
+}
+
+// NewPanicReporter creates a new panic reporter
+func NewPanicReporter(middleware *RecoveryMiddleware) *PanicReporter {
+	return &PanicReporter{
+		middleware: middleware,
+	}
+}
+
+// ReportPanic manually reports a panic (useful for goroutines)
+func (pr *PanicReporter) ReportPanic(recovered interface{}, additionalContext map[string]interface{}) {
+	err := pr.middleware.formatPanicError(recovered)
+	stack := pr.middleware.getStackTrace()
+	
+	// Merge additional context with request details
+	requestDetails := make(map[string]interface{})
+	if additionalContext != nil {
+		for k, v := range additionalContext {
+			requestDetails[k] = v
+		}
+	}
+	
+	pr.middleware.logPanic(err, recovered, stack, requestDetails)
+}
+
+// SafeGo runs a function in a goroutine with panic recovery
+func (pr *PanicReporter) SafeGo(fn func(), context map[string]interface{}) {
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				pr.ReportPanic(recovered, context)
+			}
+		}()
+		fn()
+	}()
+}
+
+// SafeGoWithLogger is similar to SafeGo but allows custom logging context
+func (pr *PanicReporter) SafeGoWithLogger(fn func(), contextBuilder func() map[string]interface{}) {
+	go func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				var context map[string]interface{}
+				if contextBuilder != nil {
+					context = contextBuilder()
+				}
+				pr.ReportPanic(recovered, context)
+			}
+		}()
+		fn()
+	}()
+}

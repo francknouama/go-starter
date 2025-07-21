@@ -1,0 +1,370 @@
+package routes
+
+import (
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+	"{{.ModulePath}}/controllers"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	{{- end}}
+	"{{.ModulePath}}/middleware"
+)
+
+// Setup configures and returns the web application router
+{{- if eq .Framework "gin"}}
+func Setup(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) *gin.Engine {
+	// Set Gin mode based on environment
+	if cfg.App.Environment == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.New()
+
+	// Global middleware
+	router.Use(middleware.Logger(cfg))
+	router.Use(middleware.Recovery(cfg))
+	router.Use(middleware.Security(cfg))
+	router.Use(middleware.CORS(cfg))
+
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+	// Session middleware
+	router.Use(middleware.Session(cfg{{if eq .SessionStore "redis"}}, db{{end}}))
+	{{- end}}
+
+	// Initialize controllers
+	homeController := controllers.NewHomeController(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- if ne .AuthType ""}}
+	authController := controllers.NewAuthController(cfg, db)
+	userController := controllers.NewUserController(cfg, db)
+	{{- end}}
+
+	// Serve static files
+	router.Static("/static", "./static")
+	router.StaticFile("/favicon.ico", "./static/favicon.ico")
+
+	// Web routes
+	webGroup := router.Group("/")
+	{
+		webGroup.GET("", homeController.Index)
+		webGroup.GET("/", homeController.Index)
+		webGroup.GET("/home", homeController.Index)
+		webGroup.GET("/about", homeController.About)
+		webGroup.GET("/contact", homeController.Contact)
+		webGroup.POST("/contact", homeController.ContactSubmit)
+	}
+
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	authGroup := router.Group("/auth")
+	{
+		authGroup.GET("/login", authController.LoginForm)
+		authGroup.POST("/login", authController.Login)
+		authGroup.GET("/logout", authController.Logout)
+		{{- if ne .AuthType "oauth2"}}
+		authGroup.GET("/register", authController.RegisterForm)
+		authGroup.POST("/register", authController.Register)
+		{{- end}}
+		authGroup.GET("/forgot-password", authController.ForgotPasswordForm)
+		authGroup.POST("/forgot-password", authController.ForgotPassword)
+		authGroup.GET("/reset-password", authController.ResetPasswordForm)
+		authGroup.POST("/reset-password", authController.ResetPassword)
+		{{- if eq .AuthType "oauth2"}}
+		authGroup.GET("/google", authController.GoogleLogin)
+		authGroup.GET("/google/callback", authController.GoogleCallback)
+		authGroup.GET("/github", authController.GithubLogin)
+		authGroup.GET("/github/callback", authController.GithubCallback)
+		{{- end}}
+	}
+
+	// Protected routes (require authentication)
+	protectedGroup := router.Group("/")
+	protectedGroup.Use(middleware.RequireAuth(cfg))
+	{
+		protectedGroup.GET("/dashboard", homeController.Dashboard)
+		protectedGroup.GET("/profile", userController.Profile)
+		protectedGroup.POST("/profile", userController.UpdateProfile)
+		protectedGroup.GET("/settings", userController.Settings)
+		protectedGroup.POST("/settings", userController.UpdateSettings)
+	}
+	{{- end}}
+
+	// Error handling
+	router.NoRoute(func(c *gin.Context) {
+		c.HTML(404, "errors/404.html", gin.H{
+			"title": "Page Not Found",
+		})
+	})
+
+	return router
+}
+
+{{- else if eq .Framework "echo"}}
+func Setup(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) *echo.Echo {
+	e := echo.New()
+
+	// Global middleware
+	e.Use(middleware.Logger(cfg))
+	e.Use(middleware.Recovery(cfg))
+	e.Use(middleware.Security(cfg))
+	e.Use(middleware.CORS(cfg))
+
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+	// Session middleware
+	e.Use(middleware.Session(cfg{{if eq .SessionStore "redis"}}, db{{end}}))
+	{{- end}}
+
+	// Initialize controllers
+	homeController := controllers.NewHomeController(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- if ne .AuthType ""}}
+	authController := controllers.NewAuthController(cfg, db)
+	userController := controllers.NewUserController(cfg, db)
+	{{- end}}
+
+	// Serve static files
+	e.Static("/static", "static")
+	e.File("/favicon.ico", "static/favicon.ico")
+
+	// Web routes
+	e.GET("/", homeController.Index)
+	e.GET("/home", homeController.Index)
+	e.GET("/about", homeController.About)
+	e.GET("/contact", homeController.Contact)
+	e.POST("/contact", homeController.ContactSubmit)
+
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	authGroup := e.Group("/auth")
+	{
+		authGroup.GET("/login", authController.LoginForm)
+		authGroup.POST("/login", authController.Login)
+		authGroup.GET("/logout", authController.Logout)
+		{{- if ne .AuthType "oauth2"}}
+		authGroup.GET("/register", authController.RegisterForm)
+		authGroup.POST("/register", authController.Register)
+		{{- end}}
+		authGroup.GET("/forgot-password", authController.ForgotPasswordForm)
+		authGroup.POST("/forgot-password", authController.ForgotPassword)
+		authGroup.GET("/reset-password", authController.ResetPasswordForm)
+		authGroup.POST("/reset-password", authController.ResetPassword)
+		{{- if eq .AuthType "oauth2"}}
+		authGroup.GET("/google", authController.GoogleLogin)
+		authGroup.GET("/google/callback", authController.GoogleCallback)
+		authGroup.GET("/github", authController.GithubLogin)
+		authGroup.GET("/github/callback", authController.GithubCallback)
+		{{- end}}
+	}
+
+	// Protected routes (require authentication)
+	protectedGroup := e.Group("/")
+	protectedGroup.Use(middleware.RequireAuth(cfg))
+	{
+		protectedGroup.GET("/dashboard", homeController.Dashboard)
+		protectedGroup.GET("/profile", userController.Profile)
+		protectedGroup.POST("/profile", userController.UpdateProfile)
+		protectedGroup.GET("/settings", userController.Settings)
+		protectedGroup.POST("/settings", userController.UpdateSettings)
+	}
+	{{- end}}
+
+	return e
+}
+
+{{- else if eq .Framework "fiber"}}
+func Setup(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) *fiber.App {
+	app := fiber.New(fiber.Config{
+		ErrorHandler: middleware.ErrorHandler,
+	})
+
+	// Global middleware
+	app.Use(middleware.Logger(cfg))
+	app.Use(middleware.Recovery(cfg))
+	app.Use(middleware.Security(cfg))
+	app.Use(middleware.CORS(cfg))
+
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+	// Session middleware
+	app.Use(middleware.Session(cfg{{if eq .SessionStore "redis"}}, db{{end}}))
+	{{- end}}
+
+	// Initialize controllers
+	homeController := controllers.NewHomeController(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- if ne .AuthType ""}}
+	authController := controllers.NewAuthController(cfg, db)
+	userController := controllers.NewUserController(cfg, db)
+	{{- end}}
+
+	// Serve static files
+	app.Static("/static", "./static")
+	app.Get("/favicon.ico", func(c *fiber.Ctx) error {
+		return c.SendFile("./static/favicon.ico")
+	})
+
+	// Web routes
+	app.Get("/", homeController.Index)
+	app.Get("/home", homeController.Index)
+	app.Get("/about", homeController.About)
+	app.Get("/contact", homeController.Contact)
+	app.Post("/contact", homeController.ContactSubmit)
+
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	authGroup := app.Group("/auth")
+	{
+		authGroup.Get("/login", authController.LoginForm)
+		authGroup.Post("/login", authController.Login)
+		authGroup.Get("/logout", authController.Logout)
+		{{- if ne .AuthType "oauth2"}}
+		authGroup.Get("/register", authController.RegisterForm)
+		authGroup.Post("/register", authController.Register)
+		{{- end}}
+		authGroup.Get("/forgot-password", authController.ForgotPasswordForm)
+		authGroup.Post("/forgot-password", authController.ForgotPassword)
+		authGroup.Get("/reset-password", authController.ResetPasswordForm)
+		authGroup.Post("/reset-password", authController.ResetPassword)
+		{{- if eq .AuthType "oauth2"}}
+		authGroup.Get("/google", authController.GoogleLogin)
+		authGroup.Get("/google/callback", authController.GoogleCallback)
+		authGroup.Get("/github", authController.GithubLogin)
+		authGroup.Get("/github/callback", authController.GithubCallback)
+		{{- end}}
+	}
+
+	// Protected routes (require authentication)
+	protectedGroup := app.Group("/")
+	protectedGroup.Use(middleware.RequireAuth(cfg))
+	{
+		protectedGroup.Get("/dashboard", homeController.Dashboard)
+		protectedGroup.Get("/profile", userController.Profile)
+		protectedGroup.Post("/profile", userController.UpdateProfile)
+		protectedGroup.Get("/settings", userController.Settings)
+		protectedGroup.Post("/settings", userController.UpdateSettings)
+	}
+	{{- end}}
+
+	return app
+}
+
+{{- else if eq .Framework "chi"}}
+func Setup(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) chi.Router {
+	r := chi.NewRouter()
+
+	// Global middleware
+	r.Use(middleware.Logger(cfg))
+	r.Use(middleware.Recovery(cfg))
+	r.Use(middleware.Security(cfg))
+	r.Use(middleware.CORS(cfg))
+
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+	// Session middleware
+	r.Use(middleware.Session(cfg{{if eq .SessionStore "redis"}}, db{{end}}))
+	{{- end}}
+
+	// Initialize controllers
+	homeController := controllers.NewHomeController(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- if ne .AuthType ""}}
+	authController := controllers.NewAuthController(cfg, db)
+	userController := controllers.NewUserController(cfg, db)
+	{{- end}}
+
+	// Serve static files
+	fileServer := http.FileServer(http.Dir("./static"))
+	r.Handle("/static/*", http.StripPrefix("/static", fileServer))
+	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./static/favicon.ico")
+	})
+
+	// Web routes
+	r.Get("/", homeController.Index)
+	r.Get("/home", homeController.Index)
+	r.Get("/about", homeController.About)
+	r.Get("/contact", homeController.Contact)
+	r.Post("/contact", homeController.ContactSubmit)
+
+	{{- if ne .AuthType ""}}
+	// Authentication routes
+	r.Route("/auth", func(r chi.Router) {
+		r.Get("/login", authController.LoginForm)
+		r.Post("/login", authController.Login)
+		r.Get("/logout", authController.Logout)
+		{{- if ne .AuthType "oauth2"}}
+		r.Get("/register", authController.RegisterForm)
+		r.Post("/register", authController.Register)
+		{{- end}}
+		r.Get("/forgot-password", authController.ForgotPasswordForm)
+		r.Post("/forgot-password", authController.ForgotPassword)
+		r.Get("/reset-password", authController.ResetPasswordForm)
+		r.Post("/reset-password", authController.ResetPassword)
+		{{- if eq .AuthType "oauth2"}}
+		r.Get("/google", authController.GoogleLogin)
+		r.Get("/google/callback", authController.GoogleCallback)
+		r.Get("/github", authController.GithubLogin)
+		r.Get("/github/callback", authController.GithubCallback)
+		{{- end}}
+	})
+
+	// Protected routes (require authentication)
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.RequireAuth(cfg))
+		r.Get("/dashboard", homeController.Dashboard)
+		r.Get("/profile", userController.Profile)
+		r.Post("/profile", userController.UpdateProfile)
+		r.Get("/settings", userController.Settings)
+		r.Post("/settings", userController.UpdateSettings)
+	})
+	{{- end}}
+
+	return r
+}
+{{- end}}
+
+// setupErrorHandling configures custom error handling
+func setupErrorHandling({{if eq .Framework "gin"}}router *gin.Engine{{else if eq .Framework "echo"}}e *echo.Echo{{else if eq .Framework "fiber"}}app *fiber.App{{else if eq .Framework "chi"}}r chi.Router{{end}}) {
+	{{- if eq .Framework "gin"}}
+	// 404 handler
+	router.NoRoute(func(c *gin.Context) {
+		c.HTML(404, "errors/404.html", gin.H{
+			"title": "Page Not Found",
+		})
+	})
+
+	// 405 handler
+	router.NoMethod(func(c *gin.Context) {
+		c.HTML(405, "errors/405.html", gin.H{
+			"title": "Method Not Allowed",
+		})
+	})
+	{{- else if eq .Framework "echo"}}
+	// Custom error handler
+	e.HTTPErrorHandler = func(err error, c echo.Context) {
+		if he, ok := err.(*echo.HTTPError); ok {
+			switch he.Code {
+			case 404:
+				c.Render(404, "errors/404.html", map[string]interface{}{
+					"title": "Page Not Found",
+				})
+			case 405:
+				c.Render(405, "errors/405.html", map[string]interface{}{
+					"title": "Method Not Allowed",
+				})
+			default:
+				c.Render(500, "errors/500.html", map[string]interface{}{
+					"title": "Internal Server Error",
+				})
+			}
+		}
+	}
+	{{- else if eq .Framework "fiber"}}
+	// Error handling is configured in fiber.Config
+	{{- else if eq .Framework "chi"}}
+	// Custom error handlers would be implemented as middleware
+	{{- end}}
+}

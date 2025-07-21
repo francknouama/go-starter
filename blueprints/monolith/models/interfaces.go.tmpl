@@ -1,0 +1,325 @@
+package models
+
+import (
+	"context"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	{{- end}}
+)
+
+// Repository interfaces for testability and abstraction
+
+// BaseRepositoryInterface defines common repository operations
+type BaseRepositoryInterface interface {
+	Create(ctx context.Context, model interface{}) error
+	GetByID(ctx context.Context, id interface{}, model interface{}) error
+	Update(ctx context.Context, model interface{}) error
+	Delete(ctx context.Context, id interface{}) error
+	List(ctx context.Context, models interface{}, opts QueryOptions) (*PaginatedResult, error)
+	Count(ctx context.Context, filters []FilterOption) (int64, error)
+	Exists(ctx context.Context, id interface{}) (bool, error)
+}
+
+// UserRepositoryInterface defines user-specific repository operations
+type UserRepositoryInterface interface {
+	BaseRepositoryInterface
+	
+	// User-specific queries
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	GetByUsername(ctx context.Context, username string) (*User, error)
+	GetByEmailVerificationToken(ctx context.Context, token string) (*User, error)
+	GetByPasswordResetToken(ctx context.Context, token string) (*User, error)
+	{{- if eq .AuthType "oauth2"}}
+	GetByGoogleID(ctx context.Context, googleID string) (*User, error)
+	GetByGitHubID(ctx context.Context, githubID string) (*User, error)
+	{{- end}}
+	
+	// Email and username uniqueness checks
+	IsEmailTaken(ctx context.Context, email string, excludeUserID ...interface{}) (bool, error)
+	IsUsernameTaken(ctx context.Context, username string, excludeUserID ...interface{}) (bool, error)
+	
+	// Search and filtering
+	SearchUsers(ctx context.Context, query string, opts QueryOptions) (*PaginatedResult, error)
+	GetActiveUsers(ctx context.Context, opts QueryOptions) (*PaginatedResult, error)
+	GetUnverifiedUsers(ctx context.Context, opts QueryOptions) (*PaginatedResult, error)
+	GetSuspendedUsers(ctx context.Context, opts QueryOptions) (*PaginatedResult, error)
+	
+	// Statistics
+	GetUserStats(ctx context.Context, userID interface{}) (*UserStats, error)
+	GetTotalUserCount(ctx context.Context) (int64, error)
+	GetActiveUserCount(ctx context.Context) (int64, error)
+	GetNewUserCountByDateRange(ctx context.Context, startDate, endDate string) (int64, error)
+	
+	// Batch operations
+	UpdateLastLogin(ctx context.Context, userID interface{}, ip string) error
+	BulkUpdateStatus(ctx context.Context, userIDs []interface{}, isActive bool) error
+	CleanupUnverifiedUsers(ctx context.Context, olderThanDays int) (int64, error)
+	CleanupExpiredTokens(ctx context.Context) (int64, error)
+}
+
+// ServiceInterface defines service layer operations
+type ServiceInterface interface {
+	// Context for dependency injection
+	SetRepository(repo interface{})
+	SetDatabase({{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}})
+}
+
+// UserServiceInterface defines user service operations
+type UserServiceInterface interface {
+	ServiceInterface
+	
+	// User management
+	CreateUser(ctx context.Context, user *User) (*User, error)
+	GetUser(ctx context.Context, id interface{}) (*User, error)
+	UpdateUser(ctx context.Context, user *User) (*User, error)
+	DeleteUser(ctx context.Context, id interface{}) error
+	
+	// Authentication
+	AuthenticateUser(ctx context.Context, email, password string) (*User, error)
+	RegisterUser(ctx context.Context, user *User) (*User, error)
+	VerifyEmail(ctx context.Context, token string) (*User, error)
+	
+	// Password management
+	ChangePassword(ctx context.Context, userID interface{}, oldPassword, newPassword string) error
+	ResetPassword(ctx context.Context, email string) error
+	ResetPasswordWithToken(ctx context.Context, token, newPassword string) error
+	
+	// Profile management
+	UpdateProfile(ctx context.Context, userID interface{}, profileData map[string]interface{}) (*User, error)
+	UploadAvatar(ctx context.Context, userID interface{}, avatarData []byte, filename string) (string, error)
+	
+	// User queries
+	SearchUsers(ctx context.Context, query string, opts QueryOptions) (*PaginatedResult, error)
+	GetUserByEmail(ctx context.Context, email string) (*User, error)
+	GetUserByUsername(ctx context.Context, username string) (*User, error)
+	
+	// Admin operations
+	SuspendUser(ctx context.Context, userID interface{}, reason string) error
+	UnsuspendUser(ctx context.Context, userID interface{}) error
+	ActivateUser(ctx context.Context, userID interface{}) error
+	DeactivateUser(ctx context.Context, userID interface{}) error
+	
+	// Statistics and analytics
+	GetUserStatistics(ctx context.Context) (map[string]interface{}, error)
+	GetUserGrowthStats(ctx context.Context, days int) ([]map[string]interface{}, error)
+}
+
+{{- if eq .AuthType "oauth2"}}
+// OAuthServiceInterface defines OAuth service operations
+type OAuthServiceInterface interface {
+	ServiceInterface
+	
+	// OAuth authentication
+	AuthenticateWithGoogle(ctx context.Context, googleToken string) (*User, error)
+	AuthenticateWithGitHub(ctx context.Context, githubToken string) (*User, error)
+	LinkGoogleAccount(ctx context.Context, userID interface{}, googleToken string) error
+	LinkGitHubAccount(ctx context.Context, userID interface{}, githubToken string) error
+	UnlinkGoogleAccount(ctx context.Context, userID interface{}) error
+	UnlinkGitHubAccount(ctx context.Context, userID interface{}) error
+	
+	// OAuth user creation
+	CreateUserFromGoogle(ctx context.Context, googleUser *GoogleUser) (*User, error)
+	CreateUserFromGitHub(ctx context.Context, githubUser *GitHubUser) (*User, error)
+}
+
+// GoogleUser represents user data from Google OAuth
+type GoogleUser struct {
+	ID            string `json:"id"`
+	Email         string `json:"email"`
+	VerifiedEmail bool   `json:"verified_email"`
+	Name          string `json:"name"`
+	GivenName     string `json:"given_name"`
+	FamilyName    string `json:"family_name"`
+	Picture       string `json:"picture"`
+	Locale        string `json:"locale"`
+}
+
+// GitHubUser represents user data from GitHub OAuth
+type GitHubUser struct {
+	ID        int    `json:"id"`
+	Login     string `json:"login"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	AvatarURL string `json:"avatar_url"`
+	Location  string `json:"location"`
+	Bio       string `json:"bio"`
+	Blog      string `json:"blog"`
+}
+{{- end}}
+
+// NotificationServiceInterface defines notification operations
+type NotificationServiceInterface interface {
+	ServiceInterface
+	
+	// Email notifications
+	SendWelcomeEmail(ctx context.Context, user *User) error
+	SendEmailVerificationEmail(ctx context.Context, user *User, token string) error
+	SendPasswordResetEmail(ctx context.Context, user *User, token string) error
+	SendPasswordChangedEmail(ctx context.Context, user *User) error
+	SendAccountSuspendedEmail(ctx context.Context, user *User, reason string) error
+	
+	// In-app notifications
+	CreateNotification(ctx context.Context, userID interface{}, title, message, notificationType string) error
+	GetUserNotifications(ctx context.Context, userID interface{}, opts QueryOptions) (*PaginatedResult, error)
+	MarkNotificationAsRead(ctx context.Context, notificationID interface{}) error
+	MarkAllNotificationsAsRead(ctx context.Context, userID interface{}) error
+	DeleteNotification(ctx context.Context, notificationID interface{}) error
+	
+	// Bulk notifications
+	SendBulkNotification(ctx context.Context, userIDs []interface{}, title, message string) error
+	SendSystemNotification(ctx context.Context, title, message string) error
+}
+
+// SessionServiceInterface defines session management operations
+type SessionServiceInterface interface {
+	ServiceInterface
+	
+	// Session management
+	CreateSession(ctx context.Context, userID interface{}, sessionData map[string]interface{}) (string, error)
+	GetSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
+	UpdateSession(ctx context.Context, sessionID string, sessionData map[string]interface{}) error
+	DeleteSession(ctx context.Context, sessionID string) error
+	DeleteUserSessions(ctx context.Context, userID interface{}) error
+	
+	// Session queries
+	GetUserSessions(ctx context.Context, userID interface{}) ([]map[string]interface{}, error)
+	IsSessionValid(ctx context.Context, sessionID string) (bool, error)
+	CleanupExpiredSessions(ctx context.Context) (int64, error)
+	
+	// Security
+	InvalidateAllUserSessions(ctx context.Context, userID interface{}) error
+	GetActiveSessionCount(ctx context.Context, userID interface{}) (int, error)
+	LimitUserSessions(ctx context.Context, userID interface{}, maxSessions int) error
+}
+
+// CacheServiceInterface defines caching operations
+type CacheServiceInterface interface {
+	ServiceInterface
+	
+	// Basic cache operations
+	Set(ctx context.Context, key string, value interface{}, ttl int) error
+	Get(ctx context.Context, key string) (interface{}, error)
+	Delete(ctx context.Context, key string) error
+	Exists(ctx context.Context, key string) (bool, error)
+	
+	// User-specific caching
+	CacheUser(ctx context.Context, user *User, ttl int) error
+	GetCachedUser(ctx context.Context, userID interface{}) (*User, error)
+	InvalidateUserCache(ctx context.Context, userID interface{}) error
+	
+	// Session caching
+	CacheSession(ctx context.Context, sessionID string, sessionData map[string]interface{}, ttl int) error
+	GetCachedSession(ctx context.Context, sessionID string) (map[string]interface{}, error)
+	InvalidateSessionCache(ctx context.Context, sessionID string) error
+	
+	// Bulk operations
+	InvalidatePattern(ctx context.Context, pattern string) error
+	FlushAll(ctx context.Context) error
+	GetCacheStats(ctx context.Context) (map[string]interface{}, error)
+}
+
+// FileStorageServiceInterface defines file storage operations
+type FileStorageServiceInterface interface {
+	ServiceInterface
+	
+	// File operations
+	UploadFile(ctx context.Context, filename string, data []byte, contentType string) (string, error)
+	DownloadFile(ctx context.Context, filename string) ([]byte, error)
+	DeleteFile(ctx context.Context, filename string) error
+	FileExists(ctx context.Context, filename string) (bool, error)
+	GetFileURL(ctx context.Context, filename string) (string, error)
+	
+	// Image operations
+	UploadImage(ctx context.Context, filename string, data []byte) (string, error)
+	ResizeImage(ctx context.Context, filename string, width, height int) (string, error)
+	GenerateThumbnail(ctx context.Context, filename string, size int) (string, error)
+	
+	// Bulk operations
+	DeleteFiles(ctx context.Context, filenames []string) error
+	ListFiles(ctx context.Context, prefix string) ([]string, error)
+	GetStorageStats(ctx context.Context) (map[string]interface{}, error)
+}
+
+// ValidationServiceInterface defines validation operations
+type ValidationServiceInterface interface {
+	ServiceInterface
+	
+	// Model validation
+	ValidateUser(ctx context.Context, user *User) ValidationErrors
+	ValidateUserRegistration(ctx context.Context, user *User) ValidationErrors
+	ValidateUserUpdate(ctx context.Context, user *User, userID interface{}) ValidationErrors
+	ValidatePasswordChange(ctx context.Context, oldPassword, newPassword string) ValidationErrors
+	
+	// Field validation
+	ValidateEmail(ctx context.Context, email string) error
+	ValidateUsername(ctx context.Context, username string) error
+	ValidatePassword(ctx context.Context, password string) error
+	
+	// Uniqueness validation
+	ValidateEmailUniqueness(ctx context.Context, email string, excludeUserID ...interface{}) error
+	ValidateUsernameUniqueness(ctx context.Context, username string, excludeUserID ...interface{}) error
+	
+	// Security validation
+	ValidateCSRFToken(ctx context.Context, token, expected string) error
+	ValidateRateLimit(ctx context.Context, key string, limit int, window int) error
+	ValidateIPWhitelist(ctx context.Context, ip string) error
+}
+
+// AuditServiceInterface defines audit logging operations
+type AuditServiceInterface interface {
+	ServiceInterface
+	
+	// Audit logging
+	LogUserAction(ctx context.Context, userID interface{}, action, resource string, metadata map[string]interface{}) error
+	LogSecurityEvent(ctx context.Context, eventType, description string, metadata map[string]interface{}) error
+	LogSystemEvent(ctx context.Context, eventType, description string, metadata map[string]interface{}) error
+	
+	// Audit queries
+	GetUserAuditLog(ctx context.Context, userID interface{}, opts QueryOptions) (*PaginatedResult, error)
+	GetSecurityAuditLog(ctx context.Context, opts QueryOptions) (*PaginatedResult, error)
+	GetSystemAuditLog(ctx context.Context, opts QueryOptions) (*PaginatedResult, error)
+	SearchAuditLog(ctx context.Context, query string, opts QueryOptions) (*PaginatedResult, error)
+	
+	// Audit analytics
+	GetSecurityMetrics(ctx context.Context, days int) (map[string]interface{}, error)
+	GetUserActivityMetrics(ctx context.Context, userID interface{}, days int) (map[string]interface{}, error)
+	GetSystemMetrics(ctx context.Context, days int) (map[string]interface{}, error)
+}
+
+// HealthServiceInterface defines health check operations
+type HealthServiceInterface interface {
+	ServiceInterface
+	
+	// Health checks
+	CheckDatabaseHealth(ctx context.Context) error
+	CheckCacheHealth(ctx context.Context) error
+	CheckStorageHealth(ctx context.Context) error
+	CheckExternalServicesHealth(ctx context.Context) map[string]error
+	
+	// System status
+	GetSystemStatus(ctx context.Context) map[string]interface{}
+	GetPerformanceMetrics(ctx context.Context) map[string]interface{}
+	GetResourceUsage(ctx context.Context) map[string]interface{}
+}
+
+// Factory interfaces for dependency injection
+
+// RepositoryFactory creates repository instances
+type RepositoryFactory interface {
+	CreateUserRepository({{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}}) UserRepositoryInterface
+}
+
+// ServiceFactory creates service instances
+type ServiceFactory interface {
+	CreateUserService(repo UserRepositoryInterface, {{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}}) UserServiceInterface
+	CreateNotificationService({{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}}) NotificationServiceInterface
+	CreateSessionService({{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}}) SessionServiceInterface
+	CreateCacheService() CacheServiceInterface
+	CreateFileStorageService() FileStorageServiceInterface
+	CreateValidationService(userRepo UserRepositoryInterface) ValidationServiceInterface
+	CreateAuditService({{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}}) AuditServiceInterface
+	CreateHealthService({{if ne .DatabaseDriver ""}}db *database.DB{{else}}db interface{}{{end}}) HealthServiceInterface
+	{{- if eq .AuthType "oauth2"}}
+	CreateOAuthService(userRepo UserRepositoryInterface) OAuthServiceInterface
+	{{- end}}
+}

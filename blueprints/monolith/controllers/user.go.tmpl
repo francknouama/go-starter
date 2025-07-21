@@ -1,0 +1,575 @@
+package controllers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+
+{{- if eq .Framework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo" }}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber" }}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi" }}
+	"github.com/go-chi/chi/v5"
+{{- end }}
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+{{- end }}
+
+	"{{.ModulePath}}/models"
+	"{{.ModulePath}}/services"
+)
+
+// UserController handles user-related HTTP requests
+type UserController struct {
+	userService services.UserService
+{{- if eq .LoggerType "slog" }}
+	logger      *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger      *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger      *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger      zerolog.Logger
+{{- end }}
+}
+
+// NewUserController creates a new user controller
+func NewUserController(userService services.UserService, {{if eq .LoggerType "slog"}}logger *slog.Logger{{else if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "zerolog"}}logger zerolog.Logger{{end}}) *UserController {
+	return &UserController{
+		userService: userService,
+		logger:      logger,
+	}
+}
+
+// UserProfileRequest represents the user profile update request
+type UserProfileRequest struct {
+	FirstName *string `json:"first_name" form:"first_name" validate:"omitempty,min=2,max=50"`
+	LastName  *string `json:"last_name" form:"last_name" validate:"omitempty,min=2,max=50"`
+	Email     *string `json:"email" form:"email" validate:"omitempty,email"`
+}
+
+// PasswordChangeRequest represents the password change request
+type PasswordChangeRequest struct {
+	CurrentPassword string `json:"current_password" form:"current_password" validate:"required,min=8"`
+	NewPassword     string `json:"new_password" form:"new_password" validate:"required,min=8,password"`
+	ConfirmPassword string `json:"confirm_password" form:"confirm_password" validate:"required,eqfield=NewPassword"`
+}
+
+// UserResponse represents the user data response
+type UserResponse struct {
+	ID        uint   `json:"id"`
+	Email     string `json:"email"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+{{- if eq .Framework "gin" }}
+
+// GetProfile shows the user profile page
+func (uc *UserController) GetProfile(c *gin.Context) {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		c.Redirect(http.StatusFound, "/auth/login")
+		return
+	}
+
+	user, err := uc.userService.GetByID(c.Request.Context(), userID)
+	if err != nil {
+		uc.logger.Error("failed to get user profile", 
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		c.HTML(http.StatusInternalServerError, "errors/500.html", gin.H{
+			"error": "Failed to load profile",
+		})
+		return
+	}
+
+	c.HTML(http.StatusOK, "users/profile.html", gin.H{
+		"user":  user,
+		"title": "Profile",
+	})
+}
+
+// UpdateProfile handles profile update requests
+func (uc *UserController) UpdateProfile(c *gin.Context) {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req UserProfileRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+		return
+	}
+
+	// Validate request
+	if err := uc.validateRequest(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Update user profile
+	updateData := make(map[string]interface{})
+	if req.FirstName != nil {
+		updateData["first_name"] = *req.FirstName
+	}
+	if req.LastName != nil {
+		updateData["last_name"] = *req.LastName
+	}
+	if req.Email != nil {
+		updateData["email"] = *req.Email
+	}
+
+	user, err := uc.userService.UpdateProfile(c.Request.Context(), userID, updateData)
+	if err != nil {
+		uc.logger.Error("failed to update user profile",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update profile"})
+		return
+	}
+
+	// Handle both JSON and form responses
+	if c.GetHeader("Content-Type") == "application/json" || c.Query("format") == "json" {
+		c.JSON(http.StatusOK, gin.H{
+			"message": "Profile updated successfully",
+			"user":    uc.toUserResponse(user),
+		})
+	} else {
+		// Flash success message and redirect
+		uc.setFlash(c, "success", "Profile updated successfully")
+		c.Redirect(http.StatusFound, "/users/profile")
+	}
+}
+
+// ChangePassword handles password change requests
+func (uc *UserController) ChangePassword(c *gin.Context) {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	var req PasswordChangeRequest
+	if err := c.ShouldBind(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+		return
+	}
+
+	// Validate request
+	if err := uc.validateRequest(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Change password
+	err := uc.userService.ChangePassword(c.Request.Context(), userID, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid password") {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Current password is incorrect"})
+			return
+		}
+		
+		uc.logger.Error("failed to change password",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to change password"})
+		return
+	}
+
+	// Handle both JSON and form responses
+	if c.GetHeader("Content-Type") == "application/json" || c.Query("format") == "json" {
+		c.JSON(http.StatusOK, gin.H{"message": "Password changed successfully"})
+	} else {
+		// Flash success message and redirect
+		uc.setFlash(c, "success", "Password changed successfully")
+		c.Redirect(http.StatusFound, "/users/profile")
+	}
+}
+
+// DeleteAccount handles account deletion requests
+func (uc *UserController) DeleteAccount(c *gin.Context) {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+		return
+	}
+
+	// Soft delete the user
+	err := uc.userService.DeleteUser(c.Request.Context(), userID)
+	if err != nil {
+		uc.logger.Error("failed to delete user account",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete account"})
+		return
+	}
+
+	// Clear session
+	uc.clearSession(c)
+
+	// Handle both JSON and form responses
+	if c.GetHeader("Content-Type") == "application/json" || c.Query("format") == "json" {
+		c.JSON(http.StatusOK, gin.H{"message": "Account deleted successfully"})
+	} else {
+		c.Redirect(http.StatusFound, "/")
+	}
+}
+
+// Helper methods for Gin
+
+func (uc *UserController) getCurrentUserID(c *gin.Context) uint {
+	if userID, exists := c.Get("user_id"); exists {
+		if id, ok := userID.(uint); ok {
+			return id
+		}
+	}
+	return 0
+}
+
+func (uc *UserController) setFlash(c *gin.Context, category, message string) {
+	// Implementation depends on session management
+	// This is a placeholder for flash message functionality
+}
+
+func (uc *UserController) clearSession(c *gin.Context) {
+	// Implementation depends on session management
+	// This is a placeholder for session clearing functionality
+}
+
+{{- else if eq .Framework "echo" }}
+
+// GetProfile shows the user profile page
+func (uc *UserController) GetProfile(c echo.Context) error {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		return c.Redirect(http.StatusFound, "/auth/login")
+	}
+
+	user, err := uc.userService.GetByID(c.Request().Context(), userID)
+	if err != nil {
+		uc.logger.Error("failed to get user profile",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		return c.Render(http.StatusInternalServerError, "errors/500.html", map[string]interface{}{
+			"error": "Failed to load profile",
+		})
+	}
+
+	return c.Render(http.StatusOK, "users/profile.html", map[string]interface{}{
+		"user":  user,
+		"title": "Profile",
+	})
+}
+
+// UpdateProfile handles profile update requests
+func (uc *UserController) UpdateProfile(c echo.Context) error {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	var req UserProfileRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request data"})
+	}
+
+	// Validate request
+	if err := uc.validateRequest(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	// Update user profile
+	updateData := make(map[string]interface{})
+	if req.FirstName != nil {
+		updateData["first_name"] = *req.FirstName
+	}
+	if req.LastName != nil {
+		updateData["last_name"] = *req.LastName
+	}
+	if req.Email != nil {
+		updateData["email"] = *req.Email
+	}
+
+	user, err := uc.userService.UpdateProfile(c.Request().Context(), userID, updateData)
+	if err != nil {
+		uc.logger.Error("failed to update user profile",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to update profile"})
+	}
+
+	// Handle both JSON and form responses
+	if c.Request().Header.Get("Content-Type") == "application/json" || c.QueryParam("format") == "json" {
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"message": "Profile updated successfully",
+			"user":    uc.toUserResponse(user),
+		})
+	} else {
+		// Flash success message and redirect
+		uc.setFlash(c, "success", "Profile updated successfully")
+		return c.Redirect(http.StatusFound, "/users/profile")
+	}
+}
+
+// ChangePassword handles password change requests
+func (uc *UserController) ChangePassword(c echo.Context) error {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	var req PasswordChangeRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request data"})
+	}
+
+	// Validate request
+	if err := uc.validateRequest(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	// Change password
+	err := uc.userService.ChangePassword(c.Request().Context(), userID, req.CurrentPassword, req.NewPassword)
+	if err != nil {
+		if strings.Contains(err.Error(), "invalid password") {
+			return c.JSON(http.StatusBadRequest, map[string]string{"error": "Current password is incorrect"})
+		}
+		
+		uc.logger.Error("failed to change password",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to change password"})
+	}
+
+	// Handle both JSON and form responses
+	if c.Request().Header.Get("Content-Type") == "application/json" || c.QueryParam("format") == "json" {
+		return c.JSON(http.StatusOK, map[string]string{"message": "Password changed successfully"})
+	} else {
+		// Flash success message and redirect
+		uc.setFlash(c, "success", "Password changed successfully")
+		return c.Redirect(http.StatusFound, "/users/profile")
+	}
+}
+
+// DeleteAccount handles account deletion requests
+func (uc *UserController) DeleteAccount(c echo.Context) error {
+	userID := uc.getCurrentUserID(c)
+	if userID == 0 {
+		return c.JSON(http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+	}
+
+	// Soft delete the user
+	err := uc.userService.DeleteUser(c.Request().Context(), userID)
+	if err != nil {
+		uc.logger.Error("failed to delete user account",
+{{- if eq .LoggerType "slog" }}
+			slog.Uint64("user_id", uint64(userID)),
+			slog.String("error", err.Error()),
+{{- else if eq .LoggerType "zap" }}
+			zap.Uint("user_id", userID),
+			zap.Error(err),
+{{- else if eq .LoggerType "logrus" }}
+			logrus.Fields{"user_id": userID, "error": err},
+{{- else if eq .LoggerType "zerolog" }}
+			uc.logger.With().Uint("user_id", userID).Err(err).
+{{- end }}
+		)
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "Failed to delete account"})
+	}
+
+	// Clear session
+	uc.clearSession(c)
+
+	// Handle both JSON and form responses
+	if c.Request().Header.Get("Content-Type") == "application/json" || c.QueryParam("format") == "json" {
+		return c.JSON(http.StatusOK, map[string]string{"message": "Account deleted successfully"})
+	} else {
+		return c.Redirect(http.StatusFound, "/")
+	}
+}
+
+// Helper methods for Echo
+
+func (uc *UserController) getCurrentUserID(c echo.Context) uint {
+	if userID := c.Get("user_id"); userID != nil {
+		if id, ok := userID.(uint); ok {
+			return id
+		}
+	}
+	return 0
+}
+
+func (uc *UserController) setFlash(c echo.Context, category, message string) {
+	// Implementation depends on session management
+}
+
+func (uc *UserController) clearSession(c echo.Context) {
+	// Implementation depends on session management
+}
+
+{{- end }}
+
+// Common helper methods
+
+// validateRequest validates the request using a validation library
+func (uc *UserController) validateRequest(req interface{}) error {
+	// This would typically use a validation library like go-playground/validator
+	// For now, we'll implement basic validation
+	switch v := req.(type) {
+	case *UserProfileRequest:
+		if v.Email != nil && !isValidEmail(*v.Email) {
+			return fmt.Errorf("invalid email format")
+		}
+		if v.FirstName != nil && (len(*v.FirstName) < 2 || len(*v.FirstName) > 50) {
+			return fmt.Errorf("first name must be between 2 and 50 characters")
+		}
+		if v.LastName != nil && (len(*v.LastName) < 2 || len(*v.LastName) > 50) {
+			return fmt.Errorf("last name must be between 2 and 50 characters")
+		}
+	case *PasswordChangeRequest:
+		if len(v.CurrentPassword) < 8 {
+			return fmt.Errorf("current password must be at least 8 characters")
+		}
+		if len(v.NewPassword) < 8 {
+			return fmt.Errorf("new password must be at least 8 characters")
+		}
+		if v.NewPassword != v.ConfirmPassword {
+			return fmt.Errorf("passwords do not match")
+		}
+		if !isValidPassword(v.NewPassword) {
+			return fmt.Errorf("password must contain at least one uppercase letter, one lowercase letter, one number, and one special character")
+		}
+	}
+	return nil
+}
+
+// toUserResponse converts a user model to response format
+func (uc *UserController) toUserResponse(user *models.User) UserResponse {
+	return UserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		FirstName: user.FirstName,
+		LastName:  user.LastName,
+		CreatedAt: user.CreatedAt.Format("2006-01-02 15:04:05"),
+		UpdatedAt: user.UpdatedAt.Format("2006-01-02 15:04:05"),
+	}
+}
+
+// isValidEmail validates email format
+func isValidEmail(email string) bool {
+	// Basic email validation
+	return strings.Contains(email, "@") && strings.Contains(email, ".")
+}
+
+// isValidPassword validates password strength
+func isValidPassword(password string) bool {
+	// Check for at least 8 characters, one uppercase, one lowercase, one digit, one special char
+	if len(password) < 8 {
+		return false
+	}
+	
+	hasUpper := false
+	hasLower := false
+	hasDigit := false
+	hasSpecial := false
+	
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasDigit = true
+		case strings.ContainsRune("!@#$%^&*()_+-=[]{}|;:,.<>?", char):
+			hasSpecial = true
+		}
+	}
+	
+	return hasUpper && hasLower && hasDigit && hasSpecial
+}

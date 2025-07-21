@@ -1,0 +1,306 @@
+name: monolith-standard
+description: Traditional monolithic web application template with MVC architecture
+version: 1.0.0
+type: monolith
+complexity: intermediate
+
+variables:
+  - name: ProjectName
+    description: Name of the project
+    required: true
+  - name: ModulePath
+    description: Go module path
+    required: true
+  - name: GoVersion
+    description: Go version to use
+    default: "1.21"
+  - name: Framework
+    description: Web framework to use
+    default: "gin"
+    options: ["gin", "echo", "fiber", "chi"]
+  - name: TemplateEngine
+    description: HTML template engine
+    default: "html/template"
+    options: ["html/template", "pongo2", "jet"]
+  - name: SessionStore
+    description: Session storage type
+    default: "cookie"
+    options: ["cookie", "redis", "database"]
+  - name: DatabaseDriver
+    description: Database driver
+    default: "postgres"
+    options: ["postgres", "mysql", "sqlite"]
+  - name: DatabaseORM
+    description: Database ORM
+    default: "gorm"
+    options: ["gorm", "sqlx", "raw"]
+  - name: AuthType
+    description: Authentication type
+    default: "session"
+    options: ["session", "jwt", "oauth2"]
+  - name: LoggerType
+    description: Logger to use
+    default: "slog"
+    options: ["slog", "zap", "logrus", "zerolog"]
+  - name: AssetPipeline
+    description: Asset build system
+    default: "embedded"
+    options: ["embedded", "webpack", "vite", "esbuild"]
+
+files:
+  # Root files
+  - source: main.go.tmpl
+    destination: main.go
+  - source: go.mod.tmpl
+    destination: go.mod
+  - source: README.md.tmpl
+    destination: README.md
+  - source: gitignore.tmpl
+    destination: .gitignore
+  - source: env-example.tmpl
+    destination: .env.example
+  - source: Makefile.tmpl
+    destination: Makefile
+  - source: Dockerfile.tmpl
+    destination: Dockerfile
+  - source: docker-compose.yml.tmpl
+    destination: docker-compose.yml
+
+  # Configuration
+  - source: config/config.go.tmpl
+    destination: config/config.go
+  - source: config/database.go.tmpl
+    destination: config/database.go
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  - source: config/session.go.tmpl
+    destination: config/session.go
+    condition: "{{or (eq .AuthType \"session\") (eq .AuthType \"oauth2\")}}"
+
+  # Models
+  - source: models/user.go.tmpl
+    destination: models/user.go
+    condition: "{{ne .AuthType \"\"}}"
+  - source: models/base.go.tmpl
+    destination: models/base.go
+  - source: models/interfaces.go.tmpl
+    destination: models/interfaces.go
+
+  # Controllers
+  - source: controllers/base.go.tmpl
+    destination: controllers/base.go
+  - source: controllers/home.go.tmpl
+    destination: controllers/home.go
+  - source: controllers/auth.go.tmpl
+    destination: controllers/auth.go
+    condition: "{{ne .AuthType \"\"}}"
+  - source: controllers/user.go.tmpl
+    destination: controllers/user.go
+    condition: "{{ne .AuthType \"\"}}"
+  - source: controllers/api.go.tmpl
+    destination: controllers/api.go
+
+  # Middleware
+  - source: middleware/auth.go.tmpl
+    destination: middleware/auth.go
+    condition: "{{ne .AuthType \"\"}}"
+  - source: middleware/cors.go.tmpl
+    destination: middleware/cors.go
+  - source: middleware/logger.go.tmpl
+    destination: middleware/logger.go
+  - source: middleware/recovery.go.tmpl
+    destination: middleware/recovery.go
+  - source: middleware/security.go.tmpl
+    destination: middleware/security.go
+  - source: middleware/session.go.tmpl
+    destination: middleware/session.go
+    condition: "{{or (eq .AuthType \"session\") (eq .AuthType \"oauth2\")}}"
+
+  # Services
+  - source: services/auth.go.tmpl
+    destination: services/auth.go
+    condition: "{{ne .AuthType \"\"}}"
+  - source: services/user.go.tmpl
+    destination: services/user.go
+    condition: "{{ne .AuthType \"\"}}"
+  - source: services/email.go.tmpl
+    destination: services/email.go
+  - source: services/cache.go.tmpl
+    destination: services/cache.go
+    condition: "{{eq .SessionStore \"redis\"}}"
+
+  # Database
+  - source: database/connection.go.tmpl
+    destination: database/connection.go
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  - source: database/migrations.go.tmpl
+    destination: database/migrations.go
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  - source: database/migrations/001_create_users.sql.tmpl
+    destination: database/migrations/001_create_users.sql
+    condition: "{{and (ne .DatabaseDriver \"\") (ne .AuthType \"\")}}"
+
+  # Routes
+  - source: routes/web.go.tmpl
+    destination: routes/web.go
+  - source: routes/api.go.tmpl
+    destination: routes/api.go
+  - source: routes/auth.go.tmpl
+    destination: routes/auth.go
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Views (HTML templates)
+  - source: views/layouts/base.html.tmpl
+    destination: views/layouts/base.html
+  - source: views/layouts/auth.html.tmpl
+    destination: views/layouts/auth.html
+    condition: "{{ne .AuthType \"\"}}"
+  - source: views/partials/header.html.tmpl
+    destination: views/partials/header.html
+  - source: views/partials/footer.html.tmpl
+    destination: views/partials/footer.html
+  - source: views/partials/flash.html.tmpl
+    destination: views/partials/flash.html
+  - source: views/home/index.html.tmpl
+    destination: views/home/index.html
+  - source: views/auth/login.html.tmpl
+    destination: views/auth/login.html
+    condition: "{{ne .AuthType \"\"}}"
+  - source: views/auth/register.html.tmpl
+    destination: views/auth/register.html
+    condition: "{{and (ne .AuthType \"\") (ne .AuthType \"oauth2\")}}"
+  - source: views/users/profile.html.tmpl
+    destination: views/users/profile.html
+    condition: "{{ne .AuthType \"\"}}"
+  - source: views/errors/404.html.tmpl
+    destination: views/errors/404.html
+  - source: views/errors/500.html.tmpl
+    destination: views/errors/500.html
+
+  # Static assets
+  - source: static/css/main.css.tmpl
+    destination: static/css/main.css
+  - source: static/js/main.js.tmpl
+    destination: static/js/main.js
+  - source: static/favicon.ico
+    destination: static/favicon.ico
+
+  # Asset pipeline (conditional)
+  - source: webpack.config.js.tmpl
+    destination: webpack.config.js
+    condition: "{{eq .AssetPipeline \"webpack\"}}"
+  - source: vite.config.js.tmpl
+    destination: vite.config.js
+    condition: "{{eq .AssetPipeline \"vite\"}}"
+  - source: esbuild.config.js.tmpl
+    destination: esbuild.config.js
+    condition: "{{eq .AssetPipeline \"esbuild\"}}"
+  - source: package.json.tmpl
+    destination: package.json
+    condition: "{{and (ne .AssetPipeline \"embedded\") (ne .AssetPipeline \"\")}}"
+
+  # Testing
+  - source: tests/integration_test.go.tmpl
+    destination: tests/integration_test.go
+  - source: tests/helpers.go.tmpl
+    destination: tests/helpers.go
+  - source: controllers/home_test.go.tmpl
+    destination: controllers/home_test.go
+  - source: services/user_test.go.tmpl
+    destination: services/user_test.go
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Scripts
+  - source: scripts/setup.sh.tmpl
+    destination: scripts/setup.sh
+    executable: true
+  - source: scripts/migrate.sh.tmpl
+    destination: scripts/migrate.sh
+    executable: true
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  # CI/CD
+  - source: github-workflows-ci.yml.tmpl
+    destination: .github/workflows/ci.yml
+  - source: github-workflows-deploy.yml.tmpl
+    destination: .github/workflows/deploy.yml
+
+dependencies:
+  - module: github.com/gin-gonic/gin
+    version: v1.10.0
+    condition: "{{eq .Framework \"gin\"}}"
+  - module: github.com/labstack/echo/v4
+    version: v4.12.0
+    condition: "{{eq .Framework \"echo\"}}"
+  - module: github.com/gofiber/fiber/v2
+    version: v2.52.0
+    condition: "{{eq .Framework \"fiber\"}}"
+  - module: github.com/go-chi/chi/v5
+    version: v5.0.12
+    condition: "{{eq .Framework \"chi\"}}"
+  - module: github.com/spf13/viper
+    version: v1.18.2
+  - module: github.com/joho/godotenv
+    version: v1.5.1
+  - module: gorm.io/gorm
+    version: v1.25.7
+    condition: "{{eq .DatabaseORM \"gorm\"}}"
+  - module: gorm.io/driver/postgres
+    version: v1.5.6
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (eq .DatabaseORM \"gorm\")}}"
+  - module: gorm.io/driver/mysql
+    version: v1.5.4
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (eq .DatabaseORM \"gorm\")}}"
+  - module: gorm.io/driver/sqlite
+    version: v1.5.5
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (eq .DatabaseORM \"gorm\")}}"
+  - module: github.com/jmoiron/sqlx
+    version: v1.3.5
+    condition: "{{eq .DatabaseORM \"sqlx\"}}"
+  - module: github.com/lib/pq
+    version: v1.10.9
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (ne .DatabaseORM \"gorm\")}}"
+  - module: github.com/go-sql-driver/mysql
+    version: v1.7.1
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (ne .DatabaseORM \"gorm\")}}"
+  - module: github.com/mattn/go-sqlite3
+    version: v1.14.19
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (ne .DatabaseORM \"gorm\")}}"
+  - module: github.com/gorilla/sessions
+    version: v1.2.2
+    condition: "{{eq .AuthType \"session\"}}"
+  - module: github.com/golang-jwt/jwt/v5
+    version: v5.2.0
+    condition: "{{eq .AuthType \"jwt\"}}"
+  - module: golang.org/x/oauth2
+    version: v0.16.0
+    condition: "{{eq .AuthType \"oauth2\"}}"
+  - module: github.com/redis/go-redis/v9
+    version: v9.4.0
+    condition: "{{eq .SessionStore \"redis\"}}"
+  - module: go.uber.org/zap
+    version: v1.26.0
+    condition: "{{eq .LoggerType \"zap\"}}"
+  - module: github.com/sirupsen/logrus
+    version: v1.9.3
+    condition: "{{eq .LoggerType \"logrus\"}}"
+  - module: github.com/rs/zerolog
+    version: v1.31.0
+    condition: "{{eq .LoggerType \"zerolog\"}}"
+  - module: github.com/stretchr/testify
+    version: v1.8.4
+  - module: github.com/flosch/pongo2/v6
+    version: v6.0.0
+    condition: "{{eq .TemplateEngine \"pongo2\"}}"
+  - module: github.com/CloudyKit/jet/v6
+    version: v6.2.0
+    condition: "{{eq .TemplateEngine \"jet\"}}"
+
+post_hooks:
+  - name: go_mod_tidy
+    command: go mod tidy
+  - name: setup_database
+    command: make setup-db
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  - name: install_assets
+    command: npm install
+    condition: "{{and (ne .AssetPipeline \"embedded\") (ne .AssetPipeline \"\")}}"

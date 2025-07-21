@@ -1,0 +1,605 @@
+{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+package middleware
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"time"
+
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"net/http"
+	{{- end}}
+
+	"github.com/gorilla/sessions"
+	{{- if eq .SessionStore "redis"}}
+	"github.com/rbcervilla/redisstore/v9"
+	"github.com/redis/go-redis/v9"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	{{- end}}
+)
+
+const (
+	SessionName     = "{{.ProjectName}}_session"
+	UserIDKey      = "user_id"
+	UserEmailKey   = "user_email"
+	CSRFTokenKey   = "csrf_token"
+	FlashMessageKey = "flash_message"
+	SessionLifetime = 3 * time.Hour // Absolute session lifetime
+	SessionIdleTime = 20 * time.Minute // Idle timeout
+)
+
+var store sessions.Store
+
+// InitSessionStore initializes the session store based on configuration
+func InitSessionStore(cfg *config.Config{{if eq .SessionStore "redis"}}, db *database.DB{{end}}) error {
+	switch cfg.Session.Store {
+	case "cookie":
+		store = sessions.NewCookieStore([]byte(cfg.Session.Secret))
+	{{- if eq .SessionStore "redis"}}
+	case "redis":
+		redisClient := redis.NewClient(&redis.Options{
+			Addr:     fmt.Sprintf("%s:%s", cfg.Cache.RedisHost, cfg.Cache.RedisPort),
+			Password: cfg.Cache.RedisPassword,
+			DB:       cfg.Cache.RedisDB,
+		})
+
+		// Test Redis connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		
+		if err := redisClient.Ping(ctx).Err(); err != nil {
+			return fmt.Errorf("failed to connect to Redis: %w", err)
+		}
+
+		redisStore, err := redisstore.NewRedisStore(ctx, redisClient)
+		if err != nil {
+			return fmt.Errorf("failed to create Redis store: %w", err)
+		}
+
+		store = redisStore
+	{{- end}}
+	default:
+		store = sessions.NewCookieStore([]byte(cfg.Session.Secret))
+	}
+
+	// Configure session options
+	configureSessionStore(cfg)
+	return nil
+}
+
+// configureSessionStore sets secure session options
+func configureSessionStore(cfg *config.Config) {
+	options := &sessions.Options{
+		Path:     cfg.Session.Path,
+		Domain:   cfg.Session.Domain,
+		MaxAge:   cfg.Session.MaxAge,
+		Secure:   cfg.Session.Secure,
+		HttpOnly: cfg.Session.HttpOnly,
+		SameSite: getSameSiteMode(cfg.Session.SameSite),
+	}
+
+	// Apply options based on store type
+	switch s := store.(type) {
+	case *sessions.CookieStore:
+		s.Options = options
+	{{- if eq .SessionStore "redis"}}
+	case *redisstore.RedisStore:
+		s.Options = options
+	{{- end}}
+	}
+}
+
+// getSameSiteMode converts string to http.SameSite
+func getSameSiteMode(mode string) http.SameSite {
+	switch mode {
+	case "Strict":
+		return http.SameSiteStrictMode
+	case "None":
+		return http.SameSiteNoneMode
+	default:
+		return http.SameSiteLaxMode
+	}
+}
+
+// Session middleware provides session management
+{{- if eq .Framework "gin"}}
+func Session(cfg *config.Config{{if eq .SessionStore "redis"}}, db *database.DB{{end}}) gin.HandlerFunc {
+	// Initialize session store
+	if err := InitSessionStore(cfg{{if eq .SessionStore "redis"}}, db{{end}}); err != nil {
+		panic(fmt.Sprintf("Failed to initialize session store: %v", err))
+	}
+
+	return gin.HandlerFunc(func(c *gin.Context) {
+		session, err := store.Get(c.Request, SessionName)
+		if err != nil {
+			// Log error but continue - create new session
+			session, _ = store.New(c.Request, SessionName)
+		}
+
+		// Check session validity and timeouts
+		if !isSessionValid(session) {
+			// Clear invalid session
+			session.Options.MaxAge = -1
+			session.Save(c.Request, c.Writer)
+			
+			// Create new session
+			session, _ = store.New(c.Request, SessionName)
+		}
+
+		// Update last activity time
+		session.Values["last_activity"] = time.Now()
+
+		// Store session in context
+		c.Set("session", session)
+
+		// Continue to next handler
+		c.Next()
+
+		// Save session after request processing
+		if err := session.Save(c.Request, c.Writer); err != nil {
+			// Log session save error
+			fmt.Printf("Failed to save session: %v\n", err)
+		}
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+func Session(cfg *config.Config{{if eq .SessionStore "redis"}}, db *database.DB{{end}}) echo.MiddlewareFunc {
+	// Initialize session store
+	if err := InitSessionStore(cfg{{if eq .SessionStore "redis"}}, db{{end}}); err != nil {
+		panic(fmt.Sprintf("Failed to initialize session store: %v", err))
+	}
+
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			session, err := store.Get(c.Request(), SessionName)
+			if err != nil {
+				// Log error but continue - create new session
+				session, _ = store.New(c.Request(), SessionName)
+			}
+
+			// Check session validity and timeouts
+			if !isSessionValid(session) {
+				// Clear invalid session
+				session.Options.MaxAge = -1
+				session.Save(c.Request(), c.Response().Writer)
+				
+				// Create new session
+				session, _ = store.New(c.Request(), SessionName)
+			}
+
+			// Update last activity time
+			session.Values["last_activity"] = time.Now()
+
+			// Store session in context
+			c.Set("session", session)
+
+			// Continue to next handler
+			err = next(c)
+
+			// Save session after request processing
+			if saveErr := session.Save(c.Request(), c.Response().Writer); saveErr != nil {
+				// Log session save error
+				fmt.Printf("Failed to save session: %v\n", saveErr)
+			}
+
+			return err
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+func Session(cfg *config.Config{{if eq .SessionStore "redis"}}, db *database.DB{{end}}) fiber.Handler {
+	// Initialize session store
+	if err := InitSessionStore(cfg{{if eq .SessionStore "redis"}}, db{{end}}); err != nil {
+		panic(fmt.Sprintf("Failed to initialize session store: %v", err))
+	}
+
+	return func(c *fiber.Ctx) error {
+		// Convert Fiber context to http.Request and http.ResponseWriter
+		req := &http.Request{
+			Method: c.Method(),
+			URL:    c.Context().URI(),
+			Header: make(http.Header),
+		}
+
+		// Copy headers
+		c.Request().Header.VisitAll(func(key, value []byte) {
+			req.Header.Set(string(key), string(value))
+		})
+
+		session, err := store.Get(req, SessionName)
+		if err != nil {
+			// Log error but continue - create new session
+			session, _ = store.New(req, SessionName)
+		}
+
+		// Check session validity and timeouts
+		if !isSessionValid(session) {
+			// Clear invalid session
+			session.Options.MaxAge = -1
+			// Note: Session clearing in Fiber requires custom implementation
+			
+			// Create new session
+			session, _ = store.New(req, SessionName)
+		}
+
+		// Update last activity time
+		session.Values["last_activity"] = time.Now()
+
+		// Store session in context
+		c.Locals("session", session)
+
+		// Continue to next handler
+		err = c.Next()
+
+		// Session saving in Fiber requires custom HTTP adapter
+		// This is a simplified version - production would need proper implementation
+
+		return err
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+func Session(cfg *config.Config{{if eq .SessionStore "redis"}}, db *database.DB{{end}}) func(http.Handler) http.Handler {
+	// Initialize session store
+	if err := InitSessionStore(cfg{{if eq .SessionStore "redis"}}, db{{end}}); err != nil {
+		panic(fmt.Sprintf("Failed to initialize session store: %v", err))
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			session, err := store.Get(r, SessionName)
+			if err != nil {
+				// Log error but continue - create new session
+				session, _ = store.New(r, SessionName)
+			}
+
+			// Check session validity and timeouts
+			if !isSessionValid(session) {
+				// Clear invalid session
+				session.Options.MaxAge = -1
+				session.Save(r, w)
+				
+				// Create new session
+				session, _ = store.New(r, SessionName)
+			}
+
+			// Update last activity time
+			session.Values["last_activity"] = time.Now()
+
+			// Store session in context
+			ctx := context.WithValue(r.Context(), "session", session)
+			r = r.WithContext(ctx)
+
+			// Continue to next handler
+			next.ServeHTTP(w, r)
+
+			// Save session after request processing
+			if err := session.Save(r, w); err != nil {
+				// Log session save error
+				fmt.Printf("Failed to save session: %v\n", err)
+			}
+		})
+	}
+}
+{{- end}}
+
+// isSessionValid checks session timeouts and validity
+func isSessionValid(session *sessions.Session) bool {
+	// Check if session has required timestamps
+	lastActivity, ok := session.Values["last_activity"].(time.Time)
+	if !ok {
+		return false
+	}
+
+	createdAt, ok := session.Values["created_at"].(time.Time)
+	if !ok {
+		// Set creation time if not present
+		session.Values["created_at"] = time.Now()
+		return true
+	}
+
+	now := time.Now()
+
+	// Check idle timeout
+	if now.Sub(lastActivity) > SessionIdleTime {
+		return false
+	}
+
+	// Check absolute timeout
+	if now.Sub(createdAt) > SessionLifetime {
+		return false
+	}
+
+	return true
+}
+
+// Helper functions for session management
+
+// GetSession retrieves session from context
+{{- if eq .Framework "gin"}}
+func GetSession(c *gin.Context) *sessions.Session {
+	session, exists := c.Get("session")
+	if !exists {
+		return nil
+	}
+	return session.(*sessions.Session)
+}
+{{- else if eq .Framework "echo"}}
+func GetSession(c echo.Context) *sessions.Session {
+	session := c.Get("session")
+	if session == nil {
+		return nil
+	}
+	return session.(*sessions.Session)
+}
+{{- else if eq .Framework "fiber"}}
+func GetSession(c *fiber.Ctx) *sessions.Session {
+	session := c.Locals("session")
+	if session == nil {
+		return nil
+	}
+	return session.(*sessions.Session)
+}
+{{- else if eq .Framework "chi"}}
+func GetSession(r *http.Request) *sessions.Session {
+	session := r.Context().Value("session")
+	if session == nil {
+		return nil
+	}
+	return session.(*sessions.Session)
+}
+{{- end}}
+
+// SetFlashMessage sets a flash message in the session
+{{- if eq .Framework "gin"}}
+func SetFlashMessage(c *gin.Context, message string) {
+	session := GetSession(c)
+	if session != nil {
+		session.Values[FlashMessageKey] = message
+	}
+}
+{{- else if eq .Framework "echo"}}
+func SetFlashMessage(c echo.Context, message string) {
+	session := GetSession(c)
+	if session != nil {
+		session.Values[FlashMessageKey] = message
+	}
+}
+{{- else if eq .Framework "fiber"}}
+func SetFlashMessage(c *fiber.Ctx, message string) {
+	session := GetSession(c)
+	if session != nil {
+		session.Values[FlashMessageKey] = message
+	}
+}
+{{- else if eq .Framework "chi"}}
+func SetFlashMessage(r *http.Request, message string) {
+	session := GetSession(r)
+	if session != nil {
+		session.Values[FlashMessageKey] = message
+	}
+}
+{{- end}}
+
+// GetFlashMessage retrieves and clears a flash message
+{{- if eq .Framework "gin"}}
+func GetFlashMessage(c *gin.Context) string {
+	session := GetSession(c)
+	if session == nil {
+		return ""
+	}
+
+	message, ok := session.Values[FlashMessageKey].(string)
+	if ok {
+		delete(session.Values, FlashMessageKey)
+		return message
+	}
+	return ""
+}
+{{- else if eq .Framework "echo"}}
+func GetFlashMessage(c echo.Context) string {
+	session := GetSession(c)
+	if session == nil {
+		return ""
+	}
+
+	message, ok := session.Values[FlashMessageKey].(string)
+	if ok {
+		delete(session.Values, FlashMessageKey)
+		return message
+	}
+	return ""
+}
+{{- else if eq .Framework "fiber"}}
+func GetFlashMessage(c *fiber.Ctx) string {
+	session := GetSession(c)
+	if session == nil {
+		return ""
+	}
+
+	message, ok := session.Values[FlashMessageKey].(string)
+	if ok {
+		delete(session.Values, FlashMessageKey)
+		return message
+	}
+	return ""
+}
+{{- else if eq .Framework "chi"}}
+func GetFlashMessage(r *http.Request) string {
+	session := GetSession(r)
+	if session == nil {
+		return ""
+	}
+
+	message, ok := session.Values[FlashMessageKey].(string)
+	if ok {
+		delete(session.Values, FlashMessageKey)
+		return message
+	}
+	return ""
+}
+{{- end}}
+
+// SetUserSession sets user information in session
+{{- if eq .Framework "gin"}}
+func SetUserSession(c *gin.Context, userID int, email string) {
+	session := GetSession(c)
+	if session != nil {
+		session.Values[UserIDKey] = userID
+		session.Values[UserEmailKey] = email
+		session.Values["created_at"] = time.Now()
+		session.Values["last_activity"] = time.Now()
+	}
+}
+{{- else if eq .Framework "echo"}}
+func SetUserSession(c echo.Context, userID int, email string) {
+	session := GetSession(c)
+	if session != nil {
+		session.Values[UserIDKey] = userID
+		session.Values[UserEmailKey] = email
+		session.Values["created_at"] = time.Now()
+		session.Values["last_activity"] = time.Now()
+	}
+}
+{{- else if eq .Framework "fiber"}}
+func SetUserSession(c *fiber.Ctx, userID int, email string) {
+	session := GetSession(c)
+	if session != nil {
+		session.Values[UserIDKey] = userID
+		session.Values[UserEmailKey] = email
+		session.Values["created_at"] = time.Now()
+		session.Values["last_activity"] = time.Now()
+	}
+}
+{{- else if eq .Framework "chi"}}
+func SetUserSession(w http.ResponseWriter, r *http.Request, userID int, email string) {
+	session := GetSession(r)
+	if session != nil {
+		session.Values[UserIDKey] = userID
+		session.Values[UserEmailKey] = email
+		session.Values["created_at"] = time.Now()
+		session.Values["last_activity"] = time.Now()
+		session.Save(r, w)
+	}
+}
+{{- end}}
+
+// ClearUserSession clears user session (logout)
+{{- if eq .Framework "gin"}}
+func ClearUserSession(c *gin.Context) {
+	session := GetSession(c)
+	if session != nil {
+		delete(session.Values, UserIDKey)
+		delete(session.Values, UserEmailKey)
+		session.Options.MaxAge = -1
+	}
+}
+{{- else if eq .Framework "echo"}}
+func ClearUserSession(c echo.Context) {
+	session := GetSession(c)
+	if session != nil {
+		delete(session.Values, UserIDKey)
+		delete(session.Values, UserEmailKey)
+		session.Options.MaxAge = -1
+	}
+}
+{{- else if eq .Framework "fiber"}}
+func ClearUserSession(c *fiber.Ctx) {
+	session := GetSession(c)
+	if session != nil {
+		delete(session.Values, UserIDKey)
+		delete(session.Values, UserEmailKey)
+		session.Options.MaxAge = -1
+	}
+}
+{{- else if eq .Framework "chi"}}
+func ClearUserSession(w http.ResponseWriter, r *http.Request) {
+	session := GetSession(r)
+	if session != nil {
+		delete(session.Values, UserIDKey)
+		delete(session.Values, UserEmailKey)
+		session.Options.MaxAge = -1
+		session.Save(r, w)
+	}
+}
+{{- end}}
+
+// GetUserID retrieves user ID from session
+{{- if eq .Framework "gin"}}
+func GetUserID(c *gin.Context) (int, bool) {
+	session := GetSession(c)
+	if session == nil {
+		return 0, false
+	}
+
+	userID, ok := session.Values[UserIDKey].(int)
+	return userID, ok
+}
+{{- else if eq .Framework "echo"}}
+func GetUserID(c echo.Context) (int, bool) {
+	session := GetSession(c)
+	if session == nil {
+		return 0, false
+	}
+
+	userID, ok := session.Values[UserIDKey].(int)
+	return userID, ok
+}
+{{- else if eq .Framework "fiber"}}
+func GetUserID(c *fiber.Ctx) (int, bool) {
+	session := GetSession(c)
+	if session == nil {
+		return 0, false
+	}
+
+	userID, ok := session.Values[UserIDKey].(int)
+	return userID, ok
+}
+{{- else if eq .Framework "chi"}}
+func GetUserID(r *http.Request) (int, bool) {
+	session := GetSession(r)
+	if session == nil {
+		return 0, false
+	}
+
+	userID, ok := session.Values[UserIDKey].(int)
+	return userID, ok
+}
+{{- end}}
+
+// IsAuthenticated checks if user is authenticated
+{{- if eq .Framework "gin"}}
+func IsAuthenticated(c *gin.Context) bool {
+	_, ok := GetUserID(c)
+	return ok
+}
+{{- else if eq .Framework "echo"}}
+func IsAuthenticated(c echo.Context) bool {
+	_, ok := GetUserID(c)
+	return ok
+}
+{{- else if eq .Framework "fiber"}}
+func IsAuthenticated(c *fiber.Ctx) bool {
+	_, ok := GetUserID(c)
+	return ok
+}
+{{- else if eq .Framework "chi"}}
+func IsAuthenticated(r *http.Request) bool {
+	_, ok := GetUserID(r)
+	return ok
+}
+{{- end}}
+{{- end}}

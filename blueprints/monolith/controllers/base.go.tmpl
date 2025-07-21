@@ -1,0 +1,543 @@
+package controllers
+
+import (
+	"fmt"
+	"net/http"
+	"strconv"
+
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"net/http"
+	"encoding/json"
+	"html/template"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	{{- end}}
+	"{{.ModulePath}}/middleware"
+)
+
+// BaseController provides common functionality for all controllers
+type BaseController struct {
+	Config *config.Config
+	{{- if ne .DatabaseDriver ""}}
+	DB     *database.DB
+	{{- end}}
+	{{- if ne .TemplateEngine "html/template"}}
+	{{- if eq .TemplateEngine "pongo2"}}
+	Templates *pongo2.TemplateSet
+	{{- else if eq .TemplateEngine "jet"}}
+	Templates *jet.Set
+	{{- end}}
+	{{- else}}
+	Templates *template.Template
+	{{- end}}
+}
+
+// NewBaseController creates a new base controller
+func NewBaseController(cfg *config.Config{{if ne .DatabaseDriver ""}}, db *database.DB{{end}}) *BaseController {
+	return &BaseController{
+		Config: cfg,
+		{{- if ne .DatabaseDriver ""}}
+		DB:     db,
+		{{- end}}
+	}
+}
+
+// Response represents a standard API response
+type Response struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   string      `json:"error,omitempty"`
+	Message string      `json:"message,omitempty"`
+}
+
+// ValidationError represents form validation errors
+type ValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+	Code    string `json:"code"`
+}
+
+// ValidationErrors represents multiple validation errors
+type ValidationErrors struct {
+	Errors []ValidationError `json:"errors"`
+}
+
+func (ve ValidationErrors) Error() string {
+	if len(ve.Errors) > 0 {
+		return ve.Errors[0].Message
+	}
+	return "validation failed"
+}
+
+// Common template data structure
+type TemplateData struct {
+	Title       string
+	User        interface{}
+	Flash       string
+	CSRFToken   string
+	Nonce       string
+	Config      *config.Config
+	Data        interface{}
+	Errors      map[string]string
+	OldInput    map[string]interface{}
+	PageTitle   string
+	MetaDesc    string
+	Breadcrumbs []Breadcrumb
+}
+
+// Breadcrumb represents navigation breadcrumb
+type Breadcrumb struct {
+	Title string
+	URL   string
+}
+
+{{- if eq .Framework "gin"}}
+// Render renders a template with common data
+func (bc *BaseController) Render(c *gin.Context, template string, data interface{}) {
+	templateData := bc.buildTemplateData(c, data)
+	c.HTML(http.StatusOK, template, templateData)
+}
+
+// RenderWithStatus renders a template with custom status code
+func (bc *BaseController) RenderWithStatus(c *gin.Context, status int, template string, data interface{}) {
+	templateData := bc.buildTemplateData(c, data)
+	c.HTML(status, template, templateData)
+}
+
+// JSON renders JSON response
+func (bc *BaseController) JSON(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusOK, Response{Success: true, Data: data})
+}
+
+// JSONError renders JSON error response
+func (bc *BaseController) JSONError(c *gin.Context, status int, message string) {
+	c.JSON(status, Response{Success: false, Error: message})
+}
+
+// Redirect performs a redirect
+func (bc *BaseController) Redirect(c *gin.Context, url string) {
+	c.Redirect(http.StatusFound, url)
+}
+
+// RedirectWithFlash performs a redirect with flash message
+func (bc *BaseController) RedirectWithFlash(c *gin.Context, url, message string) {
+	middleware.SetFlashMessage(c, message)
+	c.Redirect(http.StatusFound, url)
+}
+
+// GetCurrentUser gets the current authenticated user
+func (bc *BaseController) GetCurrentUser(c *gin.Context) (interface{}, bool) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		return nil, false
+	}
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Load user from database
+	// This would be implemented based on your user model
+	// Example: user, err := bc.DB.GetUserByID(userID)
+	{{- end}}
+	
+	return userID, true
+}
+
+// buildTemplateData builds common template data
+func (bc *BaseController) buildTemplateData(c *gin.Context, data interface{}) TemplateData {
+	user, _ := bc.GetCurrentUser(c)
+	flash := middleware.GetFlashMessage(c)
+	nonce := c.GetString("nonce")
+	
+	return TemplateData{
+		Title:     bc.Config.App.Name,
+		User:      user,
+		Flash:     flash,
+		CSRFToken: bc.getCSRFToken(c),
+		Nonce:     nonce,
+		Config:    bc.Config,
+		Data:      data,
+		Errors:    make(map[string]string),
+		OldInput:  make(map[string]interface{}),
+	}
+}
+
+// getCSRFToken gets CSRF token from session
+func (bc *BaseController) getCSRFToken(c *gin.Context) string {
+	session := middleware.GetSession(c)
+	if session == nil {
+		return ""
+	}
+	
+	token, ok := session.Values["csrf_token"].(string)
+	if !ok {
+		// Generate new token
+		token = middleware.GenerateNonce()
+		session.Values["csrf_token"] = token
+	}
+	
+	return token
+}
+
+{{- else if eq .Framework "echo"}}
+// Render renders a template with common data
+func (bc *BaseController) Render(c echo.Context, template string, data interface{}) error {
+	templateData := bc.buildTemplateData(c, data)
+	return c.Render(http.StatusOK, template, templateData)
+}
+
+// RenderWithStatus renders a template with custom status code
+func (bc *BaseController) RenderWithStatus(c echo.Context, status int, template string, data interface{}) error {
+	templateData := bc.buildTemplateData(c, data)
+	return c.Render(status, template, templateData)
+}
+
+// JSON renders JSON response
+func (bc *BaseController) JSON(c echo.Context, data interface{}) error {
+	return c.JSON(http.StatusOK, Response{Success: true, Data: data})
+}
+
+// JSONError renders JSON error response
+func (bc *BaseController) JSONError(c echo.Context, status int, message string) error {
+	return c.JSON(status, Response{Success: false, Error: message})
+}
+
+// Redirect performs a redirect
+func (bc *BaseController) Redirect(c echo.Context, url string) error {
+	return c.Redirect(http.StatusFound, url)
+}
+
+// RedirectWithFlash performs a redirect with flash message
+func (bc *BaseController) RedirectWithFlash(c echo.Context, url, message string) error {
+	middleware.SetFlashMessage(c, message)
+	return c.Redirect(http.StatusFound, url)
+}
+
+// GetCurrentUser gets the current authenticated user
+func (bc *BaseController) GetCurrentUser(c echo.Context) (interface{}, bool) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		return nil, false
+	}
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Load user from database
+	{{- end}}
+	
+	return userID, true
+}
+
+// buildTemplateData builds common template data
+func (bc *BaseController) buildTemplateData(c echo.Context, data interface{}) TemplateData {
+	user, _ := bc.GetCurrentUser(c)
+	flash := middleware.GetFlashMessage(c)
+	nonce := c.Get("nonce").(string)
+	
+	return TemplateData{
+		Title:     bc.Config.App.Name,
+		User:      user,
+		Flash:     flash,
+		CSRFToken: bc.getCSRFTokenEcho(c),
+		Nonce:     nonce,
+		Config:    bc.Config,
+		Data:      data,
+		Errors:    make(map[string]string),
+		OldInput:  make(map[string]interface{}),
+	}
+}
+
+// getCSRFTokenEcho gets CSRF token from session
+func (bc *BaseController) getCSRFTokenEcho(c echo.Context) string {
+	session := middleware.GetSession(c)
+	if session == nil {
+		return ""
+	}
+	
+	token, ok := session.Values["csrf_token"].(string)
+	if !ok {
+		// Generate new token
+		token = middleware.GenerateNonce()
+		session.Values["csrf_token"] = token
+	}
+	
+	return token
+}
+
+{{- else if eq .Framework "fiber"}}
+// Render renders a template with common data
+func (bc *BaseController) Render(c *fiber.Ctx, template string, data interface{}) error {
+	templateData := bc.buildTemplateDataFiber(c, data)
+	return c.Render(template, templateData)
+}
+
+// RenderWithStatus renders a template with custom status code
+func (bc *BaseController) RenderWithStatus(c *fiber.Ctx, status int, template string, data interface{}) error {
+	templateData := bc.buildTemplateDataFiber(c, data)
+	return c.Status(status).Render(template, templateData)
+}
+
+// JSON renders JSON response
+func (bc *BaseController) JSON(c *fiber.Ctx, data interface{}) error {
+	return c.JSON(Response{Success: true, Data: data})
+}
+
+// JSONError renders JSON error response
+func (bc *BaseController) JSONError(c *fiber.Ctx, status int, message string) error {
+	return c.Status(status).JSON(Response{Success: false, Error: message})
+}
+
+// Redirect performs a redirect
+func (bc *BaseController) Redirect(c *fiber.Ctx, url string) error {
+	return c.Redirect(url, http.StatusFound)
+}
+
+// RedirectWithFlash performs a redirect with flash message
+func (bc *BaseController) RedirectWithFlash(c *fiber.Ctx, url, message string) error {
+	middleware.SetFlashMessage(c, message)
+	return c.Redirect(url, http.StatusFound)
+}
+
+// GetCurrentUser gets the current authenticated user
+func (bc *BaseController) GetCurrentUser(c *fiber.Ctx) (interface{}, bool) {
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		return nil, false
+	}
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Load user from database
+	{{- end}}
+	
+	return userID, true
+}
+
+// buildTemplateDataFiber builds common template data for Fiber
+func (bc *BaseController) buildTemplateDataFiber(c *fiber.Ctx, data interface{}) TemplateData {
+	user, _ := bc.GetCurrentUser(c)
+	flash := middleware.GetFlashMessage(c)
+	nonce := c.Locals("nonce").(string)
+	
+	return TemplateData{
+		Title:     bc.Config.App.Name,
+		User:      user,
+		Flash:     flash,
+		CSRFToken: bc.getCSRFTokenFiber(c),
+		Nonce:     nonce,
+		Config:    bc.Config,
+		Data:      data,
+		Errors:    make(map[string]string),
+		OldInput:  make(map[string]interface{}),
+	}
+}
+
+// getCSRFTokenFiber gets CSRF token from session
+func (bc *BaseController) getCSRFTokenFiber(c *fiber.Ctx) string {
+	session := middleware.GetSession(c)
+	if session == nil {
+		return ""
+	}
+	
+	token, ok := session.Values["csrf_token"].(string)
+	if !ok {
+		// Generate new token
+		token = middleware.GenerateNonce()
+		session.Values["csrf_token"] = token
+	}
+	
+	return token
+}
+
+{{- else if eq .Framework "chi"}}
+// Render renders a template with common data
+func (bc *BaseController) Render(w http.ResponseWriter, r *http.Request, template string, data interface{}) error {
+	templateData := bc.buildTemplateDataChi(r, data)
+	return bc.Templates.ExecuteTemplate(w, template, templateData)
+}
+
+// RenderWithStatus renders a template with custom status code
+func (bc *BaseController) RenderWithStatus(w http.ResponseWriter, r *http.Request, status int, template string, data interface{}) error {
+	w.WriteHeader(status)
+	templateData := bc.buildTemplateDataChi(r, data)
+	return bc.Templates.ExecuteTemplate(w, template, templateData)
+}
+
+// JSON renders JSON response
+func (bc *BaseController) JSON(w http.ResponseWriter, data interface{}) error {
+	w.Header().Set("Content-Type", "application/json")
+	return json.NewEncoder(w).Encode(Response{Success: true, Data: data})
+}
+
+// JSONError renders JSON error response
+func (bc *BaseController) JSONError(w http.ResponseWriter, status int, message string) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	return json.NewEncoder(w).Encode(Response{Success: false, Error: message})
+}
+
+// Redirect performs a redirect
+func (bc *BaseController) Redirect(w http.ResponseWriter, r *http.Request, url string) {
+	http.Redirect(w, r, url, http.StatusFound)
+}
+
+// RedirectWithFlash performs a redirect with flash message
+func (bc *BaseController) RedirectWithFlash(w http.ResponseWriter, r *http.Request, url, message string) {
+	middleware.SetFlashMessage(r, message)
+	http.Redirect(w, r, url, http.StatusFound)
+}
+
+// GetCurrentUser gets the current authenticated user
+func (bc *BaseController) GetCurrentUser(r *http.Request) (interface{}, bool) {
+	userID, ok := middleware.GetUserID(r)
+	if !ok {
+		return nil, false
+	}
+	
+	{{- if ne .DatabaseDriver ""}}
+	// Load user from database
+	{{- end}}
+	
+	return userID, true
+}
+
+// buildTemplateDataChi builds common template data for Chi
+func (bc *BaseController) buildTemplateDataChi(r *http.Request, data interface{}) TemplateData {
+	user, _ := bc.GetCurrentUser(r)
+	flash := middleware.GetFlashMessage(r)
+	nonce := r.Context().Value("nonce").(string)
+	
+	return TemplateData{
+		Title:     bc.Config.App.Name,
+		User:      user,
+		Flash:     flash,
+		CSRFToken: bc.getCSRFTokenChi(r),
+		Nonce:     nonce,
+		Config:    bc.Config,
+		Data:      data,
+		Errors:    make(map[string]string),
+		OldInput:  make(map[string]interface{}),
+	}
+}
+
+// getCSRFTokenChi gets CSRF token from session
+func (bc *BaseController) getCSRFTokenChi(r *http.Request) string {
+	session := middleware.GetSession(r)
+	if session == nil {
+		return ""
+	}
+	
+	token, ok := session.Values["csrf_token"].(string)
+	if !ok {
+		// Generate new token
+		token = middleware.GenerateNonce()
+		session.Values["csrf_token"] = token
+	}
+	
+	return token
+}
+{{- end}}
+
+// Helper functions
+
+// ParseID parses an ID from URL parameter
+{{- if eq .Framework "gin"}}
+func (bc *BaseController) ParseID(c *gin.Context, param string) (int, error) {
+	idStr := c.Param(param)
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ID: %s", idStr)
+	}
+	return id, nil
+}
+{{- else if eq .Framework "echo"}}
+func (bc *BaseController) ParseID(c echo.Context, param string) (int, error) {
+	idStr := c.Param(param)
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ID: %s", idStr)
+	}
+	return id, nil
+}
+{{- else if eq .Framework "fiber"}}
+func (bc *BaseController) ParseID(c *fiber.Ctx, param string) (int, error) {
+	idStr := c.Params(param)
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ID: %s", idStr)
+	}
+	return id, nil
+}
+{{- else if eq .Framework "chi"}}
+func (bc *BaseController) ParseID(r *http.Request, param string) (int, error) {
+	idStr := chi.URLParam(r, param)
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return 0, fmt.Errorf("invalid ID: %s", idStr)
+	}
+	return id, nil
+}
+{{- end}}
+
+// ValidateRequired validates required fields
+func (bc *BaseController) ValidateRequired(fields map[string]string) ValidationErrors {
+	var errors []ValidationError
+	
+	for field, value := range fields {
+		if value == "" {
+			errors = append(errors, ValidationError{
+				Field:   field,
+				Message: fmt.Sprintf("%s is required", field),
+				Code:    "required",
+			})
+		}
+	}
+	
+	return ValidationErrors{Errors: errors}
+}
+
+// ValidateEmail validates email format
+func (bc *BaseController) ValidateEmail(email string) bool {
+	// Simple email validation - in production, use a proper validator
+	return email != "" && len(email) > 3 && 
+		   len(email) < 255 && 
+		   contains(email, "@") && 
+		   contains(email, ".")
+}
+
+// contains checks if string contains substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && 
+		   (s == substr || 
+		    contains(s[1:], substr) || 
+		    (len(s) > 0 && s[:len(substr)] == substr))
+}
+
+// SetPageTitle sets the page title
+{{- if eq .Framework "gin"}}
+func (bc *BaseController) SetPageTitle(c *gin.Context, title string) {
+	c.Set("page_title", title)
+}
+{{- else if eq .Framework "echo"}}
+func (bc *BaseController) SetPageTitle(c echo.Context, title string) {
+	c.Set("page_title", title)
+}
+{{- else if eq .Framework "fiber"}}
+func (bc *BaseController) SetPageTitle(c *fiber.Ctx, title string) {
+	c.Locals("page_title", title)
+}
+{{- else if eq .Framework "chi"}}
+func (bc *BaseController) SetPageTitle(r *http.Request, title string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), "page_title", title))
+}
+{{- end}}
+
+// AddBreadcrumb adds a breadcrumb to the navigation
+func (bc *BaseController) AddBreadcrumb(breadcrumbs []Breadcrumb, title, url string) []Breadcrumb {
+	return append(breadcrumbs, Breadcrumb{Title: title, URL: url})
+}

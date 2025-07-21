@@ -1,0 +1,626 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	"golang.org/x/crypto/bcrypt"
+)
+
+// User service errors
+var (
+	ErrUserNotFound         = errors.New("user not found")
+	ErrUserAlreadyExists    = errors.New("user already exists")
+	ErrInvalidUserData      = errors.New("invalid user data")
+	ErrUnauthorized         = errors.New("unauthorized access")
+	ErrCurrentPasswordWrong = errors.New("current password is incorrect")
+	ErrSamePassword         = errors.New("new password must be different from current password")
+	ErrCannotDeleteSelf     = errors.New("cannot delete your own account")
+	ErrInvalidProfilePicture = errors.New("invalid profile picture format")
+)
+
+// UserService handles user management operations
+type UserService struct {
+	userRepo models.UserRepository
+	authSvc  *AuthService
+	emailSvc EmailService
+	config   *config.Config
+	{{- if eq .LoggerType "zap"}}
+	logger   *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger   *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger   zerolog.Logger
+	{{- else}}
+	logger   *slog.Logger
+	{{- end}}
+}
+
+// NewUserService creates a new user service
+func NewUserService(
+	userRepo models.UserRepository,
+	authSvc *AuthService,
+	emailSvc EmailService,
+	config *config.Config,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *UserService {
+	return &UserService{
+		userRepo: userRepo,
+		authSvc:  authSvc,
+		emailSvc: emailSvc,
+		config:   config,
+		logger:   logger,
+	}
+}
+
+// UpdateProfileRequest represents a profile update request
+type UpdateProfileRequest struct {
+	FirstName       string `json:"first_name" validate:"required,min=2,max=50"`
+	LastName        string `json:"last_name" validate:"required,min=2,max=50"`
+	Username        string `json:"username,omitempty" validate:"omitempty,min=3,max=30,alphanum"`
+	Bio             string `json:"bio,omitempty" validate:"omitempty,max=500"`
+	Location        string `json:"location,omitempty" validate:"omitempty,max=100"`
+	Website         string `json:"website,omitempty" validate:"omitempty,url,max=255"`
+	AcceptMarketing bool   `json:"accept_marketing"`
+}
+
+// ChangePasswordRequest represents a password change request
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
+	NewPassword     string `json:"new_password" validate:"required"`
+	ConfirmPassword string `json:"confirm_password" validate:"required,eqfield=NewPassword"`
+}
+
+// UpdateEmailRequest represents an email update request
+type UpdateEmailRequest struct {
+	NewEmail        string `json:"new_email" validate:"required,email"`
+	Password        string `json:"password" validate:"required"`
+}
+
+// ProfilePictureRequest represents a profile picture update request
+type ProfilePictureRequest struct {
+	ImageData   []byte `json:"image_data"`
+	ContentType string `json:"content_type"`
+	Filename    string `json:"filename"`
+}
+
+// UserStats represents user statistics
+type UserStats struct {
+	TotalUsers       int64 `json:"total_users"`
+	ActiveUsers      int64 `json:"active_users"`
+	NewUsersToday    int64 `json:"new_users_today"`
+	NewUsersThisWeek int64 `json:"new_users_this_week"`
+	VerifiedUsers    int64 `json:"verified_users"`
+}
+
+// GetUserByID retrieves a user by ID
+func (s *UserService) GetUserByID(ctx context.Context, userID string) (*models.User, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+	return user, nil
+}
+
+// GetUserByEmail retrieves a user by email
+func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	user, err := s.userRepo.FindByEmail(ctx, email)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+	return user, nil
+}
+
+// GetUserByUsername retrieves a user by username
+func (s *UserService) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	user, err := s.userRepo.FindByUsername(ctx, username)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+	return user, nil
+}
+
+// ListUsers retrieves a paginated list of users
+func (s *UserService) ListUsers(ctx context.Context, page, limit int, search string) ([]*models.User, int64, error) {
+	offset := (page - 1) * limit
+	
+	var users []*models.User
+	var total int64
+	var err error
+	
+	if search != "" {
+		users, err = s.userRepo.SearchUsers(ctx, search, limit, offset)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to search users: %w", err)
+		}
+		total, err = s.userRepo.CountSearchUsers(ctx, search)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to count search users: %w", err)
+		}
+	} else {
+		users, err = s.userRepo.List(ctx, limit, offset)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to list users: %w", err)
+		}
+		total, err = s.userRepo.Count(ctx)
+		if err != nil {
+			return nil, 0, fmt.Errorf("failed to count users: %w", err)
+		}
+	}
+	
+	return users, total, nil
+}
+
+// UpdateProfile updates a user's profile information
+func (s *UserService) UpdateProfile(ctx context.Context, userID string, req *UpdateProfileRequest) (*models.User, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+
+	// Check username uniqueness if changed
+	if req.Username != "" && req.Username != user.Username {
+		if existingUser, err := s.userRepo.FindByUsername(ctx, req.Username); err == nil && existingUser.ID != userID {
+			return nil, errors.New("username already exists")
+		}
+	}
+
+	// Update fields
+	user.FirstName = req.FirstName
+	user.LastName = req.LastName
+	user.Username = req.Username
+	user.Bio = req.Bio
+	user.Location = req.Location
+	user.Website = req.Website
+	user.AcceptMarketing = req.AcceptMarketing
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to update user: %w", err)
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("User profile updated", zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithField("user_id", userID).Info("User profile updated"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Msg("User profile updated"){{else}}Info("User profile updated", "user_id", userID){{end}}
+
+	return user, nil
+}
+
+// ChangePassword changes a user's password
+func (s *UserService) ChangePassword(ctx context.Context, userID string, req *ChangePasswordRequest) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Warn("Invalid current password attempt", zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithField("user_id", userID).Warn("Invalid current password attempt"){{else if eq .LoggerType "zerolog"}}Warn().Str("user_id", userID).Msg("Invalid current password attempt"){{else}}Warn("Invalid current password attempt", "user_id", userID){{end}}
+		return ErrCurrentPasswordWrong
+	}
+
+	// Check if new password is different
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.NewPassword)); err == nil {
+		return ErrSamePassword
+	}
+
+	// Validate new password strength
+	if err := s.authSvc.validatePasswordStrength(req.NewPassword); err != nil {
+		return err
+	}
+
+	// Hash new password
+	hashedPassword, err := s.authSvc.hashPassword(req.NewPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password
+	user.Password = hashedPassword
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update password: %w", err)
+	}
+
+	// Send password change notification email
+	if err := s.emailSvc.SendPasswordChangedEmail(ctx, user.Email, user.FirstName); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send password change notification", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to send password change notification"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to send password change notification"){{else}}Error("Failed to send password change notification", "error", err, "user_id", userID){{end}}
+	}
+
+	{{- if eq .Features.Authentication.Type "session"}}
+	// Invalidate all sessions except current one
+	s.authSvc.invalidateAllUserSessions(ctx, userID)
+	{{- end}}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("User password changed", zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithField("user_id", userID).Info("User password changed"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Msg("User password changed"){{else}}Info("User password changed", "user_id", userID){{end}}
+
+	return nil
+}
+
+// UpdateEmail initiates email change process
+func (s *UserService) UpdateEmail(ctx context.Context, userID string, req *UpdateEmailRequest) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	// Verify password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Warn("Invalid password for email change", zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithField("user_id", userID).Warn("Invalid password for email change"){{else if eq .LoggerType "zerolog"}}Warn().Str("user_id", userID).Msg("Invalid password for email change"){{else}}Warn("Invalid password for email change", "user_id", userID){{end}}
+		return ErrCurrentPasswordWrong
+	}
+
+	// Check if email is already in use
+	if existingUser, err := s.userRepo.FindByEmail(ctx, req.NewEmail); err == nil && existingUser.ID != userID {
+		return ErrUserAlreadyExists
+	}
+
+	// Generate email change token
+	token, err := s.authSvc.generateSecureToken(32)
+	if err != nil {
+		return fmt.Errorf("failed to generate token: %w", err)
+	}
+
+	// Store pending email change
+	user.PendingEmail = req.NewEmail
+	user.PendingEmailToken = token
+	user.PendingEmailExpires = time.Now().Add(24 * time.Hour) // 24 hour expiration
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	// Send confirmation email to new address
+	if err := s.emailSvc.SendEmailChangeConfirmation(ctx, req.NewEmail, user.FirstName, token); err != nil {
+		return fmt.Errorf("failed to send confirmation email: %w", err)
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Email change initiated", zap.String("user_id", userID), zap.String("new_email", req.NewEmail)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": userID, "new_email": req.NewEmail}).Info("Email change initiated"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Str("new_email", req.NewEmail).Msg("Email change initiated"){{else}}Info("Email change initiated", "user_id", userID, "new_email", req.NewEmail){{end}}
+
+	return nil
+}
+
+// ConfirmEmailChange confirms email change with token
+func (s *UserService) ConfirmEmailChange(ctx context.Context, token string) error {
+	user, err := s.userRepo.FindByPendingEmailToken(ctx, token)
+	if err != nil || user.PendingEmailExpires.Before(time.Now()) {
+		return ErrInvalidToken
+	}
+
+	// Update email
+	oldEmail := user.Email
+	user.Email = user.PendingEmail
+	user.PendingEmail = ""
+	user.PendingEmailToken = ""
+	user.PendingEmailExpires = time.Time{}
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update email: %w", err)
+	}
+
+	// Send notification to old email
+	if err := s.emailSvc.SendEmailChangedNotification(ctx, oldEmail, user.FirstName, user.Email); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send email change notification", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to send email change notification"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to send email change notification"){{else}}Error("Failed to send email change notification", "error", err){{end}}
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Email change confirmed", zap.String("user_id", user.ID), zap.String("old_email", oldEmail), zap.String("new_email", user.Email)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": user.ID, "old_email": oldEmail, "new_email": user.Email}).Info("Email change confirmed"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", user.ID).Str("old_email", oldEmail).Str("new_email", user.Email).Msg("Email change confirmed"){{else}}Info("Email change confirmed", "user_id", user.ID, "old_email", oldEmail, "new_email", user.Email){{end}}
+
+	return nil
+}
+
+// UpdateProfilePicture updates a user's profile picture
+func (s *UserService) UpdateProfilePicture(ctx context.Context, userID string, req *ProfilePictureRequest) (*models.User, error) {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, ErrUserNotFound
+	}
+
+	// Validate content type
+	allowedTypes := []string{"image/jpeg", "image/png", "image/webp"}
+	isValid := false
+	for _, allowedType := range allowedTypes {
+		if req.ContentType == allowedType {
+			isValid = true
+			break
+		}
+	}
+	if !isValid {
+		return nil, ErrInvalidProfilePicture
+	}
+
+	// Validate file size (max 5MB)
+	maxSize := 5 * 1024 * 1024 // 5MB
+	if len(req.ImageData) > maxSize {
+		return nil, errors.New("profile picture too large (max 5MB)")
+	}
+
+	// TODO: In a real implementation, you would:
+	// 1. Resize/compress the image
+	// 2. Upload to cloud storage (S3, CloudFlare, etc.)
+	// 3. Generate thumbnails
+	// 4. Store the URL(s) in the database
+
+	// For now, we'll just store a placeholder URL
+	timestamp := time.Now().Unix()
+	filename := fmt.Sprintf("profile_%s_%d.jpg", userID, timestamp)
+	user.Avatar = fmt.Sprintf("/uploads/avatars/%s", filename)
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to update profile picture: %w", err)
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Profile picture updated", zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithField("user_id", userID).Info("Profile picture updated"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Msg("Profile picture updated"){{else}}Info("Profile picture updated", "user_id", userID){{end}}
+
+	return user, nil
+}
+
+// DeleteUser deactivates a user account (soft delete)
+func (s *UserService) DeleteUser(ctx context.Context, userID, currentUserID string) error {
+	// Prevent self-deletion
+	if userID == currentUserID {
+		return ErrCannotDeleteSelf
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	// Soft delete by deactivating
+	user.IsActive = false
+	user.DeactivatedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to deactivate user: %w", err)
+	}
+
+	{{- if eq .Features.Authentication.Type "session"}}
+	// Invalidate all user sessions
+	s.authSvc.invalidateAllUserSessions(ctx, userID)
+	{{- end}}
+
+	// Send account deactivation email
+	if err := s.emailSvc.SendAccountDeactivatedEmail(ctx, user.Email, user.FirstName); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send deactivation email", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to send deactivation email"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to send deactivation email"){{else}}Error("Failed to send deactivation email", "error", err){{end}}
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("User deactivated", zap.String("user_id", userID), zap.String("deleted_by", currentUserID)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": userID, "deleted_by": currentUserID}).Info("User deactivated"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Str("deleted_by", currentUserID).Msg("User deactivated"){{else}}Info("User deactivated", "user_id", userID, "deleted_by", currentUserID){{end}}
+
+	return nil
+}
+
+// RestoreUser reactivates a deactivated user account
+func (s *UserService) RestoreUser(ctx context.Context, userID string) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	if user.IsActive {
+		return errors.New("user is already active")
+	}
+
+	// Reactivate user
+	user.IsActive = true
+	user.DeactivatedAt = time.Time{}
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to restore user: %w", err)
+	}
+
+	// Send account restoration email
+	if err := s.emailSvc.SendAccountRestoredEmail(ctx, user.Email, user.FirstName); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send restoration email", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to send restoration email"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to send restoration email"){{else}}Error("Failed to send restoration email", "error", err){{end}}
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("User restored", zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithField("user_id", userID).Info("User restored"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Msg("User restored"){{else}}Info("User restored", "user_id", userID){{end}}
+
+	return nil
+}
+
+// GetUserStats returns user statistics
+func (s *UserService) GetUserStats(ctx context.Context) (*UserStats, error) {
+	total, err := s.userRepo.Count(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count total users: %w", err)
+	}
+
+	active, err := s.userRepo.CountActive(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count active users: %w", err)
+	}
+
+	verified, err := s.userRepo.CountVerified(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count verified users: %w", err)
+	}
+
+	today := time.Now().Truncate(24 * time.Hour)
+	newToday, err := s.userRepo.CountCreatedSince(ctx, today)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count new users today: %w", err)
+	}
+
+	weekAgo := today.AddDate(0, 0, -7)
+	newThisWeek, err := s.userRepo.CountCreatedSince(ctx, weekAgo)
+	if err != nil {
+		return nil, fmt.Errorf("failed to count new users this week: %w", err)
+	}
+
+	return &UserStats{
+		TotalUsers:       total,
+		ActiveUsers:      active,
+		NewUsersToday:    newToday,
+		NewUsersThisWeek: newThisWeek,
+		VerifiedUsers:    verified,
+	}, nil
+}
+
+// UpdateUserRole updates a user's role (admin function)
+func (s *UserService) UpdateUserRole(ctx context.Context, userID string, role string) error {
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return ErrUserNotFound
+	}
+
+	// Validate role
+	validRoles := []string{"user", "admin", "moderator"}
+	isValidRole := false
+	for _, validRole := range validRoles {
+		if role == validRole {
+			isValidRole = true
+			break
+		}
+	}
+	if !isValidRole {
+		return errors.New("invalid role")
+	}
+
+	user.Role = role
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user role: %w", err)
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("User role updated", zap.String("user_id", userID), zap.String("new_role", role)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": userID, "new_role": role}).Info("User role updated"){{else if eq .LoggerType "zerolog"}}Info().Str("user_id", userID).Str("new_role", role).Msg("User role updated"){{else}}Info("User role updated", "user_id", userID, "new_role", role){{end}}
+
+	return nil
+}
+
+// BulkUpdateUsers performs bulk operations on users
+func (s *UserService) BulkUpdateUsers(ctx context.Context, userIDs []string, action string) error {
+	if len(userIDs) == 0 {
+		return errors.New("no user IDs provided")
+	}
+
+	switch strings.ToLower(action) {
+	case "activate":
+		return s.bulkActivateUsers(ctx, userIDs)
+	case "deactivate":
+		return s.bulkDeactivateUsers(ctx, userIDs)
+	case "verify":
+		return s.bulkVerifyUsers(ctx, userIDs)
+	default:
+		return errors.New("invalid bulk action")
+	}
+}
+
+// bulkActivateUsers activates multiple users
+func (s *UserService) bulkActivateUsers(ctx context.Context, userIDs []string) error {
+	for _, userID := range userIDs {
+		user, err := s.userRepo.FindByID(ctx, userID)
+		if err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to find user for bulk activate", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to find user for bulk activate"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to find user for bulk activate"){{else}}Error("Failed to find user for bulk activate", "error", err, "user_id", userID){{end}}
+			continue
+		}
+
+		user.IsActive = true
+		user.UpdatedAt = time.Now()
+
+		if err := s.userRepo.Update(ctx, user); err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to activate user", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to activate user"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to activate user"){{else}}Error("Failed to activate user", "error", err, "user_id", userID){{end}}
+		}
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Bulk user activation completed", zap.Int("count", len(userIDs))){{else if eq .LoggerType "logrus"}}WithField("count", len(userIDs)).Info("Bulk user activation completed"){{else if eq .LoggerType "zerolog"}}Info().Int("count", len(userIDs)).Msg("Bulk user activation completed"){{else}}Info("Bulk user activation completed", "count", len(userIDs)){{end}}
+
+	return nil
+}
+
+// bulkDeactivateUsers deactivates multiple users
+func (s *UserService) bulkDeactivateUsers(ctx context.Context, userIDs []string) error {
+	for _, userID := range userIDs {
+		user, err := s.userRepo.FindByID(ctx, userID)
+		if err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to find user for bulk deactivate", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to find user for bulk deactivate"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to find user for bulk deactivate"){{else}}Error("Failed to find user for bulk deactivate", "error", err, "user_id", userID){{end}}
+			continue
+		}
+
+		user.IsActive = false
+		user.DeactivatedAt = time.Now()
+		user.UpdatedAt = time.Now()
+
+		if err := s.userRepo.Update(ctx, user); err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to deactivate user", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to deactivate user"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to deactivate user"){{else}}Error("Failed to deactivate user", "error", err, "user_id", userID){{end}}
+		}
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Bulk user deactivation completed", zap.Int("count", len(userIDs))){{else if eq .LoggerType "logrus"}}WithField("count", len(userIDs)).Info("Bulk user deactivation completed"){{else if eq .LoggerType "zerolog"}}Info().Int("count", len(userIDs)).Msg("Bulk user deactivation completed"){{else}}Info("Bulk user deactivation completed", "count", len(userIDs)){{end}}
+
+	return nil
+}
+
+// bulkVerifyUsers verifies multiple users
+func (s *UserService) bulkVerifyUsers(ctx context.Context, userIDs []string) error {
+	for _, userID := range userIDs {
+		user, err := s.userRepo.FindByID(ctx, userID)
+		if err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to find user for bulk verify", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to find user for bulk verify"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to find user for bulk verify"){{else}}Error("Failed to find user for bulk verify", "error", err, "user_id", userID){{end}}
+			continue
+		}
+
+		user.EmailVerified = true
+		user.EmailVerifyToken = ""
+		user.EmailVerifiedAt = time.Now()
+		user.UpdatedAt = time.Now()
+
+		if err := s.userRepo.Update(ctx, user); err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to verify user", zap.Error(err), zap.String("user_id", userID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", userID).Error("Failed to verify user"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", userID).Msg("Failed to verify user"){{else}}Error("Failed to verify user", "error", err, "user_id", userID){{end}}
+		}
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Bulk user verification completed", zap.Int("count", len(userIDs))){{else if eq .LoggerType "logrus"}}WithField("count", len(userIDs)).Info("Bulk user verification completed"){{else if eq .LoggerType "zerolog"}}Info().Int("count", len(userIDs)).Msg("Bulk user verification completed"){{else}}Info("Bulk user verification completed", "count", len(userIDs)){{end}}
+
+	return nil
+}
+
+// GetRecentUsers returns recently registered users
+func (s *UserService) GetRecentUsers(ctx context.Context, limit int) ([]*models.User, error) {
+	users, err := s.userRepo.FindRecent(ctx, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent users: %w", err)
+	}
+	return users, nil
+}
+
+// SearchUsers searches for users by various criteria
+func (s *UserService) SearchUsers(ctx context.Context, query string, limit, offset int) ([]*models.User, int64, error) {
+	users, err := s.userRepo.SearchUsers(ctx, query, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to search users: %w", err)
+	}
+
+	total, err := s.userRepo.CountSearchUsers(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to count search results: %w", err)
+	}
+
+	return users, total, nil
+}

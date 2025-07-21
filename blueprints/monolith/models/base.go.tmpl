@@ -1,0 +1,276 @@
+package models
+
+import (
+	"time"
+
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- else if eq .DatabaseORM "ent"}}
+	"entgo.io/ent"
+	{{- end}}
+)
+
+// BaseModel provides common fields for all models
+type BaseModel struct {
+	{{- if eq .DatabaseORM "gorm"}}
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `gorm:"autoCreateTime" json:"created_at"`
+	UpdatedAt time.Time      `gorm:"autoUpdateTime" json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+	{{- else if eq .DatabaseORM "ent"}}
+	ID        int       `json:"id,omitempty"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	{{- else}}
+	ID        int       `db:"id" json:"id"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+	DeletedAt *time.Time `db:"deleted_at" json:"deleted_at,omitempty"`
+	{{- end}}
+}
+
+{{- if ne .DatabaseORM "gorm"}}
+// IsDeleted checks if the record is soft deleted
+func (bm *BaseModel) IsDeleted() bool {
+	return bm.DeletedAt != nil
+}
+
+// SoftDelete marks the record as deleted
+func (bm *BaseModel) SoftDelete() {
+	now := time.Now()
+	bm.DeletedAt = &now
+}
+{{- end}}
+
+// Timestamps updates the timestamps for the model
+func (bm *BaseModel) UpdateTimestamps() {
+	now := time.Now()
+	if bm.ID == 0 {
+		bm.CreatedAt = now
+	}
+	bm.UpdatedAt = now
+}
+
+// AuditFields provides audit trail fields
+type AuditFields struct {
+	CreatedBy string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255)"{{else}}db:"created_by"{{end}} json:"created_by,omitempty"`
+	UpdatedBy string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255)"{{else}}db:"updated_by"{{end}} json:"updated_by,omitempty"`
+	DeletedBy string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255)"{{else}}db:"deleted_by"{{end}} json:"deleted_by,omitempty"`
+	Version   int    `{{if eq .DatabaseORM "gorm"}}gorm:"default:1"{{else}}db:"version"{{end}} json:"version"`
+}
+
+// UpdateAudit updates audit fields
+func (af *AuditFields) UpdateAudit(userID string, isCreate bool) {
+	if isCreate {
+		af.CreatedBy = userID
+		af.Version = 1
+	} else {
+		af.UpdatedBy = userID
+		af.Version++
+	}
+}
+
+// SoftDeleteAudit marks audit fields for soft delete
+func (af *AuditFields) SoftDeleteAudit(userID string) {
+	af.DeletedBy = userID
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// BeforeCreate GORM hook
+func (bm *BaseModel) BeforeCreate(tx *gorm.DB) error {
+	bm.UpdateTimestamps()
+	return nil
+}
+
+// BeforeUpdate GORM hook
+func (bm *BaseModel) BeforeUpdate(tx *gorm.DB) error {
+	bm.UpdateTimestamps()
+	return nil
+}
+{{- end}}
+
+// ModelInterface defines common model operations
+type ModelInterface interface {
+	GetID() interface{}
+	GetCreatedAt() time.Time
+	GetUpdatedAt() time.Time
+	UpdateTimestamps()
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// GetID returns the model ID
+func (bm *BaseModel) GetID() interface{} {
+	return bm.ID
+}
+{{- else}}
+// GetID returns the model ID
+func (bm *BaseModel) GetID() interface{} {
+	return bm.ID
+}
+{{- end}}
+
+// GetCreatedAt returns the creation timestamp
+func (bm *BaseModel) GetCreatedAt() time.Time {
+	return bm.CreatedAt
+}
+
+// GetUpdatedAt returns the update timestamp
+func (bm *BaseModel) GetUpdatedAt() time.Time {
+	return bm.UpdatedAt
+}
+
+// ValidationError represents a model validation error
+type ValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+	Code    string `json:"code"`
+	Value   interface{} `json:"value,omitempty"`
+}
+
+// ValidationErrors is a collection of validation errors
+type ValidationErrors []ValidationError
+
+// Error implements the error interface
+func (ve ValidationErrors) Error() string {
+	if len(ve) > 0 {
+		return ve[0].Message
+	}
+	return "validation failed"
+}
+
+// HasErrors checks if there are any validation errors
+func (ve ValidationErrors) HasErrors() bool {
+	return len(ve) > 0
+}
+
+// AddError adds a validation error
+func (ve *ValidationErrors) AddError(field, message, code string, value interface{}) {
+	*ve = append(*ve, ValidationError{
+		Field:   field,
+		Message: message,
+		Code:    code,
+		Value:   value,
+	})
+}
+
+// GetFieldErrors returns errors for a specific field
+func (ve ValidationErrors) GetFieldErrors(field string) []ValidationError {
+	var errors []ValidationError
+	for _, err := range ve {
+		if err.Field == field {
+			errors = append(errors, err)
+		}
+	}
+	return errors
+}
+
+// PaginationMeta represents pagination metadata
+type PaginationMeta struct {
+	CurrentPage int   `json:"current_page"`
+	PerPage     int   `json:"per_page"`
+	Total       int64 `json:"total"`
+	LastPage    int   `json:"last_page"`
+	From        int   `json:"from"`
+	To          int   `json:"to"`
+}
+
+// PaginatedResult represents a paginated result set
+type PaginatedResult struct {
+	Data []interface{}   `json:"data"`
+	Meta PaginationMeta  `json:"meta"`
+}
+
+// CalculatePagination calculates pagination metadata
+func CalculatePagination(page, perPage int, total int64) PaginationMeta {
+	if page < 1 {
+		page = 1
+	}
+	if perPage < 1 {
+		perPage = 10
+	}
+
+	lastPage := int((total + int64(perPage) - 1) / int64(perPage))
+	if lastPage < 1 {
+		lastPage = 1
+	}
+
+	from := (page-1)*perPage + 1
+	to := page * perPage
+	if int64(to) > total {
+		to = int(total)
+	}
+	if total == 0 {
+		from = 0
+		to = 0
+	}
+
+	return PaginationMeta{
+		CurrentPage: page,
+		PerPage:     perPage,
+		Total:       total,
+		LastPage:    lastPage,
+		From:        from,
+		To:          to,
+	}
+}
+
+// SortDirection represents sort direction
+type SortDirection string
+
+const (
+	SortAsc  SortDirection = "asc"
+	SortDesc SortDirection = "desc"
+)
+
+// SortOption represents a sort option
+type SortOption struct {
+	Field     string        `json:"field"`
+	Direction SortDirection `json:"direction"`
+}
+
+// FilterOption represents a filter option
+type FilterOption struct {
+	Field    string      `json:"field"`
+	Operator string      `json:"operator"` // eq, ne, gt, gte, lt, lte, like, in, between
+	Value    interface{} `json:"value"`
+}
+
+// QueryOptions represents query options for listing models
+type QueryOptions struct {
+	Page    int            `json:"page"`
+	PerPage int            `json:"per_page"`
+	Sort    []SortOption   `json:"sort"`
+	Filter  []FilterOption `json:"filter"`
+	Search  string         `json:"search"`
+}
+
+// DefaultQueryOptions returns default query options
+func DefaultQueryOptions() QueryOptions {
+	return QueryOptions{
+		Page:    1,
+		PerPage: 20,
+		Sort: []SortOption{
+			{Field: "created_at", Direction: SortDesc},
+		},
+		Filter: []FilterOption{},
+		Search: "",
+	}
+}
+
+// ValidateQueryOptions validates and normalizes query options
+func ValidateQueryOptions(opts *QueryOptions) {
+	if opts.Page < 1 {
+		opts.Page = 1
+	}
+	if opts.PerPage < 1 || opts.PerPage > 100 {
+		opts.PerPage = 20
+	}
+	if len(opts.Sort) == 0 {
+		opts.Sort = []SortOption{
+			{Field: "created_at", Direction: SortDesc},
+		}
+	}
+	if opts.Filter == nil {
+		opts.Filter = []FilterOption{}
+	}
+}

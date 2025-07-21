@@ -1,0 +1,559 @@
+package tests
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+{{- if eq .Framework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo" }}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber" }}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi" }}
+	"github.com/go-chi/chi/v5"
+{{- end }}
+	"github.com/stretchr/testify/require"
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseORM "gorm" }}
+	"gorm.io/gorm"
+{{- else if eq .DatabaseORM "sqlx" }}
+	"github.com/jmoiron/sqlx"
+{{- else }}
+	"database/sql"
+{{- end }}
+{{- end }}
+
+	"{{.ModulePath}}/config"
+	"{{.ModulePath}}/models"
+)
+
+// TestConfig holds test configuration
+type TestConfig struct {
+	BaseURL        string
+	Timeout        time.Duration
+	RetryAttempts  int
+	RetryDelay     time.Duration
+{{- if ne .DatabaseDriver "" }}
+	DatabaseURL    string
+	TestDatabase   string
+{{- end }}
+}
+
+// NewTestConfig creates a new test configuration
+func NewTestConfig() *TestConfig {
+	return &TestConfig{
+		BaseURL:       getEnvOrDefault("TEST_BASE_URL", "http://localhost:8080"),
+		Timeout:       10 * time.Second,
+		RetryAttempts: 3,
+		RetryDelay:    100 * time.Millisecond,
+{{- if ne .DatabaseDriver "" }}
+		DatabaseURL:   getEnvOrDefault("TEST_DATABASE_URL", ""),
+		TestDatabase:  getEnvOrDefault("TEST_DATABASE_NAME", "{{.ProjectName}}_test"),
+{{- end }}
+	}
+}
+
+// HTTPClient is a test HTTP client with helper methods
+type HTTPClient struct {
+	client  *http.Client
+	baseURL string
+	headers map[string]string
+	cookies []*http.Cookie
+}
+
+// NewHTTPClient creates a new test HTTP client
+func NewHTTPClient(baseURL string) *HTTPClient {
+	return &HTTPClient{
+		client: &http.Client{
+			Timeout: 30 * time.Second,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse // Don't follow redirects automatically
+			},
+		},
+		baseURL: strings.TrimRight(baseURL, "/"),
+		headers: make(map[string]string),
+		cookies: make([]*http.Cookie, 0),
+	}
+}
+
+// SetHeader sets a header for all requests
+func (c *HTTPClient) SetHeader(key, value string) {
+	c.headers[key] = value
+}
+
+// SetAuthToken sets the authorization header
+func (c *HTTPClient) SetAuthToken(token string) {
+	c.SetHeader("Authorization", "Bearer "+token)
+}
+
+// AddCookie adds a cookie for all requests
+func (c *HTTPClient) AddCookie(cookie *http.Cookie) {
+	c.cookies = append(c.cookies, cookie)
+}
+
+// GET performs a GET request
+func (c *HTTPClient) GET(path string, params url.Values) (*http.Response, error) {
+	fullURL := c.baseURL + path
+	if params != nil {
+		fullURL += "?" + params.Encode()
+	}
+	return c.doRequest("GET", fullURL, nil)
+}
+
+// POST performs a POST request
+func (c *HTTPClient) POST(path string, body interface{}) (*http.Response, error) {
+	return c.doRequest("POST", c.baseURL+path, body)
+}
+
+// PUT performs a PUT request
+func (c *HTTPClient) PUT(path string, body interface{}) (*http.Response, error) {
+	return c.doRequest("PUT", c.baseURL+path, body)
+}
+
+// DELETE performs a DELETE request
+func (c *HTTPClient) DELETE(path string) (*http.Response, error) {
+	return c.doRequest("DELETE", c.baseURL+path, nil)
+}
+
+// PostForm performs a form POST request
+func (c *HTTPClient) PostForm(path string, data url.Values) (*http.Response, error) {
+	req, err := http.NewRequest("POST", c.baseURL+path, strings.NewReader(data.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return c.do(req)
+}
+
+// PostMultipart performs a multipart form POST request
+func (c *HTTPClient) PostMultipart(path string, fields map[string]string, files map[string]string) (*http.Response, error) {
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+
+	// Add fields
+	for key, value := range fields {
+		if err := writer.WriteField(key, value); err != nil {
+			return nil, err
+		}
+	}
+
+	// Add files
+	for fieldName, filePath := range files {
+		file, err := os.Open(filePath)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+
+		part, err := writer.CreateFormFile(fieldName, filepath.Base(filePath))
+		if err != nil {
+			return nil, err
+		}
+
+		if _, err := io.Copy(part, file); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	return c.do(req)
+}
+
+// doRequest performs an HTTP request
+func (c *HTTPClient) doRequest(method, url string, body interface{}) (*http.Response, error) {
+	var reqBody io.Reader
+	if body != nil {
+		jsonData, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		reqBody = bytes.NewBuffer(jsonData)
+	}
+
+	req, err := http.NewRequest(method, url, reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return c.do(req)
+}
+
+// do executes the request with headers and cookies
+func (c *HTTPClient) do(req *http.Request) (*http.Response, error) {
+	// Add headers
+	for key, value := range c.headers {
+		req.Header.Set(key, value)
+	}
+
+	// Add cookies
+	for _, cookie := range c.cookies {
+		req.AddCookie(cookie)
+	}
+
+	return c.client.Do(req)
+}
+
+// ResponseAssertion provides fluent assertions for HTTP responses
+type ResponseAssertion struct {
+	t        *testing.T
+	response *http.Response
+	body     []byte
+}
+
+// NewResponseAssertion creates a new response assertion
+func NewResponseAssertion(t *testing.T, resp *http.Response) *ResponseAssertion {
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	return &ResponseAssertion{
+		t:        t,
+		response: resp,
+		body:     body,
+	}
+}
+
+// AssertStatus asserts the response status code
+func (ra *ResponseAssertion) AssertStatus(expected int) *ResponseAssertion {
+	require.Equal(ra.t, expected, ra.response.StatusCode,
+		"Expected status %d, got %d. Body: %s", expected, ra.response.StatusCode, string(ra.body))
+	return ra
+}
+
+// AssertHeader asserts a response header value
+func (ra *ResponseAssertion) AssertHeader(key, value string) *ResponseAssertion {
+	actual := ra.response.Header.Get(key)
+	require.Equal(ra.t, value, actual, "Expected header %s to be %s, got %s", key, value, actual)
+	return ra
+}
+
+// AssertJSON asserts the response body as JSON and unmarshals it
+func (ra *ResponseAssertion) AssertJSON(target interface{}) *ResponseAssertion {
+	err := json.Unmarshal(ra.body, target)
+	require.NoError(ra.t, err, "Failed to unmarshal JSON: %s", string(ra.body))
+	return ra
+}
+
+// AssertJSONPath asserts a specific path in JSON response
+func (ra *ResponseAssertion) AssertJSONPath(path string, expected interface{}) *ResponseAssertion {
+	var data interface{}
+	err := json.Unmarshal(ra.body, &data)
+	require.NoError(ra.t, err)
+
+	value := getJSONPath(data, path)
+	require.Equal(ra.t, expected, value, "Expected JSON path %s to be %v, got %v", path, expected, value)
+	return ra
+}
+
+// AssertBodyContains asserts the response body contains a string
+func (ra *ResponseAssertion) AssertBodyContains(substring string) *ResponseAssertion {
+	require.Contains(ra.t, string(ra.body), substring,
+		"Expected body to contain %s. Body: %s", substring, string(ra.body))
+	return ra
+}
+
+// GetBody returns the response body as string
+func (ra *ResponseAssertion) GetBody() string {
+	return string(ra.body)
+}
+
+// GetJSON unmarshals the response body as JSON
+func (ra *ResponseAssertion) GetJSON() map[string]interface{} {
+	var result map[string]interface{}
+	err := json.Unmarshal(ra.body, &result)
+	require.NoError(ra.t, err)
+	return result
+}
+
+{{- if ne .DatabaseDriver "" }}
+
+// DatabaseHelper provides database test helpers
+type DatabaseHelper struct {
+{{- if eq .DatabaseORM "gorm" }}
+	db *gorm.DB
+{{- else if eq .DatabaseORM "sqlx" }}
+	db *sqlx.DB
+{{- else }}
+	db *sql.DB
+{{- end }}
+}
+
+// NewDatabaseHelper creates a new database helper
+func NewDatabaseHelper(db interface{}) *DatabaseHelper {
+	switch v := db.(type) {
+{{- if eq .DatabaseORM "gorm" }}
+	case *gorm.DB:
+		return &DatabaseHelper{db: v}
+{{- else if eq .DatabaseORM "sqlx" }}
+	case *sqlx.DB:
+		return &DatabaseHelper{db: v}
+{{- else }}
+	case *sql.DB:
+		return &DatabaseHelper{db: v}
+{{- end }}
+	default:
+		panic("unsupported database type")
+	}
+}
+
+// TruncateTables truncates all tables for clean test state
+func (dh *DatabaseHelper) TruncateTables(tables ...string) error {
+{{- if eq .DatabaseDriver "postgres" }}
+	query := "TRUNCATE TABLE " + strings.Join(tables, ", ") + " RESTART IDENTITY CASCADE"
+{{- else if eq .DatabaseDriver "mysql" }}
+	// Disable foreign key checks for MySQL
+	if _, err := dh.db.Exec("SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+		return err
+	}
+	defer dh.db.Exec("SET FOREIGN_KEY_CHECKS = 1")
+	
+	for _, table := range tables {
+		if _, err := dh.db.Exec("TRUNCATE TABLE " + table); err != nil {
+			return err
+		}
+	}
+	return nil
+{{- else if eq .DatabaseDriver "sqlite" }}
+	for _, table := range tables {
+		if _, err := dh.db.Exec("DELETE FROM " + table); err != nil {
+			return err
+		}
+	}
+	return nil
+{{- end }}
+
+{{- if eq .DatabaseORM "gorm" }}
+	return dh.db.Exec(query).Error
+{{- else }}
+	_, err := dh.db.Exec(query)
+	return err
+{{- end }}
+}
+
+// CreateTestUser creates a test user
+func (dh *DatabaseHelper) CreateTestUser(email, password string) (*models.User, error) {
+	user := &models.User{
+		Email:     email,
+		FirstName: "Test",
+		LastName:  "User",
+		Password:  password, // Should be hashed in the model
+		IsActive:  true,
+		EmailVerifiedAt: &time.Time{},
+	}
+
+{{- if eq .DatabaseORM "gorm" }}
+	if err := dh.db.Create(user).Error; err != nil {
+		return nil, err
+	}
+{{- else }}
+	// Implementation depends on your database setup
+	// This is a placeholder
+{{- end }}
+
+	return user, nil
+}
+
+// CountRecords counts records in a table
+func (dh *DatabaseHelper) CountRecords(table string, condition string, args ...interface{}) (int64, error) {
+	var count int64
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", table)
+	if condition != "" {
+		query += " WHERE " + condition
+	}
+
+{{- if eq .DatabaseORM "gorm" }}
+	err := dh.db.Raw(query, args...).Scan(&count).Error
+{{- else if eq .DatabaseORM "sqlx" }}
+	err := dh.db.Get(&count, query, args...)
+{{- else }}
+	err := dh.db.QueryRow(query, args...).Scan(&count)
+{{- end }}
+
+	return count, err
+}
+
+{{- end }}
+
+// MockServer creates a mock server for testing
+type MockServer struct {
+{{- if eq .Framework "gin" }}
+	Engine *gin.Engine
+{{- else if eq .Framework "echo" }}
+	Echo   *echo.Echo
+{{- else if eq .Framework "chi" }}
+	Router chi.Router
+{{- end }}
+}
+
+// NewMockServer creates a new mock server
+func NewMockServer() *MockServer {
+{{- if eq .Framework "gin" }}
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	return &MockServer{Engine: engine}
+{{- else if eq .Framework "echo" }}
+	e := echo.New()
+	return &MockServer{Echo: e}
+{{- else if eq .Framework "chi" }}
+	r := chi.NewRouter()
+	return &MockServer{Router: r}
+{{- end }}
+}
+
+// ServeHTTP implements http.Handler
+func (ms *MockServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+{{- if eq .Framework "gin" }}
+	ms.Engine.ServeHTTP(w, r)
+{{- else if eq .Framework "echo" }}
+	ms.Echo.ServeHTTP(w, r)
+{{- else if eq .Framework "chi" }}
+	ms.Router.ServeHTTP(w, r)
+{{- end }}
+}
+
+// Fixtures provides test data fixtures
+type Fixtures struct {
+	Users     map[string]*models.User
+	Tokens    map[string]string
+	TestFiles map[string]string
+}
+
+// LoadFixtures loads test fixtures
+func LoadFixtures() *Fixtures {
+	return &Fixtures{
+		Users: map[string]*models.User{
+			"admin": {
+				ID:        1,
+				Email:     "admin@example.com",
+				FirstName: "Admin",
+				LastName:  "User",
+				IsAdmin:   true,
+			},
+			"user": {
+				ID:        2,
+				Email:     "user@example.com",
+				FirstName: "Regular",
+				LastName:  "User",
+				IsAdmin:   false,
+			},
+		},
+		Tokens: map[string]string{
+			"valid":   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+			"expired": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+		},
+		TestFiles: map[string]string{
+			"image": "test-fixtures/test-image.jpg",
+			"pdf":   "test-fixtures/test-document.pdf",
+		},
+	}
+}
+
+// Utility functions
+
+// getEnvOrDefault gets an environment variable or returns a default value
+func getEnvOrDefault(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// getJSONPath extracts a value from nested JSON using dot notation
+func getJSONPath(data interface{}, path string) interface{} {
+	parts := strings.Split(path, ".")
+	current := data
+
+	for _, part := range parts {
+		switch v := current.(type) {
+		case map[string]interface{}:
+			current = v[part]
+		default:
+			return nil
+		}
+	}
+
+	return current
+}
+
+// WaitForCondition waits for a condition to be true with timeout
+func WaitForCondition(timeout time.Duration, check func() bool) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if check() {
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return fmt.Errorf("condition not met within timeout")
+}
+
+// CaptureOutput captures stdout/stderr output during test execution
+func CaptureOutput(f func()) string {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	f()
+
+	w.Close()
+	os.Stdout = old
+
+	output, _ := io.ReadAll(r)
+	return string(output)
+}
+
+// CreateTempFile creates a temporary file for testing
+func CreateTempFile(t *testing.T, content string) string {
+	tmpfile, err := os.CreateTemp("", "test-*.txt")
+	require.NoError(t, err)
+
+	_, err = tmpfile.Write([]byte(content))
+	require.NoError(t, err)
+
+	err = tmpfile.Close()
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		os.Remove(tmpfile.Name())
+	})
+
+	return tmpfile.Name()
+}
+
+// CompareJSON compares two JSON strings ignoring formatting
+func CompareJSON(t *testing.T, expected, actual string) {
+	var expectedData, actualData interface{}
+	
+	err := json.Unmarshal([]byte(expected), &expectedData)
+	require.NoError(t, err, "Failed to parse expected JSON")
+	
+	err = json.Unmarshal([]byte(actual), &actualData)
+	require.NoError(t, err, "Failed to parse actual JSON")
+	
+	require.Equal(t, expectedData, actualData, "JSON content doesn't match")
+}

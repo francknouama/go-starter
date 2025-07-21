@@ -1,0 +1,1065 @@
+package services
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	"golang.org/x/crypto/bcrypt"
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	"github.com/golang-jwt/jwt/v5"
+	{{- end}}
+	{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+	"golang.org/x/oauth2"
+	{{- if contains .Features.Authentication.Providers "google"}}
+	"golang.org/x/oauth2/google"
+	{{- end}}
+	{{- if contains .Features.Authentication.Providers "github"}}
+	"golang.org/x/oauth2/github"
+	{{- end}}
+	{{- end}}
+)
+
+// Authentication errors
+var (
+	ErrInvalidCredentials     = errors.New("invalid email or password")
+	ErrUserNotFound          = errors.New("user not found")
+	ErrUserAlreadyExists     = errors.New("user already exists")
+	ErrInvalidToken          = errors.New("invalid or expired token")
+	ErrAccountLocked         = errors.New("account is locked due to too many failed attempts")
+	ErrAccountNotVerified    = errors.New("account email not verified")
+	ErrPasswordTooWeak       = errors.New("password does not meet security requirements")
+	ErrTokenExpired          = errors.New("token has expired")
+	ErrInvalidSession        = errors.New("invalid session")
+	ErrRateLimitExceeded     = errors.New("rate limit exceeded")
+)
+
+// Security constants based on OWASP recommendations
+const (
+	// Password hashing cost (OWASP minimum: 10, recommended: 12-15)
+	BcryptCost = 12
+	
+	// Maximum password length for bcrypt (72 bytes limitation)
+	MaxPasswordLength = 72
+	
+	// Account lockout settings
+	MaxFailedAttempts = 5
+	LockoutDuration   = 15 * time.Minute
+	
+	// Session settings
+	SessionDuration        = 24 * time.Hour
+	SessionCleanupInterval = 1 * time.Hour
+	
+	// Token settings
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	JWTExpiration = 1 * time.Hour
+	RefreshTokenExpiration = 30 * 24 * time.Hour // 30 days
+	{{- end}}
+	
+	// Rate limiting
+	LoginAttemptsWindow = 15 * time.Minute
+	MaxLoginAttempts    = 10
+	
+	// Token lengths
+	TokenLength        = 32
+	VerificationTokenLength = 32
+	ResetTokenLength   = 32
+)
+
+// AuthService handles user authentication and session management
+type AuthService struct {
+	userRepo    models.UserRepository
+	emailSvc    EmailService
+	cacheSvc    CacheService
+	config      *config.Config
+	{{- if eq .LoggerType "zap"}}
+	logger      *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger      *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger      zerolog.Logger
+	{{- else}}
+	logger      *slog.Logger
+	{{- end}}
+	{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+	oauthConfigs map[string]*oauth2.Config
+	{{- end}}
+}
+
+// NewAuthService creates a new authentication service
+func NewAuthService(
+	userRepo models.UserRepository,
+	emailSvc EmailService,
+	cacheSvc CacheService,
+	config *config.Config,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *AuthService {
+	service := &AuthService{
+		userRepo: userRepo,
+		emailSvc: emailSvc,
+		cacheSvc: cacheSvc,
+		config:   config,
+		logger:   logger,
+		{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+		oauthConfigs: make(map[string]*oauth2.Config),
+		{{- end}}
+	}
+
+	{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+	service.setupOAuthConfigs()
+	{{- end}}
+	
+	return service
+}
+
+{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+
+// setupOAuthConfigs initializes OAuth2 configurations
+func (s *AuthService) setupOAuthConfigs() {
+	baseURL := s.config.App.URL
+
+	{{- if contains .Features.Authentication.Providers "google"}}
+	if s.config.OAuth.Google.ClientID != "" {
+		s.oauthConfigs["google"] = &oauth2.Config{
+			ClientID:     s.config.OAuth.Google.ClientID,
+			ClientSecret: s.config.OAuth.Google.ClientSecret,
+			RedirectURL:  baseURL + "/auth/google/callback",
+			Scopes:       []string{"openid", "profile", "email"},
+			Endpoint:     google.Endpoint,
+		}
+	}
+	{{- end}}
+
+	{{- if contains .Features.Authentication.Providers "github"}}
+	if s.config.OAuth.GitHub.ClientID != "" {
+		s.oauthConfigs["github"] = &oauth2.Config{
+			ClientID:     s.config.OAuth.GitHub.ClientID,
+			ClientSecret: s.config.OAuth.GitHub.ClientSecret,
+			RedirectURL:  baseURL + "/auth/github/callback",
+			Scopes:       []string{"user:email"},
+			Endpoint:     github.Endpoint,
+		}
+	}
+	{{- end}}
+}
+
+{{- end}}
+
+// LoginRequest represents a login request
+type LoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+	Remember bool   `json:"remember"`
+}
+
+// RegisterRequest represents a registration request
+type RegisterRequest struct {
+	FirstName           string `json:"first_name" validate:"required,min=2,max=50"`
+	LastName            string `json:"last_name" validate:"required,min=2,max=50"`
+	Email               string `json:"email" validate:"required,email"`
+	Username            string `json:"username,omitempty" validate:"omitempty,min=3,max=30,alphanum"`
+	Password            string `json:"password" validate:"required"`
+	PasswordConfirm     string `json:"password_confirmation" validate:"required,eqfield=Password"`
+	AcceptTerms         bool   `json:"accept_terms" validate:"required"`
+	MarketingEmails     bool   `json:"marketing_emails"`
+}
+
+// AuthResponse represents an authentication response
+type AuthResponse struct {
+	User         *models.User `json:"user"`
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	AccessToken  string       `json:"access_token,omitempty"`
+	RefreshToken string       `json:"refresh_token,omitempty"`
+	ExpiresIn    int64        `json:"expires_in,omitempty"`
+	{{- else}}
+	SessionID    string       `json:"session_id,omitempty"`
+	{{- end}}
+	Message      string       `json:"message"`
+}
+
+// Login authenticates a user with email and password
+func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthResponse, error) {
+	// Rate limiting check
+	if err := s.checkRateLimit(ctx, "login", req.Email); err != nil {
+		s.logSecurityEvent(ctx, "rate_limit_exceeded", req.Email, nil)
+		return nil, err
+	}
+
+	// Check account lockout
+	if locked, err := s.isAccountLocked(ctx, req.Email); err != nil {
+		return nil, err
+	} else if locked {
+		s.logSecurityEvent(ctx, "login_attempt_locked_account", req.Email, nil)
+		return nil, ErrAccountLocked
+	}
+
+	// Find user by email
+	user, err := s.userRepo.FindByEmail(ctx, req.Email)
+	if err != nil {
+		// Increment failed attempts even for non-existent users to prevent enumeration
+		s.recordFailedAttempt(ctx, req.Email)
+		s.logSecurityEvent(ctx, "login_attempt_invalid_email", req.Email, nil)
+		return nil, ErrInvalidCredentials
+	}
+
+	// Verify password using constant-time comparison via bcrypt
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		s.recordFailedAttempt(ctx, req.Email)
+		s.logSecurityEvent(ctx, "login_attempt_invalid_password", req.Email, map[string]interface{}{
+			"user_id": user.ID,
+		})
+		return nil, ErrInvalidCredentials
+	}
+
+	// Check if account is verified
+	if !user.EmailVerified {
+		s.logSecurityEvent(ctx, "login_attempt_unverified_account", req.Email, map[string]interface{}{
+			"user_id": user.ID,
+		})
+		return nil, ErrAccountNotVerified
+	}
+
+	// Clear failed attempts on successful login
+	s.clearFailedAttempts(ctx, req.Email)
+
+	// Update last login
+	user.LastLoginAt = time.Now()
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to update last login", zap.Error(err), zap.String("user_id", user.ID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", user.ID).Error("Failed to update last login"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", user.ID).Msg("Failed to update last login"){{else}}Error("Failed to update last login", "error", err, "user_id", user.ID){{end}}
+	}
+
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	// Generate JWT tokens
+	accessToken, refreshToken, err := s.generateTokens(ctx, user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+	}
+	{{- else}}
+	// Create session
+	sessionID, err := s.createSession(ctx, user, req.Remember)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	{{- end}}
+
+	s.logSecurityEvent(ctx, "login_success", req.Email, map[string]interface{}{
+		"user_id": user.ID,
+	})
+
+	return &AuthResponse{
+		User: user,
+		{{- if eq .Features.Authentication.Type "jwt"}}
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int64(JWTExpiration.Seconds()),
+		{{- else}}
+		SessionID:    sessionID,
+		{{- end}}
+		Message: "Login successful",
+	}, nil
+}
+
+// Register creates a new user account
+func (s *AuthService) Register(ctx context.Context, req *RegisterRequest) (*AuthResponse, error) {
+	// Rate limiting check
+	if err := s.checkRateLimit(ctx, "register", req.Email); err != nil {
+		return nil, err
+	}
+
+	// Validate password strength
+	if err := s.validatePasswordStrength(req.Password); err != nil {
+		return nil, err
+	}
+
+	// Check if user already exists
+	if existingUser, err := s.userRepo.FindByEmail(ctx, req.Email); err == nil && existingUser != nil {
+		s.logSecurityEvent(ctx, "registration_attempt_existing_email", req.Email, nil)
+		return nil, ErrUserAlreadyExists
+	}
+
+	// Check username uniqueness if provided
+	if req.Username != "" {
+		if existingUser, err := s.userRepo.FindByUsername(ctx, req.Username); err == nil && existingUser != nil {
+			return nil, errors.New("username already exists")
+		}
+	}
+
+	// Hash password
+	hashedPassword, err := s.hashPassword(req.Password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Generate verification token
+	verificationToken, err := s.generateSecureToken(VerificationTokenLength)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate verification token: %w", err)
+	}
+
+	// Create user
+	user := &models.User{
+		FirstName:         req.FirstName,
+		LastName:          req.LastName,
+		Email:             req.Email,
+		Username:          req.Username,
+		Password:          hashedPassword,
+		EmailVerified:     false,
+		EmailVerifyToken:  verificationToken,
+		AcceptMarketing:   req.MarketingEmails,
+		IsActive:          true,
+		CreatedAt:         time.Now(),
+		UpdatedAt:         time.Now(),
+	}
+
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+
+	// Send verification email
+	if err := s.emailSvc.SendVerificationEmail(ctx, user.Email, user.FirstName, verificationToken); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send verification email", zap.Error(err), zap.String("email", user.Email)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("email", user.Email).Error("Failed to send verification email"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("email", user.Email).Msg("Failed to send verification email"){{else}}Error("Failed to send verification email", "error", err, "email", user.Email){{end}}
+		// Don't fail registration if email fails
+	}
+
+	s.logSecurityEvent(ctx, "registration_success", req.Email, map[string]interface{}{
+		"user_id": user.ID,
+	})
+
+	return &AuthResponse{
+		User:    user,
+		Message: "Registration successful. Please check your email to verify your account.",
+	}, nil
+}
+
+// VerifyEmail verifies a user's email address
+func (s *AuthService) VerifyEmail(ctx context.Context, token string) error {
+	user, err := s.userRepo.FindByEmailVerifyToken(ctx, token)
+	if err != nil {
+		return ErrInvalidToken
+	}
+
+	// Mark as verified
+	user.EmailVerified = true
+	user.EmailVerifyToken = ""
+	user.EmailVerifiedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	s.logSecurityEvent(ctx, "email_verification_success", user.Email, map[string]interface{}{
+		"user_id": user.ID,
+	})
+
+	return nil
+}
+
+// RequestPasswordReset initiates a password reset flow
+func (s *AuthService) RequestPasswordReset(ctx context.Context, email string) error {
+	// Rate limiting check
+	if err := s.checkRateLimit(ctx, "password_reset", email); err != nil {
+		return err
+	}
+
+	user, err := s.userRepo.FindByEmail(ctx, email)
+	if err != nil {
+		// Don't reveal if email exists
+		s.logSecurityEvent(ctx, "password_reset_request_invalid_email", email, nil)
+		return nil
+	}
+
+	// Generate reset token
+	resetToken, err := s.generateSecureToken(ResetTokenLength)
+	if err != nil {
+		return fmt.Errorf("failed to generate reset token: %w", err)
+	}
+
+	// Set reset token with expiration
+	user.PasswordResetToken = resetToken
+	user.PasswordResetExpires = time.Now().Add(1 * time.Hour) // 1 hour expiration
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	// Send reset email
+	if err := s.emailSvc.SendPasswordResetEmail(ctx, user.Email, user.FirstName, resetToken); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send password reset email", zap.Error(err), zap.String("email", user.Email)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("email", user.Email).Error("Failed to send password reset email"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("email", user.Email).Msg("Failed to send password reset email"){{else}}Error("Failed to send password reset email", "error", err, "email", user.Email){{end}}
+		return fmt.Errorf("failed to send reset email")
+	}
+
+	s.logSecurityEvent(ctx, "password_reset_request_success", email, map[string]interface{}{
+		"user_id": user.ID,
+	})
+
+	return nil
+}
+
+// ResetPassword resets a user's password using a reset token
+func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword string) error {
+	// Validate password strength
+	if err := s.validatePasswordStrength(newPassword); err != nil {
+		return err
+	}
+
+	user, err := s.userRepo.FindByPasswordResetToken(ctx, token)
+	if err != nil || user.PasswordResetExpires.Before(time.Now()) {
+		s.logSecurityEvent(ctx, "password_reset_invalid_token", "", map[string]interface{}{
+			"token": token,
+		})
+		return ErrInvalidToken
+	}
+
+	// Hash new password
+	hashedPassword, err := s.hashPassword(newPassword)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Update password and clear reset token
+	user.Password = hashedPassword
+	user.PasswordResetToken = ""
+	user.PasswordResetExpires = time.Time{}
+	user.UpdatedAt = time.Now()
+
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	// Invalidate all existing sessions
+	{{- if eq .Features.Authentication.Type "session"}}
+	s.invalidateAllUserSessions(ctx, user.ID)
+	{{- end}}
+
+	s.logSecurityEvent(ctx, "password_reset_success", user.Email, map[string]interface{}{
+		"user_id": user.ID,
+	})
+
+	return nil
+}
+
+{{- if eq .Features.Authentication.Type "session"}}
+
+// createSession creates a new user session
+func (s *AuthService) createSession(ctx context.Context, user *models.User, remember bool) (string, error) {
+	sessionID, err := s.generateSecureToken(TokenLength)
+	if err != nil {
+		return "", err
+	}
+
+	duration := SessionDuration
+	if remember {
+		duration = 30 * 24 * time.Hour // 30 days for "remember me"
+	}
+
+	sessionData := map[string]interface{}{
+		"user_id":    user.ID,
+		"email":      user.Email,
+		"created_at": time.Now(),
+		"expires_at": time.Now().Add(duration),
+		"remember":   remember,
+	}
+
+	key := fmt.Sprintf("session:%s", sessionID)
+	if err := s.cacheSvc.Set(ctx, key, sessionData, duration); err != nil {
+		return "", fmt.Errorf("failed to store session: %w", err)
+	}
+
+	return sessionID, nil
+}
+
+// ValidateSession validates a session and returns the user
+func (s *AuthService) ValidateSession(ctx context.Context, sessionID string) (*models.User, error) {
+	if sessionID == "" {
+		return nil, ErrInvalidSession
+	}
+
+	key := fmt.Sprintf("session:%s", sessionID)
+	sessionData, err := s.cacheSvc.Get(ctx, key)
+	if err != nil {
+		return nil, ErrInvalidSession
+	}
+
+	data, ok := sessionData.(map[string]interface{})
+	if !ok {
+		return nil, ErrInvalidSession
+	}
+
+	userID, ok := data["user_id"].(string)
+	if !ok {
+		return nil, ErrInvalidSession
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, ErrInvalidSession
+	}
+
+	// Extend session if it's close to expiring
+	if remember, ok := data["remember"].(bool); ok && remember {
+		duration := 30 * 24 * time.Hour
+		if err := s.cacheSvc.Extend(ctx, key, duration); err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to extend session", zap.Error(err), zap.String("session_id", sessionID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("session_id", sessionID).Error("Failed to extend session"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("session_id", sessionID).Msg("Failed to extend session"){{else}}Error("Failed to extend session", "error", err, "session_id", sessionID){{end}}
+		}
+	}
+
+	return user, nil
+}
+
+// InvalidateSession invalidates a user session
+func (s *AuthService) InvalidateSession(ctx context.Context, sessionID string) error {
+	key := fmt.Sprintf("session:%s", sessionID)
+	return s.cacheSvc.Delete(ctx, key)
+}
+
+// invalidateAllUserSessions invalidates all sessions for a user
+func (s *AuthService) invalidateAllUserSessions(ctx context.Context, userID string) {
+	pattern := fmt.Sprintf("session:*")
+	sessions, err := s.cacheSvc.Keys(ctx, pattern)
+	if err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to get session keys", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to get session keys"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to get session keys"){{else}}Error("Failed to get session keys", "error", err){{end}}
+		return
+	}
+
+	for _, sessionKey := range sessions {
+		sessionData, err := s.cacheSvc.Get(ctx, sessionKey)
+		if err != nil {
+			continue
+		}
+
+		if data, ok := sessionData.(map[string]interface{}); ok {
+			if sessionUserID, ok := data["user_id"].(string); ok && sessionUserID == userID {
+				s.cacheSvc.Delete(ctx, sessionKey)
+			}
+		}
+	}
+}
+
+{{- end}}
+
+{{- if eq .Features.Authentication.Type "jwt"}}
+
+// generateTokens generates JWT access and refresh tokens
+func (s *AuthService) generateTokens(ctx context.Context, user *models.User) (string, string, error) {
+	// Access token claims
+	accessClaims := jwt.MapClaims{
+		"sub":   user.ID,
+		"email": user.Email,
+		"iat":   time.Now().Unix(),
+		"exp":   time.Now().Add(JWTExpiration).Unix(),
+		"type":  "access",
+	}
+
+	// Refresh token claims
+	refreshClaims := jwt.MapClaims{
+		"sub":  user.ID,
+		"iat":  time.Now().Unix(),
+		"exp":  time.Now().Add(RefreshTokenExpiration).Unix(),
+		"type": "refresh",
+	}
+
+	// Sign tokens
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
+
+	accessTokenString, err := accessToken.SignedString([]byte(s.config.JWT.Secret))
+	if err != nil {
+		return "", "", err
+	}
+
+	refreshTokenString, err := refreshToken.SignedString([]byte(s.config.JWT.Secret))
+	if err != nil {
+		return "", "", err
+	}
+
+	// Store refresh token in cache for revocation capability
+	refreshKey := fmt.Sprintf("refresh_token:%s", user.ID)
+	if err := s.cacheSvc.Set(ctx, refreshKey, refreshTokenString, RefreshTokenExpiration); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to store refresh token", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to store refresh token"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to store refresh token"){{else}}Error("Failed to store refresh token", "error", err){{end}}
+	}
+
+	return accessTokenString, refreshTokenString, nil
+}
+
+// ValidateToken validates a JWT token and returns the user
+func (s *AuthService) ValidateToken(ctx context.Context, tokenString string) (*models.User, error) {
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.config.JWT.Secret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, ErrInvalidToken
+	}
+
+	// Check token type
+	if tokenType, ok := claims["type"].(string); !ok || tokenType != "access" {
+		return nil, ErrInvalidToken
+	}
+
+	userID, ok := claims["sub"].(string)
+	if !ok {
+		return nil, ErrInvalidToken
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+
+	return user, nil
+}
+
+// RefreshTokens refreshes access token using refresh token
+func (s *AuthService) RefreshTokens(ctx context.Context, refreshTokenString string) (string, string, error) {
+	token, err := jwt.Parse(refreshTokenString, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.config.JWT.Secret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return "", "", ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", "", ErrInvalidToken
+	}
+
+	// Check token type
+	if tokenType, ok := claims["type"].(string); !ok || tokenType != "refresh" {
+		return "", "", ErrInvalidToken
+	}
+
+	userID, ok := claims["sub"].(string)
+	if !ok {
+		return "", "", ErrInvalidToken
+	}
+
+	// Verify refresh token is still valid in cache
+	refreshKey := fmt.Sprintf("refresh_token:%s", userID)
+	storedToken, err := s.cacheSvc.Get(ctx, refreshKey)
+	if err != nil || storedToken != refreshTokenString {
+		return "", "", ErrInvalidToken
+	}
+
+	user, err := s.userRepo.FindByID(ctx, userID)
+	if err != nil {
+		return "", "", ErrInvalidToken
+	}
+
+	// Generate new tokens
+	return s.generateTokens(ctx, user)
+}
+
+{{- end}}
+
+// Logout invalidates the user's session or tokens
+func (s *AuthService) Logout(ctx context.Context, {{if eq .Features.Authentication.Type "jwt"}}userID{{else}}sessionID{{end}} string) error {
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	// Invalidate refresh token
+	refreshKey := fmt.Sprintf("refresh_token:%s", userID)
+	if err := s.cacheSvc.Delete(ctx, refreshKey); err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to delete refresh token", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to delete refresh token"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to delete refresh token"){{else}}Error("Failed to delete refresh token", "error", err){{end}}
+	}
+	{{- else}}
+	// Invalidate session
+	return s.InvalidateSession(ctx, sessionID)
+	{{- end}}
+	return nil
+}
+
+// Security helper methods
+
+// hashPassword hashes a password using bcrypt with appropriate cost
+func (s *AuthService) hashPassword(password string) (string, error) {
+	if len(password) > MaxPasswordLength {
+		return "", fmt.Errorf("password too long (max %d bytes)", MaxPasswordLength)
+	}
+	
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), BcryptCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hash), nil
+}
+
+// validatePasswordStrength validates password against security requirements
+func (s *AuthService) validatePasswordStrength(password string) error {
+	if len(password) < 8 {
+		return ErrPasswordTooWeak
+	}
+	
+	if len(password) > MaxPasswordLength {
+		return fmt.Errorf("password too long (max %d characters)", MaxPasswordLength)
+	}
+
+	var hasUpper, hasLower, hasNumber, hasSpecial bool
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasNumber = true
+		case strings.ContainsRune("!@#$%^&*()_+-=[]{}|;:,.<>?", char):
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper || !hasLower || !hasNumber || !hasSpecial {
+		return ErrPasswordTooWeak
+	}
+
+	return nil
+}
+
+// generateSecureToken generates a cryptographically secure random token
+func (s *AuthService) generateSecureToken(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return base64.URLEncoding.EncodeToString(bytes)[:length], nil
+}
+
+// checkRateLimit checks if the action is rate limited
+func (s *AuthService) checkRateLimit(ctx context.Context, action, identifier string) error {
+	key := fmt.Sprintf("rate_limit:%s:%s", action, identifier)
+	
+	count, err := s.cacheSvc.Increment(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	if count == 1 {
+		// Set expiration on first increment
+		s.cacheSvc.Expire(ctx, key, LoginAttemptsWindow)
+	}
+
+	if count > MaxLoginAttempts {
+		return ErrRateLimitExceeded
+	}
+
+	return nil
+}
+
+// recordFailedAttempt records a failed login attempt
+func (s *AuthService) recordFailedAttempt(ctx context.Context, email string) {
+	key := fmt.Sprintf("failed_attempts:%s", email)
+	
+	count, err := s.cacheSvc.Increment(ctx, key)
+	if err != nil {
+		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to record failed attempt", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to record failed attempt"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to record failed attempt"){{else}}Error("Failed to record failed attempt", "error", err){{end}}
+		return
+	}
+
+	if count == 1 {
+		s.cacheSvc.Expire(ctx, key, LockoutDuration)
+	}
+
+	// Lock account after max attempts
+	if count >= MaxFailedAttempts {
+		lockKey := fmt.Sprintf("account_locked:%s", email)
+		s.cacheSvc.Set(ctx, lockKey, true, LockoutDuration)
+	}
+}
+
+// clearFailedAttempts clears failed login attempts
+func (s *AuthService) clearFailedAttempts(ctx context.Context, email string) {
+	key := fmt.Sprintf("failed_attempts:%s", email)
+	lockKey := fmt.Sprintf("account_locked:%s", email)
+	
+	s.cacheSvc.Delete(ctx, key)
+	s.cacheSvc.Delete(ctx, lockKey)
+}
+
+// isAccountLocked checks if an account is locked
+func (s *AuthService) isAccountLocked(ctx context.Context, email string) (bool, error) {
+	key := fmt.Sprintf("account_locked:%s", email)
+	locked, err := s.cacheSvc.Get(ctx, key)
+	if err != nil {
+		return false, nil // Assume not locked on error
+	}
+	return locked != nil, nil
+}
+
+// logSecurityEvent logs security-related events
+func (s *AuthService) logSecurityEvent(ctx context.Context, event, email string, metadata map[string]interface{}) {
+	logData := map[string]interface{}{
+		"event":      event,
+		"email":      email,
+		"timestamp":  time.Now(),
+		"ip_address": s.getClientIP(ctx),
+		"user_agent": s.getUserAgent(ctx),
+	}
+	
+	for k, v := range metadata {
+		logData[k] = v
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Security event", zap.Any("data", logData)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields(logData)).Info("Security event"){{else if eq .LoggerType "zerolog"}}Info().Fields(logData).Msg("Security event"){{else}}Info("Security event", slog.Any("data", logData)){{end}}
+}
+
+// getClientIP extracts client IP from context
+func (s *AuthService) getClientIP(ctx context.Context) string {
+	if req, ok := ctx.Value("request").(*http.Request); ok {
+		// Check for forwarded IP headers
+		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+			ips := strings.Split(xff, ",")
+			return strings.TrimSpace(ips[0])
+		}
+		if xri := req.Header.Get("X-Real-IP"); xri != "" {
+			return xri
+		}
+		return req.RemoteAddr
+	}
+	return "unknown"
+}
+
+// getUserAgent extracts user agent from context
+func (s *AuthService) getUserAgent(ctx context.Context) string {
+	if req, ok := ctx.Value("request").(*http.Request); ok {
+		return req.Header.Get("User-Agent")
+	}
+	return "unknown"
+}
+
+{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+
+// GetOAuthURL generates OAuth authorization URL
+func (s *AuthService) GetOAuthURL(provider, state string) (string, error) {
+	config, exists := s.oauthConfigs[provider]
+	if !exists {
+		return "", fmt.Errorf("unsupported OAuth provider: %s", provider)
+	}
+	
+	return config.AuthCodeURL(state, oauth2.AccessTypeOffline), nil
+}
+
+// HandleOAuthCallback handles OAuth callback and creates/logs in user
+func (s *AuthService) HandleOAuthCallback(ctx context.Context, provider, code, state string) (*AuthResponse, error) {
+	config, exists := s.oauthConfigs[provider]
+	if !exists {
+		return nil, fmt.Errorf("unsupported OAuth provider: %s", provider)
+	}
+
+	// Exchange code for token
+	token, err := config.Exchange(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange code: %w", err)
+	}
+
+	// Get user info from provider
+	userInfo, err := s.getOAuthUserInfo(ctx, provider, token)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get user info: %w", err)
+	}
+
+	// Find or create user
+	user, err := s.userRepo.FindByEmail(ctx, userInfo.Email)
+	if err != nil {
+		// Create new user
+		user = &models.User{
+			FirstName:     userInfo.FirstName,
+			LastName:      userInfo.LastName,
+			Email:         userInfo.Email,
+			EmailVerified: true, // OAuth emails are pre-verified
+			IsActive:      true,
+			CreatedAt:     time.Now(),
+			UpdatedAt:     time.Now(),
+		}
+
+		if err := s.userRepo.Create(ctx, user); err != nil {
+			return nil, fmt.Errorf("failed to create user: %w", err)
+		}
+
+		s.logSecurityEvent(ctx, "oauth_registration_success", user.Email, map[string]interface{}{
+			"provider": provider,
+			"user_id":  user.ID,
+		})
+	} else {
+		// Update last login for existing user
+		user.LastLoginAt = time.Now()
+		if err := s.userRepo.Update(ctx, user); err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to update last login", zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).Error("Failed to update last login"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Msg("Failed to update last login"){{else}}Error("Failed to update last login", "error", err){{end}}
+		}
+
+		s.logSecurityEvent(ctx, "oauth_login_success", user.Email, map[string]interface{}{
+			"provider": provider,
+			"user_id":  user.ID,
+		})
+	}
+
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	// Generate JWT tokens
+	accessToken, refreshToken, err := s.generateTokens(ctx, user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate tokens: %w", err)
+	}
+	{{- else}}
+	// Create session
+	sessionID, err := s.createSession(ctx, user, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+	{{- end}}
+
+	return &AuthResponse{
+		User: user,
+		{{- if eq .Features.Authentication.Type "jwt"}}
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresIn:    int64(JWTExpiration.Seconds()),
+		{{- else}}
+		SessionID:    sessionID,
+		{{- end}}
+		Message: "OAuth login successful",
+	}, nil
+}
+
+// OAuthUserInfo represents user information from OAuth provider
+type OAuthUserInfo struct {
+	Email     string
+	FirstName string
+	LastName  string
+}
+
+// getOAuthUserInfo retrieves user information from OAuth provider
+func (s *AuthService) getOAuthUserInfo(ctx context.Context, provider string, token *oauth2.Token) (*OAuthUserInfo, error) {
+	client := s.oauthConfigs[provider].Client(ctx, token)
+	
+	switch provider {
+	{{- if contains .Features.Authentication.Providers "google"}}
+	case "google":
+		resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+
+		var userInfo struct {
+			Email     string `json:"email"`
+			GivenName string `json:"given_name"`
+			FamilyName string `json:"family_name"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+			return nil, err
+		}
+
+		return &OAuthUserInfo{
+			Email:     userInfo.Email,
+			FirstName: userInfo.GivenName,
+			LastName:  userInfo.FamilyName,
+		}, nil
+	{{- end}}
+
+	{{- if contains .Features.Authentication.Providers "github"}}
+	case "github":
+		// Get user info
+		userResp, err := client.Get("https://api.github.com/user")
+		if err != nil {
+			return nil, err
+		}
+		defer userResp.Body.Close()
+
+		var userInfo struct {
+			Login string `json:"login"`
+			Name  string `json:"name"`
+		}
+
+		if err := json.NewDecoder(userResp.Body).Decode(&userInfo); err != nil {
+			return nil, err
+		}
+
+		// Get email (GitHub might not return email in user endpoint)
+		emailResp, err := client.Get("https://api.github.com/user/emails")
+		if err != nil {
+			return nil, err
+		}
+		defer emailResp.Body.Close()
+
+		var emails []struct {
+			Email   string `json:"email"`
+			Primary bool   `json:"primary"`
+		}
+
+		if err := json.NewDecoder(emailResp.Body).Decode(&emails); err != nil {
+			return nil, err
+		}
+
+		var primaryEmail string
+		for _, email := range emails {
+			if email.Primary {
+				primaryEmail = email.Email
+				break
+			}
+		}
+
+		if primaryEmail == "" && len(emails) > 0 {
+			primaryEmail = emails[0].Email
+		}
+
+		// Parse name
+		parts := strings.Fields(userInfo.Name)
+		firstName := userInfo.Login
+		lastName := ""
+		
+		if len(parts) > 0 {
+			firstName = parts[0]
+			if len(parts) > 1 {
+				lastName = strings.Join(parts[1:], " ")
+			}
+		}
+
+		return &OAuthUserInfo{
+			Email:     primaryEmail,
+			FirstName: firstName,
+			LastName:  lastName,
+		}, nil
+	{{- end}}
+
+	default:
+		return nil, fmt.Errorf("unsupported provider: %s", provider)
+	}
+}
+
+{{- end}}

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="{{.Language | default "en"}}" class="{{.Theme | default "auto"}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    
+    <!-- SEO Meta Tags -->
+    <title>{{if .PageTitle}}{{.PageTitle}} - {{end}}{{.Config.App.Name}}</title>
+    <meta name="description" content="{{.MetaDesc | default .Config.App.Description}}">
+    <meta name="keywords" content="{{.Config.App.Keywords}}">
+    <meta name="author" content="{{.Config.App.Author}}">
+    <meta name="robots" content="index,follow">
+    
+    <!-- Open Graph Meta Tags -->
+    <meta property="og:title" content="{{if .PageTitle}}{{.PageTitle}} - {{end}}{{.Config.App.Name}}">
+    <meta property="og:description" content="{{.MetaDesc | default .Config.App.Description}}">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="{{.Config.App.URL}}">
+    <meta property="og:site_name" content="{{.Config.App.Name}}">
+    {{- if .Config.App.Logo}}
+    <meta property="og:image" content="{{.Config.App.URL}}/static/images/{{.Config.App.Logo}}">
+    {{- end}}
+    
+    <!-- Twitter Card Meta Tags -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="{{if .PageTitle}}{{.PageTitle}} - {{end}}{{.Config.App.Name}}">
+    <meta name="twitter:description" content="{{.MetaDesc | default .Config.App.Description}}">
+    {{- if .Config.App.TwitterHandle}}
+    <meta name="twitter:site" content="@{{.Config.App.TwitterHandle}}">
+    {{- end}}
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="apple-touch-icon" sizes="180x180" href="/static/images/apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="/static/images/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="/static/images/favicon-16x16.png">
+    <link rel="manifest" href="/static/site.webmanifest">
+    
+    <!-- Preconnect to external domains for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- CSS Framework - Using a modern CSS framework -->
+    {{- if eq .AssetPipeline "webpack"}}
+    <link rel="stylesheet" href="/static/dist/css/main.css">
+    {{- else if eq .AssetPipeline "vite"}}
+    <link rel="stylesheet" href="/static/dist/assets/main.css">
+    {{- else}}
+    <!-- Modern CSS with CSS Grid and Flexbox -->
+    <link rel="stylesheet" href="/static/css/main.css">
+    {{- end}}
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Theme Detection Script (Critical CSS) -->
+    <script>
+        // Theme detection and application (runs before page render)
+        (function() {
+            const theme = localStorage.getItem('theme') || 
+                         (document.documentElement.classList.contains('auto') ? 
+                          (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 
+                          '{{.Theme | default "auto"}}');
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.classList.add('theme-' + theme);
+        })();
+    </script>
+    
+    <!-- CSRF Token -->
+    {{- if .CSRFToken}}
+    <meta name="csrf-token" content="{{.CSRFToken}}">
+    {{- end}}
+    
+    <!-- Security Headers (CSP Nonce) -->
+    {{- if .Nonce}}
+    <meta name="csp-nonce" content="{{.Nonce}}">
+    {{- end}}
+    
+    <!-- Additional Head Content -->
+    {{block "head" .}}{{end}}
+</head>
+<body class="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-200">
+    <!-- Skip Navigation Link for Accessibility -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 bg-blue-600 text-white px-4 py-2 rounded-md z-50">
+        Skip to main content
+    </a>
+    
+    <!-- Main Container -->
+    <div class="flex flex-col min-h-screen" id="app">
+        <!-- Header -->
+        {{template "partials/header.html" .}}
+        
+        <!-- Flash Messages -->
+        {{template "partials/flash.html" .}}
+        
+        <!-- Breadcrumbs -->
+        {{- if .Breadcrumbs}}
+        <nav aria-label="Breadcrumb" class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                <ol class="flex items-center space-x-2 py-3 text-sm">
+                    {{- range $index, $crumb := .Breadcrumbs}}
+                    <li class="flex items-center">
+                        {{- if ne $index 0}}
+                        <svg class="w-5 h-5 text-gray-400 mr-2" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 111.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd"></path>
+                        </svg>
+                        {{- end}}
+                        {{- if eq $index (sub (len $.Breadcrumbs) 1)}}
+                        <span class="text-gray-500 dark:text-gray-400" aria-current="page">{{$crumb.Title}}</span>
+                        {{- else}}
+                        <a href="{{$crumb.URL}}" class="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300">{{$crumb.Title}}</a>
+                        {{- end}}
+                    </li>
+                    {{- end}}
+                </ol>
+            </div>
+        </nav>
+        {{- end}}
+        
+        <!-- Main Content Area -->
+        <main id="main-content" class="flex-1" role="main">
+            {{block "content" .}}
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+                <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Welcome to {{.Config.App.Name}}</h1>
+                <p class="mt-4 text-lg text-gray-600 dark:text-gray-400">This is the default content block.</p>
+            </div>
+            {{end}}
+        </main>
+        
+        <!-- Footer -->
+        {{template "partials/footer.html" .}}
+    </div>
+    
+    <!-- JavaScript -->
+    {{- if eq .AssetPipeline "webpack"}}
+    <script src="/static/dist/js/main.js" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    {{- else if eq .AssetPipeline "vite"}}
+    <script type="module" src="/static/dist/assets/main.js" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    {{- else}}
+    <script src="/static/js/main.js" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    {{- end}}
+    
+    <!-- Theme Toggle Script -->
+    <script {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+        // Theme toggle functionality
+        function toggleTheme() {
+            const current = localStorage.getItem('theme') || 'auto';
+            const themes = ['light', 'dark', 'auto'];
+            const nextIndex = (themes.indexOf(current) + 1) % themes.length;
+            const nextTheme = themes[nextIndex];
+            
+            localStorage.setItem('theme', nextTheme);
+            
+            if (nextTheme === 'auto') {
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+            } else {
+                document.documentElement.setAttribute('data-theme', nextTheme);
+            }
+            
+            document.documentElement.className = 'theme-' + nextTheme;
+        }
+        
+        // Listen for system theme changes
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+            if (localStorage.getItem('theme') === 'auto' || !localStorage.getItem('theme')) {
+                document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+            }
+        });
+    </script>
+    
+    <!-- Analytics -->
+    {{- if .Config.Analytics.GoogleAnalyticsID}}
+    <!-- Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id={{.Config.Analytics.GoogleAnalyticsID}}" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    <script {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+        window.dataLayer = window.dataLayer || [];
+        function gtag(){dataLayer.push(arguments);}
+        gtag('js', new Date());
+        gtag('config', '{{.Config.Analytics.GoogleAnalyticsID}}', {
+            anonymize_ip: true,
+            respect_privacy: true
+        });
+    </script>
+    {{- end}}
+    
+    <!-- Additional Scripts -->
+    {{block "scripts" .}}{{end}}
+    
+    <!-- Service Worker Registration -->
+    {{- if .Config.PWA.Enabled}}
+    <script {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(function(registration) {
+                        console.log('ServiceWorker registration successful');
+                    })
+                    .catch(function(err) {
+                        console.log('ServiceWorker registration failed');
+                    });
+            });
+        }
+    </script>
+    {{- end}}
+</body>
+</html>

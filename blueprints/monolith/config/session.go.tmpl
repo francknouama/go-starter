@@ -1,0 +1,484 @@
+package config
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/gorilla/sessions"
+{{- if eq .SessionStore "redis" }}
+	"github.com/redis/go-redis/v9"
+	"context"
+{{- end }}
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+{{- end }}
+)
+
+// SessionConfig holds session configuration
+type SessionConfig struct {
+	Secret         []byte
+	Name           string
+	Lifetime       int
+	Path           string
+	Domain         string
+	Secure         bool
+	HttpOnly       bool
+	SameSite       http.SameSite
+	Store          string
+{{- if eq .SessionStore "redis" }}
+	RedisAddr      string
+	RedisPassword  string
+	RedisDB        int
+	RedisKeyPrefix string
+{{- end }}
+}
+
+// SessionManager interface for session operations
+type SessionManager interface {
+	Store() sessions.Store
+	Get(r *http.Request) (*sessions.Session, error)
+	Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error
+	Destroy(r *http.Request, w http.ResponseWriter) error
+	RegenerateID(r *http.Request, w http.ResponseWriter) error
+	Flash(r *http.Request, w http.ResponseWriter, name string, value interface{})
+	GetFlash(r *http.Request, w http.ResponseWriter, name string) []interface{}
+}
+
+// sessionManager implements SessionManager interface
+type sessionManager struct {
+	store  sessions.Store
+	config *SessionConfig
+{{- if eq .LoggerType "slog" }}
+	logger *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger zerolog.Logger
+{{- end }}
+}
+
+// NewSessionConfig creates session configuration from environment
+func NewSessionConfig() (*SessionConfig, error) {
+	secret := getEnv("SESSION_SECRET", "")
+	if secret == "" {
+		// Generate a random secret for development
+		if getEnv("APP_ENV", "production") == "development" {
+			randomSecret := make([]byte, 32)
+			if _, err := rand.Read(randomSecret); err != nil {
+				return nil, fmt.Errorf("failed to generate session secret: %w", err)
+			}
+			secret = base64.StdEncoding.EncodeToString(randomSecret)
+		} else {
+			return nil, fmt.Errorf("SESSION_SECRET is required in production")
+		}
+	}
+
+	// Ensure secret is at least 32 bytes
+	if len(secret) < 32 {
+		return nil, fmt.Errorf("SESSION_SECRET must be at least 32 characters long")
+	}
+
+	// Parse SameSite setting
+	sameSiteStr := getEnv("SESSION_SAME_SITE", "lax")
+	var sameSite http.SameSite
+	switch sameSiteStr {
+	case "strict":
+		sameSite = http.SameSiteStrictMode
+	case "lax":
+		sameSite = http.SameSiteLaxMode
+	case "none":
+		sameSite = http.SameSiteNoneMode
+	default:
+		sameSite = http.SameSiteDefaultMode
+	}
+
+	cfg := &SessionConfig{
+		Secret:   []byte(secret),
+		Name:     getEnv("SESSION_NAME", "{{.ProjectName}}_session"),
+		Lifetime: getEnvAsInt("SESSION_LIFETIME", 86400), // 24 hours
+		Path:     getEnv("SESSION_PATH", "/"),
+		Domain:   getEnv("SESSION_DOMAIN", ""),
+		Secure:   getEnvAsBool("SESSION_SECURE", false),
+		HttpOnly: getEnvAsBool("SESSION_HTTP_ONLY", true),
+		SameSite: sameSite,
+		Store:    getEnv("SESSION_STORE", "{{.SessionStore}}"),
+{{- if eq .SessionStore "redis" }}
+		RedisAddr:      getEnv("REDIS_URL", "localhost:6379"),
+		RedisPassword:  getEnv("REDIS_PASSWORD", ""),
+		RedisDB:        getEnvAsInt("REDIS_DB", 0),
+		RedisKeyPrefix: getEnv("SESSION_KEY_PREFIX", "session:"),
+{{- end }}
+	}
+
+	// Validate configuration
+	if cfg.Secure && getEnv("APP_ENV", "production") == "production" && sameSite == http.SameSiteNoneMode {
+		// SameSite=None requires Secure flag
+		cfg.Secure = true
+	}
+
+	return cfg, nil
+}
+
+// NewSessionManager creates a new session manager
+func NewSessionManager(cfg *SessionConfig, {{if eq .LoggerType "slog"}}logger *slog.Logger{{else if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "zerolog"}}logger zerolog.Logger{{end}}) (SessionManager, error) {
+	var store sessions.Store
+
+	switch cfg.Store {
+{{- if eq .SessionStore "redis" }}
+	case "redis":
+		store = NewRedisStore(cfg)
+{{- else }}
+	case "cookie", "default":
+		store = sessions.NewCookieStore(cfg.Secret)
+{{- end }}
+	default:
+		return nil, fmt.Errorf("unsupported session store: %s", cfg.Store)
+	}
+
+	// Configure store options
+	store.Options = &sessions.Options{
+		Path:     cfg.Path,
+		Domain:   cfg.Domain,
+		MaxAge:   cfg.Lifetime,
+		Secure:   cfg.Secure,
+		HttpOnly: cfg.HttpOnly,
+		SameSite: cfg.SameSite,
+	}
+
+{{- if eq .LoggerType "slog" }}
+	logger.Info("session manager initialized",
+		slog.String("store", cfg.Store),
+		slog.String("name", cfg.Name),
+		slog.Bool("secure", cfg.Secure),
+	)
+{{- else if eq .LoggerType "zap" }}
+	logger.Info("session manager initialized",
+		zap.String("store", cfg.Store),
+		zap.String("name", cfg.Name),
+		zap.Bool("secure", cfg.Secure),
+	)
+{{- else if eq .LoggerType "logrus" }}
+	logger.WithFields(logrus.Fields{
+		"store":  cfg.Store,
+		"name":   cfg.Name,
+		"secure": cfg.Secure,
+	}).Info("session manager initialized")
+{{- else if eq .LoggerType "zerolog" }}
+	logger.Info().
+		Str("store", cfg.Store).
+		Str("name", cfg.Name).
+		Bool("secure", cfg.Secure).
+		Msg("session manager initialized")
+{{- end }}
+
+	return &sessionManager{
+		store:  store,
+		config: cfg,
+		logger: logger,
+	}, nil
+}
+
+// Store returns the underlying session store
+func (sm *sessionManager) Store() sessions.Store {
+	return sm.store
+}
+
+// Get retrieves a session
+func (sm *sessionManager) Get(r *http.Request) (*sessions.Session, error) {
+	session, err := sm.store.Get(r, sm.config.Name)
+	if err != nil {
+		// If session is corrupted, create a new one
+		if session == nil {
+			session = sessions.NewSession(sm.store, sm.config.Name)
+		}
+{{- if eq .LoggerType "slog" }}
+		sm.logger.Warn("failed to get session, creating new one",
+			slog.String("error", err.Error()),
+		)
+{{- else if eq .LoggerType "zap" }}
+		sm.logger.Warn("failed to get session, creating new one",
+			zap.Error(err),
+		)
+{{- else if eq .LoggerType "logrus" }}
+		sm.logger.WithError(err).Warn("failed to get session, creating new one")
+{{- else if eq .LoggerType "zerolog" }}
+		sm.logger.Warn().
+			Err(err).
+			Msg("failed to get session, creating new one")
+{{- end }}
+	}
+	return session, nil
+}
+
+// Save saves a session
+func (sm *sessionManager) Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error {
+	// Set security options
+	session.Options = &sessions.Options{
+		Path:     sm.config.Path,
+		Domain:   sm.config.Domain,
+		MaxAge:   sm.config.Lifetime,
+		Secure:   sm.config.Secure,
+		HttpOnly: sm.config.HttpOnly,
+		SameSite: sm.config.SameSite,
+	}
+
+	if err := session.Save(r, w); err != nil {
+{{- if eq .LoggerType "slog" }}
+		sm.logger.Error("failed to save session",
+			slog.String("error", err.Error()),
+		)
+{{- else if eq .LoggerType "zap" }}
+		sm.logger.Error("failed to save session",
+			zap.Error(err),
+		)
+{{- else if eq .LoggerType "logrus" }}
+		sm.logger.WithError(err).Error("failed to save session")
+{{- else if eq .LoggerType "zerolog" }}
+		sm.logger.Error().
+			Err(err).
+			Msg("failed to save session")
+{{- end }}
+		return err
+	}
+	return nil
+}
+
+// Destroy destroys a session
+func (sm *sessionManager) Destroy(r *http.Request, w http.ResponseWriter) error {
+	session, err := sm.Get(r)
+	if err != nil {
+		return err
+	}
+
+	// Clear session values
+	for key := range session.Values {
+		delete(session.Values, key)
+	}
+
+	// Set MaxAge to -1 to delete cookie
+	session.Options.MaxAge = -1
+
+	return sm.Save(r, w, session)
+}
+
+// RegenerateID regenerates session ID for security
+func (sm *sessionManager) RegenerateID(r *http.Request, w http.ResponseWriter) error {
+	session, err := sm.Get(r)
+	if err != nil {
+		return err
+	}
+
+	// Store existing values
+	values := make(map[interface{}]interface{})
+	for k, v := range session.Values {
+		values[k] = v
+	}
+
+	// Destroy old session
+	if err := sm.Destroy(r, w); err != nil {
+		return err
+	}
+
+	// Create new session
+	newSession, err := sm.Get(r)
+	if err != nil {
+		return err
+	}
+
+	// Restore values
+	for k, v := range values {
+		newSession.Values[k] = v
+	}
+
+	// Generate new ID
+	newSession.ID = generateSessionID()
+
+	return sm.Save(r, w, newSession)
+}
+
+// Flash adds a flash message to the session
+func (sm *sessionManager) Flash(r *http.Request, w http.ResponseWriter, name string, value interface{}) {
+	session, _ := sm.Get(r)
+	session.AddFlash(value, name)
+	_ = sm.Save(r, w, session)
+}
+
+// GetFlash retrieves flash messages from the session
+func (sm *sessionManager) GetFlash(r *http.Request, w http.ResponseWriter, name string) []interface{} {
+	session, _ := sm.Get(r)
+	flashes := session.Flashes(name)
+	if len(flashes) > 0 {
+		_ = sm.Save(r, w, session)
+	}
+	return flashes
+}
+
+// generateSessionID generates a secure random session ID
+func generateSessionID() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based ID
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+{{- if eq .SessionStore "redis" }}
+
+// RedisStore implements a Redis-backed session store
+type RedisStore struct {
+	client    *redis.Client
+	keyPrefix string
+	options   *sessions.Options
+	codecs    []sessions.Codec
+}
+
+// NewRedisStore creates a new Redis session store
+func NewRedisStore(cfg *SessionConfig) *RedisStore {
+	opt, err := redis.ParseURL(cfg.RedisAddr)
+	if err != nil {
+		// Fallback to manual configuration
+		opt = &redis.Options{
+			Addr:     cfg.RedisAddr,
+			Password: cfg.RedisPassword,
+			DB:       cfg.RedisDB,
+		}
+	}
+
+	client := redis.NewClient(opt)
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	if err := client.Ping(ctx).Err(); err != nil {
+		panic(fmt.Sprintf("failed to connect to Redis: %v", err))
+	}
+
+	return &RedisStore{
+		client:    client,
+		keyPrefix: cfg.RedisKeyPrefix,
+		options: &sessions.Options{
+			Path:     cfg.Path,
+			Domain:   cfg.Domain,
+			MaxAge:   cfg.Lifetime,
+			Secure:   cfg.Secure,
+			HttpOnly: cfg.HttpOnly,
+			SameSite: cfg.SameSite,
+		},
+		codecs: sessions.CodecsFromPairs(cfg.Secret),
+	}
+}
+
+// Get returns a session for the given name after adding it to the registry
+func (s *RedisStore) Get(r *http.Request, name string) (*sessions.Session, error) {
+	return sessions.GetRegistry(r).Get(s, name)
+}
+
+// New returns a session for the given name without adding it to the registry
+func (s *RedisStore) New(r *http.Request, name string) (*sessions.Session, error) {
+	session := sessions.NewSession(s, name)
+	session.Options = s.options
+	session.IsNew = true
+
+	// Try to load existing session
+	cookie, err := r.Cookie(name)
+	if err == nil && cookie.Value != "" {
+		if err := sessions.DecodeMulti(name, cookie.Value, &session.Values, s.codecs...); err == nil {
+			session.IsNew = false
+			session.ID = cookie.Value[:32] // First 32 chars as ID
+
+			// Load from Redis
+			ctx := context.Background()
+			key := s.keyPrefix + session.ID
+			data, err := s.client.Get(ctx, key).Bytes()
+			if err == nil && len(data) > 0 {
+				if err := sessions.DecodeMulti(name, string(data), &session.Values, s.codecs...); err == nil {
+					session.IsNew = false
+				}
+			}
+		}
+	}
+
+	return session, nil
+}
+
+// Save adds a single session to the response
+func (s *RedisStore) Save(r *http.Request, w http.ResponseWriter, session *sessions.Session) error {
+	// Generate ID if new
+	if session.ID == "" {
+		session.ID = generateSessionID()
+	}
+
+	// Encode session data
+	encoded, err := sessions.EncodeMulti(session.Name(), session.Values, s.codecs...)
+	if err != nil {
+		return err
+	}
+
+	// Save to Redis
+	ctx := context.Background()
+	key := s.keyPrefix + session.ID
+	
+	if session.Options.MaxAge < 0 {
+		// Delete session
+		if err := s.client.Del(ctx, key).Err(); err != nil {
+			return err
+		}
+	} else {
+		// Save session with expiration
+		expiration := time.Duration(session.Options.MaxAge) * time.Second
+		if err := s.client.Set(ctx, key, encoded, expiration).Err(); err != nil {
+			return err
+		}
+	}
+
+	// Set cookie
+	http.SetCookie(w, sessions.NewCookie(session.Name(), session.ID+encoded[:32], session.Options))
+	
+	return nil
+}
+{{- end }}
+
+// SessionMiddleware creates a middleware that ensures sessions are properly handled
+func SessionMiddleware(sm SessionManager) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Ensure session exists
+			session, err := sm.Get(r)
+			if err != nil {
+				// Create new session if error
+				session = sessions.NewSession(sm.Store(), "{{.ProjectName}}_session")
+			}
+
+			// Add session to context for easy access
+			ctx := context.WithValue(r.Context(), "session", session)
+			r = r.WithContext(ctx)
+
+			// Continue with request
+			next.ServeHTTP(w, r)
+
+			// Save session after request
+			_ = sm.Save(r, w, session)
+		})
+	}
+}
+
+// GetSessionFromContext retrieves session from context
+func GetSessionFromContext(ctx context.Context) *sessions.Session {
+	if session, ok := ctx.Value("session").(*sessions.Session); ok {
+		return session
+	}
+	return nil
+}

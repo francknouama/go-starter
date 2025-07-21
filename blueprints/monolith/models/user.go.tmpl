@@ -1,0 +1,545 @@
+package models
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+	"unicode"
+
+	"golang.org/x/crypto/bcrypt"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- end}}
+)
+
+// User represents a user in the system
+type User struct {
+	{{- if eq .DatabaseORM "gorm"}}
+	BaseModel
+	{{- else}}
+	BaseModel
+	{{- end}}
+	
+	// Basic user information
+	FirstName string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(100);not null"{{else}}db:"first_name"{{end}} json:"first_name" validate:"required,min=2,max=100"`
+	LastName  string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(100);not null"{{else}}db:"last_name"{{end}} json:"last_name" validate:"required,min=2,max=100"`
+	Email     string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255);uniqueIndex;not null"{{else}}db:"email"{{end}} json:"email" validate:"required,email,max=255"`
+	Username  string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(50);uniqueIndex"{{else}}db:"username"{{end}} json:"username,omitempty" validate:"omitempty,min=3,max=50,alphanum"`
+	
+	// Authentication
+	Password    string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255);not null"{{else}}db:"password"{{end}} json:"-" validate:"required,min=8"`
+	Salt        string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(32)"{{else}}db:"salt"{{end}} json:"-"`
+	
+	// Profile information
+	Avatar      string    `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255)"{{else}}db:"avatar"{{end}} json:"avatar,omitempty"`
+	Bio         string    `{{if eq .DatabaseORM "gorm"}}gorm:"type:text"{{else}}db:"bio"{{end}} json:"bio,omitempty" validate:"max=500"`
+	Website     string    `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(255)"{{else}}db:"website"{{end}} json:"website,omitempty" validate:"omitempty,url"`
+	Location    string    `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(100)"{{else}}db:"location"{{end}} json:"location,omitempty" validate:"max=100"`
+	DateOfBirth *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:date"{{else}}db:"date_of_birth"{{end}} json:"date_of_birth,omitempty"`
+	
+	// Account status
+	IsActive    bool      `{{if eq .DatabaseORM "gorm"}}gorm:"default:false"{{else}}db:"is_active"{{end}} json:"is_active"`
+	IsVerified  bool      `{{if eq .DatabaseORM "gorm"}}gorm:"default:false"{{else}}db:"is_verified"{{end}} json:"is_verified"`
+	IsSuspended bool      `{{if eq .DatabaseORM "gorm"}}gorm:"default:false"{{else}}db:"is_suspended"{{end}} json:"is_suspended"`
+	
+	// Verification and recovery
+	EmailVerificationToken string     `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(64)"{{else}}db:"email_verification_token"{{end}} json:"-"`
+	EmailVerifiedAt        *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:timestamp"{{else}}db:"email_verified_at"{{end}} json:"email_verified_at,omitempty"`
+	PasswordResetToken     string     `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(64)"{{else}}db:"password_reset_token"{{end}} json:"-"`
+	PasswordResetExpiresAt *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:timestamp"{{else}}db:"password_reset_expires_at"{{end}} json:"-"`
+	
+	// Login tracking
+	LastLoginAt    *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:timestamp"{{else}}db:"last_login_at"{{end}} json:"last_login_at,omitempty"`
+	LastLoginIP    string     `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(45)"{{else}}db:"last_login_ip"{{end}} json:"last_login_ip,omitempty"`
+	LoginAttempts  int        `{{if eq .DatabaseORM "gorm"}}gorm:"default:0"{{else}}db:"login_attempts"{{end}} json:"-"`
+	LockedUntil    *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:timestamp"{{else}}db:"locked_until"{{end}} json:"-"`
+	
+	// OAuth integration
+	{{- if eq .AuthType "oauth2"}}
+	GoogleID   string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(100);uniqueIndex"{{else}}db:"google_id"{{end}} json:"google_id,omitempty"`
+	GitHubID   string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(100);uniqueIndex"{{else}}db:"github_id"{{end}} json:"github_id,omitempty"`
+	{{- end}}
+	
+	// Preferences
+	Timezone   string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(50);default:UTC"{{else}}db:"timezone"{{end}} json:"timezone" validate:"max=50"`
+	Language   string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(10);default:en"{{else}}db:"language"{{end}} json:"language" validate:"max=10"`
+	Theme      string `{{if eq .DatabaseORM "gorm"}}gorm:"type:varchar(20);default:auto"{{else}}db:"theme"{{end}} json:"theme" validate:"oneof=light dark auto"`
+	
+	// Audit fields
+	AuditFields
+}
+
+// UserRole represents user roles
+type UserRole string
+
+const (
+	RoleUser  UserRole = "user"
+	RoleAdmin UserRole = "admin"
+	RoleMod   UserRole = "moderator"
+)
+
+// UserPreferences represents user preferences
+type UserPreferences struct {
+	EmailNotifications    bool `json:"email_notifications"`
+	PushNotifications     bool `json:"push_notifications"`
+	MarketingEmails       bool `json:"marketing_emails"`
+	TwoFactorEnabled      bool `json:"two_factor_enabled"`
+	ProfileVisibility     string `json:"profile_visibility"` // public, private, friends
+	ShowEmail             bool `json:"show_email"`
+	ShowDateOfBirth       bool `json:"show_date_of_birth"`
+	AllowIndexing         bool `json:"allow_indexing"`
+}
+
+// UserStats represents user statistics
+type UserStats struct {
+	TotalLogins    int       `json:"total_logins"`
+	LastLoginDate  time.Time `json:"last_login_date"`
+	AccountAge     int       `json:"account_age_days"`
+	ProfileViews   int       `json:"profile_views"`
+	PostCount      int       `json:"post_count"`
+	FollowerCount  int       `json:"follower_count"`
+	FollowingCount int       `json:"following_count"`
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// TableName returns the table name for GORM
+func (User) TableName() string {
+	return "users"
+}
+
+// BeforeCreate GORM hook - runs before creating a user
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	// Call parent BeforeCreate
+	if err := u.BaseModel.BeforeCreate(tx); err != nil {
+		return err
+	}
+	
+	// Generate salt if not present
+	if u.Salt == "" {
+		salt, err := generateSalt()
+		if err != nil {
+			return fmt.Errorf("failed to generate salt: %w", err)
+		}
+		u.Salt = salt
+	}
+	
+	// Hash password if not already hashed
+	if u.Password != "" && !isHashedPassword(u.Password) {
+		hashedPassword, err := u.HashPassword(u.Password)
+		if err != nil {
+			return fmt.Errorf("failed to hash password: %w", err)
+		}
+		u.Password = hashedPassword
+	}
+	
+	// Set default values
+	if u.Timezone == "" {
+		u.Timezone = "UTC"
+	}
+	if u.Language == "" {
+		u.Language = "en"
+	}
+	if u.Theme == "" {
+		u.Theme = "auto"
+	}
+	
+	return nil
+}
+
+// BeforeUpdate GORM hook - runs before updating a user
+func (u *User) BeforeUpdate(tx *gorm.DB) error {
+	// Call parent BeforeUpdate
+	if err := u.BaseModel.BeforeUpdate(tx); err != nil {
+		return err
+	}
+	
+	// Hash password if it's being updated and not already hashed
+	if u.Password != "" && !isHashedPassword(u.Password) {
+		hashedPassword, err := u.HashPassword(u.Password)
+		if err != nil {
+			return fmt.Errorf("failed to hash password: %w", err)
+		}
+		u.Password = hashedPassword
+	}
+	
+	return nil
+}
+{{- end}}
+
+// Validate validates the user model
+func (u *User) Validate() ValidationErrors {
+	var errors ValidationErrors
+	
+	// Validate required fields
+	if strings.TrimSpace(u.FirstName) == "" {
+		errors.AddError("first_name", "First name is required", "required", u.FirstName)
+	} else if len(u.FirstName) < 2 || len(u.FirstName) > 100 {
+		errors.AddError("first_name", "First name must be between 2 and 100 characters", "length", u.FirstName)
+	}
+	
+	if strings.TrimSpace(u.LastName) == "" {
+		errors.AddError("last_name", "Last name is required", "required", u.LastName)
+	} else if len(u.LastName) < 2 || len(u.LastName) > 100 {
+		errors.AddError("last_name", "Last name must be between 2 and 100 characters", "length", u.LastName)
+	}
+	
+	// Validate email
+	if strings.TrimSpace(u.Email) == "" {
+		errors.AddError("email", "Email is required", "required", u.Email)
+	} else if !isValidEmail(u.Email) {
+		errors.AddError("email", "Email format is invalid", "format", u.Email)
+	} else if len(u.Email) > 255 {
+		errors.AddError("email", "Email must be less than 255 characters", "length", u.Email)
+	}
+	
+	// Validate username if provided
+	if u.Username != "" {
+		if len(u.Username) < 3 || len(u.Username) > 50 {
+			errors.AddError("username", "Username must be between 3 and 50 characters", "length", u.Username)
+		} else if !isAlphanumeric(u.Username) {
+			errors.AddError("username", "Username must contain only letters and numbers", "format", u.Username)
+		}
+	}
+	
+	// Validate password (only if being set)
+	if u.Password != "" && !isHashedPassword(u.Password) {
+		if err := ValidatePassword(u.Password); err != nil {
+			errors.AddError("password", err.Error(), "password_strength", nil)
+		}
+	}
+	
+	// Validate optional fields
+	if u.Bio != "" && len(u.Bio) > 500 {
+		errors.AddError("bio", "Bio must be less than 500 characters", "length", u.Bio)
+	}
+	
+	if u.Website != "" && !isValidURL(u.Website) {
+		errors.AddError("website", "Website URL is invalid", "format", u.Website)
+	}
+	
+	if u.Location != "" && len(u.Location) > 100 {
+		errors.AddError("location", "Location must be less than 100 characters", "length", u.Location)
+	}
+	
+	// Validate theme
+	if u.Theme != "" && u.Theme != "light" && u.Theme != "dark" && u.Theme != "auto" {
+		errors.AddError("theme", "Theme must be one of: light, dark, auto", "enum", u.Theme)
+	}
+	
+	return errors
+}
+
+// HashPassword hashes a password using bcrypt with salt
+func (u *User) HashPassword(password string) (string, error) {
+	// Ensure we have a salt
+	if u.Salt == "" {
+		salt, err := generateSalt()
+		if err != nil {
+			return "", fmt.Errorf("failed to generate salt: %w", err)
+		}
+		u.Salt = salt
+	}
+	
+	// Combine password with salt
+	saltedPassword := password + u.Salt
+	
+	// Hash with bcrypt
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(saltedPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash password: %w", err)
+	}
+	
+	return string(hashedBytes), nil
+}
+
+// CheckPassword verifies a password against the stored hash
+func (u *User) CheckPassword(password string) bool {
+	if u.Password == "" || u.Salt == "" {
+		return false
+	}
+	
+	// Combine password with salt
+	saltedPassword := password + u.Salt
+	
+	// Compare with bcrypt
+	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(saltedPassword))
+	return err == nil
+}
+
+// GenerateEmailVerificationToken generates a token for email verification
+func (u *User) GenerateEmailVerificationToken() (string, error) {
+	token, err := generateRandomToken(32)
+	if err != nil {
+		return "", err
+	}
+	u.EmailVerificationToken = token
+	return token, nil
+}
+
+// GeneratePasswordResetToken generates a token for password reset
+func (u *User) GeneratePasswordResetToken() (string, error) {
+	token, err := generateRandomToken(32)
+	if err != nil {
+		return "", err
+	}
+	u.PasswordResetToken = token
+	// Set expiration to 1 hour from now
+	expiresAt := time.Now().Add(time.Hour)
+	u.PasswordResetExpiresAt = &expiresAt
+	return token, nil
+}
+
+// IsPasswordResetTokenValid checks if the password reset token is valid
+func (u *User) IsPasswordResetTokenValid(token string) bool {
+	if u.PasswordResetToken == "" || u.PasswordResetExpiresAt == nil {
+		return false
+	}
+	
+	// Check if token matches
+	if u.PasswordResetToken != token {
+		return false
+	}
+	
+	// Check if token has expired
+	if time.Now().After(*u.PasswordResetExpiresAt) {
+		return false
+	}
+	
+	return true
+}
+
+// ClearPasswordResetToken clears the password reset token
+func (u *User) ClearPasswordResetToken() {
+	u.PasswordResetToken = ""
+	u.PasswordResetExpiresAt = nil
+}
+
+// VerifyEmail marks the email as verified
+func (u *User) VerifyEmail() {
+	u.IsVerified = true
+	now := time.Now()
+	u.EmailVerifiedAt = &now
+	u.EmailVerificationToken = ""
+}
+
+// IsAccountLocked checks if the account is locked due to failed login attempts
+func (u *User) IsAccountLocked() bool {
+	if u.LockedUntil == nil {
+		return false
+	}
+	return time.Now().Before(*u.LockedUntil)
+}
+
+// IncrementLoginAttempts increments failed login attempts and locks account if necessary
+func (u *User) IncrementLoginAttempts() {
+	u.LoginAttempts++
+	
+	// Lock account after 5 failed attempts for 30 minutes
+	if u.LoginAttempts >= 5 {
+		lockUntil := time.Now().Add(30 * time.Minute)
+		u.LockedUntil = &lockUntil
+	}
+}
+
+// ResetLoginAttempts resets login attempts and unlocks account
+func (u *User) ResetLoginAttempts() {
+	u.LoginAttempts = 0
+	u.LockedUntil = nil
+}
+
+// UpdateLastLogin updates the last login timestamp and IP
+func (u *User) UpdateLastLogin(ip string) {
+	now := time.Now()
+	u.LastLoginAt = &now
+	u.LastLoginIP = ip
+	u.ResetLoginAttempts() // Reset on successful login
+}
+
+// GetFullName returns the user's full name
+func (u *User) GetFullName() string {
+	return strings.TrimSpace(u.FirstName + " " + u.LastName)
+}
+
+// GetDisplayName returns the preferred display name (username or full name)
+func (u *User) GetDisplayName() string {
+	if u.Username != "" {
+		return u.Username
+	}
+	return u.GetFullName()
+}
+
+// GetAge calculates the user's age from date of birth
+func (u *User) GetAge() int {
+	if u.DateOfBirth == nil {
+		return 0
+	}
+	
+	now := time.Now()
+	age := now.Year() - u.DateOfBirth.Year()
+	
+	// Adjust if birthday hasn't occurred this year
+	if now.YearDay() < u.DateOfBirth.YearDay() {
+		age--
+	}
+	
+	return age
+}
+
+// CanLogin checks if the user can log in
+func (u *User) CanLogin() (bool, string) {
+	if !u.IsActive {
+		return false, "Account is not active"
+	}
+	
+	if u.IsSuspended {
+		return false, "Account is suspended"
+	}
+	
+	if u.IsAccountLocked() {
+		return false, "Account is temporarily locked due to failed login attempts"
+	}
+	
+	return true, ""
+}
+
+// ToPublicJSON returns user data safe for public consumption
+func (u *User) ToPublicJSON() map[string]interface{} {
+	return map[string]interface{}{
+		"id":           u.GetID(),
+		"first_name":   u.FirstName,
+		"last_name":    u.LastName,
+		"username":     u.Username,
+		"avatar":       u.Avatar,
+		"bio":          u.Bio,
+		"location":     u.Location,
+		"website":      u.Website,
+		"is_verified":  u.IsVerified,
+		"created_at":   u.CreatedAt,
+		"last_login":   u.LastLoginAt,
+	}
+}
+
+// ToPrivateJSON returns user data including private fields (for the user themselves)
+func (u *User) ToPrivateJSON() map[string]interface{} {
+	data := u.ToPublicJSON()
+	data["email"] = u.Email
+	data["is_active"] = u.IsActive
+	data["timezone"] = u.Timezone
+	data["language"] = u.Language
+	data["theme"] = u.Theme
+	data["email_verified_at"] = u.EmailVerifiedAt
+	return data
+}
+
+// Helper functions
+
+// generateSalt generates a random salt for password hashing
+func generateSalt() (string, error) {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// generateRandomToken generates a random token for verification purposes
+func generateRandomToken(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(bytes), nil
+}
+
+// isHashedPassword checks if a string looks like a bcrypt hash
+func isHashedPassword(password string) bool {
+	return len(password) == 60 && strings.HasPrefix(password, "$2")
+}
+
+// isValidEmail validates email format using regex
+func isValidEmail(email string) bool {
+	// RFC 5322 compliant email regex (simplified)
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
+}
+
+// isAlphanumeric checks if string contains only letters and numbers
+func isAlphanumeric(s string) bool {
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// isValidURL validates URL format (simplified)
+func isValidURL(url string) bool {
+	urlRegex := regexp.MustCompile(`^https?:\/\/[^\s\/$.?#].[^\s]*$`)
+	return urlRegex.MatchString(url)
+}
+
+// ValidatePassword validates password strength according to OWASP guidelines
+func ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters long")
+	}
+	
+	if len(password) > 128 {
+		return fmt.Errorf("password must be less than 128 characters long")
+	}
+	
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasNumber  bool
+		hasSpecial bool
+	)
+	
+	for _, char := range password {
+		switch {
+		case unicode.IsUpper(char):
+			hasUpper = true
+		case unicode.IsLower(char):
+			hasLower = true
+		case unicode.IsDigit(char):
+			hasNumber = true
+		case unicode.IsPunct(char) || unicode.IsSymbol(char):
+			hasSpecial = true
+		}
+	}
+	
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	
+	if !hasNumber {
+		return fmt.Errorf("password must contain at least one number")
+	}
+	
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
+	}
+	
+	// Check for common weak patterns
+	lowercasePassword := strings.ToLower(password)
+	commonPasswords := []string{
+		"password", "123456", "password123", "admin", "qwerty",
+		"letmein", "welcome", "monkey", "dragon", "master",
+	}
+	
+	for _, common := range commonPasswords {
+		if strings.Contains(lowercasePassword, common) {
+			return fmt.Errorf("password contains common patterns and is not secure")
+		}
+	}
+	
+	return nil
+}

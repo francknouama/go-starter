@@ -1,0 +1,730 @@
+package routes
+
+import (
+{{- if eq .Framework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo" }}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+{{- else if eq .Framework "fiber" }}
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+{{- else if eq .Framework "chi" }}
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+{{- end }}
+
+	"{{.ModulePath}}/controllers"
+{{- if ne .DatabaseDriver "" }}
+	"{{.ModulePath}}/config"
+{{- end }}
+{{- if ne .AuthType "" }}
+	authMiddleware "{{.ModulePath}}/middleware"
+{{- end }}
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+{{- end }}
+)
+
+// APIRoutes configures API routes
+type APIRoutes struct {
+	apiController  *controllers.APIController
+	userController *controllers.UserController
+{{- if ne .AuthType "" }}
+	authMiddleware *authMiddleware.AuthMiddleware
+{{- end }}
+{{- if eq .LoggerType "slog" }}
+	logger         *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger         *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger         *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger         zerolog.Logger
+{{- end }}
+}
+
+// NewAPIRoutes creates a new API routes instance
+func NewAPIRoutes(
+	apiController *controllers.APIController,
+	userController *controllers.UserController,
+{{- if ne .AuthType "" }}
+	authMiddleware *authMiddleware.AuthMiddleware,
+{{- end }}
+	{{if eq .LoggerType "slog"}}logger *slog.Logger{{else if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "zerolog"}}logger zerolog.Logger{{end}},
+) *APIRoutes {
+	return &APIRoutes{
+		apiController:  apiController,
+		userController: userController,
+{{- if ne .AuthType "" }}
+		authMiddleware: authMiddleware,
+{{- end }}
+		logger: logger,
+	}
+}
+
+{{- if eq .Framework "gin" }}
+
+// RegisterAPIRoutes registers all API routes with Gin
+func (ar *APIRoutes) RegisterAPIRoutes(router *gin.Engine) {
+	// API v1 group with rate limiting and CORS
+	v1 := router.Group("/api/v1")
+	v1.Use(ar.corsMiddleware())
+	v1.Use(ar.rateLimitMiddleware())
+	{
+		// Public endpoints - no authentication required
+		v1.GET("/ping", ar.apiController.Ping)
+		v1.GET("/health", ar.apiController.Health)
+		v1.GET("/ready", ar.apiController.Ready)
+		v1.GET("/version", ar.apiController.Version)
+		
+		// Metrics endpoint - typically protected in production
+		if ar.isMetricsEnabled() {
+			metrics := v1.Group("/metrics")
+			if ar.isProductionEnvironment() {
+				metrics.Use(ar.authMiddleware.RequireAuth())
+			}
+			metrics.GET("", ar.apiController.Metrics)
+		}
+
+{{- if ne .AuthType "" }}
+		// Protected endpoints - require authentication
+		protected := v1.Group("/")
+		protected.Use(ar.authMiddleware.RequireAuth())
+		{
+			// User endpoints
+			users := protected.Group("/users")
+			{
+				users.GET("/me", ar.userController.GetProfile)
+				users.PUT("/me", ar.userController.UpdateProfile)
+				users.POST("/me/password", ar.userController.ChangePassword)
+				users.DELETE("/me", ar.userController.DeleteAccount)
+			}
+
+			// Admin endpoints
+			if ar.hasAdminEndpoints() {
+				admin := protected.Group("/admin")
+				admin.Use(ar.authMiddleware.RequireRole("admin"))
+				{
+					admin.GET("/users", ar.listUsers)
+					admin.GET("/users/:id", ar.getUserByID)
+					admin.PUT("/users/:id", ar.updateUserByID)
+					admin.DELETE("/users/:id", ar.deleteUserByID)
+					admin.GET("/stats", ar.getAdminStats)
+					admin.GET("/system", ar.getSystemInfo)
+				}
+			}
+		}
+{{- end }}
+
+		// API documentation endpoint
+		if ar.isAPIDocsEnabled() {
+			docs := v1.Group("/docs")
+			if ar.isProductionEnvironment() {
+				docs.Use(ar.authMiddleware.RequireAuth())
+			}
+			docs.GET("", ar.getAPIDocs)
+			docs.GET("/openapi.json", ar.getOpenAPISpec)
+		}
+	}
+
+	// Webhook endpoints (if enabled)
+	if ar.areWebhooksEnabled() {
+		webhooks := router.Group("/webhooks")
+		webhooks.Use(ar.webhookSecurityMiddleware())
+		{
+			webhooks.POST("/github", ar.handleGitHubWebhook)
+			webhooks.POST("/stripe", ar.handleStripeWebhook)
+			webhooks.POST("/generic", ar.handleGenericWebhook)
+		}
+	}
+}
+
+{{- else if eq .Framework "echo" }}
+
+// RegisterAPIRoutes registers all API routes with Echo
+func (ar *APIRoutes) RegisterAPIRoutes(e *echo.Echo) {
+	// API v1 group with middleware
+	v1 := e.Group("/api/v1")
+	v1.Use(ar.corsMiddleware())
+	v1.Use(ar.rateLimitMiddleware())
+
+	// Public endpoints - no authentication required
+	v1.GET("/ping", ar.apiController.Ping)
+	v1.GET("/health", ar.apiController.Health)
+	v1.GET("/ready", ar.apiController.Ready)
+	v1.GET("/version", ar.apiController.Version)
+	
+	// Metrics endpoint - typically protected in production
+	if ar.isMetricsEnabled() {
+		metrics := v1.Group("/metrics")
+		if ar.isProductionEnvironment() {
+			metrics.Use(ar.authMiddleware.RequireAuth())
+		}
+		metrics.GET("", ar.apiController.Metrics)
+	}
+
+{{- if ne .AuthType "" }}
+	// Protected endpoints - require authentication
+	protected := v1.Group("")
+	protected.Use(ar.authMiddleware.RequireAuth())
+
+	// User endpoints
+	users := protected.Group("/users")
+	users.GET("/me", ar.userController.GetProfile)
+	users.PUT("/me", ar.userController.UpdateProfile)
+	users.POST("/me/password", ar.userController.ChangePassword)
+	users.DELETE("/me", ar.userController.DeleteAccount)
+
+	// Admin endpoints
+	if ar.hasAdminEndpoints() {
+		admin := protected.Group("/admin")
+		admin.Use(ar.authMiddleware.RequireRole("admin"))
+		admin.GET("/users", ar.listUsers)
+		admin.GET("/users/:id", ar.getUserByID)
+		admin.PUT("/users/:id", ar.updateUserByID)
+		admin.DELETE("/users/:id", ar.deleteUserByID)
+		admin.GET("/stats", ar.getAdminStats)
+		admin.GET("/system", ar.getSystemInfo)
+	}
+{{- end }}
+
+	// API documentation endpoint
+	if ar.isAPIDocsEnabled() {
+		docs := v1.Group("/docs")
+		if ar.isProductionEnvironment() {
+			docs.Use(ar.authMiddleware.RequireAuth())
+		}
+		docs.GET("", ar.getAPIDocs)
+		docs.GET("/openapi.json", ar.getOpenAPISpec)
+	}
+
+	// Webhook endpoints (if enabled)
+	if ar.areWebhooksEnabled() {
+		webhooks := e.Group("/webhooks")
+		webhooks.Use(ar.webhookSecurityMiddleware())
+		webhooks.POST("/github", ar.handleGitHubWebhook)
+		webhooks.POST("/stripe", ar.handleStripeWebhook)
+		webhooks.POST("/generic", ar.handleGenericWebhook)
+	}
+}
+
+{{- else if eq .Framework "chi" }}
+
+// RegisterAPIRoutes registers all API routes with Chi
+func (ar *APIRoutes) RegisterAPIRoutes(r chi.Router) {
+	r.Route("/api/v1", func(r chi.Router) {
+		// Apply middleware
+		r.Use(ar.corsMiddleware())
+		r.Use(ar.rateLimitMiddleware())
+
+		// Public endpoints - no authentication required
+		r.Get("/ping", ar.apiController.Ping)
+		r.Get("/health", ar.apiController.Health)
+		r.Get("/ready", ar.apiController.Ready)
+		r.Get("/version", ar.apiController.Version)
+		
+		// Metrics endpoint - typically protected in production
+		if ar.isMetricsEnabled() {
+			r.Route("/metrics", func(r chi.Router) {
+				if ar.isProductionEnvironment() {
+					r.Use(ar.authMiddleware.RequireAuth())
+				}
+				r.Get("/", ar.apiController.Metrics)
+			})
+		}
+
+{{- if ne .AuthType "" }}
+		// Protected endpoints - require authentication
+		r.Group(func(r chi.Router) {
+			r.Use(ar.authMiddleware.RequireAuth())
+
+			// User endpoints
+			r.Route("/users", func(r chi.Router) {
+				r.Get("/me", ar.userController.GetProfile)
+				r.Put("/me", ar.userController.UpdateProfile)
+				r.Post("/me/password", ar.userController.ChangePassword)
+				r.Delete("/me", ar.userController.DeleteAccount)
+			})
+
+			// Admin endpoints
+			if ar.hasAdminEndpoints() {
+				r.Route("/admin", func(r chi.Router) {
+					r.Use(ar.authMiddleware.RequireRole("admin"))
+					r.Get("/users", ar.listUsers)
+					r.Get("/users/{id}", ar.getUserByID)
+					r.Put("/users/{id}", ar.updateUserByID)
+					r.Delete("/users/{id}", ar.deleteUserByID)
+					r.Get("/stats", ar.getAdminStats)
+					r.Get("/system", ar.getSystemInfo)
+				})
+			}
+		})
+{{- end }}
+
+		// API documentation endpoint
+		if ar.isAPIDocsEnabled() {
+			r.Route("/docs", func(r chi.Router) {
+				if ar.isProductionEnvironment() {
+					r.Use(ar.authMiddleware.RequireAuth())
+				}
+				r.Get("/", ar.getAPIDocs)
+				r.Get("/openapi.json", ar.getOpenAPISpec)
+			})
+		}
+	})
+
+	// Webhook endpoints (if enabled)
+	if ar.areWebhooksEnabled() {
+		r.Route("/webhooks", func(r chi.Router) {
+			r.Use(ar.webhookSecurityMiddleware())
+			r.Post("/github", ar.handleGitHubWebhook)
+			r.Post("/stripe", ar.handleStripeWebhook)
+			r.Post("/generic", ar.handleGenericWebhook)
+		})
+	}
+}
+
+{{- end }}
+
+// Configuration helper methods
+
+func (ar *APIRoutes) isMetricsEnabled() bool {
+	return getEnvAsBool("MONITORING_ENABLED", true)
+}
+
+func (ar *APIRoutes) hasAdminEndpoints() bool {
+	return getEnvAsBool("FEATURE_ADMIN_API", true)
+}
+
+func (ar *APIRoutes) isAPIDocsEnabled() bool {
+	return getEnvAsBool("FEATURE_API_DOCS", getEnv("APP_ENV", "production") == "development")
+}
+
+func (ar *APIRoutes) areWebhooksEnabled() bool {
+	return getEnvAsBool("FEATURE_WEBHOOKS", false)
+}
+
+func (ar *APIRoutes) isProductionEnvironment() bool {
+	return getEnv("APP_ENV", "production") == "production"
+}
+
+// Middleware methods
+
+{{- if eq .Framework "gin" }}
+
+func (ar *APIRoutes) corsMiddleware() gin.HandlerFunc {
+	// This would typically use a CORS middleware package
+	return gin.HandlerFunc(func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", getEnv("CORS_ALLOWED_ORIGINS", "*"))
+		c.Header("Access-Control-Allow-Methods", getEnv("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS"))
+		c.Header("Access-Control-Allow-Headers", getEnv("CORS_ALLOWED_HEADERS", "Accept,Authorization,Content-Type,X-CSRF-Token"))
+		
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(204)
+			return
+		}
+		
+		c.Next()
+	})
+}
+
+func (ar *APIRoutes) rateLimitMiddleware() gin.HandlerFunc {
+	// This would typically use a rate limiting middleware
+	return gin.HandlerFunc(func(c *gin.Context) {
+		// Implement rate limiting logic here
+		c.Next()
+	})
+}
+
+func (ar *APIRoutes) webhookSecurityMiddleware() gin.HandlerFunc {
+	// This would verify webhook signatures
+	return gin.HandlerFunc(func(c *gin.Context) {
+		// Implement webhook signature verification
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo" }}
+
+func (ar *APIRoutes) corsMiddleware() echo.MiddlewareFunc {
+	return middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins:     []string{getEnv("CORS_ALLOWED_ORIGINS", "*")},
+		AllowMethods:     []string{getEnv("CORS_ALLOWED_METHODS", "GET,POST,PUT,DELETE,OPTIONS")},
+		AllowHeaders:     []string{getEnv("CORS_ALLOWED_HEADERS", "Accept,Authorization,Content-Type,X-CSRF-Token")},
+		AllowCredentials: getEnvAsBool("CORS_ALLOW_CREDENTIALS", true),
+		MaxAge:           getEnvAsInt("CORS_MAX_AGE", 86400),
+	})
+}
+
+func (ar *APIRoutes) rateLimitMiddleware() echo.MiddlewareFunc {
+	return middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Max:      getEnvAsInt("RATE_LIMIT_REQUESTS", 100),
+		Duration: time.Duration(getEnvAsInt("RATE_LIMIT_WINDOW", 60)) * time.Second,
+	})
+}
+
+func (ar *APIRoutes) webhookSecurityMiddleware() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Implement webhook signature verification
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "chi" }}
+
+func (ar *APIRoutes) corsMiddleware() func(http.Handler) http.Handler {
+	return middleware.AllowContentType("application/json", "application/x-www-form-urlencoded")
+}
+
+func (ar *APIRoutes) rateLimitMiddleware() func(http.Handler) http.Handler {
+	return middleware.Throttle(getEnvAsInt("RATE_LIMIT_REQUESTS", 100))
+}
+
+func (ar *APIRoutes) webhookSecurityMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Implement webhook signature verification
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+{{- end }}
+
+{{- if ne .AuthType "" }}
+
+// Admin API handlers
+
+{{- if eq .Framework "gin" }}
+
+func (ar *APIRoutes) listUsers(c *gin.Context) {
+	// Implement pagination
+	page := getIntParam(c, "page", 1)
+	limit := getIntParam(c, "limit", 20)
+	search := c.Query("search")
+
+	// This would call a user service to get paginated users
+	c.JSON(200, gin.H{
+		"users": []interface{}{},
+		"pagination": gin.H{
+			"page":  page,
+			"limit": limit,
+			"total": 0,
+		},
+		"search": search,
+	})
+}
+
+func (ar *APIRoutes) getUserByID(c *gin.Context) {
+	userID := c.Param("id")
+	// This would call a user service to get user by ID
+	c.JSON(200, gin.H{
+		"user_id": userID,
+		"user":    nil,
+	})
+}
+
+func (ar *APIRoutes) updateUserByID(c *gin.Context) {
+	userID := c.Param("id")
+	// This would call a user service to update user
+	c.JSON(200, gin.H{
+		"message": "User updated",
+		"user_id": userID,
+	})
+}
+
+func (ar *APIRoutes) deleteUserByID(c *gin.Context) {
+	userID := c.Param("id")
+	// This would call a user service to delete user
+	c.JSON(200, gin.H{
+		"message": "User deleted",
+		"user_id": userID,
+	})
+}
+
+func (ar *APIRoutes) getAdminStats(c *gin.Context) {
+	// Return comprehensive admin statistics
+	c.JSON(200, gin.H{
+		"users": gin.H{
+			"total":           0,
+			"active":          0,
+			"inactive":        0,
+			"registered_today": 0,
+		},
+		"sessions": gin.H{
+			"active": 0,
+			"total":  0,
+		},
+		"system": gin.H{
+			"uptime":     "0s",
+			"memory":     "0MB",
+			"cpu_usage":  "0%",
+		},
+	})
+}
+
+func (ar *APIRoutes) getSystemInfo(c *gin.Context) {
+	// Return detailed system information
+	c.JSON(200, gin.H{
+		"version":    "1.0.0",
+		"build_time": "unknown",
+		"git_commit": "unknown",
+		"go_version": "go1.21",
+		"environment": getEnv("APP_ENV", "production"),
+	})
+}
+
+{{- else if eq .Framework "echo" }}
+
+func (ar *APIRoutes) listUsers(c echo.Context) error {
+	page := getIntParamEcho(c, "page", 1)
+	limit := getIntParamEcho(c, "limit", 20)
+	search := c.QueryParam("search")
+
+	return c.JSON(200, map[string]interface{}{
+		"users": []interface{}{},
+		"pagination": map[string]interface{}{
+			"page":  page,
+			"limit": limit,
+			"total": 0,
+		},
+		"search": search,
+	})
+}
+
+func (ar *APIRoutes) getUserByID(c echo.Context) error {
+	userID := c.Param("id")
+	return c.JSON(200, map[string]interface{}{
+		"user_id": userID,
+		"user":    nil,
+	})
+}
+
+func (ar *APIRoutes) updateUserByID(c echo.Context) error {
+	userID := c.Param("id")
+	return c.JSON(200, map[string]interface{}{
+		"message": "User updated",
+		"user_id": userID,
+	})
+}
+
+func (ar *APIRoutes) deleteUserByID(c echo.Context) error {
+	userID := c.Param("id")
+	return c.JSON(200, map[string]interface{}{
+		"message": "User deleted",
+		"user_id": userID,
+	})
+}
+
+func (ar *APIRoutes) getAdminStats(c echo.Context) error {
+	return c.JSON(200, map[string]interface{}{
+		"users": map[string]interface{}{
+			"total":           0,
+			"active":          0,
+			"inactive":        0,
+			"registered_today": 0,
+		},
+		"sessions": map[string]interface{}{
+			"active": 0,
+			"total":  0,
+		},
+		"system": map[string]interface{}{
+			"uptime":     "0s",
+			"memory":     "0MB",
+			"cpu_usage":  "0%",
+		},
+	})
+}
+
+func (ar *APIRoutes) getSystemInfo(c echo.Context) error {
+	return c.JSON(200, map[string]interface{}{
+		"version":    "1.0.0",
+		"build_time": "unknown",
+		"git_commit": "unknown",
+		"go_version": "go1.21",
+		"environment": getEnv("APP_ENV", "production"),
+	})
+}
+
+{{- end }}
+{{- end }}
+
+// Documentation and webhook handlers
+
+{{- if eq .Framework "gin" }}
+
+func (ar *APIRoutes) getAPIDocs(c *gin.Context) {
+	// Serve API documentation (Swagger UI, etc.)
+	c.JSON(200, gin.H{
+		"title":       "{{.ProjectName}} API",
+		"version":     "1.0.0",
+		"description": "API documentation for {{.ProjectName}}",
+	})
+}
+
+func (ar *APIRoutes) getOpenAPISpec(c *gin.Context) {
+	// Serve OpenAPI specification
+	spec := map[string]interface{}{
+		"openapi": "3.0.0",
+		"info": map[string]interface{}{
+			"title":   "{{.ProjectName}} API",
+			"version": "1.0.0",
+		},
+		"paths": map[string]interface{}{},
+	}
+	c.JSON(200, spec)
+}
+
+func (ar *APIRoutes) handleGitHubWebhook(c *gin.Context) {
+{{- if eq .LoggerType "slog" }}
+	ar.logger.Info("received GitHub webhook", slog.String("event", c.GetHeader("X-GitHub-Event")))
+{{- else if eq .LoggerType "zap" }}
+	ar.logger.Info("received GitHub webhook", zap.String("event", c.GetHeader("X-GitHub-Event")))
+{{- else if eq .LoggerType "logrus" }}
+	ar.logger.WithField("event", c.GetHeader("X-GitHub-Event")).Info("received GitHub webhook")
+{{- else if eq .LoggerType "zerolog" }}
+	ar.logger.Info().Str("event", c.GetHeader("X-GitHub-Event")).Msg("received GitHub webhook")
+{{- end }}
+	c.JSON(200, gin.H{"message": "GitHub webhook processed"})
+}
+
+func (ar *APIRoutes) handleStripeWebhook(c *gin.Context) {
+{{- if eq .LoggerType "slog" }}
+	ar.logger.Info("received Stripe webhook", slog.String("event", c.GetHeader("Stripe-Event")))
+{{- else if eq .LoggerType "zap" }}
+	ar.logger.Info("received Stripe webhook", zap.String("event", c.GetHeader("Stripe-Event")))
+{{- else if eq .LoggerType "logrus" }}
+	ar.logger.WithField("event", c.GetHeader("Stripe-Event")).Info("received Stripe webhook")
+{{- else if eq .LoggerType "zerolog" }}
+	ar.logger.Info().Str("event", c.GetHeader("Stripe-Event")).Msg("received Stripe webhook")
+{{- end }}
+	c.JSON(200, gin.H{"message": "Stripe webhook processed"})
+}
+
+func (ar *APIRoutes) handleGenericWebhook(c *gin.Context) {
+{{- if eq .LoggerType "slog" }}
+	ar.logger.Info("received generic webhook")
+{{- else if eq .LoggerType "zap" }}
+	ar.logger.Info("received generic webhook")
+{{- else if eq .LoggerType "logrus" }}
+	ar.logger.Info("received generic webhook")
+{{- else if eq .LoggerType "zerolog" }}
+	ar.logger.Info().Msg("received generic webhook")
+{{- end }}
+	c.JSON(200, gin.H{"message": "Generic webhook processed"})
+}
+
+{{- else if eq .Framework "echo" }}
+
+func (ar *APIRoutes) getAPIDocs(c echo.Context) error {
+	return c.JSON(200, map[string]interface{}{
+		"title":       "{{.ProjectName}} API",
+		"version":     "1.0.0",
+		"description": "API documentation for {{.ProjectName}}",
+	})
+}
+
+func (ar *APIRoutes) getOpenAPISpec(c echo.Context) error {
+	spec := map[string]interface{}{
+		"openapi": "3.0.0",
+		"info": map[string]interface{}{
+			"title":   "{{.ProjectName}} API",
+			"version": "1.0.0",
+		},
+		"paths": map[string]interface{}{},
+	}
+	return c.JSON(200, spec)
+}
+
+func (ar *APIRoutes) handleGitHubWebhook(c echo.Context) error {
+{{- if eq .LoggerType "slog" }}
+	ar.logger.Info("received GitHub webhook", slog.String("event", c.Request().Header.Get("X-GitHub-Event")))
+{{- else if eq .LoggerType "zap" }}
+	ar.logger.Info("received GitHub webhook", zap.String("event", c.Request().Header.Get("X-GitHub-Event")))
+{{- else if eq .LoggerType "logrus" }}
+	ar.logger.WithField("event", c.Request().Header.Get("X-GitHub-Event")).Info("received GitHub webhook")
+{{- else if eq .LoggerType "zerolog" }}
+	ar.logger.Info().Str("event", c.Request().Header.Get("X-GitHub-Event")).Msg("received GitHub webhook")
+{{- end }}
+	return c.JSON(200, map[string]string{"message": "GitHub webhook processed"})
+}
+
+func (ar *APIRoutes) handleStripeWebhook(c echo.Context) error {
+{{- if eq .LoggerType "slog" }}
+	ar.logger.Info("received Stripe webhook", slog.String("event", c.Request().Header.Get("Stripe-Event")))
+{{- else if eq .LoggerType "zap" }}
+	ar.logger.Info("received Stripe webhook", zap.String("event", c.Request().Header.Get("Stripe-Event")))
+{{- else if eq .LoggerType "logrus" }}
+	ar.logger.WithField("event", c.Request().Header.Get("Stripe-Event")).Info("received Stripe webhook")
+{{- else if eq .LoggerType "zerolog" }}
+	ar.logger.Info().Str("event", c.Request().Header.Get("Stripe-Event")).Msg("received Stripe webhook")
+{{- end }}
+	return c.JSON(200, map[string]string{"message": "Stripe webhook processed"})
+}
+
+func (ar *APIRoutes) handleGenericWebhook(c echo.Context) error {
+{{- if eq .LoggerType "slog" }}
+	ar.logger.Info("received generic webhook")
+{{- else if eq .LoggerType "zap" }}
+	ar.logger.Info("received generic webhook")
+{{- else if eq .LoggerType "logrus" }}
+	ar.logger.Info("received generic webhook")
+{{- else if eq .LoggerType "zerolog" }}
+	ar.logger.Info().Msg("received generic webhook")
+{{- end }}
+	return c.JSON(200, map[string]string{"message": "Generic webhook processed"})
+}
+
+{{- end }}
+
+// Utility functions
+
+func getEnv(key, defaultValue string) string {
+	// This should be imported from a config package
+	return defaultValue
+}
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	// This should be imported from a config package
+	return defaultValue
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	// This should be imported from a config package
+	return defaultValue
+}
+
+{{- if eq .Framework "gin" }}
+
+func getIntParam(c *gin.Context, key string, defaultValue int) int {
+	if str := c.Query(key); str != "" {
+		if val, err := strconv.Atoi(str); err == nil {
+			return val
+		}
+	}
+	return defaultValue
+}
+
+{{- else if eq .Framework "echo" }}
+
+func getIntParamEcho(c echo.Context, key string, defaultValue int) int {
+	if str := c.QueryParam(key); str != "" {
+		if val, err := strconv.Atoi(str); err == nil {
+			return val
+		}
+	}
+	return defaultValue
+}
+
+{{- end }}

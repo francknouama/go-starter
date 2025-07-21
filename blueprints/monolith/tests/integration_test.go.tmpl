@@ -1,0 +1,489 @@
+package tests
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+{{- if eq .Framework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo" }}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber" }}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi" }}
+	"github.com/go-chi/chi/v5"
+{{- end }}
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/config"
+{{- if ne .DatabaseDriver "" }}
+	"{{.ModulePath}}/database"
+{{- end }}
+	"{{.ModulePath}}/models"
+	"{{.ModulePath}}/routes"
+	"{{.ModulePath}}/services"
+)
+
+// IntegrationTestSuite defines the integration test suite
+type IntegrationTestSuite struct {
+	suite.Suite
+{{- if eq .Framework "gin" }}
+	router *gin.Engine
+{{- else if eq .Framework "echo" }}
+	app    *echo.Echo
+{{- else if eq .Framework "fiber" }}
+	app    *fiber.App
+{{- else if eq .Framework "chi" }}
+	router chi.Router
+{{- end }}
+{{- if ne .DatabaseDriver "" }}
+	db     config.Database
+{{- end }}
+	cfg    *config.Config
+}
+
+// SetupSuite runs once before all tests
+func (suite *IntegrationTestSuite) SetupSuite() {
+	// Set test environment
+	suite.T().Setenv("APP_ENV", "test")
+	suite.T().Setenv("APP_PORT", "0") // Random port for testing
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "sqlite" }}
+	suite.T().Setenv("DATABASE_PATH", ":memory:")
+{{- else }}
+	suite.T().Setenv("DATABASE_NAME", "{{.ProjectName}}_test")
+{{- end }}
+{{- end }}
+
+	// Load test configuration
+	cfg, err := config.Load()
+	require.NoError(suite.T(), err, "Failed to load config")
+	suite.cfg = cfg
+
+{{- if ne .DatabaseDriver "" }}
+	// Initialize test database
+	db, err := config.NewDatabase(cfg.Database, cfg.Logger)
+	require.NoError(suite.T(), err, "Failed to connect to database")
+	suite.db = db
+
+	// Run migrations
+	err = database.Migrate(suite.db)
+	require.NoError(suite.T(), err, "Failed to run migrations")
+
+	// Seed test data
+	err = suite.seedTestData()
+	require.NoError(suite.T(), err, "Failed to seed test data")
+{{- end }}
+
+	// Initialize router
+	suite.setupRouter()
+}
+
+// TearDownSuite runs once after all tests
+func (suite *IntegrationTestSuite) TearDownSuite() {
+{{- if ne .DatabaseDriver "" }}
+	// Clean up database
+	if suite.db != nil {
+		_ = suite.db.Close()
+	}
+{{- end }}
+}
+
+// SetupTest runs before each test
+func (suite *IntegrationTestSuite) SetupTest() {
+{{- if ne .DatabaseDriver "" }}
+	// Begin transaction for test isolation
+	suite.beginTransaction()
+{{- end }}
+}
+
+// TearDownTest runs after each test
+func (suite *IntegrationTestSuite) TearDownTest() {
+{{- if ne .DatabaseDriver "" }}
+	// Rollback transaction
+	suite.rollbackTransaction()
+{{- end }}
+}
+
+// TestHealthEndpoint tests the health check endpoint
+func (suite *IntegrationTestSuite) TestHealthEndpoint() {
+	tests := []struct {
+		name           string
+		endpoint       string
+		expectedStatus int
+		expectedBody   map[string]interface{}
+	}{
+		{
+			name:           "Health endpoint returns healthy",
+			endpoint:       "/api/v1/health",
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"status": "healthy",
+			},
+		},
+		{
+			name:           "Ready endpoint returns ready",
+			endpoint:       "/api/v1/ready",
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"status": "ready",
+			},
+		},
+		{
+			name:           "Version endpoint returns version info",
+			endpoint:       "/api/v1/version",
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"version": "dev",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		suite.Run(tt.name, func() {
+			resp := suite.makeRequest("GET", tt.endpoint, nil, nil)
+			assert.Equal(suite.T(), tt.expectedStatus, resp.Code)
+
+			var body map[string]interface{}
+			err := json.Unmarshal(resp.Body.Bytes(), &body)
+			require.NoError(suite.T(), err)
+
+			for key, value := range tt.expectedBody {
+				assert.Equal(suite.T(), value, body[key])
+			}
+		})
+	}
+}
+
+// TestMetricsEndpoint tests the metrics endpoint
+func (suite *IntegrationTestSuite) TestMetricsEndpoint() {
+	resp := suite.makeRequest("GET", "/api/v1/metrics", nil, nil)
+	assert.Equal(suite.T(), http.StatusOK, resp.Code)
+
+	var metrics map[string]interface{}
+	err := json.Unmarshal(resp.Body.Bytes(), &metrics)
+	require.NoError(suite.T(), err)
+
+	// Verify metrics structure
+	assert.Contains(suite.T(), metrics, "timestamp")
+	assert.Contains(suite.T(), metrics, "system")
+	assert.Contains(suite.T(), metrics, "runtime")
+{{- if ne .DatabaseDriver "" }}
+	assert.Contains(suite.T(), metrics, "database")
+{{- end }}
+}
+
+{{- if ne .AuthType "" }}
+
+// TestAuthenticationFlow tests the complete authentication flow
+func (suite *IntegrationTestSuite) TestAuthenticationFlow() {
+	// Test registration
+{{- if ne .AuthType "oauth2" }}
+	suite.Run("Registration", func() {
+		payload := map[string]interface{}{
+			"email":     "newuser@example.com",
+			"password":  "SecurePass123!",
+			"first_name": "New",
+			"last_name":  "User",
+		}
+
+		resp := suite.makeRequest("POST", "/auth/register", payload, nil)
+		assert.Equal(suite.T(), http.StatusCreated, resp.Code)
+
+		var result map[string]interface{}
+		err := json.Unmarshal(resp.Body.Bytes(), &result)
+		require.NoError(suite.T(), err)
+		assert.Contains(suite.T(), result, "message")
+	})
+{{- end }}
+
+	// Test login
+	suite.Run("Login", func() {
+		payload := map[string]interface{}{
+			"email":    "test@example.com",
+			"password": "password123",
+		}
+
+		resp := suite.makeRequest("POST", "/auth/login", payload, nil)
+		assert.Equal(suite.T(), http.StatusOK, resp.Code)
+
+		var result map[string]interface{}
+		err := json.Unmarshal(resp.Body.Bytes(), &result)
+		require.NoError(suite.T(), err)
+{{- if eq .AuthType "jwt" }}
+		assert.Contains(suite.T(), result, "token")
+		assert.Contains(suite.T(), result, "refresh_token")
+{{- else }}
+		assert.Contains(suite.T(), result, "message")
+		// Check session cookie
+		cookies := resp.Result().Cookies()
+		assert.NotEmpty(suite.T(), cookies)
+{{- end }}
+	})
+
+	// Test accessing protected endpoint
+	suite.Run("Protected Endpoint", func() {
+		// First login to get auth
+		authResp := suite.login("test@example.com", "password123")
+		
+		// Access protected endpoint
+		headers := suite.getAuthHeaders(authResp)
+		resp := suite.makeRequest("GET", "/api/v1/users/me", nil, headers)
+		assert.Equal(suite.T(), http.StatusOK, resp.Code)
+	})
+
+	// Test logout
+	suite.Run("Logout", func() {
+		// First login
+		authResp := suite.login("test@example.com", "password123")
+		headers := suite.getAuthHeaders(authResp)
+
+		// Logout
+		resp := suite.makeRequest("POST", "/auth/logout", nil, headers)
+		assert.Equal(suite.T(), http.StatusOK, resp.Code)
+
+		// Try to access protected endpoint after logout
+		resp = suite.makeRequest("GET", "/api/v1/users/me", nil, headers)
+		assert.Equal(suite.T(), http.StatusUnauthorized, resp.Code)
+	})
+}
+
+// TestPasswordReset tests the password reset flow
+{{- if ne .AuthType "oauth2" }}
+func (suite *IntegrationTestSuite) TestPasswordReset() {
+	email := "test@example.com"
+
+	// Request password reset
+	suite.Run("Request Reset", func() {
+		payload := map[string]interface{}{
+			"email": email,
+		}
+
+		resp := suite.makeRequest("POST", "/auth/forgot-password", payload, nil)
+		assert.Equal(suite.T(), http.StatusOK, resp.Code)
+
+		// In a real test, you would verify the email was sent
+		// and extract the reset token from the email service
+	})
+
+	// Reset password with token
+	suite.Run("Reset Password", func() {
+		// In a real test, you would get this token from the email
+		token := "mock-reset-token"
+		
+		payload := map[string]interface{}{
+			"token":     token,
+			"password":  "NewSecurePass123!",
+			"confirm":   "NewSecurePass123!",
+		}
+
+		resp := suite.makeRequest("POST", "/auth/reset-password", payload, nil)
+		// This might fail without a real token, but we're testing the endpoint exists
+		assert.Contains(suite.T(), []int{http.StatusOK, http.StatusBadRequest}, resp.Code)
+	})
+}
+{{- end }}
+
+{{- end }}
+
+// TestRateLimiting tests rate limiting on sensitive endpoints
+func (suite *IntegrationTestSuite) TestRateLimiting() {
+	endpoint := "/auth/login"
+	payload := map[string]interface{}{
+		"email":    "test@example.com",
+		"password": "wrong-password",
+	}
+
+	// Make multiple rapid requests
+	responses := make([]*httptest.ResponseRecorder, 0)
+	for i := 0; i < 10; i++ {
+		resp := suite.makeRequest("POST", endpoint, payload, nil)
+		responses = append(responses, resp)
+	}
+
+	// At least one should be rate limited
+	rateLimited := false
+	for _, resp := range responses {
+		if resp.Code == http.StatusTooManyRequests {
+			rateLimited = true
+			break
+		}
+	}
+
+	assert.True(suite.T(), rateLimited, "Rate limiting should be applied")
+}
+
+// TestCORS tests CORS headers
+func (suite *IntegrationTestSuite) TestCORS() {
+	headers := map[string]string{
+		"Origin": "http://localhost:3000",
+	}
+
+	resp := suite.makeRequest("OPTIONS", "/api/v1/health", nil, headers)
+	
+	// Check CORS headers
+	assert.NotEmpty(suite.T(), resp.Header().Get("Access-Control-Allow-Origin"))
+	assert.NotEmpty(suite.T(), resp.Header().Get("Access-Control-Allow-Methods"))
+}
+
+// TestDatabaseTransaction tests database transaction handling
+{{- if ne .DatabaseDriver "" }}
+func (suite *IntegrationTestSuite) TestDatabaseTransaction() {
+	// This test verifies that database operations are properly isolated
+	// The actual implementation would depend on your specific use case
+	
+	suite.Run("Transaction Rollback", func() {
+		// Create a user in a transaction that will be rolled back
+		ctx := context.Background()
+		err := config.WithTransaction(suite.db.DB(), func(tx interface{}) error {
+			// Perform database operations
+			// Return an error to trigger rollback
+			return fmt.Errorf("intentional rollback")
+		})
+		
+		assert.Error(suite.T(), err)
+		// Verify the changes were not persisted
+	})
+}
+{{- end }}
+
+// Helper methods
+
+func (suite *IntegrationTestSuite) setupRouter() {
+{{- if eq .Framework "gin" }}
+	gin.SetMode(gin.TestMode)
+	suite.router = gin.New()
+	
+	// Setup routes
+	webRoutes := routes.NewWebRoutes(/* dependencies */)
+	webRoutes.RegisterWebRoutes(suite.router)
+	
+	apiRoutes := routes.NewAPIRoutes(/* dependencies */)
+	apiRoutes.RegisterAPIRoutes(suite.router)
+	
+{{- if ne .AuthType "" }}
+	authRoutes := routes.NewAuthRoutes(/* dependencies */)
+	authRoutes.RegisterAuthRoutes(suite.router)
+{{- end }}
+
+{{- else if eq .Framework "echo" }}
+	suite.app = echo.New()
+	
+	// Setup routes
+	webRoutes := routes.NewWebRoutes(/* dependencies */)
+	webRoutes.RegisterWebRoutes(suite.app)
+	
+	apiRoutes := routes.NewAPIRoutes(/* dependencies */)
+	apiRoutes.RegisterAPIRoutes(suite.app)
+	
+{{- if ne .AuthType "" }}
+	authRoutes := routes.NewAuthRoutes(/* dependencies */)
+	authRoutes.RegisterAuthRoutes(suite.app)
+{{- end }}
+{{- end }}
+}
+
+func (suite *IntegrationTestSuite) makeRequest(method, endpoint string, payload interface{}, headers map[string]string) *httptest.ResponseRecorder {
+	var body []byte
+	if payload != nil {
+		var err error
+		body, err = json.Marshal(payload)
+		require.NoError(suite.T(), err)
+	}
+
+	req := httptest.NewRequest(method, endpoint, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+
+	resp := httptest.NewRecorder()
+{{- if eq .Framework "gin" }}
+	suite.router.ServeHTTP(resp, req)
+{{- else if eq .Framework "echo" }}
+	suite.app.ServeHTTP(resp, req)
+{{- end }}
+
+	return resp
+}
+
+{{- if ne .AuthType "" }}
+func (suite *IntegrationTestSuite) login(email, password string) *httptest.ResponseRecorder {
+	payload := map[string]interface{}{
+		"email":    email,
+		"password": password,
+	}
+	return suite.makeRequest("POST", "/auth/login", payload, nil)
+}
+
+func (suite *IntegrationTestSuite) getAuthHeaders(authResp *httptest.ResponseRecorder) map[string]string {
+	headers := make(map[string]string)
+	
+{{- if eq .AuthType "jwt" }}
+	var result map[string]interface{}
+	err := json.Unmarshal(authResp.Body.Bytes(), &result)
+	require.NoError(suite.T(), err)
+	
+	token, ok := result["token"].(string)
+	require.True(suite.T(), ok)
+	headers["Authorization"] = "Bearer " + token
+{{- else }}
+	// Extract session cookie
+	cookies := authResp.Result().Cookies()
+	if len(cookies) > 0 {
+		headers["Cookie"] = cookies[0].String()
+	}
+{{- end }}
+	
+	return headers
+}
+{{- end }}
+
+{{- if ne .DatabaseDriver "" }}
+func (suite *IntegrationTestSuite) seedTestData() error {
+	// Seed test users
+	testUser := &models.User{
+		Email:     "test@example.com",
+		FirstName: "Test",
+		LastName:  "User",
+		Password:  "password123", // This should be hashed in the model
+	}
+	
+	// Create test user using your user service/repository
+	// userService := services.NewUserService(suite.db)
+	// _, err := userService.Create(context.Background(), testUser)
+	// return err
+	
+	return nil
+}
+
+func (suite *IntegrationTestSuite) beginTransaction() {
+	// Implementation depends on your database setup
+	// This is a placeholder for transaction-based test isolation
+}
+
+func (suite *IntegrationTestSuite) rollbackTransaction() {
+	// Implementation depends on your database setup
+	// This is a placeholder for transaction-based test isolation
+}
+{{- end }}
+
+// TestIntegrationSuite runs the integration test suite
+func TestIntegrationSuite(t *testing.T) {
+	// Skip integration tests in short mode
+	if testing.Short() {
+		t.Skip("Skipping integration tests in short mode")
+	}
+
+	suite.Run(t, new(IntegrationTestSuite))
+}

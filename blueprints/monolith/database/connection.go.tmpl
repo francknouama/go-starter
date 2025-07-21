@@ -1,0 +1,620 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	"database/sql"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	_ "github.com/lib/pq"
+	{{- else}}
+	_ "github.com/lib/pq"
+	{{- end}}
+	{{- else if eq .DatabaseDriver "mysql"}}
+	"database/sql"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	_ "github.com/go-sql-driver/mysql"
+	{{- else}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- end}}
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	"database/sql"
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+	{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	_ "github.com/mattn/go-sqlite3"
+	{{- else}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+	{{- else if eq .DatabaseDriver "mongodb"}}
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	{{- end}}
+
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+	{{- end}}
+
+	"{{.ModulePath}}/config"
+	{{- if eq .DatabaseORM "gorm"}}
+	"{{.ModulePath}}/models"
+	{{- end}}
+)
+
+// DB represents the database connection
+type DB struct {
+	{{- if eq .DatabaseDriver "mongodb"}}
+	Client   *mongo.Client
+	Database *mongo.Database
+	{{- else if eq .DatabaseORM "gorm"}}
+	*gorm.DB
+	{{- else if eq .DatabaseORM "sqlx"}}
+	*sqlx.DB
+	{{- else}}
+	*sql.DB
+	{{- end}}
+	Config *config.Config
+}
+
+// Connection configuration
+type ConnectionConfig struct {
+	MaxOpenConnections    int
+	MaxIdleConnections    int
+	ConnectionMaxLifetime time.Duration
+	ConnectionMaxIdleTime time.Duration
+	RetryAttempts        int
+	RetryDelay           time.Duration
+}
+
+// DefaultConnectionConfig returns default connection configuration
+func DefaultConnectionConfig() ConnectionConfig {
+	return ConnectionConfig{
+		MaxOpenConnections:    25,
+		MaxIdleConnections:    5,
+		ConnectionMaxLifetime: 5 * time.Minute,
+		ConnectionMaxIdleTime: 1 * time.Minute,
+		RetryAttempts:        3,
+		RetryDelay:           time.Second,
+	}
+}
+
+// NewDB creates a new database connection
+func NewDB(cfg *config.Config) (*DB, error) {
+	connConfig := DefaultConnectionConfig()
+	
+	// Override with config values if provided
+	if cfg.Database.MaxOpenConns > 0 {
+		connConfig.MaxOpenConnections = cfg.Database.MaxOpenConns
+	}
+	if cfg.Database.MaxIdleConns > 0 {
+		connConfig.MaxIdleConnections = cfg.Database.MaxIdleConns
+	}
+	if cfg.Database.ConnMaxLifetime > 0 {
+		connConfig.ConnectionMaxLifetime = time.Duration(cfg.Database.ConnMaxLifetime) * time.Second
+	}
+
+	{{- if eq .DatabaseDriver "mongodb"}}
+	return newMongoConnection(cfg, connConfig)
+	{{- else if eq .DatabaseORM "gorm"}}
+	return newGORMConnection(cfg, connConfig)
+	{{- else if eq .DatabaseORM "sqlx"}}
+	return newSQLXConnection(cfg, connConfig)
+	{{- else}}
+	return newSQLConnection(cfg, connConfig)
+	{{- end}}
+}
+
+{{- if eq .DatabaseDriver "mongodb"}}
+// newMongoConnection creates a MongoDB connection
+func newMongoConnection(cfg *config.Config, connCfg ConnectionConfig) (*DB, error) {
+	// Build MongoDB connection URI
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%s/%s",
+		cfg.Database.User,
+		cfg.Database.Password,
+		cfg.Database.Host,
+		cfg.Database.Port,
+		cfg.Database.Name)
+
+	// Configure client options
+	clientOptions := options.Client().ApplyURI(uri)
+	clientOptions.SetMaxPoolSize(uint64(connCfg.MaxOpenConnections))
+	clientOptions.SetMinPoolSize(uint64(connCfg.MaxIdleConnections))
+	clientOptions.SetMaxConnIdleTime(connCfg.ConnectionMaxIdleTime)
+	clientOptions.SetConnectTimeout(10 * time.Second)
+	clientOptions.SetServerSelectionTimeout(5 * time.Second)
+
+	// Create context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Connect to MongoDB
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to MongoDB: %w", err)
+	}
+
+	// Ping to verify connection
+	if err := client.Ping(ctx, nil); err != nil {
+		return nil, fmt.Errorf("failed to ping MongoDB: %w", err)
+	}
+
+	database := client.Database(cfg.Database.Name)
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Connected to MongoDB", "database", cfg.Database.Name, "host", cfg.Database.Host)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Connected to MongoDB", zap.String("database", cfg.Database.Name), zap.String("host", cfg.Database.Host))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{"database": cfg.Database.Name, "host": cfg.Database.Host}).Info("Connected to MongoDB")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("database", cfg.Database.Name).Str("host", cfg.Database.Host).Msg("Connected to MongoDB")
+	{{- end}}
+
+	return &DB{
+		Client:   client,
+		Database: database,
+		Config:   cfg,
+	}, nil
+}
+
+{{- else if eq .DatabaseORM "gorm"}}
+// newGORMConnection creates a GORM connection
+func newGORMConnection(cfg *config.Config, connCfg ConnectionConfig) (*DB, error) {
+	var dsn string
+	var dialector gorm.Dialector
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+		cfg.Database.Password, cfg.Database.Name, cfg.Database.SSLMode)
+	dialector = postgres.Open(dsn)
+	{{- else if eq .DatabaseDriver "mysql"}}
+	dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		cfg.Database.User, cfg.Database.Password, cfg.Database.Host,
+		cfg.Database.Port, cfg.Database.Name)
+	dialector = mysql.Open(dsn)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	dsn = cfg.Database.Name
+	if dsn == "" {
+		dsn = "{{.ProjectName}}.db"
+	}
+	dialector = sqlite.Open(dsn)
+	{{- end}}
+
+	// Configure GORM logger
+	var gormLogger logger.Interface
+	if cfg.App.Environment == "development" {
+		gormLogger = logger.Default.LogMode(logger.Info)
+	} else {
+		gormLogger = logger.Default.LogMode(logger.Error)
+	}
+
+	// GORM configuration
+	gormConfig := &gorm.Config{
+		Logger:                 gormLogger,
+		DisableForeignKeyConstraintWhenMigrating: false,
+		SkipDefaultTransaction: false,
+	}
+
+	// Connect with retry logic
+	var gormDB *gorm.DB
+	var err error
+
+	for attempt := 1; attempt <= connCfg.RetryAttempts; attempt++ {
+		gormDB, err = gorm.Open(dialector, gormConfig)
+		if err == nil {
+			break
+		}
+
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Database connection attempt failed", "attempt", attempt, "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Database connection attempt failed", zap.Int("attempt", attempt), zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{"attempt": attempt, "error": err}).Warn("Database connection attempt failed")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Int("attempt", attempt).Err(err).Msg("Database connection attempt failed")
+		{{- end}}
+
+		if attempt < connCfg.RetryAttempts {
+			time.Sleep(connCfg.RetryDelay)
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", connCfg.RetryAttempts, err)
+	}
+
+	// Get underlying sql.DB for connection pooling
+	sqlDB, err := gormDB.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(connCfg.MaxOpenConnections)
+	sqlDB.SetMaxIdleConns(connCfg.MaxIdleConnections)
+	sqlDB.SetConnMaxLifetime(connCfg.ConnectionMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(connCfg.ConnectionMaxIdleTime)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Connected to database", "driver", "{{.DatabaseDriver}}", "host", cfg.Database.Host)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Connected to database", zap.String("driver", "{{.DatabaseDriver}}"), zap.String("host", cfg.Database.Host))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{"driver": "{{.DatabaseDriver}}", "host": cfg.Database.Host}).Info("Connected to database")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("driver", "{{.DatabaseDriver}}").Str("host", cfg.Database.Host).Msg("Connected to database")
+	{{- end}}
+
+	db := &DB{
+		DB:     gormDB,
+		Config: cfg,
+	}
+
+	// Auto-migrate models if enabled
+	if cfg.Database.AutoMigrate {
+		if err := db.AutoMigrate(); err != nil {
+			return nil, fmt.Errorf("failed to auto-migrate: %w", err)
+		}
+	}
+
+	return db, nil
+}
+
+// AutoMigrate runs auto-migration for all models
+func (db *DB) AutoMigrate() error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Running database auto-migration")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Running database auto-migration")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Running database auto-migration")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Running database auto-migration")
+	{{- end}}
+
+	return db.DB.AutoMigrate(
+		&models.User{},
+		// Add other models here as they are created
+	)
+}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+// newSQLXConnection creates a SQLX connection
+func newSQLXConnection(cfg *config.Config, connCfg ConnectionConfig) (*DB, error) {
+	var dsn string
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+		cfg.Database.Password, cfg.Database.Name, cfg.Database.SSLMode)
+	{{- else if eq .DatabaseDriver "mysql"}}
+	dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+		cfg.Database.User, cfg.Database.Password, cfg.Database.Host,
+		cfg.Database.Port, cfg.Database.Name)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	dsn = cfg.Database.Name
+	if dsn == "" {
+		dsn = "{{.ProjectName}}.db"
+	}
+	{{- end}}
+
+	// Connect with retry logic
+	var sqlxDB *sqlx.DB
+	var err error
+
+	for attempt := 1; attempt <= connCfg.RetryAttempts; attempt++ {
+		sqlxDB, err = sqlx.Connect("{{.DatabaseDriver}}", dsn)
+		if err == nil {
+			break
+		}
+
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Database connection attempt failed", "attempt", attempt, "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Database connection attempt failed", zap.Int("attempt", attempt), zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{"attempt": attempt, "error": err}).Warn("Database connection attempt failed")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Int("attempt", attempt).Err(err).Msg("Database connection attempt failed")
+		{{- end}}
+
+		if attempt < connCfg.RetryAttempts {
+			time.Sleep(connCfg.RetryDelay)
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", connCfg.RetryAttempts, err)
+	}
+
+	// Configure connection pool
+	sqlxDB.SetMaxOpenConns(connCfg.MaxOpenConnections)
+	sqlxDB.SetMaxIdleConns(connCfg.MaxIdleConnections)
+	sqlxDB.SetConnMaxLifetime(connCfg.ConnectionMaxLifetime)
+	sqlxDB.SetConnMaxIdleTime(connCfg.ConnectionMaxIdleTime)
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Connected to database", "driver", "{{.DatabaseDriver}}", "host", cfg.Database.Host)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Connected to database", zap.String("driver", "{{.DatabaseDriver}}"), zap.String("host", cfg.Database.Host))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{"driver": "{{.DatabaseDriver}}", "host": cfg.Database.Host}).Info("Connected to database")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("driver", "{{.DatabaseDriver}}").Str("host", cfg.Database.Host).Msg("Connected to database")
+	{{- end}}
+
+	return &DB{
+		DB:     sqlxDB,
+		Config: cfg,
+	}, nil
+}
+
+{{- else}}
+// newSQLConnection creates a standard SQL connection
+func newSQLConnection(cfg *config.Config, connCfg ConnectionConfig) (*DB, error) {
+	var dsn string
+
+	{{- if eq .DatabaseDriver "postgres"}}
+	dsn = fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Database.Host, cfg.Database.Port, cfg.Database.User,
+		cfg.Database.Password, cfg.Database.Name, cfg.Database.SSLMode)
+	{{- else if eq .DatabaseDriver "mysql"}}
+	dsn = fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true",
+		cfg.Database.User, cfg.Database.Password, cfg.Database.Host,
+		cfg.Database.Port, cfg.Database.Name)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	dsn = cfg.Database.Name
+	if dsn == "" {
+		dsn = "{{.ProjectName}}.db"
+	}
+	{{- end}}
+
+	// Connect with retry logic
+	var sqlDB *sql.DB
+	var err error
+
+	for attempt := 1; attempt <= connCfg.RetryAttempts; attempt++ {
+		sqlDB, err = sql.Open("{{.DatabaseDriver}}", dsn)
+		if err == nil {
+			// Test the connection
+			if err = sqlDB.Ping(); err == nil {
+				break
+			}
+		}
+
+		{{- if eq .LoggerType "slog"}}
+		slog.Warn("Database connection attempt failed", "attempt", attempt, "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Warn("Database connection attempt failed", zap.Int("attempt", attempt), zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{"attempt": attempt, "error": err}).Warn("Database connection attempt failed")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Warn().Int("attempt", attempt).Err(err).Msg("Database connection attempt failed")
+		{{- end}}
+
+		if attempt < connCfg.RetryAttempts {
+			time.Sleep(connCfg.RetryDelay)
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database after %d attempts: %w", connCfg.RetryAttempts, err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(connCfg.MaxOpenConnections)
+	sqlDB.SetMaxIdleConns(connCfg.MaxIdleConnections)
+	sqlDB.SetConnMaxLifetime(connCfg.ConnectionMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(connCfg.ConnectionMaxIdleTime)
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Connected to database", "driver", "{{.DatabaseDriver}}", "host", cfg.Database.Host)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Connected to database", zap.String("driver", "{{.DatabaseDriver}}"), zap.String("host", cfg.Database.Host))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{"driver": "{{.DatabaseDriver}}", "host": cfg.Database.Host}).Info("Connected to database")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("driver", "{{.DatabaseDriver}}").Str("host", cfg.Database.Host).Msg("Connected to database")
+	{{- end}}
+
+	return &DB{
+		DB:     sqlDB,
+		Config: cfg,
+	}, nil
+}
+{{- end}}
+
+// Close closes the database connection
+func (db *DB) Close() error {
+	{{- if eq .DatabaseDriver "mongodb"}}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return db.Client.Disconnect(ctx)
+	{{- else if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+	{{- else}}
+	return db.DB.Close()
+	{{- end}}
+}
+
+// Health checks the database connection health
+func (db *DB) Health(ctx context.Context) error {
+	{{- if eq .DatabaseDriver "mongodb"}}
+	return db.Client.Ping(ctx, nil)
+	{{- else if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx)
+	{{- else}}
+	return db.DB.PingContext(ctx)
+	{{- end}}
+}
+
+// GetStats returns database connection statistics
+func (db *DB) GetStats() interface{} {
+	{{- if eq .DatabaseDriver "mongodb"}}
+	// MongoDB doesn't provide detailed connection stats in the same way
+	return map[string]interface{}{
+		"driver": "mongodb",
+		"status": "connected",
+	}
+	{{- else if eq .DatabaseORM "gorm"}}
+	sqlDB, err := db.DB.DB()
+	if err != nil {
+		return map[string]interface{}{"error": err.Error()}
+	}
+	return sqlDB.Stats()
+	{{- else}}
+	return db.DB.Stats()
+	{{- end}}
+}
+
+{{- if ne .DatabaseDriver "mongodb"}}
+// Transaction executes a function within a database transaction
+{{- if eq .DatabaseORM "gorm"}}
+func (db *DB) Transaction(fn func(tx *gorm.DB) error) error {
+	return db.DB.Transaction(fn)
+}
+{{- else if eq .DatabaseORM "sqlx"}}
+func (db *DB) Transaction(fn func(tx *sqlx.Tx) error) error {
+	tx, err := db.DB.Beginx()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	err = fn(tx)
+	return err
+}
+{{- else}}
+func (db *DB) Transaction(fn func(tx *sql.Tx) error) error {
+	tx, err := db.DB.Begin()
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+
+	err = fn(tx)
+	return err
+}
+{{- end}}
+{{- end}}
+
+// Migrate runs database migrations
+func (db *DB) Migrate() error {
+	{{- if eq .DatabaseORM "gorm"}}
+	return db.AutoMigrate()
+	{{- else}}
+	migrator := NewMigrator(db)
+	return migrator.Up()
+	{{- end}}
+}
+
+// Reset drops all tables and recreates them (development only)
+func (db *DB) Reset() error {
+	if db.Config.App.Environment != "development" {
+		return fmt.Errorf("database reset is only allowed in development environment")
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Warn("Resetting database - this will drop all data!")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Warn("Resetting database - this will drop all data!")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Warn("Resetting database - this will drop all data!")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Warn().Msg("Resetting database - this will drop all data!")
+	{{- end}}
+
+	{{- if eq .DatabaseORM "gorm"}}
+	// Drop tables
+	if err := db.DB.Migrator().DropTable(&models.User{}); err != nil {
+		return fmt.Errorf("failed to drop tables: %w", err)
+	}
+	
+	// Recreate tables
+	return db.AutoMigrate()
+	{{- else}}
+	migrator := NewMigrator(db)
+	if err := migrator.Down(); err != nil {
+		return fmt.Errorf("failed to drop tables: %w", err)
+	}
+	return migrator.Up()
+	{{- end}}
+}
+
+// Seed populates the database with initial data (development only)
+func (db *DB) Seed() error {
+	if db.Config.App.Environment != "development" {
+		return fmt.Errorf("database seeding is only allowed in development environment")
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Seeding database with initial data")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Seeding database with initial data")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Seeding database with initial data")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Seeding database with initial data")
+	{{- end}}
+
+	seeder := NewSeeder(db)
+	return seeder.Run()
+}
+{{- end}}

@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="{{.Language | default "en"}}" class="{{.Theme | default "auto"}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    
+    <!-- SEO Meta Tags -->
+    <title>{{if .PageTitle}}{{.PageTitle}} - {{end}}{{.Config.App.Name}}</title>
+    <meta name="description" content="{{.MetaDesc | default "Secure authentication for " .Config.App.Name}}">
+    <meta name="robots" content="noindex,nofollow">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    
+    <!-- Preconnect to external domains -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    
+    <!-- CSS -->
+    {{- if eq .AssetPipeline "webpack"}}
+    <link rel="stylesheet" href="/static/dist/css/main.css">
+    {{- else if eq .AssetPipeline "vite"}}
+    <link rel="stylesheet" href="/static/dist/assets/main.css">
+    {{- else}}
+    <link rel="stylesheet" href="/static/css/main.css">
+    {{- end}}
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Theme Detection Script -->
+    <script>
+        (function() {
+            const theme = localStorage.getItem('theme') || 
+                         (document.documentElement.classList.contains('auto') ? 
+                          (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 
+                          '{{.Theme | default "auto"}}');
+            document.documentElement.setAttribute('data-theme', theme);
+            document.documentElement.classList.add('theme-' + theme);
+        })();
+    </script>
+    
+    <!-- CSRF Token -->
+    {{- if .CSRFToken}}
+    <meta name="csrf-token" content="{{.CSRFToken}}">
+    {{- end}}
+    
+    <!-- Security Headers -->
+    {{- if .Nonce}}
+    <meta name="csp-nonce" content="{{.Nonce}}">
+    {{- end}}
+    
+    {{block "head" .}}{{end}}
+</head>
+<body class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+    <!-- Skip Navigation -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 bg-blue-600 text-white px-4 py-2 rounded-md z-50">
+        Skip to main content
+    </a>
+    
+    <!-- Auth Container -->
+    <div class="min-h-screen flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+        <!-- Header with Logo -->
+        <div class="sm:mx-auto sm:w-full sm:max-w-md">
+            {{- if .Config.App.Logo}}
+            <img class="mx-auto h-12 w-auto" src="/static/images/{{.Config.App.Logo}}" alt="{{.Config.App.Name}} logo">
+            {{- else}}
+            <div class="mx-auto h-12 w-12 bg-blue-600 rounded-lg flex items-center justify-center">
+                <span class="text-white font-bold text-xl">{{substr .Config.App.Name 0 1}}</span>
+            </div>
+            {{- end}}
+            <h1 class="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
+                {{block "auth-title" .}}{{.Config.App.Name}}{{end}}
+            </h1>
+            {{block "auth-subtitle" .}}{{end}}
+        </div>
+        
+        <!-- Auth Card -->
+        <div class="mt-8 sm:mx-auto sm:w-full sm:max-w-md" id="main-content" role="main">
+            <div class="bg-white dark:bg-gray-800 py-8 px-4 shadow-xl rounded-lg sm:px-10 border border-gray-200 dark:border-gray-700">
+                <!-- Flash Messages -->
+                {{template "partials/flash.html" .}}
+                
+                <!-- Auth Content -->
+                {{block "content" .}}
+                <div class="text-center">
+                    <p class="text-gray-600 dark:text-gray-400">Authentication content goes here.</p>
+                </div>
+                {{end}}
+            </div>
+            
+            <!-- Auth Footer Links -->
+            <div class="mt-6">
+                {{block "auth-footer" .}}
+                <div class="text-center space-y-2">
+                    <div class="text-sm">
+                        <a href="/" class="font-medium text-blue-600 hover:text-blue-500 dark:text-blue-400 dark:hover:text-blue-300">
+                            ← Back to {{.Config.App.Name}}
+                        </a>
+                    </div>
+                    {{- if ne .PageTitle "Privacy Policy"}}
+                    <div class="text-sm text-gray-600 dark:text-gray-400">
+                        By continuing, you agree to our 
+                        <a href="/privacy" class="text-blue-600 hover:text-blue-500 dark:text-blue-400">Privacy Policy</a>
+                        and 
+                        <a href="/terms" class="text-blue-600 hover:text-blue-500 dark:text-blue-400">Terms of Service</a>
+                    </div>
+                    {{- end}}
+                </div>
+                {{end}}
+            </div>
+        </div>
+        
+        <!-- Theme Toggle -->
+        <div class="fixed top-4 right-4">
+            <button onclick="toggleTheme()" 
+                    class="p-2 rounded-md bg-white dark:bg-gray-800 shadow-md border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                    aria-label="Toggle theme">
+                <svg class="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+    
+    <!-- JavaScript -->
+    {{- if eq .AssetPipeline "webpack"}}
+    <script src="/static/dist/js/auth.js" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    {{- else if eq .AssetPipeline "vite"}}
+    <script type="module" src="/static/dist/assets/auth.js" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    {{- else}}
+    <script src="/static/js/auth.js" {{if .Nonce}}nonce="{{.Nonce}}"{{end}}></script>
+    {{- end}}
+    
+    <!-- Theme Toggle Script -->
+    <script {{if .Nonce}}nonce="{{.Nonce}}"{{end}}>
+        function toggleTheme() {
+            const current = localStorage.getItem('theme') || 'auto';
+            const themes = ['light', 'dark', 'auto'];
+            const nextIndex = (themes.indexOf(current) + 1) % themes.length;
+            const nextTheme = themes[nextIndex];
+            
+            localStorage.setItem('theme', nextTheme);
+            
+            if (nextTheme === 'auto') {
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+            } else {
+                document.documentElement.setAttribute('data-theme', nextTheme);
+            }
+            
+            document.documentElement.className = 'theme-' + nextTheme;
+        }
+        
+        // System theme change listener
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function(e) {
+            if (localStorage.getItem('theme') === 'auto' || !localStorage.getItem('theme')) {
+                document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+            }
+        });
+        
+        // Form validation and enhancement
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add CSRF token to all forms
+            const csrfToken = document.querySelector('meta[name="csrf-token"]');
+            if (csrfToken) {
+                const forms = document.querySelectorAll('form');
+                forms.forEach(form => {
+                    if (!form.querySelector('input[name="csrf_token"]')) {
+                        const input = document.createElement('input');
+                        input.type = 'hidden';
+                        input.name = 'csrf_token';
+                        input.value = csrfToken.getAttribute('content');
+                        form.appendChild(input);
+                    }
+                });
+            }
+            
+            // Enhanced form validation
+            const forms = document.querySelectorAll('form[data-validate="true"]');
+            forms.forEach(form => {
+                form.addEventListener('submit', function(e) {
+                    const isValid = validateForm(form);
+                    if (!isValid) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                    }
+                });
+                
+                // Real-time validation
+                const inputs = form.querySelectorAll('input, textarea, select');
+                inputs.forEach(input => {
+                    input.addEventListener('blur', function() {
+                        validateField(input);
+                    });
+                    
+                    input.addEventListener('input', function() {
+                        clearFieldError(input);
+                    });
+                });
+            });
+        });
+        
+        function validateForm(form) {
+            let isValid = true;
+            const inputs = form.querySelectorAll('input[required], textarea[required], select[required]');
+            
+            inputs.forEach(input => {
+                if (!validateField(input)) {
+                    isValid = false;
+                }
+            });
+            
+            return isValid;
+        }
+        
+        function validateField(field) {
+            clearFieldError(field);
+            
+            let isValid = true;
+            let errorMessage = '';
+            
+            // Required validation
+            if (field.hasAttribute('required') && !field.value.trim()) {
+                isValid = false;
+                errorMessage = field.getAttribute('data-required-message') || 'This field is required';
+            }
+            
+            // Email validation
+            if (field.type === 'email' && field.value) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(field.value)) {
+                    isValid = false;
+                    errorMessage = 'Please enter a valid email address';
+                }
+            }
+            
+            // Password validation
+            if (field.type === 'password' && field.value && field.hasAttribute('data-validate-password')) {
+                if (field.value.length < 8) {
+                    isValid = false;
+                    errorMessage = 'Password must be at least 8 characters long';
+                }
+            }
+            
+            // Password confirmation
+            if (field.hasAttribute('data-confirm-password')) {
+                const passwordField = document.querySelector(field.getAttribute('data-confirm-password'));
+                if (passwordField && field.value !== passwordField.value) {
+                    isValid = false;
+                    errorMessage = 'Passwords do not match';
+                }
+            }
+            
+            if (!isValid) {
+                showFieldError(field, errorMessage);
+            }
+            
+            return isValid;
+        }
+        
+        function showFieldError(field, message) {
+            field.classList.add('border-red-500', 'dark:border-red-400');
+            field.classList.remove('border-gray-300', 'dark:border-gray-600');
+            
+            // Create or update error message
+            let errorDiv = field.parentNode.querySelector('.field-error');
+            if (!errorDiv) {
+                errorDiv = document.createElement('div');
+                errorDiv.className = 'field-error text-red-600 dark:text-red-400 text-sm mt-1';
+                field.parentNode.appendChild(errorDiv);
+            }
+            errorDiv.textContent = message;
+        }
+        
+        function clearFieldError(field) {
+            field.classList.remove('border-red-500', 'dark:border-red-400');
+            field.classList.add('border-gray-300', 'dark:border-gray-600');
+            
+            const errorDiv = field.parentNode.querySelector('.field-error');
+            if (errorDiv) {
+                errorDiv.remove();
+            }
+        }
+    </script>
+    
+    {{block "scripts" .}}{{end}}
+</body>
+</html>

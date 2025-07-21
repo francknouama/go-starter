@@ -1,0 +1,173 @@
+import { defineConfig } from 'vite';
+import legacy from '@vitejs/plugin-legacy';
+import { resolve } from 'path';
+
+export default defineConfig({
+  // Root directory for the build
+  root: 'static',
+  
+  // Base public path when served in development or production
+  base: '/assets/',
+  
+  // Build configuration
+  build: {
+    // Output directory (relative to project root)
+    outDir: '../public/build',
+    
+    // Empty the output directory before building
+    emptyOutDir: true,
+    
+    // Generate manifest for asset versioning
+    manifest: true,
+    
+    // Assets will be inlined as base64 if smaller than this limit
+    assetsInlineLimit: 4096,
+    
+    // Rollup options
+    rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'static/js/main.js'),
+        style: resolve(__dirname, 'static/css/main.css'),
+      },
+      output: {
+        // Chunk file names
+        chunkFileNames: 'js/[name]-[hash].js',
+        entryFileNames: 'js/[name]-[hash].js',
+        assetFileNames: ({ name }) => {
+          if (/\.(gif|jpe?g|png|svg)$/.test(name ?? '')) {
+            return 'images/[name]-[hash][extname]';
+          }
+          if (/\.css$/.test(name ?? '')) {
+            return 'css/[name]-[hash][extname]';
+          }
+          if (/\.(woff2?|eot|ttf|otf)$/.test(name ?? '')) {
+            return 'fonts/[name]-[hash][extname]';
+          }
+          return 'assets/[name]-[hash][extname]';
+        },
+      },
+    },
+    
+    // Target modern browsers
+    target: 'es2015',
+    
+    // Minification options
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+      },
+    },
+    
+    // Source maps for debugging
+    sourcemap: process.env.NODE_ENV === 'development',
+  },
+  
+  // Development server configuration
+  server: {
+    host: '0.0.0.0',
+    port: 5173,
+    strictPort: true,
+    
+    // CORS configuration for development
+    cors: true,
+    
+    // Proxy API requests to Go server during development
+    proxy: {
+      '/api': 'http://localhost:8080',
+      '/auth': 'http://localhost:8080',
+      '/webhooks': 'http://localhost:8080',
+    },
+    
+    // Watch options
+    watch: {
+      usePolling: true,
+      interval: 100,
+    },
+  },
+  
+  // Preview server configuration (for testing production builds)
+  preview: {
+    host: '0.0.0.0',
+    port: 4173,
+    strictPort: true,
+  },
+  
+  // CSS configuration
+  css: {
+    postcss: {
+      plugins: [
+        require('tailwindcss'),
+        require('autoprefixer'),
+      ],
+    },
+    preprocessorOptions: {
+      scss: {
+        additionalData: `@import "static/css/variables.scss";`,
+      },
+    },
+    devSourcemap: true,
+  },
+  
+  // Plugin configuration
+  plugins: [
+    // Legacy browser support
+    legacy({
+      targets: ['defaults', 'not IE 11'],
+      additionalLegacyPolyfills: ['regenerator-runtime/runtime'],
+      renderLegacyChunks: true,
+      polyfills: [
+        'es.symbol',
+        'es.array.filter',
+        'es.promise',
+        'es.promise.finally',
+        'es/map',
+        'es/set',
+        'es.array.for-each',
+        'es.object.define-properties',
+        'es.object.define-property',
+        'es.object.get-own-property-descriptor',
+        'es.object.get-own-property-descriptors',
+        'es.object.keys',
+        'es.object.to-string',
+        'web.dom-collections.for-each',
+        'esnext.global-this',
+        'esnext.string.match-all'
+      ]
+    }),
+  ],
+  
+  // Dependency optimization
+  optimizeDeps: {
+    include: [
+      'alpinejs',
+      'htmx.org',
+      'stimulus'
+    ],
+  },
+  
+  // Define global constants
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
+    __BUILD_TIME__: JSON.stringify(new Date().toISOString()),
+  },
+  
+  // ESBuild configuration for JS/TS processing
+  esbuild: {
+    target: 'es2015',
+    legalComments: 'none',
+  },
+  
+  // Asset handling
+  assetsInclude: ['**/*.woff', '**/*.woff2', '**/*.ttf', '**/*.eot'],
+  
+  // Environment variables configuration
+  envPrefix: ['VITE_', 'PUBLIC_'],
+  
+  // Logging level
+  logLevel: 'info',
+  
+  // Clear screen during development
+  clearScreen: false,
+});

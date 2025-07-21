@@ -1,0 +1,592 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	{{- if or (eq .Features.Cache.Type "redis") (eq .Features.Session.Store "redis")}}
+	"github.com/redis/go-redis/v9"
+	{{- end}}
+)
+
+// CacheService interface defines cache operations
+type CacheService interface {
+	Get(ctx context.Context, key string) (interface{}, error)
+	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
+	Delete(ctx context.Context, key string) error
+	Exists(ctx context.Context, key string) (bool, error)
+	Expire(ctx context.Context, key string, expiration time.Duration) error
+	Extend(ctx context.Context, key string, expiration time.Duration) error
+	Increment(ctx context.Context, key string) (int64, error)
+	Decrement(ctx context.Context, key string) (int64, error)
+	Keys(ctx context.Context, pattern string) ([]string, error)
+	FlushAll(ctx context.Context) error
+	Close() error
+}
+
+{{- if or (eq .Features.Cache.Type "redis") (eq .Features.Session.Store "redis")}}
+
+// RedisCache implements CacheService using Redis
+type RedisCache struct {
+	client *redis.Client
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger
+	{{- else}}
+	logger *slog.Logger
+	{{- end}}
+}
+
+// NewRedisCache creates a new Redis cache service
+func NewRedisCache(
+	config *config.Config,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) (*RedisCache, error) {
+	// Redis connection options
+	opts := &redis.Options{
+		Addr:         fmt.Sprintf("%s:%d", config.Redis.Host, config.Redis.Port),
+		Password:     config.Redis.Password,
+		DB:           config.Redis.Database,
+		PoolSize:     config.Redis.PoolSize,
+		MinIdleConns: config.Redis.MinIdleConns,
+		MaxIdleTime:  config.Redis.MaxIdleTime,
+		DialTimeout:  config.Redis.DialTimeout,
+		ReadTimeout:  config.Redis.ReadTimeout,
+		WriteTimeout: config.Redis.WriteTimeout,
+	}
+
+	// Enable TLS if configured
+	if config.Redis.TLS {
+		opts.TLSConfig = &tls.Config{
+			ServerName: config.Redis.Host,
+		}
+	}
+
+	client := redis.NewClient(opts)
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+
+	logger.{{if eq .LoggerType "zap"}}Info("Connected to Redis", zap.String("addr", opts.Addr), zap.Int("db", opts.DB)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"addr": opts.Addr, "db": opts.DB}).Info("Connected to Redis"){{else if eq .LoggerType "zerolog"}}Info().Str("addr", opts.Addr).Int("db", opts.DB).Msg("Connected to Redis"){{else}}Info("Connected to Redis", "addr", opts.Addr, "db", opts.DB){{end}}
+
+	return &RedisCache{
+		client: client,
+		logger: logger,
+	}, nil
+}
+
+// Get retrieves a value from Redis cache
+func (r *RedisCache) Get(ctx context.Context, key string) (interface{}, error) {
+	result, err := r.client.Get(ctx, key).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // Key doesn't exist
+		}
+		return nil, fmt.Errorf("redis get error: %w", err)
+	}
+
+	// Try to unmarshal as JSON first, fallback to string
+	var value interface{}
+	if err := json.Unmarshal([]byte(result), &value); err != nil {
+		return result, nil // Return as string if not valid JSON
+	}
+
+	return value, nil
+}
+
+// Set stores a value in Redis cache
+func (r *RedisCache) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	// Serialize value to JSON
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("failed to marshal value: %w", err)
+	}
+
+	if err := r.client.Set(ctx, key, data, expiration).Err(); err != nil {
+		return fmt.Errorf("redis set error: %w", err)
+	}
+
+	return nil
+}
+
+// Delete removes a key from Redis cache
+func (r *RedisCache) Delete(ctx context.Context, key string) error {
+	if err := r.client.Del(ctx, key).Err(); err != nil {
+		return fmt.Errorf("redis delete error: %w", err)
+	}
+	return nil
+}
+
+// Exists checks if a key exists in Redis cache
+func (r *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
+	count, err := r.client.Exists(ctx, key).Result()
+	if err != nil {
+		return false, fmt.Errorf("redis exists error: %w", err)
+	}
+	return count > 0, nil
+}
+
+// Expire sets expiration time for a key
+func (r *RedisCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	if err := r.client.Expire(ctx, key, expiration).Err(); err != nil {
+		return fmt.Errorf("redis expire error: %w", err)
+	}
+	return nil
+}
+
+// Extend extends the expiration time for a key
+func (r *RedisCache) Extend(ctx context.Context, key string, expiration time.Duration) error {
+	// Check if key exists first
+	exists, err := r.Exists(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	if !exists {
+		return fmt.Errorf("key does not exist: %s", key)
+	}
+
+	return r.Expire(ctx, key, expiration)
+}
+
+// Increment increments a numeric value
+func (r *RedisCache) Increment(ctx context.Context, key string) (int64, error) {
+	result, err := r.client.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis increment error: %w", err)
+	}
+	return result, nil
+}
+
+// Decrement decrements a numeric value
+func (r *RedisCache) Decrement(ctx context.Context, key string) (int64, error) {
+	result, err := r.client.Decr(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis decrement error: %w", err)
+	}
+	return result, nil
+}
+
+// Keys retrieves keys matching a pattern
+func (r *RedisCache) Keys(ctx context.Context, pattern string) ([]string, error) {
+	keys, err := r.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return nil, fmt.Errorf("redis keys error: %w", err)
+	}
+	return keys, nil
+}
+
+// FlushAll removes all keys from the current database
+func (r *RedisCache) FlushAll(ctx context.Context) error {
+	if err := r.client.FlushDB(ctx).Err(); err != nil {
+		return fmt.Errorf("redis flush error: %w", err)
+	}
+	return nil
+}
+
+// Close closes the Redis connection
+func (r *RedisCache) Close() error {
+	return r.client.Close()
+}
+
+{{- end}}
+
+// MemoryCache implements CacheService using in-memory storage
+type MemoryCache struct {
+	store  map[string]*cacheItem
+	mutex  sync.RWMutex
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger
+	{{- else}}
+	logger *slog.Logger
+	{{- end}}
+	stopCleanup chan bool
+}
+
+// cacheItem represents an item in the memory cache
+type cacheItem struct {
+	Value      interface{}
+	Expiration time.Time
+	CreatedAt  time.Time
+}
+
+// NewMemoryCache creates a new in-memory cache service
+func NewMemoryCache(
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *MemoryCache {
+	cache := &MemoryCache{
+		store:       make(map[string]*cacheItem),
+		logger:      logger,
+		stopCleanup: make(chan bool),
+	}
+
+	// Start cleanup goroutine
+	go cache.cleanupExpiredItems()
+
+	logger.{{if eq .LoggerType "zap"}}Info("Memory cache initialized"){{else if eq .LoggerType "logrus"}}Info("Memory cache initialized"){{else if eq .LoggerType "zerolog"}}Info().Msg("Memory cache initialized"){{else}}Info("Memory cache initialized"){{end}}
+
+	return cache
+}
+
+// Get retrieves a value from memory cache
+func (m *MemoryCache) Get(ctx context.Context, key string) (interface{}, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	item, exists := m.store[key]
+	if !exists {
+		return nil, nil
+	}
+
+	// Check if expired
+	if !item.Expiration.IsZero() && time.Now().After(item.Expiration) {
+		// Remove expired item
+		go func() {
+			m.mutex.Lock()
+			delete(m.store, key)
+			m.mutex.Unlock()
+		}()
+		return nil, nil
+	}
+
+	return item.Value, nil
+}
+
+// Set stores a value in memory cache
+func (m *MemoryCache) Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	var exp time.Time
+	if expiration > 0 {
+		exp = time.Now().Add(expiration)
+	}
+
+	m.store[key] = &cacheItem{
+		Value:      value,
+		Expiration: exp,
+		CreatedAt:  time.Now(),
+	}
+
+	return nil
+}
+
+// Delete removes a key from memory cache
+func (m *MemoryCache) Delete(ctx context.Context, key string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	delete(m.store, key)
+	return nil
+}
+
+// Exists checks if a key exists in memory cache
+func (m *MemoryCache) Exists(ctx context.Context, key string) (bool, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	item, exists := m.store[key]
+	if !exists {
+		return false, nil
+	}
+
+	// Check if expired
+	if !item.Expiration.IsZero() && time.Now().After(item.Expiration) {
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// Expire sets expiration time for a key
+func (m *MemoryCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	item, exists := m.store[key]
+	if !exists {
+		return fmt.Errorf("key does not exist: %s", key)
+	}
+
+	if expiration > 0 {
+		item.Expiration = time.Now().Add(expiration)
+	} else {
+		item.Expiration = time.Time{} // No expiration
+	}
+
+	return nil
+}
+
+// Extend extends the expiration time for a key
+func (m *MemoryCache) Extend(ctx context.Context, key string, expiration time.Duration) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	item, exists := m.store[key]
+	if !exists {
+		return fmt.Errorf("key does not exist: %s", key)
+	}
+
+	// Check if expired
+	if !item.Expiration.IsZero() && time.Now().After(item.Expiration) {
+		return fmt.Errorf("key has expired: %s", key)
+	}
+
+	if expiration > 0 {
+		item.Expiration = time.Now().Add(expiration)
+	}
+
+	return nil
+}
+
+// Increment increments a numeric value
+func (m *MemoryCache) Increment(ctx context.Context, key string) (int64, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	item, exists := m.store[key]
+	if !exists {
+		// Create new item with value 1
+		m.store[key] = &cacheItem{
+			Value:     int64(1),
+			CreatedAt: time.Now(),
+		}
+		return 1, nil
+	}
+
+	// Check if expired
+	if !item.Expiration.IsZero() && time.Now().After(item.Expiration) {
+		m.store[key] = &cacheItem{
+			Value:     int64(1),
+			CreatedAt: time.Now(),
+		}
+		return 1, nil
+	}
+
+	// Convert to int64 and increment
+	var current int64
+	switch v := item.Value.(type) {
+	case int64:
+		current = v
+	case int:
+		current = int64(v)
+	case float64:
+		current = int64(v)
+	default:
+		return 0, fmt.Errorf("value is not numeric: %T", item.Value)
+	}
+
+	current++
+	item.Value = current
+	return current, nil
+}
+
+// Decrement decrements a numeric value
+func (m *MemoryCache) Decrement(ctx context.Context, key string) (int64, error) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	item, exists := m.store[key]
+	if !exists {
+		// Create new item with value -1
+		m.store[key] = &cacheItem{
+			Value:     int64(-1),
+			CreatedAt: time.Now(),
+		}
+		return -1, nil
+	}
+
+	// Check if expired
+	if !item.Expiration.IsZero() && time.Now().After(item.Expiration) {
+		m.store[key] = &cacheItem{
+			Value:     int64(-1),
+			CreatedAt: time.Now(),
+		}
+		return -1, nil
+	}
+
+	// Convert to int64 and decrement
+	var current int64
+	switch v := item.Value.(type) {
+	case int64:
+		current = v
+	case int:
+		current = int64(v)
+	case float64:
+		current = int64(v)
+	default:
+		return 0, fmt.Errorf("value is not numeric: %T", item.Value)
+	}
+
+	current--
+	item.Value = current
+	return current, nil
+}
+
+// Keys retrieves keys matching a pattern (simple wildcard support)
+func (m *MemoryCache) Keys(ctx context.Context, pattern string) ([]string, error) {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	var keys []string
+	for key := range m.store {
+		// Simple pattern matching (only supports * at the end)
+		if pattern == "*" || (strings.HasSuffix(pattern, "*") && strings.HasPrefix(key, strings.TrimSuffix(pattern, "*"))) {
+			keys = append(keys, key)
+		} else if key == pattern {
+			keys = append(keys, key)
+		}
+	}
+
+	return keys, nil
+}
+
+// FlushAll removes all keys from memory cache
+func (m *MemoryCache) FlushAll(ctx context.Context) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	m.store = make(map[string]*cacheItem)
+	return nil
+}
+
+// Close stops the cleanup goroutine
+func (m *MemoryCache) Close() error {
+	close(m.stopCleanup)
+	return nil
+}
+
+// cleanupExpiredItems periodically removes expired items
+func (m *MemoryCache) cleanupExpiredItems() {
+	ticker := time.NewTicker(5 * time.Minute) // Cleanup every 5 minutes
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.performCleanup()
+		case <-m.stopCleanup:
+			return
+		}
+	}
+}
+
+// performCleanup removes expired items from the cache
+func (m *MemoryCache) performCleanup() {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+
+	now := time.Now()
+	var expiredKeys []string
+
+	for key, item := range m.store {
+		if !item.Expiration.IsZero() && now.After(item.Expiration) {
+			expiredKeys = append(expiredKeys, key)
+		}
+	}
+
+	for _, key := range expiredKeys {
+		delete(m.store, key)
+	}
+
+	if len(expiredKeys) > 0 {
+		m.logger.{{if eq .LoggerType "zap"}}Debug("Cleaned up expired cache items", zap.Int("count", len(expiredKeys))){{else if eq .LoggerType "logrus"}}WithField("count", len(expiredKeys)).Debug("Cleaned up expired cache items"){{else if eq .LoggerType "zerolog"}}Debug().Int("count", len(expiredKeys)).Msg("Cleaned up expired cache items"){{else}}Debug("Cleaned up expired cache items", "count", len(expiredKeys)){{end}}
+	}
+}
+
+// CacheStats represents cache statistics
+type CacheStats struct {
+	TotalKeys    int           `json:"total_keys"`
+	ExpiredKeys  int           `json:"expired_keys"`
+	MemoryUsage  int64         `json:"memory_usage"`
+	HitRate      float64       `json:"hit_rate"`
+	LastCleanup  time.Time     `json:"last_cleanup"`
+}
+
+// GetStats returns cache statistics (memory cache only)
+func (m *MemoryCache) GetStats(ctx context.Context) *CacheStats {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+
+	now := time.Now()
+	totalKeys := len(m.store)
+	expiredKeys := 0
+
+	for _, item := range m.store {
+		if !item.Expiration.IsZero() && now.After(item.Expiration) {
+			expiredKeys++
+		}
+	}
+
+	return &CacheStats{
+		TotalKeys:   totalKeys,
+		ExpiredKeys: expiredKeys,
+		MemoryUsage: int64(totalKeys * 100), // Rough estimate
+		HitRate:     0.0,                    // Would need hit/miss tracking
+		LastCleanup: time.Now(),
+	}
+}
+
+// NewCacheService creates a cache service based on configuration
+func NewCacheService(
+	config *config.Config,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) (CacheService, error) {
+	{{- if or (eq .Features.Cache.Type "redis") (eq .Features.Session.Store "redis")}}
+	if config.Cache.Type == "redis" || config.Session.Store == "redis" {
+		return NewRedisCache(config, logger)
+	}
+	{{- end}}
+
+	// Default to memory cache
+	return NewMemoryCache(logger), nil
+}

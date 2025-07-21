@@ -1,0 +1,244 @@
+# Makefile for {{.ProjectName}}
+
+# Variables
+APP_NAME := {{.ProjectName}}
+GO := go
+GOFLAGS := -v
+BUILD_DIR := ./bin
+MAIN_FILE := ./main.go
+DOCKER_IMAGE := $(APP_NAME):latest
+DOCKER_REGISTRY := 
+DB_MIGRATE_DIR := ./database/migrations
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+NODE := node
+NPM := npm
+{{- end }}
+
+# Go build variables
+CGO_ENABLED := 1
+{{- if eq .DatabaseDriver "sqlite" }}
+# SQLite requires CGO
+{{- else }}
+CGO_ENABLED := 0
+{{- end }}
+GOOS := $(shell go env GOOS)
+GOARCH := $(shell go env GOARCH)
+BUILD_TIME := $(shell date -u '+%Y-%m-%d_%H:%M:%S')
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+LDFLAGS := -ldflags "-X main.BuildTime=$(BUILD_TIME) -X main.GitCommit=$(GIT_COMMIT)"
+
+# Colors for terminal output
+COLOR_RESET := \033[0m
+COLOR_BOLD := \033[1m
+COLOR_GREEN := \033[32m
+COLOR_YELLOW := \033[33m
+COLOR_BLUE := \033[34m
+
+.PHONY: help
+help: ## Display this help message
+	@echo "$(COLOR_BOLD){{.ProjectName}} Makefile$(COLOR_RESET)"
+	@echo "$(COLOR_BLUE)Usage:$(COLOR_RESET)"
+	@echo "  make $(COLOR_GREEN)<target>$(COLOR_RESET)"
+	@echo ""
+	@echo "$(COLOR_BLUE)Targets:$(COLOR_RESET)"
+	@awk 'BEGIN {FS = ":.*?## "} /^[a-zA-Z_-]+:.*?## / {printf "  $(COLOR_GREEN)%-20s$(COLOR_RESET) %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+.PHONY: all
+all: deps lint test build ## Run all steps (deps, lint, test, build)
+
+.PHONY: deps
+deps: ## Download Go dependencies
+	@echo "$(COLOR_BLUE)Downloading dependencies...$(COLOR_RESET)"
+	$(GO) mod download
+	$(GO) mod tidy
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	@echo "$(COLOR_BLUE)Installing Node dependencies...$(COLOR_RESET)"
+	$(NPM) install
+{{- end }}
+
+.PHONY: build
+build: ## Build the application
+	@echo "$(COLOR_BLUE)Building $(APP_NAME)...$(COLOR_RESET)"
+	@mkdir -p $(BUILD_DIR)
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	@echo "$(COLOR_BLUE)Building assets...$(COLOR_RESET)"
+	$(NPM) run build
+{{- end }}
+	CGO_ENABLED=$(CGO_ENABLED) GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build $(GOFLAGS) $(LDFLAGS) -o $(BUILD_DIR)/$(APP_NAME) $(MAIN_FILE)
+	@echo "$(COLOR_GREEN)✓ Build complete: $(BUILD_DIR)/$(APP_NAME)$(COLOR_RESET)"
+
+.PHONY: run
+run: ## Run the application in development mode
+	@echo "$(COLOR_BLUE)Starting $(APP_NAME)...$(COLOR_RESET)"
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	@$(NPM) run dev &
+{{- end }}
+	$(GO) run $(MAIN_FILE)
+
+.PHONY: dev
+dev: ## Run with hot reload (requires air)
+	@echo "$(COLOR_BLUE)Starting $(APP_NAME) with hot reload...$(COLOR_RESET)"
+	@which air > /dev/null || (echo "$(COLOR_YELLOW)Installing air...$(COLOR_RESET)" && go install github.com/cosmtrek/air@latest)
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	@$(NPM) run dev &
+{{- end }}
+	air
+
+.PHONY: test
+test: ## Run tests
+	@echo "$(COLOR_BLUE)Running tests...$(COLOR_RESET)"
+	$(GO) test ./... $(GOFLAGS) -race -short
+
+.PHONY: test-coverage
+test-coverage: ## Run tests with coverage
+	@echo "$(COLOR_BLUE)Running tests with coverage...$(COLOR_RESET)"
+	$(GO) test ./... $(GOFLAGS) -race -coverprofile=coverage.out -covermode=atomic
+	$(GO) tool cover -html=coverage.out -o coverage.html
+	@echo "$(COLOR_GREEN)✓ Coverage report: coverage.html$(COLOR_RESET)"
+
+.PHONY: test-integration
+test-integration: ## Run integration tests
+	@echo "$(COLOR_BLUE)Running integration tests...$(COLOR_RESET)"
+	$(GO) test ./tests/... $(GOFLAGS) -tags=integration
+
+.PHONY: lint
+lint: ## Run linters
+	@echo "$(COLOR_BLUE)Running linters...$(COLOR_RESET)"
+	@which golangci-lint > /dev/null || (echo "$(COLOR_YELLOW)Installing golangci-lint...$(COLOR_RESET)" && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest)
+	golangci-lint run ./...
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	@echo "$(COLOR_BLUE)Running asset linters...$(COLOR_RESET)"
+	$(NPM) run lint
+{{- end }}
+
+.PHONY: fmt
+fmt: ## Format code
+	@echo "$(COLOR_BLUE)Formatting code...$(COLOR_RESET)"
+	$(GO) fmt ./...
+	@which goimports > /dev/null || (echo "$(COLOR_YELLOW)Installing goimports...$(COLOR_RESET)" && go install golang.org/x/tools/cmd/goimports@latest)
+	goimports -w .
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	$(NPM) run format
+{{- end }}
+
+.PHONY: security-check
+security-check: ## Run security checks
+	@echo "$(COLOR_BLUE)Running security checks...$(COLOR_RESET)"
+	@which gosec > /dev/null || (echo "$(COLOR_YELLOW)Installing gosec...$(COLOR_RESET)" && go install github.com/securego/gosec/v2/cmd/gosec@latest)
+	gosec -fmt=json -out=security-report.json ./... || true
+	@which govulncheck > /dev/null || (echo "$(COLOR_YELLOW)Installing govulncheck...$(COLOR_RESET)" && go install golang.org/x/vuln/cmd/govulncheck@latest)
+	govulncheck ./...
+
+.PHONY: clean
+clean: ## Clean build artifacts
+	@echo "$(COLOR_BLUE)Cleaning...$(COLOR_RESET)"
+	rm -rf $(BUILD_DIR)
+	rm -f coverage.out coverage.html security-report.json
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	rm -rf node_modules dist
+{{- end }}
+
+{{- if ne .DatabaseDriver "" }}
+
+# Database targets
+.PHONY: db-setup
+db-setup: ## Set up the database
+	@echo "$(COLOR_BLUE)Setting up database...$(COLOR_RESET)"
+{{- if eq .DatabaseDriver "postgres" }}
+	@echo "Creating PostgreSQL database..."
+	createdb {{.ProjectName}}_development || true
+	createdb {{.ProjectName}}_test || true
+{{- else if eq .DatabaseDriver "mysql" }}
+	@echo "Creating MySQL database..."
+	mysql -u root -e "CREATE DATABASE IF NOT EXISTS {{.ProjectName}}_development;"
+	mysql -u root -e "CREATE DATABASE IF NOT EXISTS {{.ProjectName}}_test;"
+{{- else if eq .DatabaseDriver "sqlite" }}
+	@echo "SQLite database will be created automatically"
+{{- end }}
+
+.PHONY: db-migrate
+db-migrate: ## Run database migrations
+	@echo "$(COLOR_BLUE)Running migrations...$(COLOR_RESET)"
+	@which migrate > /dev/null || (echo "$(COLOR_YELLOW)Installing migrate...$(COLOR_RESET)" && go install -tags '{{.DatabaseDriver}}' github.com/golang-migrate/migrate/v4/cmd/migrate@latest)
+	migrate -path $(DB_MIGRATE_DIR) -database "$${DATABASE_URL}" up
+
+.PHONY: db-rollback
+db-rollback: ## Rollback last migration
+	@echo "$(COLOR_BLUE)Rolling back migration...$(COLOR_RESET)"
+	migrate -path $(DB_MIGRATE_DIR) -database "$${DATABASE_URL}" down 1
+
+.PHONY: db-seed
+db-seed: ## Seed the database
+	@echo "$(COLOR_BLUE)Seeding database...$(COLOR_RESET)"
+	$(GO) run ./database/seeder.go
+
+.PHONY: migration-create
+migration-create: ## Create a new migration (use: make migration-create name=create_users_table)
+	@echo "$(COLOR_BLUE)Creating migration: $(name)...$(COLOR_RESET)"
+	@which migrate > /dev/null || (echo "$(COLOR_YELLOW)Installing migrate...$(COLOR_RESET)" && go install -tags '{{.DatabaseDriver}}' github.com/golang-migrate/migrate/v4/cmd/migrate@latest)
+	migrate create -ext sql -dir $(DB_MIGRATE_DIR) -seq $(name)
+{{- end }}
+
+# Docker targets
+.PHONY: docker-build
+docker-build: ## Build Docker image
+	@echo "$(COLOR_BLUE)Building Docker image...$(COLOR_RESET)"
+	docker build -t $(DOCKER_IMAGE) .
+
+.PHONY: docker-run
+docker-run: ## Run Docker container
+	@echo "$(COLOR_BLUE)Running Docker container...$(COLOR_RESET)"
+	docker run --rm -p 8080:8080 --env-file .env $(DOCKER_IMAGE)
+
+.PHONY: docker-push
+docker-push: ## Push Docker image to registry
+	@echo "$(COLOR_BLUE)Pushing Docker image...$(COLOR_RESET)"
+	docker tag $(DOCKER_IMAGE) $(DOCKER_REGISTRY)/$(DOCKER_IMAGE)
+	docker push $(DOCKER_REGISTRY)/$(DOCKER_IMAGE)
+
+.PHONY: docker-compose-up
+docker-compose-up: ## Start services with docker-compose
+	@echo "$(COLOR_BLUE)Starting services...$(COLOR_RESET)"
+	docker-compose up -d
+
+.PHONY: docker-compose-down
+docker-compose-down: ## Stop services with docker-compose
+	@echo "$(COLOR_BLUE)Stopping services...$(COLOR_RESET)"
+	docker-compose down
+
+.PHONY: docker-compose-logs
+docker-compose-logs: ## Show docker-compose logs
+	docker-compose logs -f
+
+# Utility targets
+.PHONY: install-tools
+install-tools: ## Install development tools
+	@echo "$(COLOR_BLUE)Installing development tools...$(COLOR_RESET)"
+	go install github.com/cosmtrek/air@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install golang.org/x/tools/cmd/goimports@latest
+	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+{{- if ne .DatabaseDriver "" }}
+	go install -tags '{{.DatabaseDriver}}' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+{{- end }}
+
+.PHONY: check-env
+check-env: ## Check environment configuration
+	@echo "$(COLOR_BLUE)Checking environment...$(COLOR_RESET)"
+	@echo "Go version: $(shell go version)"
+	@echo "GOOS: $(GOOS)"
+	@echo "GOARCH: $(GOARCH)"
+	@echo "CGO_ENABLED: $(CGO_ENABLED)"
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+	@echo "Node version: $(shell node --version)"
+	@echo "NPM version: $(shell npm --version)"
+{{- end }}
+{{- if ne .DatabaseDriver "" }}
+	@echo "Database: {{.DatabaseDriver}}"
+{{- end }}
+
+.PHONY: generate
+generate: ## Run go generate
+	@echo "$(COLOR_BLUE)Running go generate...$(COLOR_RESET)"
+	$(GO) generate ./...

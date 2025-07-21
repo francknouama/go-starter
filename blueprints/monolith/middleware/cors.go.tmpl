@@ -1,0 +1,491 @@
+package middleware
+
+import (
+	"net/http"
+	"strconv"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	{{- end}}
+)
+
+// CORSConfig represents CORS configuration
+type CORSConfig struct {
+	AllowOrigins     []string
+	AllowMethods     []string
+	AllowHeaders     []string
+	ExposeHeaders    []string
+	AllowCredentials bool
+	MaxAge           time.Duration
+}
+
+// DefaultCORSConfig returns the default CORS configuration
+func DefaultCORSConfig() *CORSConfig {
+	return &CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{
+			http.MethodGet,
+			http.MethodPost,
+			http.MethodPut,
+			http.MethodPatch,
+			http.MethodDelete,
+			http.MethodOptions,
+			http.MethodHead,
+		},
+		AllowHeaders: []string{
+			"Accept",
+			"Authorization",
+			"Content-Type",
+			"X-Requested-With",
+			"X-CSRF-Token",
+			"X-Session-ID",
+			"Cache-Control",
+			"Origin",
+			"User-Agent",
+		},
+		ExposeHeaders: []string{
+			"Content-Length",
+			"Content-Type",
+			"X-Request-ID",
+			"X-Rate-Limit-Remaining",
+			"X-Rate-Limit-Reset",
+		},
+		AllowCredentials: true,
+		MaxAge:           12 * time.Hour,
+	}
+}
+
+// NewCORSConfigFromConfig creates CORS config from app config
+func NewCORSConfigFromConfig(cfg *config.Config) *CORSConfig {
+	corsConfig := DefaultCORSConfig()
+
+	// Override with config values if available
+	if cfg.CORS.AllowOrigins != nil && len(cfg.CORS.AllowOrigins) > 0 {
+		corsConfig.AllowOrigins = cfg.CORS.AllowOrigins
+	}
+
+	if cfg.CORS.AllowMethods != nil && len(cfg.CORS.AllowMethods) > 0 {
+		corsConfig.AllowMethods = cfg.CORS.AllowMethods
+	}
+
+	if cfg.CORS.AllowHeaders != nil && len(cfg.CORS.AllowHeaders) > 0 {
+		corsConfig.AllowHeaders = cfg.CORS.AllowHeaders
+	}
+
+	if cfg.CORS.ExposeHeaders != nil && len(cfg.CORS.ExposeHeaders) > 0 {
+		corsConfig.ExposeHeaders = cfg.CORS.ExposeHeaders
+	}
+
+	corsConfig.AllowCredentials = cfg.CORS.AllowCredentials
+
+	if cfg.CORS.MaxAge > 0 {
+		corsConfig.MaxAge = cfg.CORS.MaxAge
+	}
+
+	return corsConfig
+}
+
+// CORSMiddleware provides CORS middleware for different frameworks
+type CORSMiddleware struct {
+	config *CORSConfig
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger
+	{{- else}}
+	logger *slog.Logger
+	{{- end}}
+}
+
+// NewCORSMiddleware creates a new CORS middleware
+func NewCORSMiddleware(
+	config *CORSConfig,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *CORSMiddleware {
+	if config == nil {
+		config = DefaultCORSConfig()
+	}
+
+	return &CORSMiddleware{
+		config: config,
+		logger: logger,
+	}
+}
+
+{{- if eq .Framework "gin"}}
+
+// Handler returns Gin CORS middleware
+func (m *CORSMiddleware) Handler() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		
+		// Set CORS headers
+		m.setCORSHeaders(c.Writer.Header(), origin, c.Request.Method)
+
+		// Handle preflight requests
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+
+// Handler returns Echo CORS middleware
+func (m *CORSMiddleware) Handler() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			origin := req.Header.Get("Origin")
+			
+			// Set CORS headers
+			m.setCORSHeaders(c.Response().Header(), origin, req.Method)
+
+			// Handle preflight requests
+			if req.Method == http.MethodOptions {
+				return c.NoContent(http.StatusNoContent)
+			}
+
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+
+// Handler returns Fiber CORS middleware
+func (m *CORSMiddleware) Handler() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		origin := c.Get("Origin")
+		
+		// Set CORS headers
+		m.setFiberCORSHeaders(c, origin, c.Method())
+
+		// Handle preflight requests
+		if c.Method() == http.MethodOptions {
+			return c.SendStatus(http.StatusNoContent)
+		}
+
+		return c.Next()
+	}
+}
+
+// setFiberCORSHeaders sets CORS headers for Fiber
+func (m *CORSMiddleware) setFiberCORSHeaders(c *fiber.Ctx, origin, method string) {
+	// Access-Control-Allow-Origin
+	if m.isOriginAllowed(origin) {
+		if len(m.config.AllowOrigins) == 1 && m.config.AllowOrigins[0] == "*" {
+			c.Set("Access-Control-Allow-Origin", "*")
+		} else {
+			c.Set("Access-Control-Allow-Origin", origin)
+		}
+	}
+
+	// Access-Control-Allow-Credentials
+	if m.config.AllowCredentials {
+		c.Set("Access-Control-Allow-Credentials", "true")
+	}
+
+	// Access-Control-Allow-Methods
+	if method == http.MethodOptions {
+		c.Set("Access-Control-Allow-Methods", strings.Join(m.config.AllowMethods, ", "))
+	}
+
+	// Access-Control-Allow-Headers
+	if method == http.MethodOptions {
+		requestHeaders := c.Get("Access-Control-Request-Headers")
+		if requestHeaders != "" {
+			c.Set("Access-Control-Allow-Headers", requestHeaders)
+		} else {
+			c.Set("Access-Control-Allow-Headers", strings.Join(m.config.AllowHeaders, ", "))
+		}
+	}
+
+	// Access-Control-Expose-Headers
+	if len(m.config.ExposeHeaders) > 0 {
+		c.Set("Access-Control-Expose-Headers", strings.Join(m.config.ExposeHeaders, ", "))
+	}
+
+	// Access-Control-Max-Age
+	if method == http.MethodOptions && m.config.MaxAge > 0 {
+		c.Set("Access-Control-Max-Age", strconv.Itoa(int(m.config.MaxAge.Seconds())))
+	}
+
+	// Vary header
+	c.Set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
+}
+
+{{- else if eq .Framework "chi"}}
+
+// Handler returns Chi CORS middleware
+func (m *CORSMiddleware) Handler() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			origin := r.Header.Get("Origin")
+			
+			// Set CORS headers
+			m.setCORSHeaders(w.Header(), origin, r.Method)
+
+			// Handle preflight requests
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+{{- end}}
+
+{{- if ne .Framework "fiber"}}
+// setCORSHeaders sets CORS headers for standard HTTP response
+func (m *CORSMiddleware) setCORSHeaders(header http.Header, origin, method string) {
+	// Access-Control-Allow-Origin
+	if m.isOriginAllowed(origin) {
+		if len(m.config.AllowOrigins) == 1 && m.config.AllowOrigins[0] == "*" {
+			header.Set("Access-Control-Allow-Origin", "*")
+		} else {
+			header.Set("Access-Control-Allow-Origin", origin)
+		}
+	}
+
+	// Access-Control-Allow-Credentials
+	if m.config.AllowCredentials {
+		header.Set("Access-Control-Allow-Credentials", "true")
+	}
+
+	// Access-Control-Allow-Methods
+	if method == http.MethodOptions {
+		header.Set("Access-Control-Allow-Methods", strings.Join(m.config.AllowMethods, ", "))
+	}
+
+	// Access-Control-Allow-Headers
+	if method == http.MethodOptions {
+		// Check if client sent specific headers
+		requestHeaders := header.Get("Access-Control-Request-Headers")
+		if requestHeaders != "" {
+			header.Set("Access-Control-Allow-Headers", requestHeaders)
+		} else {
+			header.Set("Access-Control-Allow-Headers", strings.Join(m.config.AllowHeaders, ", "))
+		}
+	}
+
+	// Access-Control-Expose-Headers
+	if len(m.config.ExposeHeaders) > 0 {
+		header.Set("Access-Control-Expose-Headers", strings.Join(m.config.ExposeHeaders, ", "))
+	}
+
+	// Access-Control-Max-Age
+	if method == http.MethodOptions && m.config.MaxAge > 0 {
+		header.Set("Access-Control-Max-Age", strconv.Itoa(int(m.config.MaxAge.Seconds())))
+	}
+
+	// Vary header
+	header.Set("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
+}
+{{- end}}
+
+// isOriginAllowed checks if the origin is allowed
+func (m *CORSMiddleware) isOriginAllowed(origin string) bool {
+	if origin == "" {
+		return false
+	}
+
+	// Check if origin is in allowed list
+	for _, allowed := range m.config.AllowOrigins {
+		if allowed == "*" {
+			return true
+		}
+		if allowed == origin {
+			return true
+		}
+		// Support wildcard subdomain matching
+		if strings.HasPrefix(allowed, "*.") {
+			domain := strings.TrimPrefix(allowed, "*.")
+			if strings.HasSuffix(origin, domain) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// SetOrigin allows adding origins dynamically
+func (m *CORSMiddleware) SetOrigin(origin string) {
+	if origin == "" {
+		return
+	}
+
+	// Check if origin already exists
+	for _, existing := range m.config.AllowOrigins {
+		if existing == origin {
+			return
+		}
+	}
+
+	// Remove "*" if it exists when adding specific origins
+	if len(m.config.AllowOrigins) == 1 && m.config.AllowOrigins[0] == "*" {
+		m.config.AllowOrigins = []string{}
+	}
+
+	m.config.AllowOrigins = append(m.config.AllowOrigins, origin)
+	m.logger.{{if eq .LoggerType "zap"}}Debug("Added CORS origin", zap.String("origin", origin)){{else if eq .LoggerType "logrus"}}WithField("origin", origin).Debug("Added CORS origin"){{else if eq .LoggerType "zerolog"}}Debug().Str("origin", origin).Msg("Added CORS origin"){{else}}Debug("Added CORS origin", "origin", origin){{end}}
+}
+
+// RemoveOrigin removes an origin from allowed list
+func (m *CORSMiddleware) RemoveOrigin(origin string) {
+	for i, existing := range m.config.AllowOrigins {
+		if existing == origin {
+			m.config.AllowOrigins = append(m.config.AllowOrigins[:i], m.config.AllowOrigins[i+1:]...)
+			m.logger.{{if eq .LoggerType "zap"}}Debug("Removed CORS origin", zap.String("origin", origin)){{else if eq .LoggerType "logrus"}}WithField("origin", origin).Debug("Removed CORS origin"){{else if eq .LoggerType "zerolog"}}Debug().Str("origin", origin).Msg("Removed CORS origin"){{else}}Debug("Removed CORS origin", "origin", origin){{end}}
+			break
+		}
+	}
+}
+
+// GetAllowedOrigins returns the list of allowed origins
+func (m *CORSMiddleware) GetAllowedOrigins() []string {
+	return m.config.AllowOrigins
+}
+
+// IsSecure checks if CORS configuration is secure for production
+func (m *CORSMiddleware) IsSecure() bool {
+	// Check for wildcard origins
+	for _, origin := range m.config.AllowOrigins {
+		if origin == "*" {
+			return false
+		}
+	}
+
+	// Check for development origins in production
+	developmentOrigins := []string{
+		"http://localhost",
+		"http://127.0.0.1",
+		"http://0.0.0.0",
+	}
+
+	for _, allowed := range m.config.AllowOrigins {
+		for _, dev := range developmentOrigins {
+			if strings.HasPrefix(allowed, dev) {
+				m.logger.{{if eq .LoggerType "zap"}}Warn("Development origin found in CORS config", zap.String("origin", allowed)){{else if eq .LoggerType "logrus"}}WithField("origin", allowed).Warn("Development origin found in CORS config"){{else if eq .LoggerType "zerolog"}}Warn().Str("origin", allowed).Msg("Development origin found in CORS config"){{else}}Warn("Development origin found in CORS config", "origin", allowed){{end}}
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// ValidateConfig validates the CORS configuration
+func (m *CORSMiddleware) ValidateConfig() []string {
+	var warnings []string
+
+	// Check for wildcard with credentials
+	hasWildcard := false
+	for _, origin := range m.config.AllowOrigins {
+		if origin == "*" {
+			hasWildcard = true
+			break
+		}
+	}
+
+	if hasWildcard && m.config.AllowCredentials {
+		warnings = append(warnings, "CORS: Cannot use wildcard (*) for origins when AllowCredentials is true")
+	}
+
+	// Check for overly permissive headers
+	dangerousHeaders := []string{
+		"*",
+		"Authorization",
+		"Cookie",
+		"Set-Cookie",
+	}
+
+	for _, header := range m.config.AllowHeaders {
+		for _, dangerous := range dangerousHeaders {
+			if strings.EqualFold(header, dangerous) {
+				warnings = append(warnings, fmt.Sprintf("CORS: Potentially dangerous header allowed: %s", header))
+			}
+		}
+	}
+
+	// Check max age
+	if m.config.MaxAge > 24*time.Hour {
+		warnings = append(warnings, "CORS: MaxAge is set to more than 24 hours, which may cause caching issues")
+	}
+
+	return warnings
+}
+
+// LogConfig logs the current CORS configuration
+func (m *CORSMiddleware) LogConfig() {
+	m.logger.{{if eq .LoggerType "zap"}}Info("CORS Configuration",
+		zap.Strings("allow_origins", m.config.AllowOrigins),
+		zap.Strings("allow_methods", m.config.AllowMethods),
+		zap.Strings("allow_headers", m.config.AllowHeaders),
+		zap.Strings("expose_headers", m.config.ExposeHeaders),
+		zap.Bool("allow_credentials", m.config.AllowCredentials),
+		zap.Duration("max_age", m.config.MaxAge),
+	){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{
+		"allow_origins":     m.config.AllowOrigins,
+		"allow_methods":     m.config.AllowMethods,
+		"allow_headers":     m.config.AllowHeaders,
+		"expose_headers":    m.config.ExposeHeaders,
+		"allow_credentials": m.config.AllowCredentials,
+		"max_age":          m.config.MaxAge,
+	}).Info("CORS Configuration"){{else if eq .LoggerType "zerolog"}}Info().
+		Strs("allow_origins", m.config.AllowOrigins).
+		Strs("allow_methods", m.config.AllowMethods).
+		Strs("allow_headers", m.config.AllowHeaders).
+		Strs("expose_headers", m.config.ExposeHeaders).
+		Bool("allow_credentials", m.config.AllowCredentials).
+		Dur("max_age", m.config.MaxAge).
+		Msg("CORS Configuration"){{else}}Info("CORS Configuration",
+		"allow_origins", m.config.AllowOrigins,
+		"allow_methods", m.config.AllowMethods,
+		"allow_headers", m.config.AllowHeaders,
+		"expose_headers", m.config.ExposeHeaders,
+		"allow_credentials", m.config.AllowCredentials,
+		"max_age", m.config.MaxAge,
+	){{end}}
+
+	// Log warnings if any
+	warnings := m.ValidateConfig()
+	for _, warning := range warnings {
+		m.logger.{{if eq .LoggerType "zap"}}Warn(warning){{else if eq .LoggerType "logrus"}}Warn(warning){{else if eq .LoggerType "zerolog"}}Warn().Msg(warning){{else}}Warn(warning){{end}}
+	}
+}

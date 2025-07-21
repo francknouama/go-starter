@@ -1,0 +1,625 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sort"
+	"strings"
+	"time"
+
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+	{{- end}}
+)
+
+// Migration represents a database migration
+type Migration struct {
+	Version   string
+	Name      string
+	UpSQL     string
+	DownSQL   string
+	AppliedAt *time.Time
+}
+
+// Migrator handles database migrations
+type Migrator struct {
+	db         *DB
+	migrations []Migration
+}
+
+// NewMigrator creates a new migrator instance
+func NewMigrator(db *DB) *Migrator {
+	migrator := &Migrator{
+		db:         db,
+		migrations: []Migration{},
+	}
+	
+	// Register all migrations
+	migrator.registerMigrations()
+	
+	return migrator
+}
+
+// registerMigrations registers all available migrations
+func (m *Migrator) registerMigrations() {
+	// Migration 001: Create users table
+	m.addMigration("001", "create_users_table",
+		m.getUsersTableUpSQL(),
+		m.getUsersTableDownSQL())
+	
+	// Migration 002: Add user indexes
+	m.addMigration("002", "add_user_indexes",
+		m.getUserIndexesUpSQL(),
+		m.getUserIndexesDownSQL())
+	
+	// Migration 003: Add user preferences
+	m.addMigration("003", "add_user_preferences",
+		m.getUserPreferencesUpSQL(),
+		m.getUserPreferencesDownSQL())
+
+	{{- if eq .AuthType "oauth2"}}
+	// Migration 004: Add OAuth fields
+	m.addMigration("004", "add_oauth_fields",
+		m.getOAuthFieldsUpSQL(),
+		m.getOAuthFieldsDownSQL())
+	{{- end}}
+	
+	// Sort migrations by version
+	sort.Slice(m.migrations, func(i, j int) bool {
+		return m.migrations[i].Version < m.migrations[j].Version
+	})
+}
+
+// addMigration adds a migration to the list
+func (m *Migrator) addMigration(version, name, upSQL, downSQL string) {
+	m.migrations = append(m.migrations, Migration{
+		Version: version,
+		Name:    name,
+		UpSQL:   upSQL,
+		DownSQL: downSQL,
+	})
+}
+
+// Up runs all pending migrations
+func (m *Migrator) Up() error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Running database migrations")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Running database migrations")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Running database migrations")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Running database migrations")
+	{{- end}}
+
+	// Ensure migrations table exists
+	if err := m.createMigrationsTable(); err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	// Get applied migrations
+	appliedMigrations, err := m.getAppliedMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+
+	// Apply pending migrations
+	for _, migration := range m.migrations {
+		if !contains(appliedMigrations, migration.Version) {
+			if err := m.applyMigration(migration, true); err != nil {
+				return fmt.Errorf("failed to apply migration %s: %w", migration.Version, err)
+			}
+		}
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Database migrations completed successfully")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Database migrations completed successfully")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Database migrations completed successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Database migrations completed successfully")
+	{{- end}}
+
+	return nil
+}
+
+// Down reverts the last migration
+func (m *Migrator) Down() error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Reverting last migration")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Reverting last migration")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Reverting last migration")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Reverting last migration")
+	{{- end}}
+
+	// Get applied migrations
+	appliedMigrations, err := m.getAppliedMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+
+	if len(appliedMigrations) == 0 {
+		{{- if eq .LoggerType "slog"}}
+		slog.Info("No migrations to revert")
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Info("No migrations to revert")
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Info("No migrations to revert")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Info().Msg("No migrations to revert")
+		{{- end}}
+		return nil
+	}
+
+	// Find the last applied migration
+	lastVersion := appliedMigrations[len(appliedMigrations)-1]
+	for _, migration := range m.migrations {
+		if migration.Version == lastVersion {
+			return m.applyMigration(migration, false)
+		}
+	}
+
+	return fmt.Errorf("migration version %s not found", lastVersion)
+}
+
+// DownAll reverts all migrations
+func (m *Migrator) DownAll() error {
+	{{- if eq .LoggerType "slog"}}
+	slog.Warn("Reverting all migrations - this will drop all data!")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Warn("Reverting all migrations - this will drop all data!")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Warn("Reverting all migrations - this will drop all data!")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Warn().Msg("Reverting all migrations - this will drop all data!")
+	{{- end}}
+
+	// Get applied migrations in reverse order
+	appliedMigrations, err := m.getAppliedMigrations()
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+
+	// Reverse the order for down migrations
+	for i := len(appliedMigrations) - 1; i >= 0; i-- {
+		version := appliedMigrations[i]
+		for _, migration := range m.migrations {
+			if migration.Version == version {
+				if err := m.applyMigration(migration, false); err != nil {
+					return fmt.Errorf("failed to revert migration %s: %w", migration.Version, err)
+				}
+				break
+			}
+		}
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("All migrations reverted successfully")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("All migrations reverted successfully")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("All migrations reverted successfully")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("All migrations reverted successfully")
+	{{- end}}
+
+	return nil
+}
+
+// Status shows the status of all migrations
+func (m *Migrator) Status() ([]map[string]interface{}, error) {
+	appliedMigrations, err := m.getAppliedMigrations()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+
+	var status []map[string]interface{}
+	for _, migration := range m.migrations {
+		applied := contains(appliedMigrations, migration.Version)
+		status = append(status, map[string]interface{}{
+			"version": migration.Version,
+			"name":    migration.Name,
+			"applied": applied,
+		})
+	}
+
+	return status, nil
+}
+
+// createMigrationsTable creates the migrations tracking table
+func (m *Migrator) createMigrationsTable() error {
+	{{- if eq .DatabaseDriver "postgres"}}
+	query := `
+		CREATE TABLE IF NOT EXISTS migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	query := `
+		CREATE TABLE IF NOT EXISTS migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			name VARCHAR(255) NOT NULL,
+			applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	query := `
+		CREATE TABLE IF NOT EXISTS migrations (
+			version TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`
+	{{- end}}
+
+	{{- if eq .DatabaseORM "gorm"}}
+	return m.db.DB.Exec(query).Error
+	{{- else}}
+	_, err := m.db.DB.Exec(query)
+	return err
+	{{- end}}
+}
+
+// getAppliedMigrations returns a list of applied migration versions
+func (m *Migrator) getAppliedMigrations() ([]string, error) {
+	query := "SELECT version FROM migrations ORDER BY version"
+	
+	{{- if eq .DatabaseORM "gorm"}}
+	var versions []string
+	err := m.db.DB.Raw(query).Scan(&versions).Error
+	return versions, err
+	{{- else if eq .DatabaseORM "sqlx"}}
+	var versions []string
+	err := m.db.DB.Select(&versions, query)
+	return versions, err
+	{{- else}}
+	rows, err := m.db.DB.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var versions []string
+	for rows.Next() {
+		var version string
+		if err := rows.Scan(&version); err != nil {
+			return nil, err
+		}
+		versions = append(versions, version)
+	}
+	return versions, rows.Err()
+	{{- end}}
+}
+
+// applyMigration applies or reverts a single migration
+func (m *Migrator) applyMigration(migration Migration, up bool) error {
+	var sql string
+	var action string
+	
+	if up {
+		sql = migration.UpSQL
+		action = "Applying"
+	} else {
+		sql = migration.DownSQL
+		action = "Reverting"
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info(fmt.Sprintf("%s migration", action), "version", migration.Version, "name", migration.Name)
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info(fmt.Sprintf("%s migration", action), zap.String("version", migration.Version), zap.String("name", migration.Name))
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.WithFields(logrus.Fields{"version": migration.Version, "name": migration.Name}).Info(fmt.Sprintf("%s migration", action))
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Str("version", migration.Version).Str("name", migration.Name).Msg(fmt.Sprintf("%s migration", action))
+	{{- end}}
+
+	{{- if ne .DatabaseDriver "mongodb"}}
+	// Execute within transaction
+	{{- if eq .DatabaseORM "gorm"}}
+	return m.db.DB.Transaction(func(tx *gorm.DB) error {
+	{{- else if eq .DatabaseORM "sqlx"}}
+	return m.db.Transaction(func(tx *sqlx.Tx) error {
+	{{- else}}
+	return m.db.Transaction(func(tx *sql.Tx) error {
+	{{- end}}
+		// Execute migration SQL
+		{{- if eq .DatabaseORM "gorm"}}
+		if err := tx.Exec(sql).Error; err != nil {
+		{{- else}}
+		if _, err := tx.Exec(sql); err != nil {
+		{{- end}}
+			return fmt.Errorf("failed to execute migration SQL: %w", err)
+		}
+
+		// Update migrations table
+		if up {
+			{{- if eq .DatabaseORM "gorm"}}
+			insertSQL := "INSERT INTO migrations (version, name) VALUES (?, ?)"
+			return tx.Exec(insertSQL, migration.Version, migration.Name).Error
+			{{- else}}
+			_, err := tx.Exec("INSERT INTO migrations (version, name) VALUES (?, ?)", migration.Version, migration.Name)
+			return err
+			{{- end}}
+		} else {
+			{{- if eq .DatabaseORM "gorm"}}
+			deleteSQL := "DELETE FROM migrations WHERE version = ?"
+			return tx.Exec(deleteSQL, migration.Version).Error
+			{{- else}}
+			_, err := tx.Exec("DELETE FROM migrations WHERE version = ?", migration.Version)
+			return err
+			{{- end}}
+		}
+	})
+	{{- else}}
+	// For MongoDB, execute directly (no transactions for DDL)
+	// Note: MongoDB migrations would typically be different
+	return nil
+	{{- end}}
+}
+
+// Migration SQL definitions
+
+// getUsersTableUpSQL returns the SQL to create the users table
+func (m *Migrator) getUsersTableUpSQL() string {
+	{{- if eq .DatabaseDriver "postgres"}}
+	return `
+		CREATE TABLE users (
+			id SERIAL PRIMARY KEY,
+			first_name VARCHAR(100) NOT NULL,
+			last_name VARCHAR(100) NOT NULL,
+			email VARCHAR(255) NOT NULL UNIQUE,
+			username VARCHAR(50) UNIQUE,
+			password VARCHAR(255) NOT NULL,
+			salt VARCHAR(32),
+			avatar VARCHAR(255),
+			bio TEXT,
+			website VARCHAR(255),
+			location VARCHAR(100),
+			date_of_birth DATE,
+			is_active BOOLEAN DEFAULT FALSE,
+			is_verified BOOLEAN DEFAULT FALSE,
+			is_suspended BOOLEAN DEFAULT FALSE,
+			email_verification_token VARCHAR(64),
+			email_verified_at TIMESTAMP,
+			password_reset_token VARCHAR(64),
+			password_reset_expires_at TIMESTAMP,
+			last_login_at TIMESTAMP,
+			last_login_ip VARCHAR(45),
+			login_attempts INTEGER DEFAULT 0,
+			locked_until TIMESTAMP,
+			timezone VARCHAR(50) DEFAULT 'UTC',
+			language VARCHAR(10) DEFAULT 'en',
+			theme VARCHAR(20) DEFAULT 'auto',
+			created_by VARCHAR(255),
+			updated_by VARCHAR(255),
+			deleted_by VARCHAR(255),
+			version INTEGER DEFAULT 1,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP
+		)`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	return `
+		CREATE TABLE users (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			first_name VARCHAR(100) NOT NULL,
+			last_name VARCHAR(100) NOT NULL,
+			email VARCHAR(255) NOT NULL UNIQUE,
+			username VARCHAR(50) UNIQUE,
+			password VARCHAR(255) NOT NULL,
+			salt VARCHAR(32),
+			avatar VARCHAR(255),
+			bio TEXT,
+			website VARCHAR(255),
+			location VARCHAR(100),
+			date_of_birth DATE,
+			is_active BOOLEAN DEFAULT FALSE,
+			is_verified BOOLEAN DEFAULT FALSE,
+			is_suspended BOOLEAN DEFAULT FALSE,
+			email_verification_token VARCHAR(64),
+			email_verified_at TIMESTAMP NULL,
+			password_reset_token VARCHAR(64),
+			password_reset_expires_at TIMESTAMP NULL,
+			last_login_at TIMESTAMP NULL,
+			last_login_ip VARCHAR(45),
+			login_attempts INT DEFAULT 0,
+			locked_until TIMESTAMP NULL,
+			timezone VARCHAR(50) DEFAULT 'UTC',
+			language VARCHAR(10) DEFAULT 'en',
+			theme VARCHAR(20) DEFAULT 'auto',
+			created_by VARCHAR(255),
+			updated_by VARCHAR(255),
+			deleted_by VARCHAR(255),
+			version INT DEFAULT 1,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			deleted_at TIMESTAMP NULL
+		)`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	return `
+		CREATE TABLE users (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			first_name TEXT NOT NULL,
+			last_name TEXT NOT NULL,
+			email TEXT NOT NULL UNIQUE,
+			username TEXT UNIQUE,
+			password TEXT NOT NULL,
+			salt TEXT,
+			avatar TEXT,
+			bio TEXT,
+			website TEXT,
+			location TEXT,
+			date_of_birth DATE,
+			is_active BOOLEAN DEFAULT 0,
+			is_verified BOOLEAN DEFAULT 0,
+			is_suspended BOOLEAN DEFAULT 0,
+			email_verification_token TEXT,
+			email_verified_at DATETIME,
+			password_reset_token TEXT,
+			password_reset_expires_at DATETIME,
+			last_login_at DATETIME,
+			last_login_ip TEXT,
+			login_attempts INTEGER DEFAULT 0,
+			locked_until DATETIME,
+			timezone TEXT DEFAULT 'UTC',
+			language TEXT DEFAULT 'en',
+			theme TEXT DEFAULT 'auto',
+			created_by TEXT,
+			updated_by TEXT,
+			deleted_by TEXT,
+			version INTEGER DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			deleted_at DATETIME
+		)`
+	{{- end}}
+}
+
+// getUsersTableDownSQL returns the SQL to drop the users table
+func (m *Migrator) getUsersTableDownSQL() string {
+	return "DROP TABLE IF EXISTS users"
+}
+
+// getUserIndexesUpSQL returns the SQL to create user indexes
+func (m *Migrator) getUserIndexesUpSQL() string {
+	return `
+		CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+		CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+		CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
+		CREATE INDEX IF NOT EXISTS idx_users_is_verified ON users(is_verified);
+		CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
+		CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at);
+		CREATE INDEX IF NOT EXISTS idx_users_email_verification_token ON users(email_verification_token);
+		CREATE INDEX IF NOT EXISTS idx_users_password_reset_token ON users(password_reset_token);
+	`
+}
+
+// getUserIndexesDownSQL returns the SQL to drop user indexes
+func (m *Migrator) getUserIndexesDownSQL() string {
+	return `
+		DROP INDEX IF EXISTS idx_users_email;
+		DROP INDEX IF EXISTS idx_users_username;
+		DROP INDEX IF EXISTS idx_users_is_active;
+		DROP INDEX IF EXISTS idx_users_is_verified;
+		DROP INDEX IF EXISTS idx_users_created_at;
+		DROP INDEX IF EXISTS idx_users_deleted_at;
+		DROP INDEX IF EXISTS idx_users_email_verification_token;
+		DROP INDEX IF EXISTS idx_users_password_reset_token;
+	`
+}
+
+// getUserPreferencesUpSQL returns the SQL to add user preferences
+func (m *Migrator) getUserPreferencesUpSQL() string {
+	{{- if eq .DatabaseDriver "postgres"}}
+	return `
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS email_notifications BOOLEAN DEFAULT TRUE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS push_notifications BOOLEAN DEFAULT TRUE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_emails BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS two_factor_enabled BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_visibility VARCHAR(20) DEFAULT 'public';
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS show_email BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS show_date_of_birth BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS allow_indexing BOOLEAN DEFAULT TRUE;
+	`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	return `
+		ALTER TABLE users ADD COLUMN email_notifications BOOLEAN DEFAULT TRUE;
+		ALTER TABLE users ADD COLUMN push_notifications BOOLEAN DEFAULT TRUE;
+		ALTER TABLE users ADD COLUMN marketing_emails BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN two_factor_enabled BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN profile_visibility VARCHAR(20) DEFAULT 'public';
+		ALTER TABLE users ADD COLUMN show_email BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN show_date_of_birth BOOLEAN DEFAULT FALSE;
+		ALTER TABLE users ADD COLUMN allow_indexing BOOLEAN DEFAULT TRUE;
+	`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	return `
+		ALTER TABLE users ADD COLUMN email_notifications BOOLEAN DEFAULT 1;
+		ALTER TABLE users ADD COLUMN push_notifications BOOLEAN DEFAULT 1;
+		ALTER TABLE users ADD COLUMN marketing_emails BOOLEAN DEFAULT 0;
+		ALTER TABLE users ADD COLUMN two_factor_enabled BOOLEAN DEFAULT 0;
+		ALTER TABLE users ADD COLUMN profile_visibility TEXT DEFAULT 'public';
+		ALTER TABLE users ADD COLUMN show_email BOOLEAN DEFAULT 0;
+		ALTER TABLE users ADD COLUMN show_date_of_birth BOOLEAN DEFAULT 0;
+		ALTER TABLE users ADD COLUMN allow_indexing BOOLEAN DEFAULT 1;
+	`
+	{{- end}}
+}
+
+// getUserPreferencesDownSQL returns the SQL to remove user preferences
+func (m *Migrator) getUserPreferencesDownSQL() string {
+	return `
+		ALTER TABLE users DROP COLUMN email_notifications;
+		ALTER TABLE users DROP COLUMN push_notifications;
+		ALTER TABLE users DROP COLUMN marketing_emails;
+		ALTER TABLE users DROP COLUMN two_factor_enabled;
+		ALTER TABLE users DROP COLUMN profile_visibility;
+		ALTER TABLE users DROP COLUMN show_email;
+		ALTER TABLE users DROP COLUMN show_date_of_birth;
+		ALTER TABLE users DROP COLUMN allow_indexing;
+	`
+}
+
+{{- if eq .AuthType "oauth2"}}
+// getOAuthFieldsUpSQL returns the SQL to add OAuth fields
+func (m *Migrator) getOAuthFieldsUpSQL() string {
+	{{- if eq .DatabaseDriver "postgres"}}
+	return `
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS google_id VARCHAR(100) UNIQUE;
+		ALTER TABLE users ADD COLUMN IF NOT EXISTS github_id VARCHAR(100) UNIQUE;
+		CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
+		CREATE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id);
+	`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	return `
+		ALTER TABLE users ADD COLUMN google_id VARCHAR(100) UNIQUE;
+		ALTER TABLE users ADD COLUMN github_id VARCHAR(100) UNIQUE;
+		CREATE INDEX idx_users_google_id ON users(google_id);
+		CREATE INDEX idx_users_github_id ON users(github_id);
+	`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	return `
+		ALTER TABLE users ADD COLUMN google_id TEXT UNIQUE;
+		ALTER TABLE users ADD COLUMN github_id TEXT UNIQUE;
+		CREATE INDEX idx_users_google_id ON users(google_id);
+		CREATE INDEX idx_users_github_id ON users(github_id);
+	`
+	{{- end}}
+}
+
+// getOAuthFieldsDownSQL returns the SQL to remove OAuth fields
+func (m *Migrator) getOAuthFieldsDownSQL() string {
+	return `
+		DROP INDEX IF EXISTS idx_users_google_id;
+		DROP INDEX IF EXISTS idx_users_github_id;
+		ALTER TABLE users DROP COLUMN google_id;
+		ALTER TABLE users DROP COLUMN github_id;
+	`
+}
+{{- end}}
+
+// Helper functions
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+{{- end}}

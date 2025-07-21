@@ -1,0 +1,541 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+	"os"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+	"os"
+{{- end }}
+
+	"{{.ModulePath}}/models"
+)
+
+// MockUserRepository is a mock implementation of UserRepository
+type MockUserRepository struct {
+	mock.Mock
+}
+
+func (m *MockUserRepository) Create(ctx context.Context, user *models.User) error {
+	args := m.Called(ctx, user)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) GetByID(ctx context.Context, id uint) (*models.User, error) {
+	args := m.Called(ctx, id)
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	args := m.Called(ctx, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) Update(ctx context.Context, user *models.User) error {
+	args := m.Called(ctx, user)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) Delete(ctx context.Context, id uint) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+
+func (m *MockUserRepository) List(ctx context.Context, offset, limit int, search string) ([]*models.User, int64, error) {
+	args := m.Called(ctx, offset, limit, search)
+	return args.Get(0).([]*models.User), args.Get(1).(int64), args.Error(2)
+}
+
+// MockEmailService is a mock implementation of EmailService
+type MockEmailService struct {
+	mock.Mock
+}
+
+func (m *MockEmailService) SendWelcomeEmail(ctx context.Context, user *models.User) error {
+	args := m.Called(ctx, user)
+	return args.Error(0)
+}
+
+func (m *MockEmailService) SendPasswordResetEmail(ctx context.Context, user *models.User, token string) error {
+	args := m.Called(ctx, user, token)
+	return args.Error(0)
+}
+
+func (m *MockEmailService) SendEmailVerification(ctx context.Context, user *models.User, token string) error {
+	args := m.Called(ctx, user, token)
+	return args.Error(0)
+}
+
+// UserServiceTestSuite defines the test suite for UserService
+type UserServiceTestSuite struct {
+	suite.Suite
+	userService    UserService
+	mockUserRepo   *MockUserRepository
+	mockEmailSvc   *MockEmailService
+{{- if eq .LoggerType "slog" }}
+	logger         *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger         *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger         *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger         zerolog.Logger
+{{- end }}
+}
+
+func (suite *UserServiceTestSuite) SetupTest() {
+	suite.mockUserRepo = new(MockUserRepository)
+	suite.mockEmailSvc = new(MockEmailService)
+
+{{- if eq .LoggerType "slog" }}
+	suite.logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelError, // Reduce log noise in tests
+	}))
+{{- else if eq .LoggerType "zap" }}
+	suite.logger, _ = zap.NewDevelopment()
+{{- else if eq .LoggerType "logrus" }}
+	suite.logger = logrus.New()
+	suite.logger.SetLevel(logrus.ErrorLevel)
+{{- else if eq .LoggerType "zerolog" }}
+	suite.logger = zerolog.New(os.Stdout).Level(zerolog.ErrorLevel)
+{{- end }}
+
+	suite.userService = NewUserService(suite.mockUserRepo, suite.mockEmailSvc, suite.logger)
+}
+
+func (suite *UserServiceTestSuite) TearDownTest() {
+	suite.mockUserRepo.AssertExpectations(suite.T())
+	suite.mockEmailSvc.AssertExpectations(suite.T())
+}
+
+// TestCreateUser tests user creation
+func (suite *UserServiceTestSuite) TestCreateUser() {
+	ctx := context.Background()
+
+	suite.Run("Success - Create new user", func() {
+		user := &models.User{
+			Email:     "test@example.com",
+			FirstName: "Test",
+			LastName:  "User",
+			Password:  "password123",
+		}
+
+		suite.mockUserRepo.On("GetByEmail", ctx, user.Email).Return(nil, errors.New("not found")).Once()
+		suite.mockUserRepo.On("Create", ctx, mock.AnythingOfType("*models.User")).Return(nil).Once()
+		suite.mockEmailSvc.On("SendWelcomeEmail", ctx, mock.AnythingOfType("*models.User")).Return(nil).Once()
+
+		createdUser, err := suite.userService.CreateUser(ctx, user)
+
+		require.NoError(suite.T(), err)
+		assert.NotNil(suite.T(), createdUser)
+		assert.Equal(suite.T(), user.Email, createdUser.Email)
+		assert.NotEmpty(suite.T(), createdUser.Password) // Should be hashed
+		assert.NotEqual(suite.T(), "password123", createdUser.Password) // Should not be plain text
+	})
+
+	suite.Run("Error - Email already exists", func() {
+		existingUser := &models.User{
+			ID:    1,
+			Email: "existing@example.com",
+		}
+
+		user := &models.User{
+			Email:     "existing@example.com",
+			FirstName: "Test",
+			LastName:  "User",
+			Password:  "password123",
+		}
+
+		suite.mockUserRepo.On("GetByEmail", ctx, user.Email).Return(existingUser, nil).Once()
+
+		createdUser, err := suite.userService.CreateUser(ctx, user)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), createdUser)
+		assert.Contains(suite.T(), err.Error(), "email already exists")
+	})
+
+	suite.Run("Error - Invalid email format", func() {
+		user := &models.User{
+			Email:     "invalid-email",
+			FirstName: "Test",
+			LastName:  "User",
+			Password:  "password123",
+		}
+
+		createdUser, err := suite.userService.CreateUser(ctx, user)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), createdUser)
+		assert.Contains(suite.T(), err.Error(), "invalid email format")
+	})
+
+	suite.Run("Error - Weak password", func() {
+		user := &models.User{
+			Email:     "test@example.com",
+			FirstName: "Test",
+			LastName:  "User",
+			Password:  "weak", // Too weak
+		}
+
+		createdUser, err := suite.userService.CreateUser(ctx, user)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), createdUser)
+		assert.Contains(suite.T(), err.Error(), "password")
+	})
+}
+
+// TestGetUserByID tests getting a user by ID
+func (suite *UserServiceTestSuite) TestGetUserByID() {
+	ctx := context.Background()
+
+	suite.Run("Success - User found", func() {
+		userID := uint(1)
+		expectedUser := &models.User{
+			ID:        userID,
+			Email:     "test@example.com",
+			FirstName: "Test",
+			LastName:  "User",
+		}
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return(expectedUser, nil).Once()
+
+		user, err := suite.userService.GetByID(ctx, userID)
+
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), expectedUser, user)
+	})
+
+	suite.Run("Error - User not found", func() {
+		userID := uint(999)
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return((*models.User)(nil), errors.New("not found")).Once()
+
+		user, err := suite.userService.GetByID(ctx, userID)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), user)
+	})
+
+	suite.Run("Error - Invalid ID", func() {
+		user, err := suite.userService.GetByID(ctx, 0)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), user)
+		assert.Contains(suite.T(), err.Error(), "invalid user ID")
+	})
+}
+
+// TestAuthenticateUser tests user authentication
+func (suite *UserServiceTestSuite) TestAuthenticateUser() {
+	ctx := context.Background()
+
+	suite.Run("Success - Valid credentials", func() {
+		email := "test@example.com"
+		password := "password123"
+		hashedPassword := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe" // bcrypt of "password123"
+
+		user := &models.User{
+			ID:       1,
+			Email:    email,
+			Password: hashedPassword,
+			IsActive: true,
+		}
+
+		suite.mockUserRepo.On("GetByEmail", ctx, email).Return(user, nil).Once()
+		suite.mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil).Once()
+
+		authenticatedUser, err := suite.userService.Authenticate(ctx, email, password)
+
+		require.NoError(suite.T(), err)
+		assert.NotNil(suite.T(), authenticatedUser)
+		assert.Equal(suite.T(), user.ID, authenticatedUser.ID)
+	})
+
+	suite.Run("Error - Invalid credentials", func() {
+		email := "test@example.com"
+		password := "wrongpassword"
+		hashedPassword := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe"
+
+		user := &models.User{
+			ID:       1,
+			Email:    email,
+			Password: hashedPassword,
+			IsActive: true,
+		}
+
+		suite.mockUserRepo.On("GetByEmail", ctx, email).Return(user, nil).Once()
+
+		authenticatedUser, err := suite.userService.Authenticate(ctx, email, password)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), authenticatedUser)
+		assert.Contains(suite.T(), err.Error(), "invalid credentials")
+	})
+
+	suite.Run("Error - User not found", func() {
+		email := "nonexistent@example.com"
+		password := "password123"
+
+		suite.mockUserRepo.On("GetByEmail", ctx, email).Return((*models.User)(nil), errors.New("not found")).Once()
+
+		authenticatedUser, err := suite.userService.Authenticate(ctx, email, password)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), authenticatedUser)
+		assert.Contains(suite.T(), err.Error(), "invalid credentials")
+	})
+
+	suite.Run("Error - Inactive user", func() {
+		email := "inactive@example.com"
+		password := "password123"
+		hashedPassword := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe"
+
+		user := &models.User{
+			ID:       1,
+			Email:    email,
+			Password: hashedPassword,
+			IsActive: false, // Inactive user
+		}
+
+		suite.mockUserRepo.On("GetByEmail", ctx, email).Return(user, nil).Once()
+
+		authenticatedUser, err := suite.userService.Authenticate(ctx, email, password)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), authenticatedUser)
+		assert.Contains(suite.T(), err.Error(), "account is inactive")
+	})
+}
+
+// TestUpdateProfile tests updating user profile
+func (suite *UserServiceTestSuite) TestUpdateProfile() {
+	ctx := context.Background()
+	userID := uint(1)
+
+	suite.Run("Success - Update profile", func() {
+		existingUser := &models.User{
+			ID:        userID,
+			Email:     "old@example.com",
+			FirstName: "Old",
+			LastName:  "Name",
+		}
+
+		updateData := map[string]interface{}{
+			"first_name": "New",
+			"last_name":  "Name",
+			"email":      "new@example.com",
+		}
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil).Once()
+		suite.mockUserRepo.On("GetByEmail", ctx, "new@example.com").Return((*models.User)(nil), errors.New("not found")).Once()
+		suite.mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil).Once()
+
+		updatedUser, err := suite.userService.UpdateProfile(ctx, userID, updateData)
+
+		require.NoError(suite.T(), err)
+		assert.NotNil(suite.T(), updatedUser)
+		assert.Equal(suite.T(), "New", updatedUser.FirstName)
+		assert.Equal(suite.T(), "new@example.com", updatedUser.Email)
+	})
+
+	suite.Run("Error - User not found", func() {
+		updateData := map[string]interface{}{
+			"first_name": "New",
+		}
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return((*models.User)(nil), errors.New("not found")).Once()
+
+		updatedUser, err := suite.userService.UpdateProfile(ctx, userID, updateData)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), updatedUser)
+	})
+
+	suite.Run("Error - Email already taken", func() {
+		existingUser := &models.User{
+			ID:        userID,
+			Email:     "old@example.com",
+			FirstName: "Old",
+			LastName:  "Name",
+		}
+
+		anotherUser := &models.User{
+			ID:    2,
+			Email: "taken@example.com",
+		}
+
+		updateData := map[string]interface{}{
+			"email": "taken@example.com",
+		}
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return(existingUser, nil).Once()
+		suite.mockUserRepo.On("GetByEmail", ctx, "taken@example.com").Return(anotherUser, nil).Once()
+
+		updatedUser, err := suite.userService.UpdateProfile(ctx, userID, updateData)
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), updatedUser)
+		assert.Contains(suite.T(), err.Error(), "email already exists")
+	})
+}
+
+// TestChangePassword tests password change functionality
+func (suite *UserServiceTestSuite) TestChangePassword() {
+	ctx := context.Background()
+	userID := uint(1)
+
+	suite.Run("Success - Change password", func() {
+		currentPassword := "oldpassword123"
+		newPassword := "newpassword456"
+		hashedCurrentPassword := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe"
+
+		user := &models.User{
+			ID:       userID,
+			Password: hashedCurrentPassword,
+		}
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return(user, nil).Once()
+		suite.mockUserRepo.On("Update", ctx, mock.AnythingOfType("*models.User")).Return(nil).Once()
+
+		err := suite.userService.ChangePassword(ctx, userID, currentPassword, newPassword)
+
+		require.NoError(suite.T(), err)
+	})
+
+	suite.Run("Error - Invalid current password", func() {
+		currentPassword := "wrongpassword"
+		newPassword := "newpassword456"
+		hashedCurrentPassword := "$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewFg1cE2gkEZQgZe"
+
+		user := &models.User{
+			ID:       userID,
+			Password: hashedCurrentPassword,
+		}
+
+		suite.mockUserRepo.On("GetByID", ctx, userID).Return(user, nil).Once()
+
+		err := suite.userService.ChangePassword(ctx, userID, currentPassword, newPassword)
+
+		assert.Error(suite.T(), err)
+		assert.Contains(suite.T(), err.Error(), "invalid password")
+	})
+
+	suite.Run("Error - Weak new password", func() {
+		currentPassword := "oldpassword123"
+		newPassword := "weak"
+
+		err := suite.userService.ChangePassword(ctx, userID, currentPassword, newPassword)
+
+		assert.Error(suite.T(), err)
+		assert.Contains(suite.T(), err.Error(), "password")
+	})
+}
+
+// TestListUsers tests user listing with pagination
+func (suite *UserServiceTestSuite) TestListUsers() {
+	ctx := context.Background()
+
+	suite.Run("Success - List users with pagination", func() {
+		expectedUsers := []*models.User{
+			{ID: 1, Email: "user1@example.com"},
+			{ID: 2, Email: "user2@example.com"},
+		}
+		expectedTotal := int64(10)
+
+		suite.mockUserRepo.On("List", ctx, 0, 20, "").Return(expectedUsers, expectedTotal, nil).Once()
+
+		users, total, err := suite.userService.ListUsers(ctx, 1, 20, "")
+
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), expectedUsers, users)
+		assert.Equal(suite.T(), expectedTotal, total)
+	})
+
+	suite.Run("Success - List users with search", func() {
+		searchTerm := "john"
+		expectedUsers := []*models.User{
+			{ID: 1, Email: "john@example.com", FirstName: "John"},
+		}
+		expectedTotal := int64(1)
+
+		suite.mockUserRepo.On("List", ctx, 0, 20, searchTerm).Return(expectedUsers, expectedTotal, nil).Once()
+
+		users, total, err := suite.userService.ListUsers(ctx, 1, 20, searchTerm)
+
+		require.NoError(suite.T(), err)
+		assert.Equal(suite.T(), expectedUsers, users)
+		assert.Equal(suite.T(), expectedTotal, total)
+	})
+
+	suite.Run("Error - Invalid pagination", func() {
+		users, total, err := suite.userService.ListUsers(ctx, 0, -1, "")
+
+		assert.Error(suite.T(), err)
+		assert.Nil(suite.T(), users)
+		assert.Equal(suite.T(), int64(0), total)
+		assert.Contains(suite.T(), err.Error(), "invalid pagination")
+	})
+}
+
+// BenchmarkUserService benchmarks user service operations
+func BenchmarkUserService(b *testing.B) {
+	mockUserRepo := new(MockUserRepository)
+	mockEmailSvc := new(MockEmailService)
+
+{{- if eq .LoggerType "slog" }}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelError,
+	}))
+{{- else if eq .LoggerType "zap" }}
+	logger, _ := zap.NewProduction()
+{{- else if eq .LoggerType "logrus" }}
+	logger := logrus.New()
+	logger.SetLevel(logrus.ErrorLevel)
+{{- else if eq .LoggerType "zerolog" }}
+	logger := zerolog.New(os.Stdout).Level(zerolog.ErrorLevel)
+{{- end }}
+
+	userService := NewUserService(mockUserRepo, mockEmailSvc, logger)
+	ctx := context.Background()
+
+	user := &models.User{
+		ID:        1,
+		Email:     "test@example.com",
+		FirstName: "Test",
+		LastName:  "User",
+	}
+
+	// Setup mocks for benchmark
+	mockUserRepo.On("GetByID", ctx, uint(1)).Return(user, nil)
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_, _ = userService.GetByID(ctx, 1)
+		}
+	})
+}
+
+// Run the test suite
+func TestUserServiceSuite(t *testing.T) {
+	suite.Run(t, new(UserServiceTestSuite))
+}

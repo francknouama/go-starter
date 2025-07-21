@@ -1,0 +1,642 @@
+package middleware
+
+import (
+	"context"
+	"net/http"
+	"strings"
+
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+	{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	{{- end}}
+)
+
+// AuthMiddleware provides authentication middleware for different frameworks
+type AuthMiddleware struct {
+	authService services.AuthService
+	{{- if eq .LoggerType "zap"}}
+	logger      *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger      *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger      zerolog.Logger
+	{{- else}}
+	logger      *slog.Logger
+	{{- end}}
+}
+
+// NewAuthMiddleware creates a new authentication middleware
+func NewAuthMiddleware(
+	authService services.AuthService,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *AuthMiddleware {
+	return &AuthMiddleware{
+		authService: authService,
+		logger:      logger,
+	}
+}
+
+{{- if eq .Framework "gin"}}
+
+// RequireAuth middleware for Gin - requires authentication
+func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		user, err := m.authenticateRequest(c.Request)
+		if err != nil {
+			m.logger.{{if eq .LoggerType "zap"}}Debug("Authentication failed", zap.Error(err), zap.String("path", c.Request.URL.Path)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("path", c.Request.URL.Path).Debug("Authentication failed"){{else if eq .LoggerType "zerolog"}}Debug().Err(err).Str("path", c.Request.URL.Path).Msg("Authentication failed"){{else}}Debug("Authentication failed", "error", err, "path", c.Request.URL.Path){{end}}
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":   "Authentication required",
+				"code":    "AUTH_REQUIRED",
+				"message": "Please log in to access this resource",
+			})
+			c.Abort()
+			return
+		}
+
+		// Add user to context
+		c.Set("user", user)
+		c.Set("user_id", user.ID)
+		c.Next()
+	})
+}
+
+// OptionalAuth middleware for Gin - authentication is optional
+func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		user, err := m.authenticateRequest(c.Request)
+		if err == nil && user != nil {
+			c.Set("user", user)
+			c.Set("user_id", user.ID)
+		}
+		c.Next()
+	})
+}
+
+// RequireRole middleware for Gin - requires specific role
+func (m *AuthMiddleware) RequireRole(roles ...string) gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		userInterface, exists := c.Get("user")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"error":   "Authentication required",
+				"code":    "AUTH_REQUIRED",
+				"message": "Please log in to access this resource",
+			})
+			c.Abort()
+			return
+		}
+
+		user, ok := userInterface.(*models.User)
+		if !ok {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":   "Internal server error",
+				"code":    "INTERNAL_ERROR",
+				"message": "User context is invalid",
+			})
+			c.Abort()
+			return
+		}
+
+		// Check if user has any of the required roles
+		hasRole := false
+		for _, role := range roles {
+			if user.Role == role {
+				hasRole = true
+				break
+			}
+		}
+
+		if !hasRole {
+			m.logger.{{if eq .LoggerType "zap"}}Warn("Access denied - insufficient role", zap.String("user_id", user.ID), zap.String("user_role", user.Role), zap.Strings("required_roles", roles)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": user.ID, "user_role": user.Role, "required_roles": roles}).Warn("Access denied - insufficient role"){{else if eq .LoggerType "zerolog"}}Warn().Str("user_id", user.ID).Str("user_role", user.Role).Strs("required_roles", roles).Msg("Access denied - insufficient role"){{else}}Warn("Access denied - insufficient role", "user_id", user.ID, "user_role", user.Role, "required_roles", roles){{end}}
+			c.JSON(http.StatusForbidden, gin.H{
+				"error":   "Insufficient permissions",
+				"code":    "INSUFFICIENT_PERMISSIONS",
+				"message": "You don't have permission to access this resource",
+			})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+
+// RequireAuth middleware for Echo - requires authentication
+func (m *AuthMiddleware) RequireAuth() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user, err := m.authenticateRequest(c.Request())
+			if err != nil {
+				m.logger.{{if eq .LoggerType "zap"}}Debug("Authentication failed", zap.Error(err), zap.String("path", c.Request().URL.Path)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("path", c.Request().URL.Path).Debug("Authentication failed"){{else if eq .LoggerType "zerolog"}}Debug().Err(err).Str("path", c.Request().URL.Path).Msg("Authentication failed"){{else}}Debug("Authentication failed", "error", err, "path", c.Request().URL.Path){{end}}
+				return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+					"error":   "Authentication required",
+					"code":    "AUTH_REQUIRED",
+					"message": "Please log in to access this resource",
+				})
+			}
+
+			// Add user to context
+			c.Set("user", user)
+			c.Set("user_id", user.ID)
+			return next(c)
+		}
+	})
+}
+
+// OptionalAuth middleware for Echo - authentication is optional
+func (m *AuthMiddleware) OptionalAuth() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			user, err := m.authenticateRequest(c.Request())
+			if err == nil && user != nil {
+				c.Set("user", user)
+				c.Set("user_id", user.ID)
+			}
+			return next(c)
+		}
+	})
+}
+
+// RequireRole middleware for Echo - requires specific role
+func (m *AuthMiddleware) RequireRole(roles ...string) echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			userInterface := c.Get("user")
+			if userInterface == nil {
+				return c.JSON(http.StatusUnauthorized, map[string]interface{}{
+					"error":   "Authentication required",
+					"code":    "AUTH_REQUIRED",
+					"message": "Please log in to access this resource",
+				})
+			}
+
+			user, ok := userInterface.(*models.User)
+			if !ok {
+				return c.JSON(http.StatusInternalServerError, map[string]interface{}{
+					"error":   "Internal server error",
+					"code":    "INTERNAL_ERROR",
+					"message": "User context is invalid",
+				})
+			}
+
+			// Check if user has any of the required roles
+			hasRole := false
+			for _, role := range roles {
+				if user.Role == role {
+					hasRole = true
+					break
+				}
+			}
+
+			if !hasRole {
+				m.logger.{{if eq .LoggerType "zap"}}Warn("Access denied - insufficient role", zap.String("user_id", user.ID), zap.String("user_role", user.Role), zap.Strings("required_roles", roles)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": user.ID, "user_role": user.Role, "required_roles": roles}).Warn("Access denied - insufficient role"){{else if eq .LoggerType "zerolog"}}Warn().Str("user_id", user.ID).Str("user_role", user.Role).Strs("required_roles", roles).Msg("Access denied - insufficient role"){{else}}Warn("Access denied - insufficient role", "user_id", user.ID, "user_role", user.Role, "required_roles", roles){{end}}
+				return c.JSON(http.StatusForbidden, map[string]interface{}{
+					"error":   "Insufficient permissions",
+					"code":    "INSUFFICIENT_PERMISSIONS",
+					"message": "You don't have permission to access this resource",
+				})
+			}
+
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+
+// RequireAuth middleware for Fiber - requires authentication
+func (m *AuthMiddleware) RequireAuth() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		user, err := m.authenticateRequest(c.Context(), c)
+		if err != nil {
+			m.logger.{{if eq .LoggerType "zap"}}Debug("Authentication failed", zap.Error(err), zap.String("path", c.Path())){{else if eq .LoggerType "logrus"}}WithError(err).WithField("path", c.Path()).Debug("Authentication failed"){{else if eq .LoggerType "zerolog"}}Debug().Err(err).Str("path", c.Path()).Msg("Authentication failed"){{else}}Debug("Authentication failed", "error", err, "path", c.Path()){{end}}
+			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+				"error":   "Authentication required",
+				"code":    "AUTH_REQUIRED",
+				"message": "Please log in to access this resource",
+			})
+		}
+
+		// Add user to context
+		c.Locals("user", user)
+		c.Locals("user_id", user.ID)
+		return c.Next()
+	}
+}
+
+// OptionalAuth middleware for Fiber - authentication is optional
+func (m *AuthMiddleware) OptionalAuth() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		user, err := m.authenticateRequest(c.Context(), c)
+		if err == nil && user != nil {
+			c.Locals("user", user)
+			c.Locals("user_id", user.ID)
+		}
+		return c.Next()
+	}
+}
+
+// RequireRole middleware for Fiber - requires specific role
+func (m *AuthMiddleware) RequireRole(roles ...string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userInterface := c.Locals("user")
+		if userInterface == nil {
+			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+				"error":   "Authentication required",
+				"code":    "AUTH_REQUIRED",
+				"message": "Please log in to access this resource",
+			})
+		}
+
+		user, ok := userInterface.(*models.User)
+		if !ok {
+			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
+				"error":   "Internal server error",
+				"code":    "INTERNAL_ERROR",
+				"message": "User context is invalid",
+			})
+		}
+
+		// Check if user has any of the required roles
+		hasRole := false
+		for _, role := range roles {
+			if user.Role == role {
+				hasRole = true
+				break
+			}
+		}
+
+		if !hasRole {
+			m.logger.{{if eq .LoggerType "zap"}}Warn("Access denied - insufficient role", zap.String("user_id", user.ID), zap.String("user_role", user.Role), zap.Strings("required_roles", roles)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": user.ID, "user_role": user.Role, "required_roles": roles}).Warn("Access denied - insufficient role"){{else if eq .LoggerType "zerolog"}}Warn().Str("user_id", user.ID).Str("user_role", user.Role).Strs("required_roles", roles).Msg("Access denied - insufficient role"){{else}}Warn("Access denied - insufficient role", "user_id", user.ID, "user_role", user.Role, "required_roles", roles){{end}}
+			return c.Status(http.StatusForbidden).JSON(fiber.Map{
+				"error":   "Insufficient permissions",
+				"code":    "INSUFFICIENT_PERMISSIONS",
+				"message": "You don't have permission to access this resource",
+			})
+		}
+
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+
+// RequireAuth middleware for Chi - requires authentication
+func (m *AuthMiddleware) RequireAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, err := m.authenticateRequest(r)
+			if err != nil {
+				m.logger.{{if eq .LoggerType "zap"}}Debug("Authentication failed", zap.Error(err), zap.String("path", r.URL.Path)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("path", r.URL.Path).Debug("Authentication failed"){{else if eq .LoggerType "zerolog"}}Debug().Err(err).Str("path", r.URL.Path).Msg("Authentication failed"){{else}}Debug("Authentication failed", "error", err, "path", r.URL.Path){{end}}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Authentication required","code":"AUTH_REQUIRED","message":"Please log in to access this resource"}`))
+				return
+			}
+
+			// Add user to context
+			ctx := context.WithValue(r.Context(), "user", user)
+			ctx = context.WithValue(ctx, "user_id", user.ID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// OptionalAuth middleware for Chi - authentication is optional
+func (m *AuthMiddleware) OptionalAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user, err := m.authenticateRequest(r)
+			if err == nil && user != nil {
+				ctx := context.WithValue(r.Context(), "user", user)
+				ctx = context.WithValue(ctx, "user_id", user.ID)
+				r = r.WithContext(ctx)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireRole middleware for Chi - requires specific role
+func (m *AuthMiddleware) RequireRole(roles ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			userInterface := r.Context().Value("user")
+			if userInterface == nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Authentication required","code":"AUTH_REQUIRED","message":"Please log in to access this resource"}`))
+				return
+			}
+
+			user, ok := userInterface.(*models.User)
+			if !ok {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte(`{"error":"Internal server error","code":"INTERNAL_ERROR","message":"User context is invalid"}`))
+				return
+			}
+
+			// Check if user has any of the required roles
+			hasRole := false
+			for _, role := range roles {
+				if user.Role == role {
+					hasRole = true
+					break
+				}
+			}
+
+			if !hasRole {
+				m.logger.{{if eq .LoggerType "zap"}}Warn("Access denied - insufficient role", zap.String("user_id", user.ID), zap.String("user_role", user.Role), zap.Strings("required_roles", roles)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"user_id": user.ID, "user_role": user.Role, "required_roles": roles}).Warn("Access denied - insufficient role"){{else if eq .LoggerType "zerolog"}}Warn().Str("user_id", user.ID).Str("user_role", user.Role).Strs("required_roles", roles).Msg("Access denied - insufficient role"){{else}}Warn("Access denied - insufficient role", "user_id", user.ID, "user_role", user.Role, "required_roles", roles){{end}}
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				w.Write([]byte(`{"error":"Insufficient permissions","code":"INSUFFICIENT_PERMISSIONS","message":"You don't have permission to access this resource"}`))
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+{{- end}}
+
+// Common authentication logic
+{{- if eq .Framework "fiber"}}
+func (m *AuthMiddleware) authenticateRequest(ctx context.Context, c *fiber.Ctx) (*models.User, error) {
+	// Extract authentication token from header or cookie
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	token := m.extractTokenFromFiberRequest(c)
+	if token == "" {
+		return nil, errors.New("no authentication token provided")
+	}
+
+	// Validate JWT token
+	user, err := m.authService.ValidateToken(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	{{- else}}
+	sessionID := m.extractSessionFromFiberRequest(c)
+	if sessionID == "" {
+		return nil, errors.New("no session provided")
+	}
+
+	// Validate session
+	user, err := m.authService.ValidateSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	{{- end}}
+
+	// Check if user is active
+	if !user.IsActive {
+		return nil, errors.New("user account is deactivated")
+	}
+
+	return user, nil
+}
+
+{{- if eq .Features.Authentication.Type "jwt"}}
+func (m *AuthMiddleware) extractTokenFromFiberRequest(c *fiber.Ctx) string {
+	// Try Authorization header first
+	authHeader := c.Get("Authorization")
+	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimPrefix(authHeader, "Bearer ")
+	}
+
+	// Try cookie as fallback
+	return c.Cookies("access_token")
+}
+{{- else}}
+func (m *AuthMiddleware) extractSessionFromFiberRequest(c *fiber.Ctx) string {
+	// Try cookie
+	sessionID := c.Cookies("session_id")
+	if sessionID != "" {
+		return sessionID
+	}
+
+	// Try header as fallback
+	return c.Get("X-Session-ID")
+}
+{{- end}}
+
+{{- else}}
+func (m *AuthMiddleware) authenticateRequest(r *http.Request) (*models.User, error) {
+	// Extract authentication token from header or cookie
+	{{- if eq .Features.Authentication.Type "jwt"}}
+	token := m.extractTokenFromRequest(r)
+	if token == "" {
+		return nil, errors.New("no authentication token provided")
+	}
+
+	// Validate JWT token
+	user, err := m.authService.ValidateToken(r.Context(), token)
+	if err != nil {
+		return nil, err
+	}
+	{{- else}}
+	sessionID := m.extractSessionFromRequest(r)
+	if sessionID == "" {
+		return nil, errors.New("no session provided")
+	}
+
+	// Validate session
+	user, err := m.authService.ValidateSession(r.Context(), sessionID)
+	if err != nil {
+		return nil, err
+	}
+	{{- end}}
+
+	// Check if user is active
+	if !user.IsActive {
+		return nil, errors.New("user account is deactivated")
+	}
+
+	return user, nil
+}
+
+{{- if eq .Features.Authentication.Type "jwt"}}
+func (m *AuthMiddleware) extractTokenFromRequest(r *http.Request) string {
+	// Try Authorization header first
+	authHeader := r.Header.Get("Authorization")
+	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
+		return strings.TrimPrefix(authHeader, "Bearer ")
+	}
+
+	// Try cookie as fallback
+	if cookie, err := r.Cookie("access_token"); err == nil {
+		return cookie.Value
+	}
+
+	return ""
+}
+{{- else}}
+func (m *AuthMiddleware) extractSessionFromRequest(r *http.Request) string {
+	// Try cookie first
+	if cookie, err := r.Cookie("session_id"); err == nil {
+		return cookie.Value
+	}
+
+	// Try header as fallback
+	return r.Header.Get("X-Session-ID")
+}
+{{- end}}
+{{- end}}
+
+// Admin role convenience middleware
+{{- if eq .Framework "gin"}}
+func (m *AuthMiddleware) RequireAdmin() gin.HandlerFunc {
+	return m.RequireRole("admin")
+}
+
+// Moderator or Admin role convenience middleware
+func (m *AuthMiddleware) RequireModerator() gin.HandlerFunc {
+	return m.RequireRole("admin", "moderator")
+}
+{{- else if eq .Framework "echo"}}
+func (m *AuthMiddleware) RequireAdmin() echo.MiddlewareFunc {
+	return m.RequireRole("admin")
+}
+
+// Moderator or Admin role convenience middleware
+func (m *AuthMiddleware) RequireModerator() echo.MiddlewareFunc {
+	return m.RequireRole("admin", "moderator")
+}
+{{- else if eq .Framework "fiber"}}
+func (m *AuthMiddleware) RequireAdmin() fiber.Handler {
+	return m.RequireRole("admin")
+}
+
+// Moderator or Admin role convenience middleware
+func (m *AuthMiddleware) RequireModerator() fiber.Handler {
+	return m.RequireRole("admin", "moderator")
+}
+{{- else if eq .Framework "chi"}}
+func (m *AuthMiddleware) RequireAdmin() func(http.Handler) http.Handler {
+	return m.RequireRole("admin")
+}
+
+// Moderator or Admin role convenience middleware
+func (m *AuthMiddleware) RequireModerator() func(http.Handler) http.Handler {
+	return m.RequireRole("admin", "moderator")
+}
+{{- end}}
+
+// Helper functions to extract user from context in handlers
+
+{{- if eq .Framework "gin"}}
+// GetUserFromContext extracts user from Gin context
+func GetUserFromContext(c *gin.Context) (*models.User, bool) {
+	userInterface, exists := c.Get("user")
+	if !exists {
+		return nil, false
+	}
+	
+	user, ok := userInterface.(*models.User)
+	return user, ok
+}
+
+// GetUserIDFromContext extracts user ID from Gin context
+func GetUserIDFromContext(c *gin.Context) (string, bool) {
+	userIDInterface, exists := c.Get("user_id")
+	if !exists {
+		return "", false
+	}
+	
+	userID, ok := userIDInterface.(string)
+	return userID, ok
+}
+{{- else if eq .Framework "echo"}}
+// GetUserFromContext extracts user from Echo context
+func GetUserFromContext(c echo.Context) (*models.User, bool) {
+	userInterface := c.Get("user")
+	if userInterface == nil {
+		return nil, false
+	}
+	
+	user, ok := userInterface.(*models.User)
+	return user, ok
+}
+
+// GetUserIDFromContext extracts user ID from Echo context
+func GetUserIDFromContext(c echo.Context) (string, bool) {
+	userIDInterface := c.Get("user_id")
+	if userIDInterface == nil {
+		return "", false
+	}
+	
+	userID, ok := userIDInterface.(string)
+	return userID, ok
+}
+{{- else if eq .Framework "fiber"}}
+// GetUserFromContext extracts user from Fiber context
+func GetUserFromContext(c *fiber.Ctx) (*models.User, bool) {
+	userInterface := c.Locals("user")
+	if userInterface == nil {
+		return nil, false
+	}
+	
+	user, ok := userInterface.(*models.User)
+	return user, ok
+}
+
+// GetUserIDFromContext extracts user ID from Fiber context
+func GetUserIDFromContext(c *fiber.Ctx) (string, bool) {
+	userIDInterface := c.Locals("user_id")
+	if userIDInterface == nil {
+		return "", false
+	}
+	
+	userID, ok := userIDInterface.(string)
+	return userID, ok
+}
+{{- else if eq .Framework "chi"}}
+// GetUserFromContext extracts user from Chi context
+func GetUserFromContext(r *http.Request) (*models.User, bool) {
+	userInterface := r.Context().Value("user")
+	if userInterface == nil {
+		return nil, false
+	}
+	
+	user, ok := userInterface.(*models.User)
+	return user, ok
+}
+
+// GetUserIDFromContext extracts user ID from Chi context
+func GetUserIDFromContext(r *http.Request) (string, bool) {
+	userIDInterface := r.Context().Value("user_id")
+	if userIDInterface == nil {
+		return "", false
+	}
+	
+	userID, ok := userIDInterface.(string)
+	return userID, ok
+}
+{{- end}}

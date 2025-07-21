@@ -1,0 +1,686 @@
+package services
+
+import (
+	"bytes"
+	"context"
+	"crypto/tls"
+	"fmt"
+	"html/template"
+	"net/smtp"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- else}}
+	"log/slog"
+	{{- end}}
+)
+
+// EmailService interface defines email operations
+type EmailService interface {
+	SendVerificationEmail(ctx context.Context, to, name, token string) error
+	SendPasswordResetEmail(ctx context.Context, to, name, token string) error
+	SendPasswordChangedEmail(ctx context.Context, to, name string) error
+	SendWelcomeEmail(ctx context.Context, to, name string) error
+	SendEmailChangeConfirmation(ctx context.Context, to, name, token string) error
+	SendEmailChangedNotification(ctx context.Context, to, name, newEmail string) error
+	SendAccountDeactivatedEmail(ctx context.Context, to, name string) error
+	SendAccountRestoredEmail(ctx context.Context, to, name string) error
+	SendNotificationEmail(ctx context.Context, to, subject, message string) error
+	SendTemplateEmail(ctx context.Context, to, subject, templateName string, data interface{}) error
+}
+
+// SMTPEmailService implements EmailService using SMTP
+type SMTPEmailService struct {
+	config    *config.Config
+	templates map[string]*template.Template
+	{{- if eq .LoggerType "zap"}}
+	logger    *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger    *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger    zerolog.Logger
+	{{- else}}
+	logger    *slog.Logger
+	{{- end}}
+}
+
+// NewSMTPEmailService creates a new SMTP email service
+func NewSMTPEmailService(
+	config *config.Config,
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *SMTPEmailService {
+	service := &SMTPEmailService{
+		config:    config,
+		templates: make(map[string]*template.Template),
+		logger:    logger,
+	}
+
+	// Load email templates
+	service.loadTemplates()
+
+	return service
+}
+
+// EmailData represents data passed to email templates
+type EmailData struct {
+	AppName     string
+	AppURL      string
+	RecipientName string
+	SupportEmail string
+	Year        int
+	Data        interface{}
+}
+
+// loadTemplates loads email templates from the templates directory
+func (s *SMTPEmailService) loadTemplates() {
+	templateDir := "templates/emails"
+	
+	templates := map[string]string{
+		"verification":           "verification.html",
+		"password_reset":         "password_reset.html",
+		"password_changed":       "password_changed.html",
+		"welcome":               "welcome.html",
+		"email_change_confirm":   "email_change_confirm.html",
+		"email_changed":         "email_changed.html",
+		"account_deactivated":   "account_deactivated.html",
+		"account_restored":      "account_restored.html",
+		"notification":          "notification.html",
+	}
+
+	for name, filename := range templates {
+		templatePath := filepath.Join(templateDir, filename)
+		
+		// In a real implementation, you would load from filesystem or embed
+		// For now, we'll create inline templates
+		templateContent := s.getInlineTemplate(name)
+		
+		tmpl, err := template.New(name).Parse(templateContent)
+		if err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to parse email template", zap.String("template", name), zap.Error(err)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("template", name).Error("Failed to parse email template"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("template", name).Msg("Failed to parse email template"){{else}}Error("Failed to parse email template", "template", name, "error", err){{end}}
+			continue
+		}
+		
+		s.templates[name] = tmpl
+	}
+
+	s.logger.{{if eq .LoggerType "zap"}}Info("Email templates loaded", zap.Int("count", len(s.templates))){{else if eq .LoggerType "logrus"}}WithField("count", len(s.templates)).Info("Email templates loaded"){{else if eq .LoggerType "zerolog"}}Info().Int("count", len(s.templates)).Msg("Email templates loaded"){{else}}Info("Email templates loaded", "count", len(s.templates)){{end}}
+}
+
+// SendVerificationEmail sends an email verification email
+func (s *SMTPEmailService) SendVerificationEmail(ctx context.Context, to, name, token string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"VerificationURL": fmt.Sprintf("%s/auth/verify-email?token=%s", s.config.App.URL, token),
+			"Token":          token,
+		},
+	}
+
+	subject := fmt.Sprintf("Verify your email address - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "verification", data)
+}
+
+// SendPasswordResetEmail sends a password reset email
+func (s *SMTPEmailService) SendPasswordResetEmail(ctx context.Context, to, name, token string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"ResetURL": fmt.Sprintf("%s/auth/reset-password?token=%s", s.config.App.URL, token),
+			"Token":    token,
+		},
+	}
+
+	subject := fmt.Sprintf("Reset your password - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "password_reset", data)
+}
+
+// SendPasswordChangedEmail sends a password changed notification email
+func (s *SMTPEmailService) SendPasswordChangedEmail(ctx context.Context, to, name string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"ChangeTime": time.Now().Format("January 2, 2006 at 3:04 PM MST"),
+		},
+	}
+
+	subject := fmt.Sprintf("Password changed - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "password_changed", data)
+}
+
+// SendWelcomeEmail sends a welcome email to new users
+func (s *SMTPEmailService) SendWelcomeEmail(ctx context.Context, to, name string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"DashboardURL": fmt.Sprintf("%s/dashboard", s.config.App.URL),
+			"ProfileURL":   fmt.Sprintf("%s/profile", s.config.App.URL),
+		},
+	}
+
+	subject := fmt.Sprintf("Welcome to %s!", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "welcome", data)
+}
+
+// SendEmailChangeConfirmation sends email change confirmation
+func (s *SMTPEmailService) SendEmailChangeConfirmation(ctx context.Context, to, name, token string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"ConfirmURL": fmt.Sprintf("%s/auth/confirm-email-change?token=%s", s.config.App.URL, token),
+			"Token":      token,
+		},
+	}
+
+	subject := fmt.Sprintf("Confirm your new email address - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "email_change_confirm", data)
+}
+
+// SendEmailChangedNotification sends notification of email change to old address
+func (s *SMTPEmailService) SendEmailChangedNotification(ctx context.Context, to, name, newEmail string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"NewEmail":   newEmail,
+			"ChangeTime": time.Now().Format("January 2, 2006 at 3:04 PM MST"),
+		},
+	}
+
+	subject := fmt.Sprintf("Email address changed - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "email_changed", data)
+}
+
+// SendAccountDeactivatedEmail sends account deactivation notification
+func (s *SMTPEmailService) SendAccountDeactivatedEmail(ctx context.Context, to, name string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"DeactivationTime": time.Now().Format("January 2, 2006 at 3:04 PM MST"),
+		},
+	}
+
+	subject := fmt.Sprintf("Account deactivated - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "account_deactivated", data)
+}
+
+// SendAccountRestoredEmail sends account restoration notification
+func (s *SMTPEmailService) SendAccountRestoredEmail(ctx context.Context, to, name string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: name,
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"RestorationTime": time.Now().Format("January 2, 2006 at 3:04 PM MST"),
+		},
+	}
+
+	subject := fmt.Sprintf("Account restored - %s", s.config.App.Name)
+	return s.SendTemplateEmail(ctx, to, subject, "account_restored", data)
+}
+
+// SendNotificationEmail sends a generic notification email
+func (s *SMTPEmailService) SendNotificationEmail(ctx context.Context, to, subject, message string) error {
+	data := EmailData{
+		AppName:       s.config.App.Name,
+		AppURL:        s.config.App.URL,
+		RecipientName: "", // Will be extracted from email if needed
+		SupportEmail:  s.config.SMTP.SupportEmail,
+		Year:         time.Now().Year(),
+		Data: map[string]interface{}{
+			"Message": message,
+		},
+	}
+
+	return s.SendTemplateEmail(ctx, to, subject, "notification", data)
+}
+
+// SendTemplateEmail sends an email using a template
+func (s *SMTPEmailService) SendTemplateEmail(ctx context.Context, to, subject, templateName string, data interface{}) error {
+	// Check if SMTP is enabled
+	if !s.config.SMTP.Enabled {
+		s.logger.{{if eq .LoggerType "zap"}}Debug("SMTP disabled, skipping email", zap.String("to", to), zap.String("subject", subject)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"to": to, "subject": subject}).Debug("SMTP disabled, skipping email"){{else if eq .LoggerType "zerolog"}}Debug().Str("to", to).Str("subject", subject).Msg("SMTP disabled, skipping email"){{else}}Debug("SMTP disabled, skipping email", "to", to, "subject", subject){{end}}
+		return nil
+	}
+
+	// Get template
+	tmpl, exists := s.templates[templateName]
+	if !exists {
+		return fmt.Errorf("template not found: %s", templateName)
+	}
+
+	// Render template
+	var bodyBuffer bytes.Buffer
+	if err := tmpl.Execute(&bodyBuffer, data); err != nil {
+		return fmt.Errorf("failed to render template: %w", err)
+	}
+
+	// Send email
+	return s.sendSMTPEmail(ctx, to, subject, bodyBuffer.String())
+}
+
+// sendSMTPEmail sends an email via SMTP
+func (s *SMTPEmailService) sendSMTPEmail(ctx context.Context, to, subject, body string) error {
+	// Validate configuration
+	if s.config.SMTP.Host == "" || s.config.SMTP.Port == 0 {
+		return fmt.Errorf("SMTP configuration incomplete")
+	}
+
+	from := s.config.SMTP.FromEmail
+	if from == "" {
+		from = s.config.SMTP.Username
+	}
+
+	// Create message
+	message := s.buildEmailMessage(from, to, subject, body)
+
+	// Set up authentication
+	var auth smtp.Auth
+	if s.config.SMTP.Username != "" && s.config.SMTP.Password != "" {
+		auth = smtp.PlainAuth("", s.config.SMTP.Username, s.config.SMTP.Password, s.config.SMTP.Host)
+	}
+
+	// Create address
+	addr := fmt.Sprintf("%s:%d", s.config.SMTP.Host, s.config.SMTP.Port)
+
+	// Send email with timeout
+	done := make(chan error, 1)
+	go func() {
+		if s.config.SMTP.TLS {
+			done <- s.sendWithTLS(addr, auth, from, []string{to}, message)
+		} else {
+			done <- smtp.SendMail(addr, auth, from, []string{to}, message)
+		}
+	}()
+
+	// Wait for completion or timeout
+	select {
+	case err := <-done:
+		if err != nil {
+			s.logger.{{if eq .LoggerType "zap"}}Error("Failed to send email", zap.Error(err), zap.String("to", to), zap.String("subject", subject)){{else if eq .LoggerType "logrus"}}WithError(err).WithFields(logrus.Fields{"to": to, "subject": subject}).Error("Failed to send email"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("to", to).Str("subject", subject).Msg("Failed to send email"){{else}}Error("Failed to send email", "error", err, "to", to, "subject", subject){{end}}
+			return fmt.Errorf("failed to send email: %w", err)
+		}
+		
+		s.logger.{{if eq .LoggerType "zap"}}Info("Email sent successfully", zap.String("to", to), zap.String("subject", subject)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"to": to, "subject": subject}).Info("Email sent successfully"){{else if eq .LoggerType "zerolog"}}Info().Str("to", to).Str("subject", subject).Msg("Email sent successfully"){{else}}Info("Email sent successfully", "to", to, "subject", subject){{end}}
+		return nil
+
+	case <-time.After(30 * time.Second):
+		s.logger.{{if eq .LoggerType "zap"}}Error("Email send timeout", zap.String("to", to), zap.String("subject", subject)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"to": to, "subject": subject}).Error("Email send timeout"){{else if eq .LoggerType "zerolog"}}Error().Str("to", to).Str("subject", subject).Msg("Email send timeout"){{else}}Error("Email send timeout", "to", to, "subject", subject){{end}}
+		return fmt.Errorf("email send timeout")
+
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// sendWithTLS sends email using TLS
+func (s *SMTPEmailService) sendWithTLS(addr string, auth smtp.Auth, from string, to []string, msg []byte) error {
+	// Create TLS connection
+	tlsConfig := &tls.Config{
+		ServerName:         s.config.SMTP.Host,
+		InsecureSkipVerify: s.config.SMTP.SkipVerify,
+	}
+
+	conn, err := tls.Dial("tcp", addr, tlsConfig)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	// Create SMTP client
+	client, err := smtp.NewClient(conn, s.config.SMTP.Host)
+	if err != nil {
+		return err
+	}
+	defer client.Quit()
+
+	// Authenticate if credentials provided
+	if auth != nil {
+		if err := client.Auth(auth); err != nil {
+			return err
+		}
+	}
+
+	// Set sender
+	if err := client.Mail(from); err != nil {
+		return err
+	}
+
+	// Set recipients
+	for _, recipient := range to {
+		if err := client.Rcpt(recipient); err != nil {
+			return err
+		}
+	}
+
+	// Send message
+	writer, err := client.Data()
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	_, err = writer.Write(msg)
+	return err
+}
+
+// buildEmailMessage builds the email message with headers
+func (s *SMTPEmailService) buildEmailMessage(from, to, subject, body string) []byte {
+	var message bytes.Buffer
+	
+	// Headers
+	message.WriteString(fmt.Sprintf("From: %s <%s>\r\n", s.config.App.Name, from))
+	message.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	message.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	message.WriteString("MIME-Version: 1.0\r\n")
+	message.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	message.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
+	message.WriteString("\r\n")
+	
+	// Body
+	message.WriteString(body)
+	
+	return message.Bytes()
+}
+
+// getInlineTemplate returns inline HTML templates for emails
+func (s *SMTPEmailService) getInlineTemplate(name string) string {
+	baseTemplate := `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.AppName}}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background: #f8f9fa; padding: 20px; text-align: center; border-radius: 8px; margin-bottom: 20px; }
+        .content { background: #ffffff; padding: 30px; border: 1px solid #dee2e6; border-radius: 8px; margin-bottom: 20px; }
+        .button { display: inline-block; padding: 12px 24px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; margin: 20px 0; }
+        .footer { text-align: center; font-size: 12px; color: #6c757d; margin-top: 20px; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; border-radius: 4px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>{{.AppName}}</h1>
+    </div>
+    <div class="content">
+        %s
+    </div>
+    <div class="footer">
+        <p>&copy; {{.Year}} {{.AppName}}. All rights reserved.</p>
+        <p>If you have questions, contact us at <a href="mailto:{{.SupportEmail}}">{{.SupportEmail}}</a></p>
+    </div>
+</body>
+</html>`
+
+	templates := map[string]string{
+		"verification": `
+			<h2>Verify Your Email Address</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>Thank you for signing up! Please verify your email address by clicking the button below:</p>
+			<p><a href="{{.Data.VerificationURL}}" class="button">Verify Email Address</a></p>
+			<p>If the button doesn't work, copy and paste this link into your browser:</p>
+			<p><a href="{{.Data.VerificationURL}}">{{.Data.VerificationURL}}</a></p>
+			<p>This verification link will expire in 24 hours.</p>
+			<p>If you didn't create an account, you can safely ignore this email.</p>
+		`,
+		"password_reset": `
+			<h2>Reset Your Password</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>We received a request to reset your password. Click the button below to create a new password:</p>
+			<p><a href="{{.Data.ResetURL}}" class="button">Reset Password</a></p>
+			<p>If the button doesn't work, copy and paste this link into your browser:</p>
+			<p><a href="{{.Data.ResetURL}}">{{.Data.ResetURL}}</a></p>
+			<p>This reset link will expire in 1 hour for security reasons.</p>
+			<div class="warning">
+				<strong>Important:</strong> If you didn't request this password reset, please ignore this email. Your password will remain unchanged.
+			</div>
+		`,
+		"password_changed": `
+			<h2>Password Changed Successfully</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>Your password was successfully changed on {{.Data.ChangeTime}}.</p>
+			<p>If you made this change, no further action is required.</p>
+			<div class="warning">
+				<strong>Security Alert:</strong> If you did not change your password, please contact our support team immediately and consider that your account may be compromised.
+			</div>
+			<p><a href="{{.AppURL}}/auth/login" class="button">Sign In to Your Account</a></p>
+		`,
+		"welcome": `
+			<h2>Welcome to {{.AppName}}!</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>Welcome to {{.AppName}}! We're excited to have you on board.</p>
+			<p>Here are some things you can do to get started:</p>
+			<ul>
+				<li><a href="{{.Data.ProfileURL}}">Complete your profile</a></li>
+				<li><a href="{{.Data.DashboardURL}}">Explore your dashboard</a></li>
+				<li>Invite friends and colleagues</li>
+			</ul>
+			<p><a href="{{.Data.DashboardURL}}" class="button">Go to Dashboard</a></p>
+			<p>If you have any questions, don't hesitate to reach out to our support team.</p>
+		`,
+		"email_change_confirm": `
+			<h2>Confirm Your New Email Address</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>You requested to change your email address. Please confirm your new email address by clicking the button below:</p>
+			<p><a href="{{.Data.ConfirmURL}}" class="button">Confirm Email Change</a></p>
+			<p>If the button doesn't work, copy and paste this link into your browser:</p>
+			<p><a href="{{.Data.ConfirmURL}}">{{.Data.ConfirmURL}}</a></p>
+			<p>This confirmation link will expire in 24 hours.</p>
+			<div class="warning">
+				<strong>Important:</strong> If you didn't request this email change, please ignore this email and contact our support team.
+			</div>
+		`,
+		"email_changed": `
+			<h2>Email Address Changed</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>Your email address was successfully changed on {{.Data.ChangeTime}}.</p>
+			<p><strong>New email address:</strong> {{.Data.NewEmail}}</p>
+			<p>This notification was sent to your previous email address for security purposes.</p>
+			<div class="warning">
+				<strong>Security Alert:</strong> If you did not make this change, please contact our support team immediately.
+			</div>
+		`,
+		"account_deactivated": `
+			<h2>Account Deactivated</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>Your account was deactivated on {{.Data.DeactivationTime}}.</p>
+			<p>If you believe this was done in error, please contact our support team for assistance.</p>
+			<p>Thank you for being part of our community.</p>
+		`,
+		"account_restored": `
+			<h2>Account Restored</h2>
+			<p>Hi {{.RecipientName}},</p>
+			<p>Good news! Your account was restored on {{.Data.RestorationTime}}.</p>
+			<p>You can now sign in and access all your previous data and settings.</p>
+			<p><a href="{{.AppURL}}/auth/login" class="button">Sign In to Your Account</a></p>
+			<p>Welcome back to {{.AppName}}!</p>
+		`,
+		"notification": `
+			<h2>Notification</h2>
+			<p>Hi there,</p>
+			<div>{{.Data.Message}}</div>
+			<p>Thank you for using {{.AppName}}!</p>
+		`,
+	}
+
+	if template, exists := templates[name]; exists {
+		return fmt.Sprintf(baseTemplate, template)
+	}
+
+	return fmt.Sprintf(baseTemplate, `
+		<h2>{{.AppName}} Notification</h2>
+		<p>Thank you for using {{.AppName}}!</p>
+	`)
+}
+
+// MockEmailService implements EmailService for testing
+type MockEmailService struct {
+	SentEmails []MockEmail
+	{{- if eq .LoggerType "zap"}}
+	logger     *zap.Logger
+	{{- else if eq .LoggerType "logrus"}}
+	logger     *logrus.Logger
+	{{- else if eq .LoggerType "zerolog"}}
+	logger     zerolog.Logger
+	{{- else}}
+	logger     *slog.Logger
+	{{- end}}
+}
+
+// MockEmail represents a mock email for testing
+type MockEmail struct {
+	To           string
+	Subject      string
+	TemplateName string
+	Data         interface{}
+	SentAt       time.Time
+}
+
+// NewMockEmailService creates a new mock email service for testing
+func NewMockEmailService(
+	{{- if eq .LoggerType "zap"}}
+	logger *zap.Logger,
+	{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger,
+	{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger,
+	{{- else}}
+	logger *slog.Logger,
+	{{- end}}
+) *MockEmailService {
+	return &MockEmailService{
+		SentEmails: make([]MockEmail, 0),
+		logger:     logger,
+	}
+}
+
+// Implement all EmailService methods for MockEmailService
+func (m *MockEmailService) SendVerificationEmail(ctx context.Context, to, name, token string) error {
+	return m.recordEmail(to, "Email Verification", "verification", map[string]interface{}{
+		"name": name, "token": token,
+	})
+}
+
+func (m *MockEmailService) SendPasswordResetEmail(ctx context.Context, to, name, token string) error {
+	return m.recordEmail(to, "Password Reset", "password_reset", map[string]interface{}{
+		"name": name, "token": token,
+	})
+}
+
+func (m *MockEmailService) SendPasswordChangedEmail(ctx context.Context, to, name string) error {
+	return m.recordEmail(to, "Password Changed", "password_changed", map[string]interface{}{
+		"name": name,
+	})
+}
+
+func (m *MockEmailService) SendWelcomeEmail(ctx context.Context, to, name string) error {
+	return m.recordEmail(to, "Welcome", "welcome", map[string]interface{}{
+		"name": name,
+	})
+}
+
+func (m *MockEmailService) SendEmailChangeConfirmation(ctx context.Context, to, name, token string) error {
+	return m.recordEmail(to, "Email Change Confirmation", "email_change_confirm", map[string]interface{}{
+		"name": name, "token": token,
+	})
+}
+
+func (m *MockEmailService) SendEmailChangedNotification(ctx context.Context, to, name, newEmail string) error {
+	return m.recordEmail(to, "Email Changed", "email_changed", map[string]interface{}{
+		"name": name, "newEmail": newEmail,
+	})
+}
+
+func (m *MockEmailService) SendAccountDeactivatedEmail(ctx context.Context, to, name string) error {
+	return m.recordEmail(to, "Account Deactivated", "account_deactivated", map[string]interface{}{
+		"name": name,
+	})
+}
+
+func (m *MockEmailService) SendAccountRestoredEmail(ctx context.Context, to, name string) error {
+	return m.recordEmail(to, "Account Restored", "account_restored", map[string]interface{}{
+		"name": name,
+	})
+}
+
+func (m *MockEmailService) SendNotificationEmail(ctx context.Context, to, subject, message string) error {
+	return m.recordEmail(to, subject, "notification", map[string]interface{}{
+		"message": message,
+	})
+}
+
+func (m *MockEmailService) SendTemplateEmail(ctx context.Context, to, subject, templateName string, data interface{}) error {
+	return m.recordEmail(to, subject, templateName, data)
+}
+
+func (m *MockEmailService) recordEmail(to, subject, templateName string, data interface{}) error {
+	email := MockEmail{
+		To:           to,
+		Subject:      subject,
+		TemplateName: templateName,
+		Data:         data,
+		SentAt:       time.Now(),
+	}
+	
+	m.SentEmails = append(m.SentEmails, email)
+	
+	m.logger.{{if eq .LoggerType "zap"}}Info("Mock email sent", zap.String("to", to), zap.String("subject", subject), zap.String("template", templateName)){{else if eq .LoggerType "logrus"}}WithFields(logrus.Fields{"to": to, "subject": subject, "template": templateName}).Info("Mock email sent"){{else if eq .LoggerType "zerolog"}}Info().Str("to", to).Str("subject", subject).Str("template", templateName).Msg("Mock email sent"){{else}}Info("Mock email sent", "to", to, "subject", subject, "template", templateName){{end}}
+	
+	return nil
+}
+
+// GetSentEmails returns all sent emails for testing
+func (m *MockEmailService) GetSentEmails() []MockEmail {
+	return m.SentEmails
+}
+
+// ClearSentEmails clears the sent emails list
+func (m *MockEmailService) ClearSentEmails() {
+	m.SentEmails = make([]MockEmail, 0)
+}

@@ -1,0 +1,348 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+
+env:
+  GO_VERSION: '{{.GoVersion}}'
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    environment:
+      name: staging
+      url: https://{{.ProjectName}}-staging.example.com
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch,suffix=-staging
+          type=sha,prefix=staging-
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ github.sha }}
+          BUILD_TIME=${{ github.event.head_commit.timestamp }}
+
+{{- if ne .DatabaseDriver "" }}
+    - name: Run database migrations (staging)
+      run: |
+        # This would connect to your staging database and run migrations
+        # Implement based on your deployment strategy
+        echo "Running staging database migrations..."
+        # kubectl exec -it staging-migration-job -- /app/migrate up
+      env:
+        STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+{{- end }}
+
+    - name: Deploy to staging
+      run: |
+        # Example deployment steps
+        # This would be replaced with your actual deployment process
+        echo "Deploying to staging environment..."
+        
+        # Example: Deploy to Kubernetes
+        # kubectl set image deployment/{{.ProjectName}}-staging app=${{ steps.meta.outputs.tags }}
+        
+        # Example: Deploy to Railway/Render/other platform
+        # curl -X POST "${{ secrets.STAGING_DEPLOY_WEBHOOK_URL }}"
+        
+        # Example: Deploy via SSH
+        # ssh deploy@staging-server "docker pull ${{ steps.meta.outputs.tags }} && docker-compose up -d"
+
+    - name: Run health check
+      run: |
+        # Wait for deployment and run health checks
+        sleep 30
+        curl -f https://{{.ProjectName}}-staging.example.com/api/v1/health || exit 1
+        echo "✅ Staging deployment health check passed"
+
+    - name: Notify deployment
+      uses: 8398a7/action-slack@v3
+      if: always()
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        text: |
+          Staging Deployment: ${{ job.status }}
+          Commit: ${{ github.sha }}
+          Branch: ${{ github.ref_name }}
+          URL: https://{{.ProjectName}}-staging.example.com
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
+    environment:
+      name: production
+      url: https://{{.ProjectName}}.example.com
+    needs: []  # Remove staging dependency for tag-based deployments
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=tag
+          type=semver,pattern={{.Version}}
+          type=semver,pattern={{.Major}}.{{.Minor}}
+          type=raw,value=production
+          type=raw,value=latest
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ github.ref_name }}
+          BUILD_TIME=${{ github.event.head_commit.timestamp }}
+
+    - name: Create backup (production)
+      run: |
+        # Create database backup before deployment
+        echo "Creating production backup..."
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "postgres" }}
+        # pg_dump "$PRODUCTION_DATABASE_URL" > backup-$(date +%Y%m%d-%H%M%S).sql
+{{- else if eq .DatabaseDriver "mysql" }}
+        # mysqldump --single-transaction --routines --triggers "$PRODUCTION_DATABASE" > backup-$(date +%Y%m%d-%H%M%S).sql
+{{- end }}
+{{- end }}
+      env:
+        PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+
+{{- if ne .DatabaseDriver "" }}
+    - name: Run database migrations (production)
+      run: |
+        echo "Running production database migrations..."
+        # Implement your production migration strategy
+        # This might involve running migrations in a separate job/container
+        # kubectl create job migration-$(date +%s) --from=cronjob/migration-job
+      env:
+        PRODUCTION_DATABASE_URL: ${{ secrets.PRODUCTION_DATABASE_URL }}
+{{- end }}
+
+    - name: Deploy to production
+      run: |
+        echo "Deploying to production environment..."
+        
+        # Example deployment strategies:
+        
+        # Blue-Green deployment
+        # kubectl patch service {{.ProjectName}} -p '{"spec":{"selector":{"version":"'${{ github.ref_name }}'"}}}'
+        
+        # Rolling update
+        # kubectl set image deployment/{{.ProjectName}} app=${{ steps.meta.outputs.tags }}
+        # kubectl rollout status deployment/{{.ProjectName}}
+        
+        # Platform-specific deployments
+        # Railway: curl -X POST "${{ secrets.RAILWAY_DEPLOY_WEBHOOK }}"
+        # Render: curl -X POST "${{ secrets.RENDER_DEPLOY_WEBHOOK }}"
+        # AWS ECS: aws ecs update-service --cluster prod --service {{.ProjectName}} --force-new-deployment
+
+    - name: Run health check
+      run: |
+        # Wait for deployment and run comprehensive health checks
+        echo "Waiting for deployment to stabilize..."
+        sleep 60
+        
+        # Health check
+        curl -f https://{{.ProjectName}}.example.com/api/v1/health || exit 1
+        
+        # Readiness check
+        curl -f https://{{.ProjectName}}.example.com/api/v1/ready || exit 1
+        
+        # Performance check (optional)
+        response_time=$(curl -o /dev/null -s -w '%{time_total}' https://{{.ProjectName}}.example.com/)
+        if (( $(echo "$response_time > 2.0" | bc -l) )); then
+          echo "❌ Response time too slow: ${response_time}s"
+          exit 1
+        fi
+        
+        echo "✅ Production deployment health checks passed"
+
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests..."
+        # Add your smoke tests here
+        # curl -f https://{{.ProjectName}}.example.com/api/v1/version
+{{- if ne .AuthType "" }}
+        # Test authentication endpoints
+        # curl -f -X POST https://{{.ProjectName}}.example.com/api/v1/auth/test
+{{- end }}
+
+    - name: Create GitHub release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref_name }}
+        release_name: Release ${{ github.ref_name }}
+        body: |
+          ## Changes
+          
+          ${{ github.event.head_commit.message }}
+          
+          ## Docker Image
+          
+          ```
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          ```
+          
+          ## Deployment
+          
+          - Production: https://{{.ProjectName}}.example.com
+          - Deployed at: ${{ github.event.head_commit.timestamp }}
+        draft: false
+        prerelease: false
+
+    - name: Notify deployment success
+      uses: 8398a7/action-slack@v3
+      if: success()
+      with:
+        status: success
+        channel: '#deployments'
+        text: |
+          🚀 Production Deployment Successful!
+          Version: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          URL: https://{{.ProjectName}}.example.com
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+    - name: Notify deployment failure
+      uses: 8398a7/action-slack@v3
+      if: failure()
+      with:
+        status: failure
+        channel: '#deployments'
+        text: |
+          ❌ Production Deployment Failed!
+          Version: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Please check the logs and take immediate action.
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    if: failure() && github.ref == 'refs/heads/main'
+    needs: [deploy-production]
+
+    steps:
+    - name: Rollback production deployment
+      run: |
+        echo "Rolling back production deployment..."
+        
+        # Example rollback strategies:
+        
+        # Kubernetes rollback
+        # kubectl rollout undo deployment/{{.ProjectName}}
+        
+        # Revert to previous image tag
+        # kubectl set image deployment/{{.ProjectName}} app=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:previous
+        
+        # Platform-specific rollbacks
+        # Each platform has its own rollback mechanism
+
+    - name: Notify rollback
+      uses: 8398a7/action-slack@v3
+      with:
+        status: custom
+        custom_payload: |
+          {
+            channel: '#incidents',
+            username: 'Deployment Bot',
+            icon_emoji: ':warning:',
+            attachments: [{
+              color: 'warning',
+              text: '⚠️ Production rollback initiated due to deployment failure'
+            }]
+          }
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always()
+
+    steps:
+    - name: Clean up old images
+      run: |
+        # Clean up old Docker images to save storage
+        echo "Cleaning up old container images..."
+        
+        # This would depend on your registry setup
+        # ghcr.io cleanup is handled automatically by GitHub
+        
+        # For other registries, you might need custom cleanup logic

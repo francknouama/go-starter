@@ -1,0 +1,298 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/config"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/database"
+	{{- end}}
+	"{{.ModulePath}}/routes"
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	{{- end}}
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatal("Failed to load configuration:", err)
+	}
+
+	// Initialize logger
+	{{- if eq .LoggerType "slog"}}
+	logger := initSlogLogger(cfg)
+	slog.SetDefault(logger)
+	{{- else if eq .LoggerType "zap"}}
+	logger := initZapLogger(cfg)
+	defer logger.Sync()
+	zap.ReplaceGlobals(logger)
+	{{- else if eq .LoggerType "logrus"}}
+	initLogrusLogger(cfg)
+	{{- else if eq .LoggerType "zerolog"}}
+	initZerologLogger(cfg)
+	{{- end}}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Connect to database
+	db, err := database.Connect(cfg)
+	if err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Failed to connect to database", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Fatal("Failed to connect to database", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Fatal("Failed to connect to database: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Fatal().Err(err).Msg("Failed to connect to database")
+		{{- end}}
+		os.Exit(1)
+	}
+	defer database.Close(db)
+
+	// Run migrations
+	if err := database.Migrate(db); err != nil {
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Failed to run migrations", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Fatal("Failed to run migrations", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Fatal("Failed to run migrations: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Fatal().Err(err).Msg("Failed to run migrations")
+		{{- end}}
+		os.Exit(1)
+	}
+	{{- end}}
+
+	// Setup routes
+	{{- if eq .Framework "gin"}}
+	router := routes.Setup(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- else if eq .Framework "echo"}}
+	e := routes.Setup(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- else if eq .Framework "fiber"}}
+	app := routes.Setup(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- else if eq .Framework "chi"}}
+	router := routes.Setup(cfg{{if ne .DatabaseDriver ""}}, db{{end}})
+	{{- end}}
+
+	// Create HTTP server
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%s", cfg.Server.Port),
+		{{- if eq .Framework "gin"}}
+		Handler:      router,
+		{{- else if eq .Framework "echo"}}
+		Handler:      e,
+		{{- else if eq .Framework "fiber"}}
+		// Fiber handles its own server
+		{{- else if eq .Framework "chi"}}
+		Handler:      router,
+		{{- end}}
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		{{- if eq .LoggerType "slog"}}
+		slog.Info("Starting server", "address", srv.Addr, "environment", cfg.App.Environment)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Info("Starting server", zap.String("address", srv.Addr), zap.String("environment", cfg.App.Environment))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.WithFields(logrus.Fields{
+			"address":     srv.Addr,
+			"environment": cfg.App.Environment,
+		}).Info("Starting server")
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Info().
+			Str("address", srv.Addr).
+			Str("environment", cfg.App.Environment).
+			Msg("Starting server")
+		{{- end}}
+
+		{{- if eq .Framework "fiber"}}
+		if err := app.Listen(srv.Addr); err != nil {
+		{{- else}}
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		{{- end}}
+			{{- if eq .LoggerType "slog"}}
+			slog.Error("Server error", "error", err)
+			{{- else if eq .LoggerType "zap"}}
+			zap.L().Fatal("Server error", zap.Error(err))
+			{{- else if eq .LoggerType "logrus"}}
+			logrus.Fatal("Server error: ", err)
+			{{- else if eq .LoggerType "zerolog"}}
+			log.Fatal().Err(err).Msg("Server error")
+			{{- end}}
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Shutting down server...")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Shutting down server...")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Shutting down server...")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Shutting down server...")
+	{{- end}}
+
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	{{- if eq .Framework "fiber"}}
+	if err := app.ShutdownWithContext(ctx); err != nil {
+	{{- else}}
+	if err := srv.Shutdown(ctx); err != nil {
+	{{- end}}
+		{{- if eq .LoggerType "slog"}}
+		slog.Error("Server forced to shutdown", "error", err)
+		{{- else if eq .LoggerType "zap"}}
+		zap.L().Error("Server forced to shutdown", zap.Error(err))
+		{{- else if eq .LoggerType "logrus"}}
+		logrus.Error("Server forced to shutdown: ", err)
+		{{- else if eq .LoggerType "zerolog"}}
+		log.Error().Err(err).Msg("Server forced to shutdown")
+		{{- end}}
+	}
+
+	{{- if eq .LoggerType "slog"}}
+	slog.Info("Server stopped")
+	{{- else if eq .LoggerType "zap"}}
+	zap.L().Info("Server stopped")
+	{{- else if eq .LoggerType "logrus"}}
+	logrus.Info("Server stopped")
+	{{- else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Server stopped")
+	{{- end}}
+}
+
+{{- if eq .LoggerType "slog"}}
+func initSlogLogger(cfg *config.Config) *slog.Logger {
+	var level slog.Level
+	switch cfg.Log.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{
+		Level: level,
+		AddSource: cfg.App.Environment == "development",
+	}
+
+	var handler slog.Handler
+	if cfg.Log.Format == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+
+	return slog.New(handler)
+}
+{{- else if eq .LoggerType "zap"}}
+func initZapLogger(cfg *config.Config) *zap.Logger {
+	var zapCfg zap.Config
+	if cfg.App.Environment == "production" {
+		zapCfg = zap.NewProductionConfig()
+	} else {
+		zapCfg = zap.NewDevelopmentConfig()
+	}
+
+	// Set log level
+	switch cfg.Log.Level {
+	case "debug":
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "warn":
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	logger, err := zapCfg.Build()
+	if err != nil {
+		log.Fatal("Failed to initialize logger:", err)
+	}
+
+	return logger
+}
+{{- else if eq .LoggerType "logrus"}}
+func initLogrusLogger(cfg *config.Config) {
+	// Set log format
+	if cfg.Log.Format == "json" {
+		logrus.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logrus.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+		})
+	}
+
+	// Set log level
+	switch cfg.Log.Level {
+	case "debug":
+		logrus.SetLevel(logrus.DebugLevel)
+	case "warn":
+		logrus.SetLevel(logrus.WarnLevel)
+	case "error":
+		logrus.SetLevel(logrus.ErrorLevel)
+	default:
+		logrus.SetLevel(logrus.InfoLevel)
+	}
+
+	// Set output
+	logrus.SetOutput(os.Stdout)
+}
+{{- else if eq .LoggerType "zerolog"}}
+func initZerologLogger(cfg *config.Config) {
+	// Set global log level
+	switch cfg.Log.Level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+
+	// Configure output
+	if cfg.Log.Format != "json" && cfg.App.Environment == "development" {
+		log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
+	}
+
+	// Add caller information in development
+	if cfg.App.Environment == "development" {
+		log.Logger = log.With().Caller().Logger()
+	}
+}
+{{- end}}

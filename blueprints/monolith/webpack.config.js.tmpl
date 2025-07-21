@@ -1,0 +1,292 @@
+const path = require('path');
+const MiniCssExtractPlugin = require('mini-css-extract-plugin');
+const TerserPlugin = require('terser-webpack-plugin');
+const CssMinimizerPlugin = require('css-minimizer-webpack-plugin');
+const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
+
+const isDevelopment = process.env.NODE_ENV === 'development';
+const isProduction = !isDevelopment;
+const shouldAnalyze = process.env.ANALYZE === 'true';
+
+module.exports = {
+  // Entry points
+  entry: {
+    main: './static/js/main.js',
+    style: './static/css/main.css',
+  },
+
+  // Output configuration
+  output: {
+    path: path.resolve(__dirname, 'public/build'),
+    filename: isProduction ? 'js/[name].[contenthash:8].js' : 'js/[name].js',
+    chunkFilename: isProduction ? 'js/[name].[contenthash:8].chunk.js' : 'js/[name].chunk.js',
+    assetModuleFilename: (pathData) => {
+      const filepath = path.dirname(pathData.filename).split('/').slice(1);
+      if (filepath.includes('images')) {
+        return `images/[name].[contenthash:8][ext]`;
+      }
+      if (filepath.includes('fonts')) {
+        return `fonts/[name].[contenthash:8][ext]`;
+      }
+      return `assets/[name].[contenthash:8][ext]`;
+    },
+    clean: true,
+    publicPath: '/assets/',
+  },
+
+  // Mode
+  mode: isDevelopment ? 'development' : 'production',
+
+  // Source maps
+  devtool: isDevelopment ? 'eval-source-map' : 'source-map',
+
+  // Resolve configuration
+  resolve: {
+    extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
+    alias: {
+      '@': path.resolve(__dirname, 'static'),
+      '@js': path.resolve(__dirname, 'static/js'),
+      '@css': path.resolve(__dirname, 'static/css'),
+      '@images': path.resolve(__dirname, 'static/images'),
+      '@fonts': path.resolve(__dirname, 'static/fonts'),
+    },
+  },
+
+  // Module rules
+  module: {
+    rules: [
+      // JavaScript/TypeScript
+      {
+        test: /\.(js|jsx|ts|tsx)$/,
+        exclude: /node_modules/,
+        use: {
+          loader: 'babel-loader',
+          options: {
+            presets: [
+              [
+                '@babel/preset-env',
+                {
+                  targets: {
+                    browsers: ['> 1%', 'last 2 versions', 'not dead', 'not ie 11'],
+                  },
+                  useBuiltIns: 'usage',
+                  corejs: 3,
+                },
+              ],
+            ],
+            plugins: [
+              '@babel/plugin-proposal-class-properties',
+              '@babel/plugin-proposal-object-rest-spread',
+            ],
+          },
+        },
+      },
+
+      // CSS/SCSS
+      {
+        test: /\.(css|scss|sass)$/,
+        use: [
+          isDevelopment ? 'style-loader' : MiniCssExtractPlugin.loader,
+          {
+            loader: 'css-loader',
+            options: {
+              importLoaders: 2,
+              sourceMap: true,
+            },
+          },
+          {
+            loader: 'postcss-loader',
+            options: {
+              postcssOptions: {
+                plugins: [
+                  ['tailwindcss', {}],
+                  ['autoprefixer', {}],
+                ],
+              },
+            },
+          },
+          {
+            loader: 'sass-loader',
+            options: {
+              sourceMap: true,
+              additionalData: `@import "static/css/variables.scss";`,
+            },
+          },
+        ],
+      },
+
+      // Images
+      {
+        test: /\.(png|jpe?g|gif|svg|webp|avif)$/i,
+        type: 'asset',
+        parser: {
+          dataUrlCondition: {
+            maxSize: 4 * 1024, // 4kb
+          },
+        },
+        generator: {
+          filename: 'images/[name].[contenthash:8][ext]',
+        },
+      },
+
+      // Fonts
+      {
+        test: /\.(woff|woff2|eot|ttf|otf)$/i,
+        type: 'asset/resource',
+        generator: {
+          filename: 'fonts/[name].[contenthash:8][ext]',
+        },
+      },
+
+      // Other assets
+      {
+        test: /\.(ico|pdf|txt)$/i,
+        type: 'asset/resource',
+        generator: {
+          filename: 'assets/[name].[contenthash:8][ext]',
+        },
+      },
+    ],
+  },
+
+  // Plugins
+  plugins: [
+    // Extract CSS into separate files
+    new MiniCssExtractPlugin({
+      filename: isProduction ? 'css/[name].[contenthash:8].css' : 'css/[name].css',
+      chunkFilename: isProduction ? 'css/[name].[contenthash:8].chunk.css' : 'css/[name].chunk.css',
+    }),
+
+    // Bundle analyzer (optional)
+    ...(shouldAnalyze ? [new BundleAnalyzerPlugin()] : []),
+  ],
+
+  // Optimization
+  optimization: {
+    minimize: isProduction,
+    minimizer: [
+      // JavaScript minification
+      new TerserPlugin({
+        terserOptions: {
+          compress: {
+            drop_console: isProduction,
+            drop_debugger: isProduction,
+          },
+          mangle: {
+            safari10: true,
+          },
+          output: {
+            comments: false,
+          },
+        },
+        extractComments: false,
+      }),
+
+      // CSS minification
+      new CssMinimizerPlugin({
+        minimizerOptions: {
+          preset: [
+            'default',
+            {
+              discardComments: { removeAll: true },
+            },
+          ],
+        },
+      }),
+    ],
+
+    // Code splitting
+    splitChunks: {
+      chunks: 'all',
+      cacheGroups: {
+        vendor: {
+          test: /[\\/]node_modules[\\/]/,
+          name: 'vendors',
+          priority: 10,
+          chunks: 'all',
+        },
+        common: {
+          name: 'common',
+          minChunks: 2,
+          priority: 5,
+          chunks: 'all',
+          reuseExistingChunk: true,
+        },
+      },
+    },
+
+    // Runtime chunk
+    runtimeChunk: {
+      name: 'runtime',
+    },
+  },
+
+  // Development server
+  devServer: {
+    static: {
+      directory: path.join(__dirname, 'public'),
+    },
+    host: '0.0.0.0',
+    port: 3000,
+    hot: true,
+    liveReload: true,
+    compress: true,
+    historyApiFallback: true,
+    
+    // Proxy API requests to Go server
+    proxy: {
+      '/api': 'http://localhost:8080',
+      '/auth': 'http://localhost:8080',
+      '/webhooks': 'http://localhost:8080',
+    },
+
+    // Headers
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, PATCH, OPTIONS',
+      'Access-Control-Allow-Headers': 'X-Requested-With, content-type, Authorization',
+    },
+
+    // Client configuration
+    client: {
+      overlay: {
+        errors: true,
+        warnings: false,
+      },
+    },
+  },
+
+  // Performance hints
+  performance: {
+    hints: isProduction ? 'warning' : false,
+    maxEntrypointSize: 512000,
+    maxAssetSize: 512000,
+  },
+
+  // Stats configuration
+  stats: {
+    preset: 'minimal',
+    moduleTrace: false,
+    errorDetails: true,
+  },
+
+  // Watch options
+  watchOptions: {
+    aggregateTimeout: 300,
+    poll: 1000,
+    ignored: /node_modules/,
+  },
+
+  // Cache configuration
+  cache: {
+    type: 'filesystem',
+    buildDependencies: {
+      config: [__filename],
+    },
+  },
+
+  // Experiments
+  experiments: {
+    topLevelAwait: true,
+  },
+};

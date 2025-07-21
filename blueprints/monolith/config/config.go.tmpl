@@ -1,0 +1,404 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/spf13/viper"
+)
+
+// Config holds all configuration for the application
+type Config struct {
+	App      AppConfig      `mapstructure:"app"`
+	Server   ServerConfig   `mapstructure:"server"`
+	Database DatabaseConfig `mapstructure:"database"`
+	Session  SessionConfig  `mapstructure:"session"`
+	Auth     AuthConfig     `mapstructure:"auth"`
+	Log      LogConfig      `mapstructure:"log"`
+	Email    EmailConfig    `mapstructure:"email"`
+	Cache    CacheConfig    `mapstructure:"cache"`
+}
+
+// AppConfig holds application-level configuration
+type AppConfig struct {
+	Name        string `mapstructure:"name"`
+	Environment string `mapstructure:"environment"`
+	Debug       bool   `mapstructure:"debug"`
+	URL         string `mapstructure:"url"`
+	Version     string `mapstructure:"version"`
+}
+
+// ServerConfig holds server-related configuration
+type ServerConfig struct {
+	Port         string        `mapstructure:"port"`
+	Host         string        `mapstructure:"host"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+	IdleTimeout  time.Duration `mapstructure:"idle_timeout"`
+}
+
+{{- if ne .DatabaseDriver ""}}
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Driver          string        `mapstructure:"driver"`
+	Host            string        `mapstructure:"host"`
+	Port            string        `mapstructure:"port"`
+	Username        string        `mapstructure:"username"`
+	Password        string        `mapstructure:"password"`
+	Database        string        `mapstructure:"database"`
+	SSLMode         string        `mapstructure:"ssl_mode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+}
+
+// GetDSN returns the database connection string
+func (d DatabaseConfig) GetDSN() string {
+	switch d.Driver {
+	case "postgres":
+		return fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+			d.Host, d.Port, d.Username, d.Password, d.Database, d.SSLMode)
+	case "mysql":
+		return fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			d.Username, d.Password, d.Host, d.Port, d.Database)
+	case "sqlite":
+		return d.Database
+	default:
+		return ""
+	}
+}
+{{- end}}
+
+{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+// SessionConfig holds session management configuration
+type SessionConfig struct {
+	Name           string        `mapstructure:"name"`
+	Secret         string        `mapstructure:"secret"`
+	Domain         string        `mapstructure:"domain"`
+	Path           string        `mapstructure:"path"`
+	MaxAge         int           `mapstructure:"max_age"`
+	Secure         bool          `mapstructure:"secure"`
+	HttpOnly       bool          `mapstructure:"http_only"`
+	SameSite       string        `mapstructure:"same_site"`
+	Store          string        `mapstructure:"store"`  // cookie, redis, database
+	IdleTimeout    time.Duration `mapstructure:"idle_timeout"`
+	AbsoluteTimeout time.Duration `mapstructure:"absolute_timeout"`
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+// AuthConfig holds authentication configuration
+type AuthConfig struct {
+	Type           string        `mapstructure:"type"`
+	{{- if eq .AuthType "jwt"}}
+	JWTSecret      string        `mapstructure:"jwt_secret"`
+	JWTExpiry      time.Duration `mapstructure:"jwt_expiry"`
+	RefreshExpiry  time.Duration `mapstructure:"refresh_expiry"`
+	{{- end}}
+	{{- if eq .AuthType "oauth2"}}
+	GoogleClientID     string `mapstructure:"google_client_id"`
+	GoogleClientSecret string `mapstructure:"google_client_secret"`
+	GithubClientID     string `mapstructure:"github_client_id"`
+	GithubClientSecret string `mapstructure:"github_client_secret"`
+	{{- end}}
+	PasswordMinLength  int           `mapstructure:"password_min_length"`
+	LoginRateLimit     int           `mapstructure:"login_rate_limit"`
+	LoginRateWindow    time.Duration `mapstructure:"login_rate_window"`
+	SessionTimeout     time.Duration `mapstructure:"session_timeout"`
+	RememberMeDuration time.Duration `mapstructure:"remember_me_duration"`
+}
+{{- end}}
+
+// LogConfig holds logging configuration
+type LogConfig struct {
+	Level     string `mapstructure:"level"`
+	Format    string `mapstructure:"format"`
+	Output    string `mapstructure:"output"`
+	AddSource bool   `mapstructure:"add_source"`
+}
+
+// EmailConfig holds email configuration
+type EmailConfig struct {
+	SMTPHost     string `mapstructure:"smtp_host"`
+	SMTPPort     int    `mapstructure:"smtp_port"`
+	SMTPUsername string `mapstructure:"smtp_username"`
+	SMTPPassword string `mapstructure:"smtp_password"`
+	FromEmail    string `mapstructure:"from_email"`
+	FromName     string `mapstructure:"from_name"`
+	UseTLS       bool   `mapstructure:"use_tls"`
+}
+
+{{- if eq .SessionStore "redis"}}
+// CacheConfig holds cache/Redis configuration
+type CacheConfig struct {
+	RedisHost     string `mapstructure:"redis_host"`
+	RedisPort     string `mapstructure:"redis_port"`
+	RedisPassword string `mapstructure:"redis_password"`
+	RedisDB       int    `mapstructure:"redis_db"`
+}
+{{- end}}
+
+// Load loads configuration from environment variables and config files
+func Load() (*Config, error) {
+	// Load .env file if it exists
+	if err := godotenv.Load(); err != nil {
+		// .env file is optional, so we don't return an error
+		fmt.Println("No .env file found, using environment variables")
+	}
+
+	// Set up Viper
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath(".")
+	viper.AddConfigPath("./config")
+	viper.AddConfigPath("/etc/{{.ProjectName}}/")
+
+	// Set defaults
+	setDefaults()
+
+	// Enable automatic environment variable reading
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Read config file (optional)
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("error reading config file: %w", err)
+		}
+	}
+
+	// Override with environment variables
+	bindEnvVars()
+
+	var config Config
+	if err := viper.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("error unmarshaling config: %w", err)
+	}
+
+	// Validate configuration
+	if err := validate(&config); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults() {
+	// App defaults
+	viper.SetDefault("app.name", "{{.ProjectName}}")
+	viper.SetDefault("app.environment", "development")
+	viper.SetDefault("app.debug", true)
+	viper.SetDefault("app.url", "http://localhost:8080")
+	viper.SetDefault("app.version", "1.0.0")
+
+	// Server defaults
+	viper.SetDefault("server.port", "8080")
+	viper.SetDefault("server.host", "localhost")
+	viper.SetDefault("server.read_timeout", "30s")
+	viper.SetDefault("server.write_timeout", "30s")
+	viper.SetDefault("server.idle_timeout", "120s")
+
+	{{- if ne .DatabaseDriver ""}}
+	// Database defaults
+	viper.SetDefault("database.driver", "{{.DatabaseDriver}}")
+	viper.SetDefault("database.host", "localhost")
+	{{- if eq .DatabaseDriver "postgres"}}
+	viper.SetDefault("database.port", "5432")
+	{{- else if eq .DatabaseDriver "mysql"}}
+	viper.SetDefault("database.port", "3306")
+	{{- end}}
+	viper.SetDefault("database.username", "{{.ProjectName}}")
+	viper.SetDefault("database.password", "password")
+	viper.SetDefault("database.database", "{{.ProjectName}}")
+	{{- if eq .DatabaseDriver "postgres"}}
+	viper.SetDefault("database.ssl_mode", "disable")
+	{{- end}}
+	viper.SetDefault("database.max_open_conns", 10)
+	viper.SetDefault("database.max_idle_conns", 5)
+	viper.SetDefault("database.conn_max_lifetime", "1h")
+	{{- end}}
+
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+	// Session defaults
+	viper.SetDefault("session.name", "{{.ProjectName}}_session")
+	viper.SetDefault("session.domain", "")
+	viper.SetDefault("session.path", "/")
+	viper.SetDefault("session.max_age", 86400*7) // 7 days
+	viper.SetDefault("session.secure", false)
+	viper.SetDefault("session.http_only", true)
+	viper.SetDefault("session.same_site", "Lax")
+	viper.SetDefault("session.store", "{{.SessionStore}}")
+	viper.SetDefault("session.idle_timeout", "20m")
+	viper.SetDefault("session.absolute_timeout", "3h")
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Auth defaults
+	viper.SetDefault("auth.type", "{{.AuthType}}")
+	{{- if eq .AuthType "jwt"}}
+	viper.SetDefault("auth.jwt_expiry", "15m")
+	viper.SetDefault("auth.refresh_expiry", "24h")
+	{{- end}}
+	viper.SetDefault("auth.password_min_length", 8)
+	viper.SetDefault("auth.login_rate_limit", 5)
+	viper.SetDefault("auth.login_rate_window", "15m")
+	viper.SetDefault("auth.session_timeout", "30m")
+	viper.SetDefault("auth.remember_me_duration", "30d")
+	{{- end}}
+
+	// Log defaults
+	viper.SetDefault("log.level", "info")
+	viper.SetDefault("log.format", "json")
+	viper.SetDefault("log.output", "stdout")
+	viper.SetDefault("log.add_source", false)
+
+	// Email defaults
+	viper.SetDefault("email.smtp_port", 587)
+	viper.SetDefault("email.from_email", "noreply@{{.ProjectName}}.com")
+	viper.SetDefault("email.from_name", "{{.ProjectName}}")
+	viper.SetDefault("email.use_tls", true)
+
+	{{- if eq .SessionStore "redis"}}
+	// Cache defaults
+	viper.SetDefault("cache.redis_host", "localhost")
+	viper.SetDefault("cache.redis_port", "6379")
+	viper.SetDefault("cache.redis_password", "")
+	viper.SetDefault("cache.redis_db", 0)
+	{{- end}}
+}
+
+// bindEnvVars binds environment variables to configuration keys
+func bindEnvVars() {
+	envVars := map[string]string{
+		"APP_NAME":        "app.name",
+		"APP_ENV":         "app.environment",
+		"APP_DEBUG":       "app.debug",
+		"APP_URL":         "app.url",
+		"APP_VERSION":     "app.version",
+		"SERVER_PORT":     "server.port",
+		"SERVER_HOST":     "server.host",
+		{{- if ne .DatabaseDriver ""}}
+		"DB_DRIVER":       "database.driver",
+		"DB_HOST":         "database.host",
+		"DB_PORT":         "database.port",
+		"DB_USERNAME":     "database.username",
+		"DB_PASSWORD":     "database.password",
+		"DB_DATABASE":     "database.database",
+		"DB_SSL_MODE":     "database.ssl_mode",
+		{{- end}}
+		{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+		"SESSION_SECRET":  "session.secret",
+		"SESSION_DOMAIN":  "session.domain",
+		"SESSION_SECURE":  "session.secure",
+		{{- end}}
+		{{- if eq .AuthType "jwt"}}
+		"JWT_SECRET":      "auth.jwt_secret",
+		{{- end}}
+		{{- if eq .AuthType "oauth2"}}
+		"GOOGLE_CLIENT_ID":     "auth.google_client_id",
+		"GOOGLE_CLIENT_SECRET": "auth.google_client_secret",
+		"GITHUB_CLIENT_ID":     "auth.github_client_id",
+		"GITHUB_CLIENT_SECRET": "auth.github_client_secret",
+		{{- end}}
+		"LOG_LEVEL":       "log.level",
+		"LOG_FORMAT":      "log.format",
+		"SMTP_HOST":       "email.smtp_host",
+		"SMTP_PORT":       "email.smtp_port",
+		"SMTP_USERNAME":   "email.smtp_username",
+		"SMTP_PASSWORD":   "email.smtp_password",
+		{{- if eq .SessionStore "redis"}}
+		"REDIS_HOST":      "cache.redis_host",
+		"REDIS_PORT":      "cache.redis_port",
+		"REDIS_PASSWORD":  "cache.redis_password",
+		"REDIS_DB":        "cache.redis_db",
+		{{- end}}
+	}
+
+	for envVar, configKey := range envVars {
+		viper.BindEnv(configKey, envVar)
+	}
+}
+
+// validate validates the configuration
+func validate(config *Config) error {
+	// Validate required fields
+	if config.App.Name == "" {
+		return fmt.Errorf("app.name is required")
+	}
+
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+	if config.Session.Secret == "" {
+		return fmt.Errorf("session.secret is required for security")
+	}
+	{{- end}}
+
+	{{- if eq .AuthType "jwt"}}
+	if config.Auth.JWTSecret == "" {
+		return fmt.Errorf("auth.jwt_secret is required for JWT authentication")
+	}
+	{{- end}}
+
+	// Validate server port
+	if port, err := strconv.Atoi(config.Server.Port); err != nil || port < 1 || port > 65535 {
+		return fmt.Errorf("server.port must be a valid port number between 1 and 65535")
+	}
+
+	// Validate environment
+	validEnvs := []string{"development", "staging", "production"}
+	if !contains(validEnvs, config.App.Environment) {
+		return fmt.Errorf("app.environment must be one of: %v", validEnvs)
+	}
+
+	// Set production defaults
+	if config.App.Environment == "production" {
+		config.App.Debug = false
+		{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
+		config.Session.Secure = true
+		{{- end}}
+	}
+
+	return nil
+}
+
+// contains checks if a slice contains a string
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// GetEnv gets an environment variable with a fallback value
+func GetEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// GetEnvAsBool gets an environment variable as a boolean
+func GetEnvAsBool(key string, fallback bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if b, err := strconv.ParseBool(value); err == nil {
+			return b
+		}
+	}
+	return fallback
+}
+
+// GetEnvAsInt gets an environment variable as an integer
+func GetEnvAsInt(key string, fallback int) int {
+	if value := os.Getenv(key); value != "" {
+		if i, err := strconv.Atoi(value); err == nil {
+			return i
+		}
+	}
+	return fallback
+}

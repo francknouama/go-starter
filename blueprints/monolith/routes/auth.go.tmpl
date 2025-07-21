@@ -1,0 +1,573 @@
+package routes
+
+import (
+{{- if eq .Framework "gin" }}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo" }}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber" }}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi" }}
+	"github.com/go-chi/chi/v5"
+{{- end }}
+
+	"{{.ModulePath}}/controllers"
+	"{{.ModulePath}}/middleware"
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+{{- end }}
+)
+
+// AuthRoutes configures authentication routes
+type AuthRoutes struct {
+	authController   *controllers.AuthController
+	rateLimiter      *middleware.RateLimiter
+	csrfMiddleware   *middleware.CSRFMiddleware
+	securityHeaders  *middleware.SecurityMiddleware
+{{- if eq .LoggerType "slog" }}
+	logger           *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	logger           *zap.Logger
+{{- else if eq .LoggerType "logrus" }}
+	logger           *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	logger           zerolog.Logger
+{{- end }}
+}
+
+// NewAuthRoutes creates a new authentication routes instance
+func NewAuthRoutes(
+	authController *controllers.AuthController,
+	rateLimiter *middleware.RateLimiter,
+	csrfMiddleware *middleware.CSRFMiddleware,
+	securityHeaders *middleware.SecurityMiddleware,
+	{{if eq .LoggerType "slog"}}logger *slog.Logger{{else if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "zerolog"}}logger zerolog.Logger{{end}},
+) *AuthRoutes {
+	return &AuthRoutes{
+		authController:  authController,
+		rateLimiter:     rateLimiter,
+		csrfMiddleware:  csrfMiddleware,
+		securityHeaders: securityHeaders,
+		logger:          logger,
+	}
+}
+
+{{- if eq .Framework "gin" }}
+
+// RegisterAuthRoutes registers all authentication routes with Gin
+func (ar *AuthRoutes) RegisterAuthRoutes(router *gin.Engine) {
+	// Auth routes group with security middleware
+	auth := router.Group("/auth")
+	auth.Use(ar.securityHeaders.Apply())
+	auth.Use(ar.csrfMiddleware.Apply())
+	{
+{{- if ne .AuthType "oauth2" }}
+		// Registration endpoints (if not OAuth-only)
+		if ar.isRegistrationEnabled() {
+			// GET /auth/register - Show registration form
+			auth.GET("/register", ar.authController.ShowRegister)
+			
+			// POST /auth/register - Process registration
+			register := auth.Group("/register")
+			register.Use(ar.rateLimiter.AuthRegister())
+			register.POST("", ar.authController.Register)
+		}
+
+		// Login endpoints
+		// GET /auth/login - Show login form
+		auth.GET("/login", ar.authController.ShowLogin)
+		
+		// POST /auth/login - Process login
+		login := auth.Group("/login")
+		login.Use(ar.rateLimiter.AuthLogin())
+		login.POST("", ar.authController.Login)
+
+		// Password reset endpoints
+		if ar.isPasswordResetEnabled() {
+			// GET /auth/forgot-password - Show forgot password form
+			auth.GET("/forgot-password", ar.authController.ShowForgotPassword)
+			
+			// POST /auth/forgot-password - Send password reset email
+			forgotPassword := auth.Group("/forgot-password")
+			forgotPassword.Use(ar.rateLimiter.AuthPasswordReset())
+			forgotPassword.POST("", ar.authController.ForgotPassword)
+			
+			// GET /auth/reset-password - Show reset password form
+			auth.GET("/reset-password", ar.authController.ShowResetPassword)
+			
+			// POST /auth/reset-password - Process password reset
+			resetPassword := auth.Group("/reset-password")
+			resetPassword.Use(ar.rateLimiter.AuthPasswordReset())
+			resetPassword.POST("", ar.authController.ResetPassword)
+		}
+{{- end }}
+
+{{- if eq .AuthType "oauth2" }}
+		// OAuth2 endpoints
+		oauth := auth.Group("/oauth")
+		{
+			// Google OAuth
+			oauth.GET("/google", ar.authController.GoogleOAuth)
+			oauth.GET("/google/callback", ar.authController.GoogleOAuthCallback)
+			
+			// GitHub OAuth
+			oauth.GET("/github", ar.authController.GitHubOAuth)
+			oauth.GET("/github/callback", ar.authController.GitHubOAuthCallback)
+			
+			// Generic OAuth callback handler
+			oauth.GET("/callback/:provider", ar.authController.OAuthCallback)
+		}
+{{- end }}
+
+		// Logout endpoint (requires authentication)
+		logout := auth.Group("/logout")
+		logout.Use(ar.requireAuthentication())
+		logout.POST("", ar.authController.Logout)
+		logout.GET("", ar.authController.Logout) // Support GET for convenience
+
+		// Email verification endpoints
+		if ar.isEmailVerificationEnabled() {
+			// GET /auth/verify-email - Show verification status
+			auth.GET("/verify-email", ar.authController.ShowVerifyEmail)
+			
+			// GET /auth/verify-email/:token - Verify email with token
+			auth.GET("/verify-email/:token", ar.authController.VerifyEmail)
+			
+			// POST /auth/resend-verification - Resend verification email
+			resendVerification := auth.Group("/resend-verification")
+			resendVerification.Use(ar.rateLimiter.AuthEmailVerification())
+			resendVerification.Use(ar.requireAuthentication())
+			resendVerification.POST("", ar.authController.ResendVerification)
+		}
+
+		// Two-factor authentication endpoints
+		if ar.isTwoFactorEnabled() {
+			twoFactor := auth.Group("/2fa")
+			twoFactor.Use(ar.requireAuthentication())
+			{
+				// GET /auth/2fa/setup - Show 2FA setup
+				twoFactor.GET("/setup", ar.authController.Show2FASetup)
+				
+				// POST /auth/2fa/setup - Enable 2FA
+				twoFactor.POST("/setup", ar.authController.Enable2FA)
+				
+				// POST /auth/2fa/verify - Verify 2FA token
+				twoFactor.POST("/verify", ar.authController.Verify2FA)
+				
+				// POST /auth/2fa/disable - Disable 2FA
+				twoFactor.POST("/disable", ar.authController.Disable2FA)
+				
+				// GET /auth/2fa/backup-codes - Show backup codes
+				twoFactor.GET("/backup-codes", ar.authController.ShowBackupCodes)
+				
+				// POST /auth/2fa/regenerate-backup-codes - Regenerate backup codes
+				twoFactor.POST("/regenerate-backup-codes", ar.authController.RegenerateBackupCodes)
+			}
+		}
+
+		// Session management endpoints
+		session := auth.Group("/session")
+		session.Use(ar.requireAuthentication())
+		{
+			// GET /auth/session/info - Get current session info
+			session.GET("/info", ar.authController.GetSessionInfo)
+			
+			// POST /auth/session/refresh - Refresh session
+			session.POST("/refresh", ar.authController.RefreshSession)
+			
+			// GET /auth/session/history - Get login history
+			session.GET("/history", ar.authController.GetLoginHistory)
+			
+			// DELETE /auth/session/:id - Revoke specific session
+			session.DELETE("/:id", ar.authController.RevokeSession)
+			
+			// DELETE /auth/session/all - Revoke all other sessions
+			session.DELETE("/all", ar.authController.RevokeAllSessions)
+		}
+
+{{- if eq .AuthType "jwt" }}
+		// JWT specific endpoints
+		jwt := auth.Group("/jwt")
+		{
+			// POST /auth/jwt/refresh - Refresh JWT token
+			jwt.POST("/refresh", ar.authController.RefreshJWT)
+			
+			// POST /auth/jwt/revoke - Revoke JWT token
+			jwt.POST("/revoke", ar.authController.RevokeJWT)
+			
+			// GET /auth/jwt/validate - Validate JWT token
+			jwt.GET("/validate", ar.authController.ValidateJWT)
+		}
+{{- end }}
+	}
+
+	// Account lockout endpoints (admin)
+	if ar.hasAccountLockoutFeature() {
+		lockout := router.Group("/admin/lockout")
+		lockout.Use(ar.requireAdminRole())
+		{
+			// GET /admin/lockout/accounts - List locked accounts
+			lockout.GET("/accounts", ar.authController.ListLockedAccounts)
+			
+			// POST /admin/lockout/:user_id/unlock - Unlock account
+			lockout.POST("/:user_id/unlock", ar.authController.UnlockAccount)
+			
+			// POST /admin/lockout/:user_id/lock - Lock account
+			lockout.POST("/:user_id/lock", ar.authController.LockAccount)
+		}
+	}
+}
+
+{{- else if eq .Framework "echo" }}
+
+// RegisterAuthRoutes registers all authentication routes with Echo
+func (ar *AuthRoutes) RegisterAuthRoutes(e *echo.Echo) {
+	// Auth routes group with security middleware
+	auth := e.Group("/auth")
+	auth.Use(ar.securityHeaders.Apply())
+	auth.Use(ar.csrfMiddleware.Apply())
+
+{{- if ne .AuthType "oauth2" }}
+	// Registration endpoints (if not OAuth-only)
+	if ar.isRegistrationEnabled() {
+		auth.GET("/register", ar.authController.ShowRegister)
+		
+		register := auth.Group("/register")
+		register.Use(ar.rateLimiter.AuthRegister())
+		register.POST("", ar.authController.Register)
+	}
+
+	// Login endpoints
+	auth.GET("/login", ar.authController.ShowLogin)
+	
+	login := auth.Group("/login")
+	login.Use(ar.rateLimiter.AuthLogin())
+	login.POST("", ar.authController.Login)
+
+	// Password reset endpoints
+	if ar.isPasswordResetEnabled() {
+		auth.GET("/forgot-password", ar.authController.ShowForgotPassword)
+		
+		forgotPassword := auth.Group("/forgot-password")
+		forgotPassword.Use(ar.rateLimiter.AuthPasswordReset())
+		forgotPassword.POST("", ar.authController.ForgotPassword)
+		
+		auth.GET("/reset-password", ar.authController.ShowResetPassword)
+		
+		resetPassword := auth.Group("/reset-password")
+		resetPassword.Use(ar.rateLimiter.AuthPasswordReset())
+		resetPassword.POST("", ar.authController.ResetPassword)
+	}
+{{- end }}
+
+{{- if eq .AuthType "oauth2" }}
+	// OAuth2 endpoints
+	oauth := auth.Group("/oauth")
+	oauth.GET("/google", ar.authController.GoogleOAuth)
+	oauth.GET("/google/callback", ar.authController.GoogleOAuthCallback)
+	oauth.GET("/github", ar.authController.GitHubOAuth)
+	oauth.GET("/github/callback", ar.authController.GitHubOAuthCallback)
+	oauth.GET("/callback/:provider", ar.authController.OAuthCallback)
+{{- end }}
+
+	// Logout endpoint
+	logout := auth.Group("/logout")
+	logout.Use(ar.requireAuthentication())
+	logout.POST("", ar.authController.Logout)
+	logout.GET("", ar.authController.Logout)
+
+	// Email verification endpoints
+	if ar.isEmailVerificationEnabled() {
+		auth.GET("/verify-email", ar.authController.ShowVerifyEmail)
+		auth.GET("/verify-email/:token", ar.authController.VerifyEmail)
+		
+		resendVerification := auth.Group("/resend-verification")
+		resendVerification.Use(ar.rateLimiter.AuthEmailVerification())
+		resendVerification.Use(ar.requireAuthentication())
+		resendVerification.POST("", ar.authController.ResendVerification)
+	}
+
+	// Two-factor authentication endpoints
+	if ar.isTwoFactorEnabled() {
+		twoFactor := auth.Group("/2fa")
+		twoFactor.Use(ar.requireAuthentication())
+		twoFactor.GET("/setup", ar.authController.Show2FASetup)
+		twoFactor.POST("/setup", ar.authController.Enable2FA)
+		twoFactor.POST("/verify", ar.authController.Verify2FA)
+		twoFactor.POST("/disable", ar.authController.Disable2FA)
+		twoFactor.GET("/backup-codes", ar.authController.ShowBackupCodes)
+		twoFactor.POST("/regenerate-backup-codes", ar.authController.RegenerateBackupCodes)
+	}
+
+	// Session management endpoints
+	session := auth.Group("/session")
+	session.Use(ar.requireAuthentication())
+	session.GET("/info", ar.authController.GetSessionInfo)
+	session.POST("/refresh", ar.authController.RefreshSession)
+	session.GET("/history", ar.authController.GetLoginHistory)
+	session.DELETE("/:id", ar.authController.RevokeSession)
+	session.DELETE("/all", ar.authController.RevokeAllSessions)
+
+{{- if eq .AuthType "jwt" }}
+	// JWT specific endpoints
+	jwt := auth.Group("/jwt")
+	jwt.POST("/refresh", ar.authController.RefreshJWT)
+	jwt.POST("/revoke", ar.authController.RevokeJWT)
+	jwt.GET("/validate", ar.authController.ValidateJWT)
+{{- end }}
+
+	// Account lockout endpoints (admin)
+	if ar.hasAccountLockoutFeature() {
+		lockout := e.Group("/admin/lockout")
+		lockout.Use(ar.requireAdminRole())
+		lockout.GET("/accounts", ar.authController.ListLockedAccounts)
+		lockout.POST("/:user_id/unlock", ar.authController.UnlockAccount)
+		lockout.POST("/:user_id/lock", ar.authController.LockAccount)
+	}
+}
+
+{{- else if eq .Framework "chi" }}
+
+// RegisterAuthRoutes registers all authentication routes with Chi
+func (ar *AuthRoutes) RegisterAuthRoutes(r chi.Router) {
+	r.Route("/auth", func(r chi.Router) {
+		// Apply security middleware
+		r.Use(ar.securityHeaders.Apply())
+		r.Use(ar.csrfMiddleware.Apply())
+
+{{- if ne .AuthType "oauth2" }}
+		// Registration endpoints (if not OAuth-only)
+		if ar.isRegistrationEnabled() {
+			r.Get("/register", ar.authController.ShowRegister)
+			
+			r.Group(func(r chi.Router) {
+				r.Use(ar.rateLimiter.AuthRegister())
+				r.Post("/register", ar.authController.Register)
+			})
+		}
+
+		// Login endpoints
+		r.Get("/login", ar.authController.ShowLogin)
+		
+		r.Group(func(r chi.Router) {
+			r.Use(ar.rateLimiter.AuthLogin())
+			r.Post("/login", ar.authController.Login)
+		})
+
+		// Password reset endpoints
+		if ar.isPasswordResetEnabled() {
+			r.Get("/forgot-password", ar.authController.ShowForgotPassword)
+			
+			r.Group(func(r chi.Router) {
+				r.Use(ar.rateLimiter.AuthPasswordReset())
+				r.Post("/forgot-password", ar.authController.ForgotPassword)
+			})
+			
+			r.Get("/reset-password", ar.authController.ShowResetPassword)
+			
+			r.Group(func(r chi.Router) {
+				r.Use(ar.rateLimiter.AuthPasswordReset())
+				r.Post("/reset-password", ar.authController.ResetPassword)
+			})
+		}
+{{- end }}
+
+{{- if eq .AuthType "oauth2" }}
+		// OAuth2 endpoints
+		r.Route("/oauth", func(r chi.Router) {
+			r.Get("/google", ar.authController.GoogleOAuth)
+			r.Get("/google/callback", ar.authController.GoogleOAuthCallback)
+			r.Get("/github", ar.authController.GitHubOAuth)
+			r.Get("/github/callback", ar.authController.GitHubOAuthCallback)
+			r.Get("/callback/{provider}", ar.authController.OAuthCallback)
+		})
+{{- end }}
+
+		// Logout endpoint
+		r.Group(func(r chi.Router) {
+			r.Use(ar.requireAuthentication())
+			r.Post("/logout", ar.authController.Logout)
+			r.Get("/logout", ar.authController.Logout)
+		})
+
+		// Email verification endpoints
+		if ar.isEmailVerificationEnabled() {
+			r.Get("/verify-email", ar.authController.ShowVerifyEmail)
+			r.Get("/verify-email/{token}", ar.authController.VerifyEmail)
+			
+			r.Group(func(r chi.Router) {
+				r.Use(ar.rateLimiter.AuthEmailVerification())
+				r.Use(ar.requireAuthentication())
+				r.Post("/resend-verification", ar.authController.ResendVerification)
+			})
+		}
+
+		// Two-factor authentication endpoints
+		if ar.isTwoFactorEnabled() {
+			r.Route("/2fa", func(r chi.Router) {
+				r.Use(ar.requireAuthentication())
+				r.Get("/setup", ar.authController.Show2FASetup)
+				r.Post("/setup", ar.authController.Enable2FA)
+				r.Post("/verify", ar.authController.Verify2FA)
+				r.Post("/disable", ar.authController.Disable2FA)
+				r.Get("/backup-codes", ar.authController.ShowBackupCodes)
+				r.Post("/regenerate-backup-codes", ar.authController.RegenerateBackupCodes)
+			})
+		}
+
+		// Session management endpoints
+		r.Route("/session", func(r chi.Router) {
+			r.Use(ar.requireAuthentication())
+			r.Get("/info", ar.authController.GetSessionInfo)
+			r.Post("/refresh", ar.authController.RefreshSession)
+			r.Get("/history", ar.authController.GetLoginHistory)
+			r.Delete("/{id}", ar.authController.RevokeSession)
+			r.Delete("/all", ar.authController.RevokeAllSessions)
+		})
+
+{{- if eq .AuthType "jwt" }}
+		// JWT specific endpoints
+		r.Route("/jwt", func(r chi.Router) {
+			r.Post("/refresh", ar.authController.RefreshJWT)
+			r.Post("/revoke", ar.authController.RevokeJWT)
+			r.Get("/validate", ar.authController.ValidateJWT)
+		})
+{{- end }}
+	})
+
+	// Account lockout endpoints (admin)
+	if ar.hasAccountLockoutFeature() {
+		r.Route("/admin/lockout", func(r chi.Router) {
+			r.Use(ar.requireAdminRole())
+			r.Get("/accounts", ar.authController.ListLockedAccounts)
+			r.Post("/{user_id}/unlock", ar.authController.UnlockAccount)
+			r.Post("/{user_id}/lock", ar.authController.LockAccount)
+		})
+	}
+}
+
+{{- end }}
+
+// Configuration helper methods
+
+func (ar *AuthRoutes) isRegistrationEnabled() bool {
+	return getEnvAsBool("FEATURE_REGISTRATION_ENABLED", true)
+}
+
+func (ar *AuthRoutes) isPasswordResetEnabled() bool {
+	return getEnvAsBool("FEATURE_PASSWORD_RESET", true)
+}
+
+func (ar *AuthRoutes) isEmailVerificationEnabled() bool {
+	return getEnvAsBool("FEATURE_EMAIL_VERIFICATION", true)
+}
+
+func (ar *AuthRoutes) isTwoFactorEnabled() bool {
+	return getEnvAsBool("FEATURE_TWO_FACTOR_AUTH", false)
+}
+
+func (ar *AuthRoutes) hasAccountLockoutFeature() bool {
+	return getEnvAsBool("FEATURE_ACCOUNT_LOCKOUT", true)
+}
+
+// Middleware helper methods
+
+{{- if eq .Framework "gin" }}
+
+func (ar *AuthRoutes) requireAuthentication() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		// Check if user is authenticated
+		if userID, exists := c.Get("user_id"); !exists || userID == nil {
+			if c.GetHeader("Accept") == "application/json" {
+				c.JSON(401, gin.H{"error": "Authentication required"})
+			} else {
+				c.Redirect(302, "/auth/login")
+			}
+			c.Abort()
+			return
+		}
+		c.Next()
+	})
+}
+
+func (ar *AuthRoutes) requireAdminRole() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		// Check if user has admin role
+		if role, exists := c.Get("user_role"); !exists || role != "admin" {
+			if c.GetHeader("Accept") == "application/json" {
+				c.JSON(403, gin.H{"error": "Admin access required"})
+			} else {
+				c.Redirect(302, "/")
+			}
+			c.Abort()
+			return
+		}
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo" }}
+
+func (ar *AuthRoutes) requireAuthentication() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if userID := c.Get("user_id"); userID == nil {
+				if c.Request().Header.Get("Accept") == "application/json" {
+					return c.JSON(401, map[string]string{"error": "Authentication required"})
+				}
+				return c.Redirect(302, "/auth/login")
+			}
+			return next(c)
+		}
+	})
+}
+
+func (ar *AuthRoutes) requireAdminRole() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			if role := c.Get("user_role"); role != "admin" {
+				if c.Request().Header.Get("Accept") == "application/json" {
+					return c.JSON(403, map[string]string{"error": "Admin access required"})
+				}
+				return c.Redirect(302, "/")
+			}
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "chi" }}
+
+func (ar *AuthRoutes) requireAuthentication() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check authentication logic here
+			// This would typically check session or JWT
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (ar *AuthRoutes) requireAdminRole() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check admin role logic here
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+{{- end }}
+
+// Utility functions
+
+func getEnvAsBool(key string, defaultValue bool) bool {
+	// This should be imported from a config package
+	return defaultValue
+}

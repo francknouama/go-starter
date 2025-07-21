@@ -1,0 +1,365 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: '{{.GoVersion}}'
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+  NODE_VERSION: '18'
+{{- end }}
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "postgres" }}
+  POSTGRES_PASSWORD: postgres
+  POSTGRES_DB: {{.ProjectName}}_test
+{{- else if eq .DatabaseDriver "mysql" }}
+  MYSQL_ROOT_PASSWORD: root
+  MYSQL_DATABASE: {{.ProjectName}}_test
+{{- end }}
+{{- end }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "postgres" }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ env.POSTGRES_DB }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+{{- else if eq .DatabaseDriver "mysql" }}
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: ${{ env.MYSQL_ROOT_PASSWORD }}
+          MYSQL_DATABASE: ${{ env.MYSQL_DATABASE }}
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+{{- end }}
+{{- end}}
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+{{- end }}
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+    - name: Install Node dependencies
+      run: npm ci
+
+    - name: Build assets
+      run: npm run build
+{{- end }}
+
+    - name: Download Go dependencies
+      run: go mod download
+
+    - name: Verify Go dependencies
+      run: go mod verify
+
+    - name: Set up environment
+      run: |
+        cp .env.example .env
+        # Set test environment variables
+        echo "APP_ENV=test" >> .env
+{{- if ne .DatabaseDriver "" }}
+{{- if eq .DatabaseDriver "postgres" }}
+        echo "DATABASE_URL=postgres://postgres:${{ env.POSTGRES_PASSWORD }}@localhost:5432/${{ env.POSTGRES_DB }}?sslmode=disable" >> .env
+{{- else if eq .DatabaseDriver "mysql" }}
+        echo "DATABASE_URL=root:${{ env.MYSQL_ROOT_PASSWORD }}@tcp(localhost:3306)/${{ env.MYSQL_DATABASE }}?charset=utf8mb4&parseTime=true" >> .env
+{{- else if eq .DatabaseDriver "sqlite" }}
+        echo "DATABASE_PATH=:memory:" >> .env
+{{- end }}
+{{- end }}
+
+{{- if ne .DatabaseDriver "" }}
+    - name: Run database migrations
+      run: |
+        go install -tags '{{.DatabaseDriver}}' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+        migrate -path database/migrations -database "$DATABASE_URL" up
+      env:
+        DATABASE_URL: ${{ env.DATABASE_URL }}
+{{- end }}
+
+    - name: Run tests
+      run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+      env:
+        CGO_ENABLED: 1
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Run integration tests
+      run: go test -v -tags=integration ./tests/...
+      env:
+        CGO_ENABLED: 1
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        check-latest: true
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+        args: --timeout=10m
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install Node dependencies
+      run: npm ci
+
+    - name: Lint JavaScript/CSS
+      run: |
+        npm run lint
+        npm run format:check
+{{- end }}
+
+  security:
+    name: Security
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out gosec.sarif ./...'
+
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec.sarif
+
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+
+    strategy:
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+        exclude:
+          - goos: windows
+            goarch: arm64
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+{{- if and (ne .AssetPipeline "embedded") (ne .AssetPipeline "") }}
+    - name: Set up Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+
+    - name: Install Node dependencies and build assets
+      run: |
+        npm ci
+        npm run build
+{{- end }}
+
+    - name: Build binary
+      run: |
+        mkdir -p dist
+        BINARY_NAME={{.ProjectName}}
+        if [ "${{ matrix.goos }}" = "windows" ]; then
+          BINARY_NAME=${BINARY_NAME}.exe
+        fi
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+          go build -ldflags="-w -s -X main.Version=${GITHUB_SHA::8} -X main.BuildTime=$(date -u '+%Y-%m-%d_%H:%M:%S')" \
+          -o dist/${BINARY_NAME}-${{ matrix.goos }}-${{ matrix.goarch }} \
+          ./main.go
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: {{.ProjectName}}-${{ matrix.goos }}-${{ matrix.goarch }}
+        path: dist/
+        retention-days: 30
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ secrets.DOCKER_USERNAME }}/{{.ProjectName}}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{.ProjectName}}-
+          type=raw,value=latest,enable={{"{{"}}is_default_branch{{"}}"}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Dependency Review
+      uses: actions/dependency-review-action@v4
+      with:
+        fail-on-severity: moderate
+
+  performance:
+    name: Performance
+    runs-on: ubuntu-latest
+    needs: [test]
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Run benchmarks
+      run: |
+        go test -bench=. -benchmem -run=^$ ./... > benchmark.txt
+        cat benchmark.txt
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results
+        path: benchmark.txt
+
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    needs: [test, lint, security, build]
+    if: always()
+
+    steps:
+    - name: Notify on success
+      if: ${{ needs.test.result == 'success' && needs.lint.result == 'success' && needs.security.result == 'success' && needs.build.result == 'success' }}
+      run: echo "✅ All checks passed!"
+
+    - name: Notify on failure
+      if: ${{ needs.test.result == 'failure' || needs.lint.result == 'failure' || needs.security.result == 'failure' || needs.build.result == 'failure' }}
+      run: |
+        echo "❌ Some checks failed!"
+        echo "Test: ${{ needs.test.result }}"
+        echo "Lint: ${{ needs.lint.result }}"
+        echo "Security: ${{ needs.security.result }}"
+        echo "Build: ${{ needs.build.result }}"
+        exit 1
