@@ -14,17 +14,172 @@ The ATDD test suite validates four Web API architecture patterns:
 
 ```
 tests/acceptance/blueprints/web-api/
-├── standard_test.go      # Standard architecture ATDD tests
-├── clean_test.go         # Clean architecture ATDD tests  
-├── ddd_test.go          # DDD architecture ATDD tests
-├── hexagonal_test.go    # Hexagonal architecture ATDD tests
-├── integration_test.go  # Cross-architecture integration tests
-└── README.md           # This documentation
+├── features/                           # Gherkin feature files (BDD scenarios)
+│   ├── web-api.feature                 # General web API scenarios
+│   ├── clean-architecture.feature     # Clean Architecture specific scenarios
+│   ├── domain-driven-design.feature   # DDD specific scenarios  
+│   ├── hexagonal-architecture.feature # Hexagonal Architecture scenarios
+│   ├── standard-architecture.feature  # Standard Architecture scenarios
+│   └── integration-testing.feature    # Cross-architecture integration scenarios
+├── web_api_steps_test.go              # BDD step definitions for all scenarios
+├── web_api_acceptance_test.go         # High-level acceptance tests
+├── standard_test.go                   # Legacy: Standard architecture ATDD tests
+├── clean_test.go                      # Legacy: Clean architecture ATDD tests  
+├── ddd_test.go                        # Legacy: DDD architecture ATDD tests
+├── hexagonal_test.go                  # Legacy: Hexagonal architecture ATDD tests
+├── integration_test.go                # Legacy: Cross-architecture integration tests
+└── README.md                          # This documentation
 ```
+
+## Normalized BDD Structure ✨
+
+**NEW**: The web-api ATDD tests have been normalized with a comprehensive BDD structure using Gherkin feature files and unified step definitions.
+
+### Feature File Organization
+
+The tests are now organized into dedicated feature files that follow BDD best practices:
+
+#### 🏗️ **Architecture-Specific Features**
+- **`clean-architecture.feature`** (9 scenarios): Clean Architecture patterns, dependency inversion, business logic isolation
+- **`domain-driven-design.feature`** (15 scenarios): DDD patterns, entities, value objects, aggregates, domain events
+- **`hexagonal-architecture.feature`** (15 scenarios): Ports & adapters, dependency direction, framework independence
+- **`standard-architecture.feature`** (20 scenarios): Traditional layered architecture, RESTful endpoints, standard patterns
+
+#### 🔗 **Cross-Cutting Features**  
+- **`integration-testing.feature`** (15 scenarios): Database integration, logger integration, framework integration across all architectures
+- **`web-api.feature`** (20+ scenarios): General web API scenarios, authentication, security, deployment, monitoring
+
+### Unified Step Definitions
+
+All feature files share a common set of step definitions in `web_api_steps_test.go`:
+
+```go
+// Architecture-specific Given steps
+ctx.Given(`^I want to create a Clean Architecture web API$`, webApiCtx.iWantToCreateACleanArchitectureWebAPI)
+ctx.Given(`^I want to create a DDD web API$`, webApiCtx.iWantToCreateADDDWebAPI)
+ctx.Given(`^I want to create a Hexagonal Architecture web API$`, webApiCtx.iWantToCreateAHexagonalArchitectureWebAPI)
+
+// Integration testing steps
+ctx.When(`^I generate a web API with architecture "([^"]*)", database "([^"]*)", and ORM "([^"]*)"$`, 
+         webApiCtx.iGenerateAWebAPIWithArchitectureDatabaseAndORM)
+
+// Validation steps
+ctx.Then(`^database configuration should follow architecture patterns$`, 
+         webApiCtx.databaseConfigurationShouldFollowArchitecturePatterns)
+```
+
+### Benefits of Normalization
+
+#### 🎯 **Improved Maintainability**
+- Single source of step definitions across all architectures
+- Consistent scenario structure and validation logic
+- Reduced code duplication between architecture tests
+
+#### 📋 **Enhanced Readability** 
+- Clear separation of concerns between architectures
+- Business-readable Gherkin scenarios
+- Focused feature files for specific architectural concerns
+
+#### 🔄 **Better Test Organization**
+- Architecture-specific scenarios grouped logically
+- Cross-cutting concerns in dedicated integration feature
+- Easy to add new scenarios for specific architectures
+
+#### 🚀 **Scalability**
+- Easy to add new architectures by creating new feature files
+- Shared step definitions reduce implementation effort
+- Consistent patterns across all architecture tests
 
 ## Test Categories
 
-### 1. Architecture-Specific Tests
+### 1. BDD Feature Files (Primary)
+
+Each feature file contains comprehensive Gherkin scenarios:
+
+#### Clean Architecture (`clean-architecture.feature`)
+- ✅ Layer structure validation (entities, use cases, adapters, frameworks)
+- ✅ Dependency inversion principle enforcement  
+- ✅ Business logic isolation from external concerns
+- ✅ Framework abstraction validation
+- ✅ Database integration with repository pattern
+- ✅ Logger integration following Clean patterns
+- ✅ Dependency injection configuration
+- ✅ Interface-based design validation
+- ✅ Architecture compliance validation
+
+#### Domain-Driven Design (`domain-driven-design.feature`)
+- ✅ Domain-centric structure validation
+- ✅ Entities and value objects implementation
+- ✅ Aggregate design and consistency boundaries
+- ✅ Domain events and event handlers
+- ✅ Domain services vs application services
+- ✅ Repository pattern in domain context
+- ✅ CQRS pattern implementation
+- ✅ Ubiquitous language in code
+- ✅ Bounded context separation
+- ✅ Anti-corruption layers
+- ✅ Business rule enforcement
+- ✅ Domain model purity
+- ✅ Infrastructure separation
+- ✅ Strategic design patterns
+- ✅ Tactical design patterns
+
+#### Hexagonal Architecture (`hexagonal-architecture.feature`)
+- ✅ Ports and adapters structure validation
+- ✅ Primary adapters (driving) implementation
+- ✅ Secondary adapters (driven) implementation  
+- ✅ Application core isolation
+- ✅ Port interface validation
+- ✅ Dependency direction enforcement
+- ✅ Framework independence validation
+- ✅ Database independence validation
+- ✅ Multiple adapter support
+- ✅ Testing strategy validation
+- ✅ Dependency injection configuration
+- ✅ Error handling across layers
+- ✅ Cross-cutting concerns handling
+- ✅ DDD integration capabilities
+- ✅ Adapter swappability
+
+#### Standard Architecture (`standard-architecture.feature`)
+- ✅ Traditional layered structure
+- ✅ RESTful endpoint generation
+- ✅ Middleware configuration
+- ✅ Request validation
+- ✅ Error handling
+- ✅ Database connection and models
+- ✅ Configuration management
+- ✅ Authentication integration
+- ✅ Testing infrastructure
+- ✅ API documentation
+- ✅ Health check implementation
+- ✅ Performance monitoring
+- ✅ Security best practices
+- ✅ Container deployment
+- ✅ Framework variations (gin, echo, fiber, chi, stdlib)
+- ✅ Database variations (postgres, mysql, sqlite)
+- ✅ ORM variations (gorm, sqlx)
+- ✅ Logger variations (slog, zap, logrus, zerolog)
+- ✅ Authentication types (jwt, session, api-key)
+
+#### Integration Testing (`integration-testing.feature`)
+- ✅ Database integration across architectures
+- ✅ Logger integration across architectures
+- ✅ Framework integration across architectures
+- ✅ Authentication integration across architectures
+- ✅ Multi-feature integration testing
+- ✅ Database migration integration
+- ✅ Container integration testing
+- ✅ CI/CD integration validation
+- ✅ Performance integration testing
+- ✅ Security integration testing
+- ✅ Error handling integration
+- ✅ Testing infrastructure integration
+- ✅ Configuration integration testing
+- ✅ API documentation integration
+- ✅ Monitoring and observability integration
+
+### 2. Legacy Architecture-Specific Tests (Preserved)
 
 Each architecture has its own test file with scenarios covering:
 
@@ -174,10 +329,33 @@ Cross-cutting validators for shared concerns:
 
 ### Run All ATDD Tests
 ```bash
+# Run all web-api ATDD tests (BDD + Legacy)
 go test ./tests/acceptance/blueprints/web-api/...
 ```
 
-### Run Specific Architecture Tests
+### Run BDD Feature Tests (Primary)
+```bash
+# Run comprehensive BDD tests with all feature files
+go test ./tests/acceptance/blueprints/web-api/ -run TestWebAPIBDD
+
+# Run with verbose output to see all scenarios
+go test -v ./tests/acceptance/blueprints/web-api/ -run TestWebAPIBDD
+```
+
+### Run Specific Feature Files
+```bash
+# Test specific architecture using tags (if implemented)
+go test ./tests/acceptance/blueprints/web-api/ -tags=clean-architecture
+go test ./tests/acceptance/blueprints/web-api/ -tags=hexagonal-architecture
+
+# Or run with godog directly for specific features
+cd tests/acceptance/blueprints/web-api/
+godog features/clean-architecture.feature
+godog features/hexagonal-architecture.feature
+godog features/integration-testing.feature
+```
+
+### Run Legacy Architecture Tests
 ```bash
 # Standard architecture
 go test ./tests/acceptance/blueprints/web-api/standard_test.go
@@ -197,12 +375,33 @@ go test ./tests/acceptance/blueprints/web-api/integration_test.go
 
 ### Run with Verbose Output
 ```bash
+# All tests with verbose output
 go test -v ./tests/acceptance/blueprints/web-api/...
+
+# BDD tests only with scenario details
+go test -v ./tests/acceptance/blueprints/web-api/ -run TestWebAPIBDD
 ```
 
-### Run Specific Scenario
+### Run Specific Scenarios
 ```bash
+# Legacy specific scenario
 go test -v ./tests/acceptance/blueprints/web-api/ -run TestStandard_WebAPI_BasicGeneration_WithGin
+
+# BDD specific scenario (depends on godog filtering)
+go test -v ./tests/acceptance/blueprints/web-api/ -run TestWebAPIBDD | grep "Clean Architecture"
+```
+
+### Debug Feature Files
+```bash
+# Validate feature file syntax
+cd tests/acceptance/blueprints/web-api/
+godog --no-colors --format=progress features/
+
+# Run single feature file
+godog features/clean-architecture.feature
+
+# Run with specific tags
+godog --tags="@database" features/
 ```
 
 ## Test Features
@@ -303,4 +502,60 @@ Comprehensive validation ensures generated projects work correctly and follow ar
 ### Regression Prevention
 Automated tests catch breaking changes to templates and ensure consistency across architectures.
 
-This ATDD implementation provides comprehensive validation of Web API blueprints while maintaining business readability and serving as living documentation of the system's capabilities.
+## Normalization Summary
+
+The web-api ATDD tests have been successfully normalized from embedded scenarios to a comprehensive BDD structure:
+
+### What Was Normalized
+
+**Before**: Embedded Gherkin scenarios in Go test comments
+```go
+// Scenario: Clean Architecture web API generation
+//   Given I want to create a Clean Architecture web API
+//   When I generate a web API with Clean Architecture
+//   Then the project should follow Clean Architecture principles
+```
+
+**After**: Dedicated Gherkin feature files with unified step definitions
+```gherkin
+# features/clean-architecture.feature
+Feature: Clean Architecture Web API
+  As a software architect
+  I want to generate Clean Architecture web API
+  So that I can maintain separation of concerns
+
+Scenario: Clean Architecture web API generation
+  Given I want to create a Clean Architecture web API
+  When I generate a web API with Clean Architecture
+  Then the project should follow Clean Architecture principles
+```
+
+### Files Created During Normalization
+
+1. **`features/clean-architecture.feature`** - 9 Clean Architecture scenarios
+2. **`features/domain-driven-design.feature`** - 15 DDD scenarios  
+3. **`features/hexagonal-architecture.feature`** - 15 Hexagonal Architecture scenarios
+4. **`features/standard-architecture.feature`** - 20 Standard Architecture scenarios
+5. **`features/integration-testing.feature`** - 15 Integration testing scenarios
+6. **Updated `web_api_steps_test.go`** - Unified step definitions for all feature files
+
+### Extraction Sources
+
+Scenarios were extracted from embedded comments in:
+- `clean_test.go` → `clean-architecture.feature`
+- `ddd_test.go` → `domain-driven-design.feature`  
+- `hexagonal_test.go` → `hexagonal-architecture.feature`
+- `standard_test.go` → `standard-architecture.feature`
+- `integration_test.go` → `integration-testing.feature`
+
+### Benefits Achieved
+
+✅ **Improved Organization**: Architecture-specific concerns properly separated
+✅ **Enhanced Readability**: Business stakeholders can read feature files directly  
+✅ **Reduced Duplication**: Single source of step definitions across all architectures
+✅ **Better Maintainability**: Changes to step logic only need to be made in one place
+✅ **Scalable Structure**: Easy to add new architectures or extend existing ones
+✅ **Standards Compliance**: Follows BDD/Gherkin best practices
+✅ **Tool Integration**: Compatible with standard Gherkin tooling and IDEs
+
+This normalization work represents a significant improvement in the web-api ATDD test structure, moving from embedded comments to a professional BDD implementation that serves as both comprehensive testing and living documentation of the system's capabilities.
