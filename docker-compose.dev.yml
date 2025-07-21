@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  # Go backend web server
+  web-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.web-server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./blueprints:/app/blueprints:ro
+      - ./web/dist:/app/web/dist:ro
+    environment:
+      - GIN_MODE=debug
+      - LOG_LEVEL=info
+    depends_on:
+      - web-ui
+    networks:
+      - go-starter-dev
+
+  # React development server (for hot reloading)
+  web-ui:
+    build:
+      context: ./web
+      dockerfile: Dockerfile.dev
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+    environment:
+      - NODE_ENV=development
+      - VITE_API_URL=http://localhost:8080
+    command: npm run dev -- --host 0.0.0.0
+    networks:
+      - go-starter-dev
+
+  # Optional: PostgreSQL for testing database blueprints
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=go_starter_dev
+      - POSTGRES_USER=dev
+      - POSTGRES_PASSWORD=dev_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - go-starter-dev
+
+  # Optional: Redis for testing cache blueprints
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - go-starter-dev
+
+volumes:
+  postgres_data:
+
+networks:
+  go-starter-dev:
+    driver: bridge

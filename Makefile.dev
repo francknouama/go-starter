@@ -1,0 +1,56 @@
+# Development Makefile for go-starter web interface
+
+.PHONY: dev-up dev-down dev-build dev-logs dev-clean web-build web-dev backend-dev
+
+# Start full development environment
+dev-up: web-build
+	docker-compose -f docker-compose.dev.yml up -d
+
+# Stop development environment
+dev-down:
+	docker-compose -f docker-compose.dev.yml down
+
+# Build development images
+dev-build:
+	docker-compose -f docker-compose.dev.yml build
+
+# Show logs from all services
+dev-logs:
+	docker-compose -f docker-compose.dev.yml logs -f
+
+# Clean development environment
+dev-clean:
+	docker-compose -f docker-compose.dev.yml down -v
+	docker-compose -f docker-compose.dev.yml rm -f
+	docker system prune -f
+
+# Build React app for production
+web-build:
+	cd web && npm run build
+
+# Start React development server (standalone)
+web-dev:
+	cd web && npm run dev
+
+# Start Go backend server (standalone)
+backend-dev: web-build
+	go run ./cmd/web-server/main.go
+
+# Full development setup (builds everything from scratch)
+dev-setup: dev-clean dev-build dev-up
+
+# Quick restart (preserves volumes)
+dev-restart: dev-down dev-up
+
+# Health check for all services
+dev-health:
+	@echo "Checking web server health..."
+	@curl -s http://localhost:8080/api/v1/health || echo "Web server not responding"
+	@echo "\nChecking React dev server..."
+	@curl -s -I http://localhost:5173 || echo "React dev server not responding"
+	@echo "\nChecking PostgreSQL..."
+	@docker-compose -f docker-compose.dev.yml exec postgres pg_isready -U dev || echo "PostgreSQL not ready"
+
+# Show running services
+dev-status:
+	docker-compose -f docker-compose.dev.yml ps
