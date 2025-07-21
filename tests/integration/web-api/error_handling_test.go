@@ -1,4 +1,4 @@
-package webapi
+package webapi_integration
 
 import (
 	"context"
