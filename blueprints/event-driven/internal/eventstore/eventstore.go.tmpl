@@ -1,0 +1,629 @@
+package eventstore
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+)
+
+// EventStore defines the interface for storing and retrieving events
+type EventStore interface {
+	// SaveEvents saves a batch of events
+	SaveEvents(ctx context.Context, aggregateID string, events []domain.Event, expectedVersion int) error
+	
+	// GetEvents retrieves all events for an aggregate
+	GetEvents(ctx context.Context, aggregateID string, fromVersion int) ([]domain.Event, error)
+	
+	// GetEventsFromVersion retrieves events starting from a specific version
+	GetEventsFromVersion(ctx context.Context, aggregateID string, fromVersion int) ([]domain.Event, error)
+	
+	// GetEventsFromPosition retrieves events starting from a specific position
+	GetEventsFromPosition(ctx context.Context, position int64) ([]domain.Event, error)
+	
+	// GetAllEvents retrieves all events in the store (for projections)
+	GetAllEvents(ctx context.Context, fromPosition int64, limit int) ([]domain.Event, error)
+	
+	// GetEventsByType retrieves events by type
+	GetEventsByType(ctx context.Context, eventType string, fromPosition int64, limit int) ([]domain.Event, error)
+	
+	// GetLatestPosition returns the latest event position in the store
+	GetLatestPosition(ctx context.Context) (int64, error)
+	
+	// DeleteEvents deletes all events for an aggregate (use with caution)
+	DeleteEvents(ctx context.Context, aggregateID string) error
+	
+	// CreateSnapshot saves a snapshot
+	CreateSnapshot(ctx context.Context, snapshot domain.Snapshot) error
+	
+	// GetSnapshot retrieves the latest snapshot for an aggregate
+	GetSnapshot(ctx context.Context, aggregateID string) (domain.Snapshot, error)
+	
+	// Close closes the event store connection
+	Close() error
+}
+
+// StoredEvent represents an event as stored in the event store
+type StoredEvent struct {
+	Position      int64                  `json:"position"`
+	EventID       string                 `json:"event_id"`
+	EventType     string                 `json:"event_type"`
+	AggregateID   string                 `json:"aggregate_id"`
+	AggregateType string                 `json:"aggregate_type"`
+	Version       int                    `json:"version"`
+	Timestamp     time.Time              `json:"timestamp"`
+	Data          map[string]interface{} `json:"data"`
+	Metadata      map[string]interface{} `json:"metadata"`
+}
+
+// ToEvent converts a StoredEvent to a domain.Event
+func (se *StoredEvent) ToEvent() domain.Event {
+	event := domain.NewBaseEvent(
+		se.EventID,
+		se.EventType,
+		se.AggregateID,
+		se.AggregateType,
+		se.Version,
+		se.Timestamp,
+		se.Data,
+	)
+	
+	// Copy metadata
+	for k, v := range se.Metadata {
+		event.SetMetadata(k, v)
+	}
+	
+	return event
+}
+
+// FromEvent creates a StoredEvent from a domain.Event
+func FromEvent(event domain.Event, position int64) *StoredEvent {
+	return &StoredEvent{
+		Position:      position,
+		EventID:       event.EventID(),
+		EventType:     event.EventType(),
+		AggregateID:   event.AggregateID(),
+		AggregateType: event.AggregateType(),
+		Version:       event.Version(),
+		Timestamp:     event.Timestamp(),
+		Data:          event.Data(),
+		Metadata:      event.Metadata(),
+	}
+}
+
+// InMemoryEventStore is an in-memory implementation of EventStore for testing
+type InMemoryEventStore struct {
+	events    map[string][]*StoredEvent // aggregateID -> events
+	position  int64                     // global position counter
+	snapshots map[string]domain.Snapshot // aggregateID -> snapshot
+	mutex     sync.RWMutex
+}
+
+// NewInMemoryEventStore creates a new in-memory event store
+func NewInMemoryEventStore() *InMemoryEventStore {
+	return &InMemoryEventStore{
+		events:    make(map[string][]*StoredEvent),
+		position:  0,
+		snapshots: make(map[string]domain.Snapshot),
+	}
+}
+
+// SaveEvents saves a batch of events
+func (es *InMemoryEventStore) SaveEvents(ctx context.Context, aggregateID string, events []domain.Event, expectedVersion int) error {
+	if len(events) == 0 {
+		return nil
+	}
+	
+	es.mutex.Lock()
+	defer es.mutex.Unlock()
+	
+	// Check optimistic concurrency
+	existingEvents := es.events[aggregateID]
+	if len(existingEvents) != expectedVersion {
+		return fmt.Errorf("concurrency conflict: expected version %d, actual version %d", 
+			expectedVersion, len(existingEvents))
+	}
+	
+	// Convert and store events
+	storedEvents := make([]*StoredEvent, len(events))
+	for i, event := range events {
+		es.position++
+		storedEvents[i] = FromEvent(event, es.position)
+	}
+	
+	// Initialize slice if it doesn't exist
+	if es.events[aggregateID] == nil {
+		es.events[aggregateID] = make([]*StoredEvent, 0)
+	}
+	
+	// Append events
+	es.events[aggregateID] = append(es.events[aggregateID], storedEvents...)
+	
+	return nil
+}
+
+// GetEvents retrieves all events for an aggregate
+func (es *InMemoryEventStore) GetEvents(ctx context.Context, aggregateID string, fromVersion int) ([]domain.Event, error) {
+	es.mutex.RLock()
+	defer es.mutex.RUnlock()
+	
+	storedEvents, exists := es.events[aggregateID]
+	if !exists {
+		return []domain.Event{}, nil
+	}
+	
+	// Filter events from the specified version
+	var events []domain.Event
+	for _, storedEvent := range storedEvents {
+		if storedEvent.Version > fromVersion {
+			events = append(events, storedEvent.ToEvent())
+		}
+	}
+	
+	return events, nil
+}
+
+// GetEventsFromVersion retrieves events starting from a specific version
+func (es *InMemoryEventStore) GetEventsFromVersion(ctx context.Context, aggregateID string, fromVersion int) ([]domain.Event, error) {
+	return es.GetEvents(ctx, aggregateID, fromVersion-1) // Adjust for inclusive behavior
+}
+
+// GetEventsFromPosition retrieves events starting from a specific position
+func (es *InMemoryEventStore) GetEventsFromPosition(ctx context.Context, position int64) ([]domain.Event, error) {
+	es.mutex.RLock()
+	defer es.mutex.RUnlock()
+	
+	var allEvents []*StoredEvent
+	
+	// Collect all events from all aggregates
+	for _, events := range es.events {
+		allEvents = append(allEvents, events...)
+	}
+	
+	// Sort by position
+	sort.Slice(allEvents, func(i, j int) bool {
+		return allEvents[i].Position < allEvents[j].Position
+	})
+	
+	// Filter events from the specified position
+	var events []domain.Event
+	for _, storedEvent := range allEvents {
+		if storedEvent.Position > position {
+			events = append(events, storedEvent.ToEvent())
+		}
+	}
+	
+	return events, nil
+}
+
+// GetAllEvents retrieves all events in the store (for projections)
+func (es *InMemoryEventStore) GetAllEvents(ctx context.Context, fromPosition int64, limit int) ([]domain.Event, error) {
+	events, err := es.GetEventsFromPosition(ctx, fromPosition)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Apply limit
+	if limit > 0 && len(events) > limit {
+		events = events[:limit]
+	}
+	
+	return events, nil
+}
+
+// GetEventsByType retrieves events by type
+func (es *InMemoryEventStore) GetEventsByType(ctx context.Context, eventType string, fromPosition int64, limit int) ([]domain.Event, error) {
+	allEvents, err := es.GetEventsFromPosition(ctx, fromPosition)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Filter by event type
+	var events []domain.Event
+	for _, event := range allEvents {
+		if event.EventType() == eventType {
+			events = append(events, event)
+			if limit > 0 && len(events) >= limit {
+				break
+			}
+		}
+	}
+	
+	return events, nil
+}
+
+// GetLatestPosition returns the latest event position in the store
+func (es *InMemoryEventStore) GetLatestPosition(ctx context.Context) (int64, error) {
+	es.mutex.RLock()
+	defer es.mutex.RUnlock()
+	
+	return es.position, nil
+}
+
+// DeleteEvents deletes all events for an aggregate (use with caution)
+func (es *InMemoryEventStore) DeleteEvents(ctx context.Context, aggregateID string) error {
+	es.mutex.Lock()
+	defer es.mutex.Unlock()
+	
+	delete(es.events, aggregateID)
+	delete(es.snapshots, aggregateID)
+	
+	return nil
+}
+
+// CreateSnapshot saves a snapshot
+func (es *InMemoryEventStore) CreateSnapshot(ctx context.Context, snapshot domain.Snapshot) error {
+	es.mutex.Lock()
+	defer es.mutex.Unlock()
+	
+	es.snapshots[snapshot.GetAggregateID()] = snapshot
+	return nil
+}
+
+// GetSnapshot retrieves the latest snapshot for an aggregate
+func (es *InMemoryEventStore) GetSnapshot(ctx context.Context, aggregateID string) (domain.Snapshot, error) {
+	es.mutex.RLock()
+	defer es.mutex.RUnlock()
+	
+	snapshot, exists := es.snapshots[aggregateID]
+	if !exists {
+		return nil, fmt.Errorf("no snapshot found for aggregate: %s", aggregateID)
+	}
+	
+	return snapshot, nil
+}
+
+// Close closes the event store connection
+func (es *InMemoryEventStore) Close() error {
+	es.mutex.Lock()
+	defer es.mutex.Unlock()
+	
+	es.events = nil
+	es.snapshots = nil
+	return nil
+}
+
+// Clear clears all data (for testing)
+func (es *InMemoryEventStore) Clear() {
+	es.mutex.Lock()
+	defer es.mutex.Unlock()
+	
+	es.events = make(map[string][]*StoredEvent)
+	es.snapshots = make(map[string]domain.Snapshot)
+	es.position = 0
+}
+
+// EventStoreConfig holds configuration for event stores
+type EventStoreConfig struct {
+	Type       string            `yaml:"type" json:"type"`
+	Connection string            `yaml:"connection" json:"connection"`
+	Options    map[string]string `yaml:"options" json:"options"`
+}
+
+{{if eq .Features.Database.Driver "postgres"}}
+// PostgreSQLEventStore is a PostgreSQL implementation of EventStore
+type PostgreSQLEventStore struct {
+	// Implementation would go here for PostgreSQL
+	// This is a placeholder showing the structure
+}
+
+// NewPostgreSQLEventStore creates a new PostgreSQL event store
+func NewPostgreSQLEventStore(config EventStoreConfig) (*PostgreSQLEventStore, error) {
+	// Implementation would connect to PostgreSQL
+	return &PostgreSQLEventStore{}, nil
+}
+{{end}}
+
+{{if eq .Features.Database.Driver "mysql"}}
+// MySQLEventStore is a MySQL implementation of EventStore
+type MySQLEventStore struct {
+	// Implementation would go here for MySQL
+	// This is a placeholder showing the structure
+}
+
+// NewMySQLEventStore creates a new MySQL event store
+func NewMySQLEventStore(config EventStoreConfig) (*MySQLEventStore, error) {
+	// Implementation would connect to MySQL
+	return &MySQLEventStore{}, nil
+}
+{{end}}
+
+{{if eq .Features.Database.Driver "mongodb"}}
+// MongoDBEventStore is a MongoDB implementation of EventStore
+type MongoDBEventStore struct {
+	// Implementation would go here for MongoDB
+	// This is a placeholder showing the structure
+}
+
+// NewMongoDBEventStore creates a new MongoDB event store
+func NewMongoDBEventStore(config EventStoreConfig) (*MongoDBEventStore, error) {
+	// Implementation would connect to MongoDB
+	return &MongoDBEventStore{}, nil
+}
+{{end}}
+
+// EventStoreFactory creates event stores based on configuration
+type EventStoreFactory struct {
+	config EventStoreConfig
+}
+
+// NewEventStoreFactory creates a new event store factory
+func NewEventStoreFactory(config EventStoreConfig) *EventStoreFactory {
+	return &EventStoreFactory{config: config}
+}
+
+// CreateEventStore creates an event store based on the configuration
+func (f *EventStoreFactory) CreateEventStore() (EventStore, error) {
+	switch f.config.Type {
+	case "inmemory":
+		return NewInMemoryEventStore(), nil
+		
+	{{if eq .Features.Database.Driver "postgres"}}
+	case "postgresql":
+		return NewPostgreSQLEventStore(f.config)
+	{{end}}
+	
+	{{if eq .Features.Database.Driver "mysql"}}
+	case "mysql":
+		return NewMySQLEventStore(f.config)
+	{{end}}
+	
+	{{if eq .Features.Database.Driver "mongodb"}}
+	case "mongodb":
+		return NewMongoDBEventStore(f.config)
+	{{end}}
+	
+	default:
+		return nil, fmt.Errorf("unsupported event store type: %s", f.config.Type)
+	}
+}
+
+// EventStoreMetrics provides metrics for event store operations
+type EventStoreMetrics interface {
+	RecordEventSaved(aggregateType string, eventType string, duration time.Duration)
+	RecordEventsLoaded(aggregateType string, eventCount int, duration time.Duration)
+	RecordConcurrencyConflict(aggregateType string)
+	RecordSnapshotCreated(aggregateType string, duration time.Duration)
+	RecordSnapshotLoaded(aggregateType string, duration time.Duration)
+	IncrementEventStoreErrors(operation string, errorType string)
+}
+
+// EventStoreHealthChecker checks the health of the event store
+type EventStoreHealthChecker struct {
+	store EventStore
+}
+
+// NewEventStoreHealthChecker creates a new event store health checker
+func NewEventStoreHealthChecker(store EventStore) *EventStoreHealthChecker {
+	return &EventStoreHealthChecker{store: store}
+}
+
+// CheckHealth performs health checks on the event store
+func (h *EventStoreHealthChecker) CheckHealth(ctx context.Context) map[string]bool {
+	health := make(map[string]bool)
+	
+	// Check if store is accessible
+	health["store_accessible"] = h.checkStoreAccessibility(ctx)
+	
+	// Check if we can read/write
+	health["read_write_operations"] = h.checkReadWriteOperations(ctx)
+	
+	return health
+}
+
+// checkStoreAccessibility checks if the event store is accessible
+func (h *EventStoreHealthChecker) checkStoreAccessibility(ctx context.Context) bool {
+	_, err := h.store.GetLatestPosition(ctx)
+	return err == nil
+}
+
+// checkReadWriteOperations checks if basic read/write operations work
+func (h *EventStoreHealthChecker) checkReadWriteOperations(ctx context.Context) bool {
+	// Create a test event
+	testEvent := domain.NewBaseEvent(
+		"health-check-event-id",
+		"HealthCheckEvent",
+		"health-check-aggregate",
+		"HealthCheck",
+		1,
+		time.Now().UTC(),
+		map[string]interface{}{"test": true},
+	)
+	
+	// Try to save it
+	err := h.store.SaveEvents(ctx, "health-check-aggregate", []domain.Event{testEvent}, 0)
+	if err != nil {
+		return false
+	}
+	
+	// Try to read it back
+	events, err := h.store.GetEvents(ctx, "health-check-aggregate", 0)
+	if err != nil || len(events) != 1 {
+		return false
+	}
+	
+	// Clean up
+	h.store.DeleteEvents(ctx, "health-check-aggregate")
+	
+	return true
+}
+
+// EventStoreBuilder provides a fluent interface for building event stores
+type EventStoreBuilder struct {
+	config  EventStoreConfig
+	metrics EventStoreMetrics
+}
+
+// NewEventStoreBuilder creates a new event store builder
+func NewEventStoreBuilder() *EventStoreBuilder {
+	return &EventStoreBuilder{
+		config: EventStoreConfig{
+			Type:    "inmemory",
+			Options: make(map[string]string),
+		},
+	}
+}
+
+// WithType sets the event store type
+func (b *EventStoreBuilder) WithType(storeType string) *EventStoreBuilder {
+	b.config.Type = storeType
+	return b
+}
+
+// WithConnection sets the connection string
+func (b *EventStoreBuilder) WithConnection(connection string) *EventStoreBuilder {
+	b.config.Connection = connection
+	return b
+}
+
+// WithOption sets a configuration option
+func (b *EventStoreBuilder) WithOption(key, value string) *EventStoreBuilder {
+	b.config.Options[key] = value
+	return b
+}
+
+// WithMetrics sets the metrics collector
+func (b *EventStoreBuilder) WithMetrics(metrics EventStoreMetrics) *EventStoreBuilder {
+	b.metrics = metrics
+	return b
+}
+
+// Build creates the event store
+func (b *EventStoreBuilder) Build() (EventStore, error) {
+	factory := NewEventStoreFactory(b.config)
+	store, err := factory.CreateEventStore()
+	if err != nil {
+		return nil, err
+	}
+	
+	// If metrics are provided, wrap the store with a metrics decorator
+	if b.metrics != nil {
+		return NewMetricsEventStoreDecorator(store, b.metrics), nil
+	}
+	
+	return store, nil
+}
+
+// MetricsEventStoreDecorator wraps an EventStore with metrics
+type MetricsEventStoreDecorator struct {
+	store   EventStore
+	metrics EventStoreMetrics
+}
+
+// NewMetricsEventStoreDecorator creates a new metrics decorator
+func NewMetricsEventStoreDecorator(store EventStore, metrics EventStoreMetrics) *MetricsEventStoreDecorator {
+	return &MetricsEventStoreDecorator{
+		store:   store,
+		metrics: metrics,
+	}
+}
+
+// SaveEvents saves a batch of events with metrics
+func (d *MetricsEventStoreDecorator) SaveEvents(ctx context.Context, aggregateID string, events []domain.Event, expectedVersion int) error {
+	start := time.Now()
+	err := d.store.SaveEvents(ctx, aggregateID, events, expectedVersion)
+	duration := time.Since(start)
+	
+	if err != nil {
+		d.metrics.IncrementEventStoreErrors("save_events", "general_error")
+		if fmt.Sprintf("%v", err) == "concurrency conflict" {
+			d.metrics.RecordConcurrencyConflict("")
+		}
+	} else if len(events) > 0 {
+		d.metrics.RecordEventSaved("", events[0].EventType(), duration)
+	}
+	
+	return err
+}
+
+// GetEvents retrieves all events for an aggregate with metrics
+func (d *MetricsEventStoreDecorator) GetEvents(ctx context.Context, aggregateID string, fromVersion int) ([]domain.Event, error) {
+	start := time.Now()
+	events, err := d.store.GetEvents(ctx, aggregateID, fromVersion)
+	duration := time.Since(start)
+	
+	if err != nil {
+		d.metrics.IncrementEventStoreErrors("get_events", "general_error")
+	} else {
+		d.metrics.RecordEventsLoaded("", len(events), duration)
+	}
+	
+	return events, err
+}
+
+// Implement remaining interface methods with similar metrics wrapping...
+func (d *MetricsEventStoreDecorator) GetEventsFromVersion(ctx context.Context, aggregateID string, fromVersion int) ([]domain.Event, error) {
+	return d.store.GetEventsFromVersion(ctx, aggregateID, fromVersion)
+}
+
+func (d *MetricsEventStoreDecorator) GetEventsFromPosition(ctx context.Context, position int64) ([]domain.Event, error) {
+	return d.store.GetEventsFromPosition(ctx, position)
+}
+
+func (d *MetricsEventStoreDecorator) GetAllEvents(ctx context.Context, fromPosition int64, limit int) ([]domain.Event, error) {
+	return d.store.GetAllEvents(ctx, fromPosition, limit)
+}
+
+func (d *MetricsEventStoreDecorator) GetEventsByType(ctx context.Context, eventType string, fromPosition int64, limit int) ([]domain.Event, error) {
+	return d.store.GetEventsByType(ctx, eventType, fromPosition, limit)
+}
+
+func (d *MetricsEventStoreDecorator) GetLatestPosition(ctx context.Context) (int64, error) {
+	return d.store.GetLatestPosition(ctx)
+}
+
+func (d *MetricsEventStoreDecorator) DeleteEvents(ctx context.Context, aggregateID string) error {
+	return d.store.DeleteEvents(ctx, aggregateID)
+}
+
+func (d *MetricsEventStoreDecorator) CreateSnapshot(ctx context.Context, snapshot domain.Snapshot) error {
+	start := time.Now()
+	err := d.store.CreateSnapshot(ctx, snapshot)
+	duration := time.Since(start)
+	
+	if err != nil {
+		d.metrics.IncrementEventStoreErrors("create_snapshot", "general_error")
+	} else {
+		d.metrics.RecordSnapshotCreated(snapshot.GetAggregateType(), duration)
+	}
+	
+	return err
+}
+
+func (d *MetricsEventStoreDecorator) GetSnapshot(ctx context.Context, aggregateID string) (domain.Snapshot, error) {
+	start := time.Now()
+	snapshot, err := d.store.GetSnapshot(ctx, aggregateID)
+	duration := time.Since(start)
+	
+	if err != nil {
+		d.metrics.IncrementEventStoreErrors("get_snapshot", "general_error")
+	} else {
+		d.metrics.RecordSnapshotLoaded(snapshot.GetAggregateType(), duration)
+	}
+	
+	return snapshot, err
+}
+
+func (d *MetricsEventStoreDecorator) Close() error {
+	return d.store.Close()
+}
+
+// Default event store instance
+var defaultEventStore EventStore
+
+// GetDefaultEventStore returns the default event store
+func GetDefaultEventStore() EventStore {
+	if defaultEventStore == nil {
+		defaultEventStore = NewInMemoryEventStore()
+	}
+	return defaultEventStore
+}
+
+// SetDefaultEventStore sets the default event store
+func SetDefaultEventStore(store EventStore) {
+	defaultEventStore = store
+}

@@ -1,0 +1,678 @@
+package monitoring
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/resilience"
+)
+
+// MetricsProvider defines the interface for metrics collection
+type MetricsProvider interface {
+	// Counter metrics
+	IncrementCounter(name string, tags map[string]string)
+	IncrementCounterBy(name string, value float64, tags map[string]string)
+	
+	// Gauge metrics
+	SetGauge(name string, value float64, tags map[string]string)
+	
+	// Histogram/Timing metrics
+	RecordDuration(name string, duration time.Duration, tags map[string]string)
+	RecordValue(name string, value float64, tags map[string]string)
+	
+	// Close and cleanup
+	Close() error
+}
+
+{{if eq .LoggerType "prometheus"}}
+// PrometheusMetricsProvider implements MetricsProvider for Prometheus
+type PrometheusMetricsProvider struct {
+	// Implementation would use prometheus/client_golang
+	// This is a placeholder showing the structure
+}
+
+// NewPrometheusMetricsProvider creates a new Prometheus metrics provider
+func NewPrometheusMetricsProvider() *PrometheusMetricsProvider {
+	return &PrometheusMetricsProvider{}
+}
+
+func (p *PrometheusMetricsProvider) IncrementCounter(name string, tags map[string]string) {
+	// Implementation would increment Prometheus counter
+}
+
+func (p *PrometheusMetricsProvider) IncrementCounterBy(name string, value float64, tags map[string]string) {
+	// Implementation would increment Prometheus counter by value
+}
+
+func (p *PrometheusMetricsProvider) SetGauge(name string, value float64, tags map[string]string) {
+	// Implementation would set Prometheus gauge
+}
+
+func (p *PrometheusMetricsProvider) RecordDuration(name string, duration time.Duration, tags map[string]string) {
+	// Implementation would record Prometheus histogram
+}
+
+func (p *PrometheusMetricsProvider) RecordValue(name string, value float64, tags map[string]string) {
+	// Implementation would record Prometheus histogram
+}
+
+func (p *PrometheusMetricsProvider) Close() error {
+	return nil
+}
+{{end}}
+
+// InMemoryMetricsProvider is an in-memory implementation for testing
+type InMemoryMetricsProvider struct {
+	counters   map[string]float64
+	gauges     map[string]float64
+	histograms map[string][]float64
+	mutex      sync.RWMutex
+}
+
+// NewInMemoryMetricsProvider creates a new in-memory metrics provider
+func NewInMemoryMetricsProvider() *InMemoryMetricsProvider {
+	return &InMemoryMetricsProvider{
+		counters:   make(map[string]float64),
+		gauges:     make(map[string]float64),
+		histograms: make(map[string][]float64),
+	}
+}
+
+func (m *InMemoryMetricsProvider) IncrementCounter(name string, tags map[string]string) {
+	m.IncrementCounterBy(name, 1.0, tags)
+}
+
+func (m *InMemoryMetricsProvider) IncrementCounterBy(name string, value float64, tags map[string]string) {
+	key := m.buildKey(name, tags)
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.counters[key] += value
+}
+
+func (m *InMemoryMetricsProvider) SetGauge(name string, value float64, tags map[string]string) {
+	key := m.buildKey(name, tags)
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.gauges[key] = value
+}
+
+func (m *InMemoryMetricsProvider) RecordDuration(name string, duration time.Duration, tags map[string]string) {
+	m.RecordValue(name, float64(duration.Nanoseconds()), tags)
+}
+
+func (m *InMemoryMetricsProvider) RecordValue(name string, value float64, tags map[string]string) {
+	key := m.buildKey(name, tags)
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.histograms[key] = append(m.histograms[key], value)
+}
+
+func (m *InMemoryMetricsProvider) Close() error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.counters = make(map[string]float64)
+	m.gauges = make(map[string]float64)
+	m.histograms = make(map[string][]float64)
+	return nil
+}
+
+func (m *InMemoryMetricsProvider) buildKey(name string, tags map[string]string) string {
+	key := name
+	for k, v := range tags {
+		key += fmt.Sprintf(",%s=%s", k, v)
+	}
+	return key
+}
+
+// GetCounters returns all counter values (for testing)
+func (m *InMemoryMetricsProvider) GetCounters() map[string]float64 {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	counters := make(map[string]float64)
+	for k, v := range m.counters {
+		counters[k] = v
+	}
+	return counters
+}
+
+// GetGauges returns all gauge values (for testing)
+func (m *InMemoryMetricsProvider) GetGauges() map[string]float64 {
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	gauges := make(map[string]float64)
+	for k, v := range m.gauges {
+		gauges[k] = v
+	}
+	return gauges
+}
+
+// EventMetricsCollector implements event-specific metrics collection
+type EventMetricsCollector struct {
+	provider MetricsProvider
+}
+
+// NewEventMetricsCollector creates a new event metrics collector
+func NewEventMetricsCollector(provider MetricsProvider) *EventMetricsCollector {
+	return &EventMetricsCollector{provider: provider}
+}
+
+// RecordEventHandled records metrics for event handling
+func (c *EventMetricsCollector) RecordEventHandled(handlerName, eventType string, duration time.Duration, success bool) {
+	tags := map[string]string{
+		"handler":    handlerName,
+		"event_type": eventType,
+		"success":    fmt.Sprintf("%t", success),
+	}
+	
+	c.provider.IncrementCounter("events_handled_total", tags)
+	c.provider.RecordDuration("event_handling_duration_seconds", duration, tags)
+	
+	if success {
+		c.provider.IncrementCounter("events_handled_success_total", tags)
+	} else {
+		c.provider.IncrementCounter("events_handled_error_total", tags)
+	}
+}
+
+// RecordEventError records event handling errors
+func (c *EventMetricsCollector) RecordEventError(handlerName, eventType, errorType string) {
+	tags := map[string]string{
+		"handler":    handlerName,
+		"event_type": eventType,
+		"error_type": errorType,
+	}
+	
+	c.provider.IncrementCounter("event_errors_total", tags)
+}
+
+// IncrementSubscriberCount increments subscriber count
+func (c *EventMetricsCollector) IncrementSubscriberCount(handlerName string) {
+	tags := map[string]string{"handler": handlerName}
+	c.provider.IncrementCounter("event_subscribers_total", tags)
+}
+
+// DecrementSubscriberCount decrements subscriber count
+func (c *EventMetricsCollector) DecrementSubscriberCount(handlerName string) {
+	tags := map[string]string{"handler": handlerName}
+	c.provider.IncrementCounterBy("event_subscribers_total", -1.0, tags)
+}
+
+// CQRSMetricsCollector implements CQRS-specific metrics collection
+type CQRSMetricsCollector struct {
+	provider MetricsProvider
+}
+
+// NewCQRSMetricsCollector creates a new CQRS metrics collector
+func NewCQRSMetricsCollector(provider MetricsProvider) *CQRSMetricsCollector {
+	return &CQRSMetricsCollector{provider: provider}
+}
+
+// RecordCommandExecuted records command execution metrics
+func (c *CQRSMetricsCollector) RecordCommandExecuted(commandType string, duration time.Duration, success bool) {
+	tags := map[string]string{
+		"command_type": commandType,
+		"success":      fmt.Sprintf("%t", success),
+	}
+	
+	c.provider.IncrementCounter("commands_executed_total", tags)
+	c.provider.RecordDuration("command_execution_duration_seconds", duration, tags)
+	
+	if success {
+		c.provider.IncrementCounter("commands_executed_success_total", tags)
+	} else {
+		c.provider.IncrementCounter("commands_executed_error_total", tags)
+	}
+}
+
+// RecordQueryExecuted records query execution metrics
+func (c *CQRSMetricsCollector) RecordQueryExecuted(queryType string, duration time.Duration, success bool) {
+	tags := map[string]string{
+		"query_type": queryType,
+		"success":    fmt.Sprintf("%t", success),
+	}
+	
+	c.provider.IncrementCounter("queries_executed_total", tags)
+	c.provider.RecordDuration("query_execution_duration_seconds", duration, tags)
+	
+	if success {
+		c.provider.IncrementCounter("queries_executed_success_total", tags)
+	} else {
+		c.provider.IncrementCounter("queries_executed_error_total", tags)
+	}
+}
+
+// RecordConcurrencyConflict records concurrency conflicts
+func (c *CQRSMetricsCollector) RecordConcurrencyConflict(aggregateType string) {
+	tags := map[string]string{"aggregate_type": aggregateType}
+	c.provider.IncrementCounter("concurrency_conflicts_total", tags)
+}
+
+// EventStoreMetricsCollector implements event store metrics collection
+type EventStoreMetricsCollector struct {
+	provider MetricsProvider
+}
+
+// NewEventStoreMetricsCollector creates a new event store metrics collector
+func NewEventStoreMetricsCollector(provider MetricsProvider) *EventStoreMetricsCollector {
+	return &EventStoreMetricsCollector{provider: provider}
+}
+
+// RecordEventSaved records event save metrics
+func (c *EventStoreMetricsCollector) RecordEventSaved(aggregateType string, eventType string, duration time.Duration) {
+	tags := map[string]string{
+		"aggregate_type": aggregateType,
+		"event_type":     eventType,
+	}
+	
+	c.provider.IncrementCounter("events_saved_total", tags)
+	c.provider.RecordDuration("event_save_duration_seconds", duration, tags)
+}
+
+// RecordEventsLoaded records event load metrics
+func (c *EventStoreMetricsCollector) RecordEventsLoaded(aggregateType string, eventCount int, duration time.Duration) {
+	tags := map[string]string{"aggregate_type": aggregateType}
+	
+	c.provider.IncrementCounter("events_loaded_total", tags)
+	c.provider.RecordValue("events_loaded_count", float64(eventCount), tags)
+	c.provider.RecordDuration("event_load_duration_seconds", duration, tags)
+}
+
+// RecordConcurrencyConflict records concurrency conflicts
+func (c *EventStoreMetricsCollector) RecordConcurrencyConflict(aggregateType string) {
+	tags := map[string]string{"aggregate_type": aggregateType}
+	c.provider.IncrementCounter("eventstore_concurrency_conflicts_total", tags)
+}
+
+// RecordSnapshotCreated records snapshot creation metrics
+func (c *EventStoreMetricsCollector) RecordSnapshotCreated(aggregateType string, duration time.Duration) {
+	tags := map[string]string{"aggregate_type": aggregateType}
+	
+	c.provider.IncrementCounter("snapshots_created_total", tags)
+	c.provider.RecordDuration("snapshot_creation_duration_seconds", duration, tags)
+}
+
+// RecordSnapshotLoaded records snapshot load metrics
+func (c *EventStoreMetricsCollector) RecordSnapshotLoaded(aggregateType string, duration time.Duration) {
+	tags := map[string]string{"aggregate_type": aggregateType}
+	
+	c.provider.IncrementCounter("snapshots_loaded_total", tags)
+	c.provider.RecordDuration("snapshot_load_duration_seconds", duration, tags)
+}
+
+// IncrementEventStoreErrors increments error counters
+func (c *EventStoreMetricsCollector) IncrementEventStoreErrors(operation string, errorType string) {
+	tags := map[string]string{
+		"operation":  operation,
+		"error_type": errorType,
+	}
+	
+	c.provider.IncrementCounter("eventstore_errors_total", tags)
+}
+
+// ProjectionMetricsCollector implements projection metrics collection
+type ProjectionMetricsCollector struct {
+	provider MetricsProvider
+}
+
+// NewProjectionMetricsCollector creates a new projection metrics collector
+func NewProjectionMetricsCollector(provider MetricsProvider) *ProjectionMetricsCollector {
+	return &ProjectionMetricsCollector{provider: provider}
+}
+
+// RecordEventProcessed records event processing metrics
+func (c *ProjectionMetricsCollector) RecordEventProcessed(projectionName string, eventType string, duration time.Duration) {
+	tags := map[string]string{
+		"projection":  projectionName,
+		"event_type": eventType,
+	}
+	
+	c.provider.IncrementCounter("projection_events_processed_total", tags)
+	c.provider.RecordDuration("projection_event_processing_duration_seconds", duration, tags)
+}
+
+// RecordProjectionError records projection errors
+func (c *ProjectionMetricsCollector) RecordProjectionError(projectionName string, errorType string) {
+	tags := map[string]string{
+		"projection": projectionName,
+		"error_type": errorType,
+	}
+	
+	c.provider.IncrementCounter("projection_errors_total", tags)
+}
+
+// RecordProjectionLag records projection lag
+func (c *ProjectionMetricsCollector) RecordProjectionLag(projectionName string, lag time.Duration) {
+	tags := map[string]string{"projection": projectionName}
+	c.provider.RecordDuration("projection_lag_seconds", lag, tags)
+}
+
+// IncrementProjectionCount increments projection count
+func (c *ProjectionMetricsCollector) IncrementProjectionCount(projectionName string) {
+	tags := map[string]string{"projection": projectionName}
+	c.provider.IncrementCounter("projections_total", tags)
+}
+
+// ResilienceMetricsCollector implements resilience pattern metrics
+type ResilienceMetricsCollector struct {
+	provider MetricsProvider
+}
+
+// NewResilienceMetricsCollector creates a new resilience metrics collector
+func NewResilienceMetricsCollector(provider MetricsProvider) *ResilienceMetricsCollector {
+	return &ResilienceMetricsCollector{provider: provider}
+}
+
+// Circuit Breaker metrics
+func (c *ResilienceMetricsCollector) RecordCircuitBreakerSuccess(name string, duration time.Duration) {
+	tags := map[string]string{"circuit_breaker": name}
+	c.provider.IncrementCounter("circuit_breaker_success_total", tags)
+	c.provider.RecordDuration("circuit_breaker_duration_seconds", duration, tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordCircuitBreakerFailure(name string, duration time.Duration) {
+	tags := map[string]string{"circuit_breaker": name}
+	c.provider.IncrementCounter("circuit_breaker_failure_total", tags)
+	c.provider.RecordDuration("circuit_breaker_duration_seconds", duration, tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordCircuitBreakerRejection(name string) {
+	tags := map[string]string{"circuit_breaker": name}
+	c.provider.IncrementCounter("circuit_breaker_rejection_total", tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordCircuitBreakerStateChange(name string, fromState, toState string) {
+	tags := map[string]string{
+		"circuit_breaker": name,
+		"from_state":      fromState,
+		"to_state":        toState,
+	}
+	c.provider.IncrementCounter("circuit_breaker_state_changes_total", tags)
+}
+
+// Retry metrics
+func (c *ResilienceMetricsCollector) RecordRetrySuccess(attempt int, duration time.Duration) {
+	tags := map[string]string{"attempt": fmt.Sprintf("%d", attempt)}
+	c.provider.IncrementCounter("retry_success_total", tags)
+	c.provider.RecordDuration("retry_duration_seconds", duration, tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordRetryFailure(attempt int, duration time.Duration, errorType string) {
+	tags := map[string]string{
+		"attempt":    fmt.Sprintf("%d", attempt),
+		"error_type": errorType,
+	}
+	c.provider.IncrementCounter("retry_failure_total", tags)
+	c.provider.RecordDuration("retry_duration_seconds", duration, tags)
+}
+
+// Bulkhead metrics
+func (c *ResilienceMetricsCollector) RecordBulkheadAcquired(name string) {
+	tags := map[string]string{"bulkhead": name}
+	c.provider.IncrementCounter("bulkhead_acquired_total", tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordBulkheadSuccess(name string, duration time.Duration) {
+	tags := map[string]string{"bulkhead": name}
+	c.provider.IncrementCounter("bulkhead_success_total", tags)
+	c.provider.RecordDuration("bulkhead_duration_seconds", duration, tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordBulkheadFailure(name string, duration time.Duration) {
+	tags := map[string]string{"bulkhead": name}
+	c.provider.IncrementCounter("bulkhead_failure_total", tags)
+	c.provider.RecordDuration("bulkhead_duration_seconds", duration, tags)
+}
+
+func (c *ResilienceMetricsCollector) RecordBulkheadRejection(name string, reason string) {
+	tags := map[string]string{
+		"bulkhead": name,
+		"reason":   reason,
+	}
+	c.provider.IncrementCounter("bulkhead_rejection_total", tags)
+}
+
+// Timeout metrics
+func (c *ResilienceMetricsCollector) RecordTimeout(duration time.Duration) {
+	c.provider.IncrementCounter("timeouts_total", nil)
+	c.provider.RecordDuration("timeout_duration_seconds", duration, nil)
+}
+
+func (c *ResilienceMetricsCollector) RecordTimeoutSuccess(duration time.Duration) {
+	c.provider.IncrementCounter("timeout_success_total", nil)
+	c.provider.RecordDuration("timeout_duration_seconds", duration, nil)
+}
+
+func (c *ResilienceMetricsCollector) RecordTimeoutFailure(duration time.Duration) {
+	c.provider.IncrementCounter("timeout_failure_total", nil)
+	c.provider.RecordDuration("timeout_duration_seconds", duration, nil)
+}
+
+// MetricsRegistry manages all metric collectors
+type MetricsRegistry struct {
+	provider             MetricsProvider
+	eventMetrics         *EventMetricsCollector
+	cqrsMetrics          *CQRSMetricsCollector
+	eventStoreMetrics    *EventStoreMetricsCollector
+	projectionMetrics    *ProjectionMetricsCollector
+	resilienceMetrics    *ResilienceMetricsCollector
+}
+
+// NewMetricsRegistry creates a new metrics registry
+func NewMetricsRegistry(provider MetricsProvider) *MetricsRegistry {
+	return &MetricsRegistry{
+		provider:             provider,
+		eventMetrics:         NewEventMetricsCollector(provider),
+		cqrsMetrics:          NewCQRSMetricsCollector(provider),
+		eventStoreMetrics:    NewEventStoreMetricsCollector(provider),
+		projectionMetrics:    NewProjectionMetricsCollector(provider),
+		resilienceMetrics:    NewResilienceMetricsCollector(provider),
+	}
+}
+
+// GetEventMetrics returns the event metrics collector
+func (r *MetricsRegistry) GetEventMetrics() domain.EventMetrics {
+	return r.eventMetrics
+}
+
+// GetCQRSMetrics returns the CQRS metrics collector
+func (r *MetricsRegistry) GetCQRSMetrics() *CQRSMetricsCollector {
+	return r.cqrsMetrics
+}
+
+// GetEventStoreMetrics returns the event store metrics collector
+func (r *MetricsRegistry) GetEventStoreMetrics() *EventStoreMetricsCollector {
+	return r.eventStoreMetrics
+}
+
+// GetProjectionMetrics returns the projection metrics collector
+func (r *MetricsRegistry) GetProjectionMetrics() *ProjectionMetricsCollector {
+	return r.projectionMetrics
+}
+
+// GetResilienceMetrics returns the resilience metrics collector
+func (r *MetricsRegistry) GetResilienceMetrics() *ResilienceMetricsCollector {
+	return r.resilienceMetrics
+}
+
+// Close closes all metrics collectors
+func (r *MetricsRegistry) Close() error {
+	return r.provider.Close()
+}
+
+// HealthMetricsCollector collects system health metrics
+type HealthMetricsCollector struct {
+	provider MetricsProvider
+}
+
+// NewHealthMetricsCollector creates a new health metrics collector
+func NewHealthMetricsCollector(provider MetricsProvider) *HealthMetricsCollector {
+	return &HealthMetricsCollector{provider: provider}
+}
+
+// RecordHealthCheck records health check results
+func (c *HealthMetricsCollector) RecordHealthCheck(component string, healthy bool, duration time.Duration) {
+	tags := map[string]string{
+		"component": component,
+		"healthy":   fmt.Sprintf("%t", healthy),
+	}
+	
+	c.provider.IncrementCounter("health_checks_total", tags)
+	c.provider.RecordDuration("health_check_duration_seconds", duration, tags)
+	
+	// Set gauge for current health status
+	healthValue := float64(0)
+	if healthy {
+		healthValue = 1
+	}
+	c.provider.SetGauge("component_health", healthValue, map[string]string{"component": component})
+}
+
+// PerformanceMonitor monitors system performance metrics
+type PerformanceMonitor struct {
+	registry *MetricsRegistry
+	ticker   *time.Ticker
+	stopCh   chan struct{}
+}
+
+// NewPerformanceMonitor creates a new performance monitor
+func NewPerformanceMonitor(registry *MetricsRegistry, interval time.Duration) *PerformanceMonitor {
+	return &PerformanceMonitor{
+		registry: registry,
+		ticker:   time.NewTicker(interval),
+		stopCh:   make(chan struct{}),
+	}
+}
+
+// Start starts the performance monitor
+func (pm *PerformanceMonitor) Start(ctx context.Context) {
+	go func() {
+		for {
+			select {
+			case <-pm.ticker.C:
+				pm.collectSystemMetrics()
+			case <-pm.stopCh:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+}
+
+// Stop stops the performance monitor
+func (pm *PerformanceMonitor) Stop() {
+	pm.ticker.Stop()
+	close(pm.stopCh)
+}
+
+// collectSystemMetrics collects system performance metrics
+func (pm *PerformanceMonitor) collectSystemMetrics() {
+	// This is a simplified example - in production you'd collect real system metrics
+	// such as memory usage, CPU usage, goroutine count, etc.
+	
+	// Example: Record current timestamp as a heartbeat
+	pm.registry.provider.SetGauge("system_heartbeat", float64(time.Now().Unix()), nil)
+	
+	// Example: Record memory usage (would use runtime.ReadMemStats in practice)
+	pm.registry.provider.SetGauge("memory_usage_bytes", 1024*1024*100, nil) // 100MB example
+}
+
+// MetricsConfig holds metrics configuration
+type MetricsConfig struct {
+	Provider string            `yaml:"provider" json:"provider"`
+	Interval time.Duration     `yaml:"interval" json:"interval"`
+	Tags     map[string]string `yaml:"tags" json:"tags"`
+}
+
+// DefaultMetricsConfig returns default metrics configuration
+func DefaultMetricsConfig() MetricsConfig {
+	return MetricsConfig{
+		Provider: "inmemory",
+		Interval: 30 * time.Second,
+		Tags:     make(map[string]string),
+	}
+}
+
+// MetricsFactory creates metrics providers based on configuration
+type MetricsFactory struct{}
+
+// NewMetricsFactory creates a new metrics factory
+func NewMetricsFactory() *MetricsFactory {
+	return &MetricsFactory{}
+}
+
+// CreateProvider creates a metrics provider based on configuration
+func (f *MetricsFactory) CreateProvider(config MetricsConfig) (MetricsProvider, error) {
+	switch config.Provider {
+	case "inmemory":
+		return NewInMemoryMetricsProvider(), nil
+	{{if eq .LoggerType "prometheus"}}
+	case "prometheus":
+		return NewPrometheusMetricsProvider(), nil
+	{{end}}
+	default:
+		return nil, fmt.Errorf("unsupported metrics provider: %s", config.Provider)
+	}
+}
+
+// Default metrics components
+var (
+	defaultMetricsRegistry *MetricsRegistry
+	defaultHealthCollector *HealthMetricsCollector
+)
+
+// GetDefaultMetricsRegistry returns the default metrics registry
+func GetDefaultMetricsRegistry() *MetricsRegistry {
+	if defaultMetricsRegistry == nil {
+		provider := NewInMemoryMetricsProvider()
+		defaultMetricsRegistry = NewMetricsRegistry(provider)
+	}
+	return defaultMetricsRegistry
+}
+
+// GetDefaultHealthCollector returns the default health metrics collector
+func GetDefaultHealthCollector() *HealthMetricsCollector {
+	if defaultHealthCollector == nil {
+		provider := NewInMemoryMetricsProvider()
+		defaultHealthCollector = NewHealthMetricsCollector(provider)
+	}
+	return defaultHealthCollector
+}
+
+// SetDefaultMetricsRegistry sets the default metrics registry
+func SetDefaultMetricsRegistry(registry *MetricsRegistry) {
+	defaultMetricsRegistry = registry
+}
+
+// Interface implementations to connect with resilience patterns
+func (c *ResilienceMetricsCollector) RecordCircuitBreakerState(name string, state string) {
+	tags := map[string]string{
+		"circuit_breaker": name,
+		"state":           state,
+	}
+	
+	stateValue := float64(0)
+	switch state {
+	case "closed":
+		stateValue = 0
+	case "open":
+		stateValue = 1
+	case "half-open":
+		stateValue = 0.5
+	}
+	
+	c.provider.SetGauge("circuit_breaker_state", stateValue, tags)
+}
+
+// Connect resilience metrics to the domain interfaces
+func (r *MetricsRegistry) ConnectResiliencePatterns() {
+	// This would typically be called during application initialization
+	// to connect the metrics collectors with the resilience components
+	
+	// Example usage:
+	// circuitBreaker := resilience.NewCircuitBreaker(config)
+	// circuitBreaker.SetMetrics(r.resilienceMetrics)
+}

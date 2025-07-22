@@ -1,0 +1,677 @@
+package resilience
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+)
+
+// CircuitState represents the state of a circuit breaker
+type CircuitState int
+
+const (
+	// CircuitClosed represents a closed circuit (normal operation)
+	CircuitClosed CircuitState = iota
+	// CircuitOpen represents an open circuit (failing fast)
+	CircuitOpen
+	// CircuitHalfOpen represents a half-open circuit (testing recovery)
+	CircuitHalfOpen
+)
+
+// String returns the string representation of the circuit state
+func (s CircuitState) String() string {
+	switch s {
+	case CircuitClosed:
+		return "closed"
+	case CircuitOpen:
+		return "open"
+	case CircuitHalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
+	}
+}
+
+// CircuitBreakerConfig holds configuration for circuit breakers
+type CircuitBreakerConfig struct {
+	Name            string        `yaml:"name" json:"name"`
+	FailureRatio    float64       `yaml:"failure_ratio" json:"failure_ratio"`       // 0.5 = 50% failure rate
+	RequestVolume   int           `yaml:"request_volume" json:"request_volume"`     // Minimum requests before tripping
+	SleepWindow     time.Duration `yaml:"sleep_window" json:"sleep_window"`         // Time to wait before trying again
+	SuccessThreshold int          `yaml:"success_threshold" json:"success_threshold"` // Successes needed to close circuit
+}
+
+// DefaultCircuitBreakerConfig returns a default configuration
+func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
+	return CircuitBreakerConfig{
+		Name:            "default",
+		FailureRatio:    0.5,
+		RequestVolume:   20,
+		SleepWindow:     30 * time.Second,
+		SuccessThreshold: 5,
+	}
+}
+
+// CircuitBreaker implements the circuit breaker pattern
+type CircuitBreaker struct {
+	config       CircuitBreakerConfig
+	state        CircuitState
+	failures     int
+	successes    int
+	requests     int
+	lastFailTime time.Time
+	mutex        sync.RWMutex
+	metrics      CircuitBreakerMetrics
+}
+
+// NewCircuitBreaker creates a new circuit breaker
+func NewCircuitBreaker(config CircuitBreakerConfig) *CircuitBreaker {
+	return &CircuitBreaker{
+		config: config,
+		state:  CircuitClosed,
+	}
+}
+
+// SetMetrics sets the metrics collector
+func (cb *CircuitBreaker) SetMetrics(metrics CircuitBreakerMetrics) {
+	cb.metrics = metrics
+}
+
+// Execute executes a function with circuit breaker protection
+func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) error) error {
+	// Check if circuit is open
+	if !cb.allowRequest() {
+		if cb.metrics != nil {
+			cb.metrics.RecordCircuitBreakerRejection(cb.config.Name)
+		}
+		return fmt.Errorf("circuit breaker %s is open", cb.config.Name)
+	}
+	
+	// Execute the function
+	start := time.Now()
+	err := fn(ctx)
+	duration := time.Since(start)
+	
+	// Record result
+	cb.recordResult(err == nil)
+	
+	// Record metrics
+	if cb.metrics != nil {
+		if err == nil {
+			cb.metrics.RecordCircuitBreakerSuccess(cb.config.Name, duration)
+		} else {
+			cb.metrics.RecordCircuitBreakerFailure(cb.config.Name, duration)
+		}
+	}
+	
+	return err
+}
+
+// allowRequest determines if a request should be allowed
+func (cb *CircuitBreaker) allowRequest() bool {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+	
+	now := time.Now()
+	
+	switch cb.state {
+	case CircuitClosed:
+		return true
+	case CircuitOpen:
+		// Check if sleep window has passed
+		if now.Sub(cb.lastFailTime) >= cb.config.SleepWindow {
+			cb.state = CircuitHalfOpen
+			cb.successes = 0
+			return true
+		}
+		return false
+	case CircuitHalfOpen:
+		return true
+	}
+	
+	return false
+}
+
+// recordResult records the result of a request
+func (cb *CircuitBreaker) recordResult(success bool) {
+	cb.mutex.Lock()
+	defer cb.mutex.Unlock()
+	
+	cb.requests++
+	
+	if success {
+		cb.successes++
+		cb.failures = 0 // Reset failures on success
+		
+		// If in half-open state, check if we can close the circuit
+		if cb.state == CircuitHalfOpen && cb.successes >= cb.config.SuccessThreshold {
+			cb.state = CircuitClosed
+			cb.successes = 0
+			cb.requests = 0
+		}
+	} else {
+		cb.failures++
+		cb.successes = 0
+		cb.lastFailTime = time.Now()
+		
+		// Check if we should open the circuit
+		if cb.shouldTrip() {
+			cb.state = CircuitOpen
+		}
+	}
+}
+
+// shouldTrip determines if the circuit should trip
+func (cb *CircuitBreaker) shouldTrip() bool {
+	if cb.requests < cb.config.RequestVolume {
+		return false
+	}
+	
+	// Calculate failure ratio over recent requests
+	failureRatio := float64(cb.failures) / float64(cb.requests)
+	return failureRatio >= cb.config.FailureRatio
+}
+
+// GetState returns the current circuit state
+func (cb *CircuitBreaker) GetState() CircuitState {
+	cb.mutex.RLock()
+	defer cb.mutex.RUnlock()
+	return cb.state
+}
+
+// GetStats returns circuit breaker statistics
+func (cb *CircuitBreaker) GetStats() map[string]interface{} {
+	cb.mutex.RLock()
+	defer cb.mutex.RUnlock()
+	
+	return map[string]interface{}{
+		"name":     cb.config.Name,
+		"state":    cb.state.String(),
+		"failures": cb.failures,
+		"successes": cb.successes,
+		"requests": cb.requests,
+		"last_fail_time": cb.lastFailTime,
+	}
+}
+
+// RetryConfig holds configuration for retry policies
+type RetryConfig struct {
+	MaxAttempts   int           `yaml:"max_attempts" json:"max_attempts"`
+	InitialDelay  time.Duration `yaml:"initial_delay" json:"initial_delay"`
+	MaxDelay      time.Duration `yaml:"max_delay" json:"max_delay"`
+	BackoffFactor float64       `yaml:"backoff_factor" json:"backoff_factor"`
+	Jitter        bool          `yaml:"jitter" json:"jitter"`
+}
+
+// DefaultRetryConfig returns a default retry configuration
+func DefaultRetryConfig() RetryConfig {
+	return RetryConfig{
+		MaxAttempts:   3,
+		InitialDelay:  100 * time.Millisecond,
+		MaxDelay:      5 * time.Second,
+		BackoffFactor: 2.0,
+		Jitter:        true,
+	}
+}
+
+// RetryPolicy implements various retry strategies
+type RetryPolicy struct {
+	config  RetryConfig
+	metrics RetryMetrics
+}
+
+// NewRetryPolicy creates a new retry policy
+func NewRetryPolicy(config RetryConfig) *RetryPolicy {
+	return &RetryPolicy{config: config}
+}
+
+// SetMetrics sets the metrics collector
+func (rp *RetryPolicy) SetMetrics(metrics RetryMetrics) {
+	rp.metrics = metrics
+}
+
+// Execute executes a function with retry logic
+func (rp *RetryPolicy) Execute(ctx context.Context, fn func(context.Context) error) error {
+	var lastErr error
+	
+	for attempt := 1; attempt <= rp.config.MaxAttempts; attempt++ {
+		// Execute the function
+		start := time.Now()
+		err := fn(ctx)
+		duration := time.Since(start)
+		
+		if err == nil {
+			// Success
+			if rp.metrics != nil {
+				rp.metrics.RecordRetrySuccess(attempt, duration)
+			}
+			return nil
+		}
+		
+		lastErr = err
+		
+		// Record failure
+		if rp.metrics != nil {
+			rp.metrics.RecordRetryFailure(attempt, duration, err.Error())
+		}
+		
+		// Don't delay on the last attempt
+		if attempt < rp.config.MaxAttempts {
+			delay := rp.calculateDelay(attempt)
+			
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(delay):
+				// Continue to next attempt
+			}
+		}
+	}
+	
+	return fmt.Errorf("max retry attempts (%d) exceeded, last error: %w", 
+		rp.config.MaxAttempts, lastErr)
+}
+
+// calculateDelay calculates the delay for a given attempt
+func (rp *RetryPolicy) calculateDelay(attempt int) time.Duration {
+	// Calculate exponential backoff delay
+	delay := float64(rp.config.InitialDelay) * math.Pow(rp.config.BackoffFactor, float64(attempt-1))
+	
+	// Apply maximum delay limit
+	if delay > float64(rp.config.MaxDelay) {
+		delay = float64(rp.config.MaxDelay)
+	}
+	
+	// Add jitter if enabled
+	if rp.config.Jitter {
+		// Add up to 25% random jitter
+		jitterRange := delay * 0.25
+		jitter := (rp.randomFloat() - 0.5) * 2 * jitterRange
+		delay += jitter
+	}
+	
+	return time.Duration(delay)
+}
+
+// randomFloat returns a random float between 0 and 1
+func (rp *RetryPolicy) randomFloat() float64 {
+	// Simple random implementation - in production, use crypto/rand
+	return float64(time.Now().UnixNano()%1000) / 1000.0
+}
+
+// BulkheadConfig holds configuration for bulkhead isolation
+type BulkheadConfig struct {
+	Name        string        `yaml:"name" json:"name"`
+	MaxRequests int           `yaml:"max_requests" json:"max_requests"`
+	QueueSize   int           `yaml:"queue_size" json:"queue_size"`
+	Timeout     time.Duration `yaml:"timeout" json:"timeout"`
+}
+
+// DefaultBulkheadConfig returns a default bulkhead configuration
+func DefaultBulkheadConfig() BulkheadConfig {
+	return BulkheadConfig{
+		Name:        "default",
+		MaxRequests: 10,
+		QueueSize:   20,
+		Timeout:     30 * time.Second,
+	}
+}
+
+// Bulkhead implements the bulkhead pattern for resource isolation
+type Bulkhead struct {
+	config    BulkheadConfig
+	semaphore chan struct{}
+	metrics   BulkheadMetrics
+}
+
+// NewBulkhead creates a new bulkhead
+func NewBulkhead(config BulkheadConfig) *Bulkhead {
+	return &Bulkhead{
+		config:    config,
+		semaphore: make(chan struct{}, config.MaxRequests),
+	}
+}
+
+// SetMetrics sets the metrics collector
+func (b *Bulkhead) SetMetrics(metrics BulkheadMetrics) {
+	b.metrics = metrics
+}
+
+// Execute executes a function with bulkhead protection
+func (b *Bulkhead) Execute(ctx context.Context, fn func(context.Context) error) error {
+	// Try to acquire a slot
+	select {
+	case b.semaphore <- struct{}{}:
+		// Acquired slot
+		defer func() { <-b.semaphore }()
+		
+		// Record metrics
+		if b.metrics != nil {
+			b.metrics.RecordBulkheadAcquired(b.config.Name)
+		}
+		
+		// Create timeout context if configured
+		if b.config.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, b.config.Timeout)
+			defer cancel()
+		}
+		
+		// Execute function
+		start := time.Now()
+		err := fn(ctx)
+		duration := time.Since(start)
+		
+		// Record execution metrics
+		if b.metrics != nil {
+			if err == nil {
+				b.metrics.RecordBulkheadSuccess(b.config.Name, duration)
+			} else {
+				b.metrics.RecordBulkheadFailure(b.config.Name, duration)
+			}
+		}
+		
+		return err
+		
+	case <-ctx.Done():
+		// Context cancelled before acquiring slot
+		if b.metrics != nil {
+			b.metrics.RecordBulkheadRejection(b.config.Name, "context_cancelled")
+		}
+		return ctx.Err()
+		
+	default:
+		// No slots available
+		if b.metrics != nil {
+			b.metrics.RecordBulkheadRejection(b.config.Name, "no_slots_available")
+		}
+		return fmt.Errorf("bulkhead %s: no slots available", b.config.Name)
+	}
+}
+
+// GetStats returns bulkhead statistics
+func (b *Bulkhead) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"name":             b.config.Name,
+		"max_requests":     b.config.MaxRequests,
+		"current_requests": len(b.semaphore),
+		"available_slots":  b.config.MaxRequests - len(b.semaphore),
+	}
+}
+
+// TimeoutConfig holds configuration for timeouts
+type TimeoutConfig struct {
+	Duration time.Duration `yaml:"duration" json:"duration"`
+}
+
+// DefaultTimeoutConfig returns a default timeout configuration
+func DefaultTimeoutConfig() TimeoutConfig {
+	return TimeoutConfig{
+		Duration: 30 * time.Second,
+	}
+}
+
+// TimeoutPolicy implements timeout functionality
+type TimeoutPolicy struct {
+	config  TimeoutConfig
+	metrics TimeoutMetrics
+}
+
+// NewTimeoutPolicy creates a new timeout policy
+func NewTimeoutPolicy(config TimeoutConfig) *TimeoutPolicy {
+	return &TimeoutPolicy{config: config}
+}
+
+// SetMetrics sets the metrics collector
+func (tp *TimeoutPolicy) SetMetrics(metrics TimeoutMetrics) {
+	tp.metrics = metrics
+}
+
+// Execute executes a function with timeout protection
+func (tp *TimeoutPolicy) Execute(ctx context.Context, fn func(context.Context) error) error {
+	// Create timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, tp.config.Duration)
+	defer cancel()
+	
+	// Execute function
+	start := time.Now()
+	err := fn(timeoutCtx)
+	duration := time.Since(start)
+	
+	// Record metrics
+	if tp.metrics != nil {
+		if err == context.DeadlineExceeded {
+			tp.metrics.RecordTimeout(duration)
+		} else if err == nil {
+			tp.metrics.RecordTimeoutSuccess(duration)
+		} else {
+			tp.metrics.RecordTimeoutFailure(duration)
+		}
+	}
+	
+	return err
+}
+
+// ResilienceConfig combines all resilience pattern configurations
+type ResilienceConfig struct {
+	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker" json:"circuit_breaker"`
+	Retry          RetryConfig          `yaml:"retry" json:"retry"`
+	Bulkhead       BulkheadConfig       `yaml:"bulkhead" json:"bulkhead"`
+	Timeout        TimeoutConfig        `yaml:"timeout" json:"timeout"`
+}
+
+// DefaultResilienceConfig returns default configuration for all patterns
+func DefaultResilienceConfig() ResilienceConfig {
+	return ResilienceConfig{
+		CircuitBreaker: DefaultCircuitBreakerConfig(),
+		Retry:          DefaultRetryConfig(),
+		Bulkhead:       DefaultBulkheadConfig(),
+		Timeout:        DefaultTimeoutConfig(),
+	}
+}
+
+// ResilienceWrapper combines multiple resilience patterns
+type ResilienceWrapper struct {
+	circuitBreaker *CircuitBreaker
+	retryPolicy    *RetryPolicy
+	bulkhead       *Bulkhead
+	timeoutPolicy  *TimeoutPolicy
+}
+
+// NewResilienceWrapper creates a new resilience wrapper
+func NewResilienceWrapper(config ResilienceConfig) *ResilienceWrapper {
+	return &ResilienceWrapper{
+		circuitBreaker: NewCircuitBreaker(config.CircuitBreaker),
+		retryPolicy:    NewRetryPolicy(config.Retry),
+		bulkhead:       NewBulkhead(config.Bulkhead),
+		timeoutPolicy:  NewTimeoutPolicy(config.Timeout),
+	}
+}
+
+// Execute executes a function with all resilience patterns applied
+func (rw *ResilienceWrapper) Execute(ctx context.Context, fn func(context.Context) error) error {
+	// Apply patterns in order: Bulkhead -> Circuit Breaker -> Retry -> Timeout
+	return rw.bulkhead.Execute(ctx, func(ctx context.Context) error {
+		return rw.circuitBreaker.Execute(ctx, func(ctx context.Context) error {
+			return rw.retryPolicy.Execute(ctx, func(ctx context.Context) error {
+				return rw.timeoutPolicy.Execute(ctx, fn)
+			})
+		})
+	})
+}
+
+// GetStats returns statistics for all resilience patterns
+func (rw *ResilienceWrapper) GetStats() map[string]interface{} {
+	return map[string]interface{}{
+		"circuit_breaker": rw.circuitBreaker.GetStats(),
+		"bulkhead":       rw.bulkhead.GetStats(),
+	}
+}
+
+// Metrics interfaces for different patterns
+type CircuitBreakerMetrics interface {
+	RecordCircuitBreakerSuccess(name string, duration time.Duration)
+	RecordCircuitBreakerFailure(name string, duration time.Duration)
+	RecordCircuitBreakerRejection(name string)
+	RecordCircuitBreakerStateChange(name string, fromState, toState string)
+}
+
+type RetryMetrics interface {
+	RecordRetrySuccess(attempt int, duration time.Duration)
+	RecordRetryFailure(attempt int, duration time.Duration, errorType string)
+}
+
+type BulkheadMetrics interface {
+	RecordBulkheadAcquired(name string)
+	RecordBulkheadSuccess(name string, duration time.Duration)
+	RecordBulkheadFailure(name string, duration time.Duration)
+	RecordBulkheadRejection(name string, reason string)
+}
+
+type TimeoutMetrics interface {
+	RecordTimeout(duration time.Duration)
+	RecordTimeoutSuccess(duration time.Duration)
+	RecordTimeoutFailure(duration time.Duration)
+}
+
+// ResilientEventHandler wraps event handlers with resilience patterns
+type ResilientEventHandler struct {
+	handler   domain.EventHandler
+	resilience *ResilienceWrapper
+	name      string
+}
+
+// NewResilientEventHandler creates a new resilient event handler
+func NewResilientEventHandler(handler domain.EventHandler, config ResilienceConfig) *ResilientEventHandler {
+	return &ResilientEventHandler{
+		handler:   handler,
+		resilience: NewResilienceWrapper(config),
+		name:      handler.GetName() + "_resilient",
+	}
+}
+
+// Handle processes an event with resilience patterns applied
+func (reh *ResilientEventHandler) Handle(ctx context.Context, event domain.Event) error {
+	return reh.resilience.Execute(ctx, func(ctx context.Context) error {
+		return reh.handler.Handle(ctx, event)
+	})
+}
+
+// CanHandle delegates to the wrapped handler
+func (reh *ResilientEventHandler) CanHandle(event domain.Event) bool {
+	return reh.handler.CanHandle(event)
+}
+
+// GetEventTypes delegates to the wrapped handler
+func (reh *ResilientEventHandler) GetEventTypes() []string {
+	return reh.handler.GetEventTypes()
+}
+
+// GetName returns the resilient handler name
+func (reh *ResilientEventHandler) GetName() string {
+	return reh.name
+}
+
+// ResilientRepository wraps repositories with resilience patterns
+type ResilientRepository struct {
+	repository domain.Repository
+	resilience *ResilienceWrapper
+}
+
+// NewResilientRepository creates a new resilient repository
+func NewResilientRepository(repository domain.Repository, config ResilienceConfig) *ResilientRepository {
+	return &ResilientRepository{
+		repository: repository,
+		resilience: NewResilienceWrapper(config),
+	}
+}
+
+// GetByID retrieves an aggregate with resilience patterns applied
+func (rr *ResilientRepository) GetByID(ctx context.Context, aggregateID string, aggregateFactory func(string) domain.AggregateRoot) (domain.AggregateRoot, error) {
+	var aggregate domain.AggregateRoot
+	
+	err := rr.resilience.Execute(ctx, func(ctx context.Context) error {
+		var err error
+		aggregate, err = rr.repository.GetByID(ctx, aggregateID, aggregateFactory)
+		return err
+	})
+	
+	return aggregate, err
+}
+
+// Save saves an aggregate with resilience patterns applied
+func (rr *ResilientRepository) Save(ctx context.Context, aggregate domain.AggregateRoot) error {
+	return rr.resilience.Execute(ctx, func(ctx context.Context) error {
+		return rr.repository.Save(ctx, aggregate)
+	})
+}
+
+// HealthChecker performs health checks for resilience components
+type HealthChecker struct {
+	circuitBreakers map[string]*CircuitBreaker
+	bulkheads      map[string]*Bulkhead
+}
+
+// NewHealthChecker creates a new health checker
+func NewHealthChecker() *HealthChecker {
+	return &HealthChecker{
+		circuitBreakers: make(map[string]*CircuitBreaker),
+		bulkheads:      make(map[string]*Bulkhead),
+	}
+}
+
+// RegisterCircuitBreaker registers a circuit breaker for health checking
+func (hc *HealthChecker) RegisterCircuitBreaker(name string, cb *CircuitBreaker) {
+	hc.circuitBreakers[name] = cb
+}
+
+// RegisterBulkhead registers a bulkhead for health checking
+func (hc *HealthChecker) RegisterBulkhead(name string, b *Bulkhead) {
+	hc.bulkheads[name] = b
+}
+
+// CheckHealth performs health checks on all registered components
+func (hc *HealthChecker) CheckHealth() map[string]interface{} {
+	health := make(map[string]interface{})
+	
+	// Check circuit breakers
+	for name, cb := range hc.circuitBreakers {
+		health[fmt.Sprintf("circuit_breaker_%s", name)] = cb.GetState() == CircuitClosed
+	}
+	
+	// Check bulkheads
+	for name, b := range hc.bulkheads {
+		stats := b.GetStats()
+		availableSlots := stats["available_slots"].(int)
+		health[fmt.Sprintf("bulkhead_%s", name)] = availableSlots > 0
+	}
+	
+	return health
+}
+
+// Default resilience components
+var (
+	defaultResilienceConfig   = DefaultResilienceConfig()
+	defaultResilienceWrapper  *ResilienceWrapper
+	defaultHealthChecker      *HealthChecker
+)
+
+// GetDefaultResilienceWrapper returns the default resilience wrapper
+func GetDefaultResilienceWrapper() *ResilienceWrapper {
+	if defaultResilienceWrapper == nil {
+		defaultResilienceWrapper = NewResilienceWrapper(defaultResilienceConfig)
+	}
+	return defaultResilienceWrapper
+}
+
+// GetDefaultHealthChecker returns the default health checker
+func GetDefaultHealthChecker() *HealthChecker {
+	if defaultHealthChecker == nil {
+		defaultHealthChecker = NewHealthChecker()
+	}
+	return defaultHealthChecker
+}

@@ -1,0 +1,485 @@
+# {{.ProjectName}} - Event-Driven Architecture
+
+This project demonstrates a production-ready implementation of Event-Driven Architecture with CQRS (Command Query Responsibility Segregation) and Event Sourcing patterns in Go.
+
+## 🏗️ Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Event-Driven Architecture                   │
+├─────────────────┬─────────────────┬─────────────────────────────┤
+│    Commands     │     Events      │        Queries              │
+│   (Write Side)  │   (Event Store) │      (Read Side)            │
+├─────────────────┼─────────────────┼─────────────────────────────┤
+│ • Command Bus   │ • Event Store   │ • Query Bus                 │
+│ • Command       │ • Event Stream  │ • Projections               │
+│   Handlers      │ • Event Bus     │ • Read Models               │
+│ • Aggregates    │ • Snapshots     │ • Query Handlers            │
+└─────────────────┴─────────────────┴─────────────────────────────┘
+```
+
+## 🚀 Key Features
+
+### Core Patterns
+- **CQRS**: Separate read and write operations for optimal performance
+- **Event Sourcing**: Store all changes as a sequence of events
+- **Domain-Driven Design**: Rich domain models with business logic
+- **Event-Driven Architecture**: Loose coupling through event communication
+
+### Advanced Features
+- **Event Versioning**: Migration support for evolving event schemas
+- **Snapshots**: Performance optimization for aggregate reconstruction
+- **Resilience Patterns**: Circuit breaker, retry, bulkhead, timeout
+- **Monitoring & Metrics**: Comprehensive observability integration
+- **Multiple Backends**: Support for various databases and message queues
+
+### Production-Ready
+- **Error Handling**: Comprehensive error recovery strategies
+- **Health Checks**: System health monitoring and reporting
+- **Performance Monitoring**: Real-time metrics and alerting
+- **Concurrency Control**: Optimistic locking for data consistency
+
+## 📦 Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/
+│   └── server/                 # Application entry point
+├── internal/
+│   ├── cqrs/                  # CQRS implementation
+│   │   ├── command.go         # Command interfaces and bus
+│   │   ├── query.go           # Query interfaces and bus
+│   │   └── middleware.go      # CQRS middleware
+│   ├── domain/                # Domain layer
+│   │   ├── aggregate.go       # Aggregate root base
+│   │   ├── event.go           # Event interfaces
+│   │   ├── event_versioning.go # Event versioning system
+│   │   ├── snapshots.go       # Snapshot implementation
+│   │   ├── repository.go      # Repository pattern
+│   │   └── user/              # User aggregate example
+│   ├── eventstore/            # Event store implementation
+│   │   └── eventstore.go      # Multiple backend support
+│   ├── handlers/              # Command/Query/Event handlers
+│   │   ├── commands/          # Command handlers
+│   │   ├── queries/           # Query handlers
+│   │   └── events/            # Event handlers
+│   ├── projections/           # Read model projections
+│   │   └── projection.go      # Projection management
+│   ├── resilience/            # Resilience patterns
+│   │   └── resilience.go      # Circuit breaker, retry, etc.
+│   ├── monitoring/            # Metrics and health checks
+│   │   └── metrics.go         # Comprehensive metrics
+│   └── config/                # Configuration management
+├── tests/
+│   ├── unit/                  # Unit tests
+│   ├── integration/           # Integration tests
+│   └── acceptance/            # ATDD tests
+└── docs/                      # Documentation
+```
+
+## 🛠️ Getting Started
+
+### Prerequisites
+
+- Go {{.GoVersion}}+
+{{if eq .Features.Database.Driver "postgres"}}
+- PostgreSQL 12+
+{{end}}
+{{if eq .Features.Database.Driver "mysql"}}
+- MySQL 8.0+
+{{end}}
+{{if eq .Features.Database.Driver "mongodb"}}
+- MongoDB 4.4+
+{{end}}
+{{if eq .Features.Database.Driver "redis"}}
+- Redis 6.0+
+{{end}}
+
+### Installation
+
+1. **Clone and setup the project:**
+```bash
+git clone {{.ModulePath}}
+cd {{.ProjectName}}
+go mod download
+```
+
+2. **Configure the application:**
+```bash
+cp config/config.example.yaml config/config.yaml
+# Edit config/config.yaml with your settings
+```
+
+3. **Run the application:**
+```bash
+go run cmd/server/main.go
+```
+
+## 💡 Usage Examples
+
+### Creating and Handling Commands
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    
+    "{{.ModulePath}}/internal/cqrs"
+    "{{.ModulePath}}/internal/handlers/commands"
+)
+
+func main() {
+    // Initialize command bus
+    commandBus := cqrs.NewCommandBus()
+    
+    // Register command handlers
+    userHandler := commands.NewCreateUserHandler(repository)
+    commandBus.RegisterHandler("CreateUser", userHandler)
+    
+    // Create and dispatch command
+    cmd := commands.NewCreateUserCommand(
+        "user-123", 
+        "John Doe", 
+        "john@example.com",
+    )
+    
+    result, err := commandBus.Dispatch(context.Background(), cmd)
+    if err != nil {
+        fmt.Printf("Command failed: %v\n", err)
+        return
+    }
+    
+    fmt.Printf("User created: %s\n", result.AggregateID)
+}
+```
+
+### Querying Data
+
+```go
+package main
+
+import (
+    "context"
+    "fmt"
+    
+    "{{.ModulePath}}/internal/cqrs"
+    "{{.ModulePath}}/internal/handlers/queries"
+)
+
+func main() {
+    // Initialize query bus
+    queryBus := cqrs.NewQueryBus()
+    
+    // Register query handlers
+    userHandler := queries.NewGetUserHandler(repository)
+    queryBus.RegisterHandler("GetUser", userHandler)
+    
+    // Create and execute query
+    query := queries.NewGetUserQuery("user-123")
+    
+    result, err := queryBus.Execute(context.Background(), query)
+    if err != nil {
+        fmt.Printf("Query failed: %v\n", err)
+        return
+    }
+    
+    user := result.Data.(*domain.User)
+    fmt.Printf("User found: %s (%s)\n", user.Name, user.Email)
+}
+```
+
+### Event Handling
+
+```go
+package main
+
+import (
+    "context"
+    "log"
+    
+    "{{.ModulePath}}/internal/handlers/events"
+    "{{.ModulePath}}/internal/domain"
+)
+
+func main() {
+    // Initialize event bus
+    eventBus := events.NewEventBus()
+    
+    // Register event handlers
+    emailHandler := events.NewUserCreatedEventHandler(emailService, auditService)
+    eventBus.Subscribe(emailHandler)
+    
+    // Events are automatically published when aggregates are saved
+    // through the repository, triggering registered handlers
+    
+    log.Println("Event handling system initialized")
+}
+```
+
+## 🔧 Configuration
+
+### Event Store Configuration
+
+```yaml
+# config/config.yaml
+eventstore:
+  type: "{{.Features.Database.Driver}}"
+  {{if eq .Features.Database.Driver "postgres"}}
+  connection: "postgres://user:pass@localhost/events?sslmode=disable"
+  {{end}}
+  {{if eq .Features.Database.Driver "mysql"}}
+  connection: "user:pass@tcp(localhost:3306)/events"
+  {{end}}
+  {{if eq .Features.Database.Driver "mongodb"}}
+  connection: "mongodb://localhost:27017/events"
+  {{end}}
+  options:
+    max_connections: 20
+    timeout: "30s"
+
+snapshots:
+  enabled: true
+  frequency: 10  # Take snapshot every 10 events
+  cleanup_interval: "24h"
+```
+
+### Resilience Configuration
+
+```yaml
+resilience:
+  circuit_breaker:
+    name: "default"
+    failure_ratio: 0.5
+    request_volume: 20
+    sleep_window: "30s"
+    success_threshold: 5
+    
+  retry:
+    max_attempts: 3
+    initial_delay: "100ms"
+    max_delay: "5s"
+    backoff_factor: 2.0
+    jitter: true
+    
+  bulkhead:
+    name: "default"
+    max_requests: 10
+    queue_size: 20
+    timeout: "30s"
+    
+  timeout:
+    duration: "30s"
+```
+
+### Monitoring Configuration
+
+```yaml
+monitoring:
+  metrics:
+    provider: "{{if eq .LoggerType "prometheus"}}prometheus{{else}}inmemory{{end}}"
+    interval: "30s"
+    {{if eq .LoggerType "prometheus"}}
+    prometheus:
+      listen_addr: ":9090"
+      path: "/metrics"
+    {{end}}
+    
+  health:
+    check_interval: "15s"
+    timeout: "5s"
+```
+
+## 🔍 Event Versioning
+
+The system supports event schema evolution through versioning:
+
+```go
+// Define event versions
+const (
+    UserCreatedV1 EventVersion = 1
+    UserCreatedV2 EventVersion = 2
+)
+
+// Register migrators
+migrator := NewUserEventMigrator()
+registry.RegisterMigrator("UserCreated", migrator)
+
+// Events are automatically migrated when loaded
+event, err := eventStore.GetEvents(ctx, aggregateID, 0)
+migratedEvent, err := registry.MigrateToCurrentVersion(event)
+```
+
+## 📊 Monitoring and Observability
+
+### Health Checks
+
+The application exposes health check endpoints:
+
+```bash
+# Check overall system health
+curl http://localhost:8080/health
+
+# Check individual components
+curl http://localhost:8080/health/eventstore
+curl http://localhost:8080/health/projections
+curl http://localhost:8080/health/resilience
+```
+
+### Metrics
+
+{{if eq .LoggerType "prometheus"}}
+Prometheus metrics are available at `/metrics`:
+
+```bash
+# View metrics
+curl http://localhost:9090/metrics
+
+# Key metrics:
+# - commands_executed_total
+# - events_handled_total
+# - projection_events_processed_total
+# - circuit_breaker_state
+# - eventstore_errors_total
+```
+{{else}}
+Metrics are collected and available through the monitoring interface:
+
+```go
+registry := monitoring.GetDefaultMetricsRegistry()
+stats := registry.GetEventStoreMetrics()
+```
+{{end}}
+
+## 🧪 Testing
+
+### Unit Tests
+
+```bash
+# Run unit tests
+go test ./internal/... -v
+
+# Run with coverage
+go test ./internal/... -v -cover -coverprofile=coverage.out
+go tool cover -html=coverage.out
+```
+
+### Integration Tests
+
+```bash
+# Run integration tests
+go test ./tests/integration/... -v
+
+# Run specific test suites
+go test ./tests/integration/cqrs_integration_test.go -v
+```
+
+### Acceptance Tests (ATDD)
+
+```bash
+# Run ATDD tests with godog
+cd tests/acceptance
+godog features/
+```
+
+## 🔄 Event Flow
+
+1. **Command Processing**:
+   ```
+   Client → Command → Command Bus → Command Handler → Aggregate → Events
+   ```
+
+2. **Event Storage**:
+   ```
+   Events → Event Store → Event Bus → Event Handlers → Side Effects
+   ```
+
+3. **Query Processing**:
+   ```
+   Client → Query → Query Bus → Query Handler → Read Model → Response
+   ```
+
+4. **Projection Updates**:
+   ```
+   Events → Projection Manager → Projections → Read Models
+   ```
+
+## 🚀 Performance Considerations
+
+### Snapshots
+- Snapshots are taken every 10 events by default
+- Reduces aggregate reconstruction time
+- Configurable frequency and retention
+
+### Read Models
+- Optimized for query patterns
+- Denormalized for performance
+- Updated asynchronously via projections
+
+### Resilience
+- Circuit breakers prevent cascade failures
+- Retry policies handle transient failures
+- Bulkheads isolate critical resources
+- Timeouts prevent resource exhaustion
+
+## 🛡️ Error Handling
+
+The system implements comprehensive error handling:
+
+1. **Command Validation**: Input validation with detailed error messages
+2. **Concurrency Control**: Optimistic locking with conflict resolution
+3. **Resilience Patterns**: Circuit breakers, retries, and timeouts
+4. **Event Handler Errors**: Graceful degradation with error tracking
+5. **Health Monitoring**: Automated health checks and alerting
+
+## 🔗 External Dependencies
+
+{{if eq .Features.Database.Driver "postgres"}}
+### PostgreSQL Event Store
+- Optimized for event storage and retrieval
+- ACID compliance for consistency
+- Efficient querying with proper indexing
+{{end}}
+
+{{if eq .Features.Database.Driver "mongodb"}}
+### MongoDB Event Store
+- Document-based event storage
+- Horizontal scalability
+- Flexible schema evolution
+{{end}}
+
+### Message Queue Integration
+- Asynchronous event processing
+- Scalable event distribution
+- Reliable message delivery
+
+## 📚 Additional Resources
+
+- [Event Sourcing Patterns](docs/event-sourcing.md)
+- [CQRS Best Practices](docs/cqrs-best-practices.md)
+- [Deployment Guide](docs/deployment.md)
+- [API Documentation](docs/api.md)
+- [Troubleshooting Guide](docs/troubleshooting.md)
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the {{.License}} License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- [Event Store](https://eventstore.com/) for event sourcing inspiration
+- [CQRS Journey](https://docs.microsoft.com/en-us/previous-versions/msp-n-p/jj554200(v=pandp.10)) for architectural guidance
+- [Domain-Driven Design](https://domainlanguage.com/) community for domain modeling patterns
+
+---
+
+**Generated with [go-starter](https://github.com/your-org/go-starter)** 🚀

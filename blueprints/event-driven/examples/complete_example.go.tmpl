@@ -1,0 +1,554 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"{{.ModulePath}}/internal/cqrs"
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/domain/user"
+	"{{.ModulePath}}/internal/eventstore"
+	"{{.ModulePath}}/internal/handlers/commands"
+	"{{.ModulePath}}/internal/handlers/events"
+	"{{.ModulePath}}/internal/handlers/queries"
+	"{{.ModulePath}}/internal/monitoring"
+	"{{.ModulePath}}/internal/projections"
+	"{{.ModulePath}}/internal/resilience"
+)
+
+// CompleteExample demonstrates the full event-driven architecture
+func main() {
+	ctx := context.Background()
+
+	// Initialize core components
+	example := NewCompleteExample()
+	defer example.Cleanup()
+
+	// Demonstrate the complete flow
+	if err := example.RunCompleteFlow(ctx); err != nil {
+		log.Fatalf("Example failed: %v", err)
+	}
+
+	log.Println("✅ Complete example finished successfully!")
+}
+
+// CompleteExample encapsulates all system components
+type CompleteExample struct {
+	// Core infrastructure
+	EventStore eventstore.EventStore
+	Repository domain.Repository
+
+	// CQRS components
+	CommandBus cqrs.CommandBus
+	QueryBus   cqrs.QueryBus
+
+	// Event handling
+	EventBus    events.EventBus
+	ProjectionManager projections.ProjectionManager
+
+	// Monitoring
+	MetricsRegistry *monitoring.MetricsRegistry
+	HealthChecker   *monitoring.HealthMetricsCollector
+
+	// Resilience
+	ResilienceWrapper *resilience.ResilienceWrapper
+}
+
+// NewCompleteExample creates a new complete example with all components
+func NewCompleteExample() *CompleteExample {
+	// Initialize event store
+	eventStore := eventstore.NewInMemoryEventStore()
+
+	// Initialize repository with snapshot support
+	snapshotManager := domain.GetDefaultSnapshotManager()
+	repository := domain.NewSnapshotOptimizedRepository(eventStore, snapshotManager)
+
+	// Initialize metrics
+	metricsProvider := monitoring.NewInMemoryMetricsProvider()
+	metricsRegistry := monitoring.NewMetricsRegistry(metricsProvider)
+
+	// Initialize resilience patterns
+	resilienceConfig := resilience.DefaultResilienceConfig()
+	resilienceConfig.CircuitBreaker.Name = "example_circuit_breaker"
+	resilienceWrapper := resilience.NewResilienceWrapper(resilienceConfig)
+
+	// Initialize CQRS components
+	commandBus := cqrs.NewCommandBusBuilder().
+		WithMetrics(metricsRegistry.GetCQRSMetrics()).
+		WithMiddleware(cqrs.LoggingMiddleware("example")).
+		WithMiddleware(cqrs.ValidationMiddleware()).
+		Build()
+
+	queryBus := cqrs.NewQueryBusBuilder().
+		WithMetrics(metricsRegistry.GetCQRSMetrics()).
+		WithMiddleware(cqrs.QueryLoggingMiddleware("example")).
+		Build()
+
+	// Initialize event bus
+	eventBus := events.NewEventBusBuilder().
+		WithMetrics(metricsRegistry.GetEventMetrics()).
+		Build()
+
+	// Initialize projection manager
+	projectionManager := projections.NewProjectionManager()
+
+	// Setup health monitoring
+	healthChecker := monitoring.GetDefaultHealthCollector()
+
+	return &CompleteExample{
+		EventStore:        eventStore,
+		Repository:        repository,
+		CommandBus:        commandBus,
+		QueryBus:         queryBus,
+		EventBus:         eventBus,
+		ProjectionManager: projectionManager,
+		MetricsRegistry:   metricsRegistry,
+		HealthChecker:     healthChecker,
+		ResilienceWrapper: resilienceWrapper,
+	}
+}
+
+// RunCompleteFlow demonstrates the complete event-driven flow
+func (e *CompleteExample) RunCompleteFlow(ctx context.Context) error {
+	log.Println("🚀 Starting complete event-driven architecture example...")
+
+	// Step 1: Setup handlers and projections
+	if err := e.setupHandlersAndProjections(); err != nil {
+		return fmt.Errorf("setup failed: %w", err)
+	}
+
+	// Step 2: Demonstrate command processing
+	userID := "user-example-001"
+	if err := e.demonstrateCommandProcessing(ctx, userID); err != nil {
+		return fmt.Errorf("command processing failed: %w", err)
+	}
+
+	// Step 3: Demonstrate query processing
+	if err := e.demonstrateQueryProcessing(ctx, userID); err != nil {
+		return fmt.Errorf("query processing failed: %w", err)
+	}
+
+	// Step 4: Demonstrate event processing and projections
+	if err := e.demonstrateEventProcessing(ctx, userID); err != nil {
+		return fmt.Errorf("event processing failed: %w", err)
+	}
+
+	// Step 5: Demonstrate resilience patterns
+	if err := e.demonstrateResiliencePatterns(ctx); err != nil {
+		return fmt.Errorf("resilience patterns failed: %w", err)
+	}
+
+	// Step 6: Demonstrate event versioning
+	if err := e.demonstrateEventVersioning(ctx); err != nil {
+		return fmt.Errorf("event versioning failed: %w", err)
+	}
+
+	// Step 7: Demonstrate snapshots
+	if err := e.demonstrateSnapshots(ctx); err != nil {
+		return fmt.Errorf("snapshots failed: %w", err)
+	}
+
+	// Step 8: Show monitoring and metrics
+	if err := e.demonstrateMonitoring(ctx); err != nil {
+		return fmt.Errorf("monitoring failed: %w", err)
+	}
+
+	return nil
+}
+
+// setupHandlersAndProjections initializes all handlers and projections
+func (e *CompleteExample) setupHandlersAndProjections() error {
+	log.Println("📋 Setting up handlers and projections...")
+
+	// Create mock services for handlers
+	emailService := &MockEmailService{}
+	cacheService := &MockCacheService{}
+	auditService := &MockAuditService{}
+	cleanupService := &MockCleanupService{}
+
+	// Setup command handlers
+	createUserHandler := commands.NewCreateUserHandler(e.Repository)
+	updateUserHandler := commands.NewUpdateUserHandler(e.Repository)
+	deleteUserHandler := commands.NewDeleteUserHandler(e.Repository)
+
+	// Register command handlers
+	e.CommandBus.RegisterHandler("CreateUser", createUserHandler)
+	e.CommandBus.RegisterHandler("UpdateUser", updateUserHandler)
+	e.CommandBus.RegisterHandler("DeleteUser", deleteUserHandler)
+
+	// Setup query handlers
+	getUserHandler := queries.NewGetUserHandler(e.Repository)
+	getUsersHandler := queries.NewGetUsersHandler(e.Repository)
+
+	// Register query handlers
+	e.QueryBus.RegisterHandler("GetUser", getUserHandler)
+	e.QueryBus.RegisterHandler("GetUsers", getUsersHandler)
+
+	// Setup event handlers
+	userCreatedHandler := events.NewUserCreatedEventHandler(emailService, auditService)
+	userUpdatedHandler := events.NewUserUpdatedEventHandler(cacheService, auditService)
+	userDeletedHandler := events.NewUserDeletedEventHandler(cacheService, cleanupService, auditService)
+
+	// Register event handlers
+	e.EventBus.Subscribe(userCreatedHandler)
+	e.EventBus.Subscribe(userUpdatedHandler)
+	e.EventBus.Subscribe(userDeletedHandler)
+
+	// Setup projections
+	userProjection := &UserProjection{}
+	e.ProjectionManager.RegisterProjection(userProjection)
+
+	log.Println("✅ Handlers and projections setup complete")
+	return nil
+}
+
+// demonstrateCommandProcessing shows command processing
+func (e *CompleteExample) demonstrateCommandProcessing(ctx context.Context, userID string) error {
+	log.Println("⚡ Demonstrating command processing...")
+
+	// Create user command
+	createCmd := commands.NewCreateUserCommand(
+		userID,
+		"John Doe",
+		"john.doe@example.com",
+	)
+
+	log.Printf("📝 Executing CreateUser command for ID: %s", userID)
+	result, err := e.CommandBus.Dispatch(ctx, createCmd)
+	if err != nil {
+		return fmt.Errorf("create user command failed: %w", err)
+	}
+
+	log.Printf("✅ User created successfully: %s", result.AggregateID)
+
+	// Update user command
+	updateCmd := commands.NewUpdateUserCommand(
+		userID,
+		"John Smith",
+		"john.smith@example.com",
+	)
+
+	log.Printf("📝 Executing UpdateUser command for ID: %s", userID)
+	result, err = e.CommandBus.Dispatch(ctx, updateCmd)
+	if err != nil {
+		return fmt.Errorf("update user command failed: %w", err)
+	}
+
+	log.Printf("✅ User updated successfully: %s", result.AggregateID)
+	return nil
+}
+
+// demonstrateQueryProcessing shows query processing
+func (e *CompleteExample) demonstrateQueryProcessing(ctx context.Context, userID string) error {
+	log.Println("🔍 Demonstrating query processing...")
+
+	// Get single user query
+	getUserQuery := queries.NewGetUserQuery(userID)
+
+	log.Printf("🔎 Executing GetUser query for ID: %s", userID)
+	result, err := e.QueryBus.Execute(ctx, getUserQuery)
+	if err != nil {
+		return fmt.Errorf("get user query failed: %w", err)
+	}
+
+	user, ok := result.Data.(*user.User)
+	if !ok {
+		return fmt.Errorf("unexpected query result type")
+	}
+
+	log.Printf("✅ User retrieved: %s (%s)", user.Name, user.Email)
+
+	// Get multiple users query
+	getUsersQuery := queries.NewGetUsersQuery(&cqrs.Pagination{
+		Page:     1,
+		PageSize: 10,
+		Offset:   0,
+		Limit:    10,
+	})
+
+	log.Println("🔎 Executing GetUsers query")
+	result, err = e.QueryBus.Execute(ctx, getUsersQuery)
+	if err != nil {
+		return fmt.Errorf("get users query failed: %w", err)
+	}
+
+	users, ok := result.Data.([]*user.User)
+	if !ok {
+		return fmt.Errorf("unexpected query result type")
+	}
+
+	log.Printf("✅ Retrieved %d users", len(users))
+	return nil
+}
+
+// demonstrateEventProcessing shows event processing and projections
+func (e *CompleteExample) demonstrateEventProcessing(ctx context.Context, userID string) error {
+	log.Println("📡 Demonstrating event processing...")
+
+	// Get events from event store
+	events, err := e.EventStore.GetEvents(ctx, userID, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get events: %w", err)
+	}
+
+	log.Printf("📊 Found %d events for user %s", len(events), userID)
+
+	// Process events through projection manager
+	for _, event := range events {
+		log.Printf("🔄 Processing event: %s (%s)", event.EventID(), event.EventType())
+		if err := e.ProjectionManager.ProcessEvent(ctx, event); err != nil {
+			log.Printf("⚠️ Warning: projection processing failed: %v", err)
+		}
+	}
+
+	// Show projection status
+	status := e.ProjectionManager.GetProjectionStatus()
+	for name, projStatus := range status {
+		log.Printf("📈 Projection '%s': Position=%d, Events=%d, Errors=%d", 
+			name, projStatus.Position, projStatus.EventsProcessed, projStatus.ErrorCount)
+	}
+
+	return nil
+}
+
+// demonstrateResiliencePatterns shows resilience patterns in action
+func (e *CompleteExample) demonstrateResiliencePatterns(ctx context.Context) error {
+	log.Println("🛡️ Demonstrating resilience patterns...")
+
+	// Simulate a function that might fail
+	attemptCount := 0
+	testFunction := func(ctx context.Context) error {
+		attemptCount++
+		log.Printf("🔄 Attempt %d", attemptCount)
+		
+		if attemptCount < 3 {
+			return fmt.Errorf("simulated failure")
+		}
+		return nil
+	}
+
+	log.Println("🔄 Testing resilience wrapper (will retry failed attempts)...")
+	err := e.ResilienceWrapper.Execute(ctx, testFunction)
+	if err != nil {
+		return fmt.Errorf("resilience pattern failed: %w", err)
+	}
+
+	log.Printf("✅ Resilience patterns working: succeeded after %d attempts", attemptCount)
+	
+	// Show resilience stats
+	stats := e.ResilienceWrapper.GetStats()
+	log.Printf("📊 Circuit breaker stats: %+v", stats["circuit_breaker"])
+	log.Printf("📊 Bulkhead stats: %+v", stats["bulkhead"])
+
+	return nil
+}
+
+// demonstrateEventVersioning shows event versioning capabilities
+func (e *CompleteExample) demonstrateEventVersioning(ctx context.Context) error {
+	log.Println("🔄 Demonstrating event versioning...")
+
+	// Create a version 1 event
+	eventV1 := domain.NewBaseVersionedEvent(
+		"evt-version-test",
+		"UserCreated",
+		"user-version-test",
+		"User",
+		1,
+		time.Now().UTC(),
+		map[string]interface{}{
+			"id":    "user-version-test",
+			"name":  "Test User",
+			"email": "test@example.com",
+		},
+		domain.EventVersion1,
+	)
+
+	log.Printf("📝 Created event V1: %s", eventV1.EventID())
+
+	// Get the version registry and migrate to current version
+	registry := domain.GetDefaultEventVersionRegistry()
+	migratedEvent, err := registry.MigrateToCurrentVersion(eventV1)
+	if err != nil {
+		return fmt.Errorf("event migration failed: %w", err)
+	}
+
+	log.Printf("✅ Migrated event from V%d to V%d", 
+		eventV1.GetEventVersion(), migratedEvent.GetEventVersion())
+
+	// Validate the migrated event
+	validator := registry.GetValidator()
+	if err := validator.ValidateEvent(migratedEvent); err != nil {
+		return fmt.Errorf("event validation failed: %w", err)
+	}
+
+	log.Println("✅ Event versioning and validation successful")
+	return nil
+}
+
+// demonstrateSnapshots shows snapshot functionality
+func (e *CompleteExample) demonstrateSnapshots(ctx context.Context) error {
+	log.Println("📸 Demonstrating snapshots...")
+
+	snapshotUserID := "user-snapshot-demo"
+
+	// Create a user and perform multiple operations to trigger snapshot
+	createCmd := commands.NewCreateUserCommand(snapshotUserID, "Snapshot User", "snapshot@example.com")
+	_, err := e.CommandBus.Dispatch(ctx, createCmd)
+	if err != nil {
+		return fmt.Errorf("failed to create user for snapshot demo: %w", err)
+	}
+
+	// Perform multiple updates to exceed snapshot threshold
+	for i := 0; i < 15; i++ {
+		updateCmd := commands.NewUpdateUserCommand(
+			snapshotUserID,
+			fmt.Sprintf("Snapshot User %d", i+1),
+			fmt.Sprintf("snapshot%d@example.com", i+1),
+		)
+		_, err := e.CommandBus.Dispatch(ctx, updateCmd)
+		if err != nil {
+			return fmt.Errorf("failed to update user for snapshot demo: %w", err)
+		}
+	}
+
+	log.Printf("✅ Created user with 16 events (should trigger snapshot)")
+
+	// Try to get snapshot
+	snapshotStore := domain.GetDefaultSnapshotManager()
+	
+	// Get the user to trigger snapshot creation if needed
+	aggregate, err := e.Repository.GetByID(ctx, snapshotUserID, func(id string) domain.AggregateRoot {
+		return user.NewUser(id)
+	})
+	if err != nil {
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+
+	log.Printf("✅ User retrieved with version %d", aggregate.GetVersion())
+	
+	// Show event count vs snapshot optimization
+	events, err := e.EventStore.GetEvents(ctx, snapshotUserID, 0)
+	if err != nil {
+		return fmt.Errorf("failed to get events: %w", err)
+	}
+
+	log.Printf("📊 Total events: %d (snapshot optimization can reduce loading time)", len(events))
+	return nil
+}
+
+// demonstrateMonitoring shows monitoring capabilities
+func (e *CompleteExample) demonstrateMonitoring(ctx context.Context) error {
+	log.Println("📊 Demonstrating monitoring and metrics...")
+
+	// Record a health check
+	start := time.Now()
+	// Simulate health check
+	time.Sleep(10 * time.Millisecond)
+	duration := time.Since(start)
+	
+	e.HealthChecker.RecordHealthCheck("example_component", true, duration)
+	log.Printf("✅ Health check recorded: %v", duration)
+
+	// Get metrics from the in-memory provider
+	if inMemoryProvider, ok := e.MetricsRegistry.GetEventStoreMetrics().(*monitoring.EventStoreMetricsCollector); ok {
+		// This would show actual metrics in a real implementation
+		log.Println("📈 Metrics are being collected (check Prometheus/monitoring dashboard)")
+	}
+
+	// Demonstrate performance monitoring
+	performanceMonitor := monitoring.NewPerformanceMonitor(e.MetricsRegistry, 5*time.Second)
+	performanceMonitor.Start(ctx)
+	defer performanceMonitor.Stop()
+
+	log.Println("📊 Performance monitoring started")
+	time.Sleep(100 * time.Millisecond) // Brief wait to show it's running
+
+	log.Println("✅ Monitoring demonstration complete")
+	return nil
+}
+
+// Cleanup releases resources
+func (e *CompleteExample) Cleanup() {
+	log.Println("🧹 Cleaning up resources...")
+	
+	if e.EventStore != nil {
+		e.EventStore.Close()
+	}
+	
+	if e.MetricsRegistry != nil {
+		e.MetricsRegistry.Close()
+	}
+	
+	log.Println("✅ Cleanup complete")
+}
+
+// Mock services for demonstration
+type MockEmailService struct{}
+
+func (m *MockEmailService) SendEmail(ctx context.Context, email *events.Email) error {
+	log.Printf("📧 Mock email sent to %s: %s", email.To, email.Subject)
+	return nil
+}
+
+type MockCacheService struct{}
+
+func (m *MockCacheService) Delete(ctx context.Context, key string) error {
+	log.Printf("🗑️ Mock cache deleted key: %s", key)
+	return nil
+}
+
+type MockAuditService struct{}
+
+func (m *MockAuditService) RecordAudit(ctx context.Context, entry *events.AuditEntry) error {
+	log.Printf("📝 Mock audit recorded: %s - %s", entry.Action, entry.EventType)
+	return nil
+}
+
+type MockCleanupService struct{}
+
+func (m *MockCleanupService) CleanupUserData(ctx context.Context, userID string) error {
+	log.Printf("🧹 Mock cleanup for user: %s", userID)
+	return nil
+}
+
+// UserProjection is a sample projection for demonstration
+type UserProjection struct {
+	*projections.BaseProjection
+	users map[string]interface{}
+}
+
+func NewUserProjection() *UserProjection {
+	return &UserProjection{
+		BaseProjection: projections.NewBaseProjection("user_projection", 1),
+		users:          make(map[string]interface{}),
+	}
+}
+
+func (p *UserProjection) CanHandle(event domain.Event) bool {
+	switch event.EventType() {
+	case "UserCreated", "UserUpdated", "UserDeleted":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *UserProjection) Handle(ctx context.Context, event domain.Event) error {
+	switch event.EventType() {
+	case "UserCreated", "UserUpdated":
+		p.users[event.AggregateID()] = event.Data()
+		log.Printf("📋 Projection updated for user: %s", event.AggregateID())
+	case "UserDeleted":
+		delete(p.users, event.AggregateID())
+		log.Printf("📋 Projection removed user: %s", event.AggregateID())
+	}
+	return nil
+}
+
+func (p *UserProjection) Reset(ctx context.Context) error {
+	p.users = make(map[string]interface{})
+	log.Println("📋 User projection reset")
+	return nil
+}
