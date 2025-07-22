@@ -1,0 +1,117 @@
+package benchmarks
+
+import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{.ModulePath}}/routes"
+	{{- if eq .LoggerType "slog"}}
+	"log/slog"
+	"os"
+	{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- end}}
+)
+
+func BenchmarkAPIEndpoints(b *testing.B) {
+	// Setup test logger
+	{{- if eq .LoggerType "slog"}}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	{{- else if eq .LoggerType "zap"}}
+	logger, _ := zap.NewProduction()
+	defer logger.Sync()
+	{{- else if eq .LoggerType "logrus"}}
+	logger := logrus.New()
+	logger.SetLevel(logrus.WarnLevel)
+	{{- else if eq .LoggerType "zerolog"}}
+	logger := zerolog.New(os.Stdout).Level(zerolog.WarnLevel)
+	{{- end}}
+	
+	// Setup router
+	router := routes.SetupRoutes()
+
+	b.Run("GET_Home", func(b *testing.B) {
+		req, _ := http.NewRequest("GET", "/", nil)
+		for i := 0; i < b.N; i++ {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				b.Errorf("Expected status code 200, got %d", w.Code)
+			}
+		}
+	})
+
+	b.Run("GET_API_Health", func(b *testing.B) {
+		req, _ := http.NewRequest("GET", "/api/health", nil)
+		for i := 0; i < b.N; i++ {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				b.Errorf("Expected status code 200, got %d", w.Code)
+			}
+		}
+	})
+
+	{{- if ne .AuthType ""}}
+	b.Run("POST_API_Users", func(b *testing.B) {
+		body := bytes.NewBufferString(`{"email":"test@example.com","password":"password123"}`)
+		req, _ := http.NewRequest("POST", "/api/users", body)
+		req.Header.Set("Content-Type", "application/json")
+		
+		for i := 0; i < b.N; i++ {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			// Note: This will likely return 401 without auth, but we're benchmarking the pipeline
+		}
+	})
+	{{- end}}
+}
+
+func BenchmarkAuthentication(b *testing.B) {
+	{{- if ne .AuthType ""}}
+	router := routes.SetupRoutes()
+	
+	b.Run("Login_Endpoint", func(b *testing.B) {
+		body := bytes.NewBufferString(`{"email":"test@example.com","password":"password123"}`)
+		req, _ := http.NewRequest("POST", "/api/auth/login", body)
+		req.Header.Set("Content-Type", "application/json")
+		
+		for i := 0; i < b.N; i++ {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+		}
+	})
+	{{- else}}
+	b.Skip("Authentication benchmarks skipped - no auth configured")
+	{{- end}}
+}
+
+func BenchmarkMiddleware(b *testing.B) {
+	router := routes.SetupRoutes()
+	
+	b.Run("CORS_Middleware", func(b *testing.B) {
+		req, _ := http.NewRequest("OPTIONS", "/api/health", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		
+		for i := 0; i < b.N; i++ {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+		}
+	})
+	
+	b.Run("Logger_Middleware", func(b *testing.B) {
+		req, _ := http.NewRequest("GET", "/", nil)
+		
+		for i := 0; i < b.N; i++ {
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+		}
+	})
+}

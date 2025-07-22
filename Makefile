@@ -61,9 +61,21 @@ setup: ## Set up development environment
 	go mod download
 	@echo "✓ Development environment ready"
 
+setup-dev: ## Full developer environment setup using setup script
+	@echo "Running full developer setup..."
+	./scripts/setup.sh
+
 # Validation
 validate: build test lint ## Run all validation checks
 	@echo "✓ All validation checks passed"
+
+validate-all: ## Validate all template combinations
+	@echo "Validating all template combinations..."
+	./scripts/test_all_combinations.sh
+
+validate-templates: ## Quick template validation for CI/CD
+	@echo "Validating template generation..."
+	./scripts/validate_template_generation.sh
 
 # Cleanup
 clean: ## Clean build artifacts
@@ -100,3 +112,7 @@ release-dry: ## Dry run release (requires goreleaser)
 	else \
 		echo "goreleaser not installed. Install with: go install github.com/goreleaser/goreleaser@latest"; \
 	fi
+
+release: ## Create a new release
+	@echo "Creating new release..."
+	./scripts/release.sh

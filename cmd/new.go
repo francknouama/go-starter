@@ -40,6 +40,7 @@ var (
 	quiet          bool
 	noBanner       bool
 	bannerStyle    string
+	assetPipeline  string
 )
 
 // newCmd represents the new command
@@ -88,6 +89,7 @@ func init() {
 	newCmd.Flags().StringVar(&databaseDriver, "database-driver", "", "Database driver (postgres, mysql, sqlite)")
 	newCmd.Flags().StringVar(&databaseORM, "database-orm", "", "Database ORM/query builder (gorm, sqlx)")
 	newCmd.Flags().StringVar(&authType, "auth-type", "", "Authentication type (jwt, oauth2, session)")
+	newCmd.Flags().StringVar(&assetPipeline, "asset-pipeline", "", "Asset build system (embedded, webpack, vite, esbuild)")
 
 	// Progressive disclosure options
 	newCmd.Flags().BoolVar(&basic, "basic", false, "Show only essential options (default)")
@@ -188,6 +190,33 @@ func runNew(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Apply defaults for all project types when sufficient flags are provided (regardless of complexity)
+	if projectType != "" {
+		// Set framework defaults for each project type
+		if framework == "" {
+			switch projectType {
+			case "cli":
+				actualFramework = "cobra"
+			case "web-api", "monolith":
+				actualFramework = "gin"
+			case "microservice":
+				actualFramework = "gin"
+			default:
+				// Library and lambda don't need frameworks
+			}
+		}
+
+		// Set logger defaults for all project types that use logging
+		if logger == "" && projectType != "library" {
+			logger = "slog" // Default to Go's standard structured logging
+		}
+
+		// Set default module path for testing scenarios
+		if projectModule == "" && projectName != "" {
+			projectModule = "github.com/username/" + projectName
+		}
+	}
+
 	// Get project configuration through interactive prompts or flags
 	initialConfig := types.ProjectConfig{
 		Name:         projectName,
@@ -205,6 +234,15 @@ func runNew(cmd *cobra.Command, args []string) error {
 			Authentication: types.AuthConfig{
 				Type: authType,
 			},
+		},
+		Variables: map[string]string{
+			"AssetPipeline":  assetPipeline,
+			"TemplateEngine": "", // Will use template default
+			"SessionStore":   "", // Will use template default
+			"DatabaseDriver": databaseDriver,
+			"DatabaseORM":    databaseORM,
+			"AuthType":       authType,
+			"LoggerType":     logger,
 		},
 	}
 

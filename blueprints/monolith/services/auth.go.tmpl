@@ -23,17 +23,13 @@ import (
 	"log/slog"
 	{{- end}}
 	"golang.org/x/crypto/bcrypt"
-	{{- if eq .Features.Authentication.Type "jwt"}}
+	{{- if eq .AuthType "jwt"}}
 	"github.com/golang-jwt/jwt/v5"
 	{{- end}}
-	{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+	{{- if eq .AuthType "oauth2"}}
 	"golang.org/x/oauth2"
-	{{- if contains .Features.Authentication.Providers "google"}}
 	"golang.org/x/oauth2/google"
-	{{- end}}
-	{{- if contains .Features.Authentication.Providers "github"}}
 	"golang.org/x/oauth2/github"
-	{{- end}}
 	{{- end}}
 )
 
@@ -68,7 +64,7 @@ const (
 	SessionCleanupInterval = 1 * time.Hour
 	
 	// Token settings
-	{{- if eq .Features.Authentication.Type "jwt"}}
+	{{- if eq .AuthType "jwt"}}
 	JWTExpiration = 1 * time.Hour
 	RefreshTokenExpiration = 30 * 24 * time.Hour // 30 days
 	{{- end}}
@@ -98,7 +94,7 @@ type AuthService struct {
 	{{- else}}
 	logger      *slog.Logger
 	{{- end}}
-	{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+	{{- if eq .AuthType "oauth2"}}
 	oauthConfigs map[string]*oauth2.Config
 	{{- end}}
 }
@@ -125,25 +121,25 @@ func NewAuthService(
 		cacheSvc: cacheSvc,
 		config:   config,
 		logger:   logger,
-		{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+		{{- if eq .AuthType "oauth2"}}
 		oauthConfigs: make(map[string]*oauth2.Config),
 		{{- end}}
 	}
 
-	{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+	{{- if eq .AuthType "oauth2"}}
 	service.setupOAuthConfigs()
 	{{- end}}
 	
 	return service
 }
 
-{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+{{- if eq .AuthType "oauth2"}}
 
 // setupOAuthConfigs initializes OAuth2 configurations
 func (s *AuthService) setupOAuthConfigs() {
 	baseURL := s.config.App.URL
 
-	{{- if contains .Features.Authentication.Providers "google"}}
+	{{- if eq .AuthType "oauth2"}} {{/* Google OAuth support */}}
 	if s.config.OAuth.Google.ClientID != "" {
 		s.oauthConfigs["google"] = &oauth2.Config{
 			ClientID:     s.config.OAuth.Google.ClientID,
@@ -155,7 +151,7 @@ func (s *AuthService) setupOAuthConfigs() {
 	}
 	{{- end}}
 
-	{{- if contains .Features.Authentication.Providers "github"}}
+	{{- if eq .AuthType "oauth2"}} {{/* GitHub OAuth support */}}
 	if s.config.OAuth.GitHub.ClientID != "" {
 		s.oauthConfigs["github"] = &oauth2.Config{
 			ClientID:     s.config.OAuth.GitHub.ClientID,
@@ -192,7 +188,7 @@ type RegisterRequest struct {
 // AuthResponse represents an authentication response
 type AuthResponse struct {
 	User         *models.User `json:"user"`
-	{{- if eq .Features.Authentication.Type "jwt"}}
+	{{- if eq .AuthType "jwt"}}
 	AccessToken  string       `json:"access_token,omitempty"`
 	RefreshToken string       `json:"refresh_token,omitempty"`
 	ExpiresIn    int64        `json:"expires_in,omitempty"`
@@ -253,7 +249,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 		s.logger.{{if eq .LoggerType "zap"}}Error("Failed to update last login", zap.Error(err), zap.String("user_id", user.ID)){{else if eq .LoggerType "logrus"}}WithError(err).WithField("user_id", user.ID).Error("Failed to update last login"){{else if eq .LoggerType "zerolog"}}Error().Err(err).Str("user_id", user.ID).Msg("Failed to update last login"){{else}}Error("Failed to update last login", "error", err, "user_id", user.ID){{end}}
 	}
 
-	{{- if eq .Features.Authentication.Type "jwt"}}
+	{{- if eq .AuthType "jwt"}}
 	// Generate JWT tokens
 	accessToken, refreshToken, err := s.generateTokens(ctx, user)
 	if err != nil {
@@ -273,7 +269,7 @@ func (s *AuthService) Login(ctx context.Context, req *LoginRequest) (*AuthRespon
 
 	return &AuthResponse{
 		User: user,
-		{{- if eq .Features.Authentication.Type "jwt"}}
+		{{- if eq .AuthType "jwt"}}
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    int64(JWTExpiration.Seconds()),
@@ -454,7 +450,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword stri
 	}
 
 	// Invalidate all existing sessions
-	{{- if eq .Features.Authentication.Type "session"}}
+	{{- if eq .AuthType "session"}}
 	s.invalidateAllUserSessions(ctx, user.ID)
 	{{- end}}
 
@@ -465,7 +461,7 @@ func (s *AuthService) ResetPassword(ctx context.Context, token, newPassword stri
 	return nil
 }
 
-{{- if eq .Features.Authentication.Type "session"}}
+{{- if eq .AuthType "session"}}
 
 // createSession creates a new user session
 func (s *AuthService) createSession(ctx context.Context, user *models.User, remember bool) (string, error) {
@@ -564,7 +560,7 @@ func (s *AuthService) invalidateAllUserSessions(ctx context.Context, userID stri
 
 {{- end}}
 
-{{- if eq .Features.Authentication.Type "jwt"}}
+{{- if eq .AuthType "jwt"}}
 
 // generateTokens generates JWT access and refresh tokens
 func (s *AuthService) generateTokens(ctx context.Context, user *models.User) (string, string, error) {
@@ -691,8 +687,8 @@ func (s *AuthService) RefreshTokens(ctx context.Context, refreshTokenString stri
 {{- end}}
 
 // Logout invalidates the user's session or tokens
-func (s *AuthService) Logout(ctx context.Context, {{if eq .Features.Authentication.Type "jwt"}}userID{{else}}sessionID{{end}} string) error {
-	{{- if eq .Features.Authentication.Type "jwt"}}
+func (s *AuthService) Logout(ctx context.Context, {{if eq .AuthType "jwt"}}userID{{else}}sessionID{{end}} string) error {
+	{{- if eq .AuthType "jwt"}}
 	// Invalidate refresh token
 	refreshKey := fmt.Sprintf("refresh_token:%s", userID)
 	if err := s.cacheSvc.Delete(ctx, refreshKey); err != nil {
@@ -862,7 +858,7 @@ func (s *AuthService) getUserAgent(ctx context.Context) string {
 	return "unknown"
 }
 
-{{- if or (eq .Features.Authentication.Type "oauth2") (contains .Features.Authentication.Providers "google") (contains .Features.Authentication.Providers "github")}}
+{{- if eq .AuthType "oauth2"}}
 
 // GetOAuthURL generates OAuth authorization URL
 func (s *AuthService) GetOAuthURL(provider, state string) (string, error) {
@@ -928,7 +924,7 @@ func (s *AuthService) HandleOAuthCallback(ctx context.Context, provider, code, s
 		})
 	}
 
-	{{- if eq .Features.Authentication.Type "jwt"}}
+	{{- if eq .AuthType "jwt"}}
 	// Generate JWT tokens
 	accessToken, refreshToken, err := s.generateTokens(ctx, user)
 	if err != nil {
@@ -944,7 +940,7 @@ func (s *AuthService) HandleOAuthCallback(ctx context.Context, provider, code, s
 
 	return &AuthResponse{
 		User: user,
-		{{- if eq .Features.Authentication.Type "jwt"}}
+		{{- if eq .AuthType "jwt"}}
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 		ExpiresIn:    int64(JWTExpiration.Seconds()),
@@ -967,7 +963,7 @@ func (s *AuthService) getOAuthUserInfo(ctx context.Context, provider string, tok
 	client := s.oauthConfigs[provider].Client(ctx, token)
 	
 	switch provider {
-	{{- if contains .Features.Authentication.Providers "google"}}
+	{{- if eq .AuthType "oauth2"}} {{/* Google OAuth support */}}
 	case "google":
 		resp, err := client.Get("https://www.googleapis.com/oauth2/v2/userinfo")
 		if err != nil {
@@ -992,7 +988,7 @@ func (s *AuthService) getOAuthUserInfo(ctx context.Context, provider string, tok
 		}, nil
 	{{- end}}
 
-	{{- if contains .Features.Authentication.Providers "github"}}
+	{{- if eq .AuthType "oauth2"}} {{/* GitHub OAuth support */}}
 	case "github":
 		// Get user info
 		userResp, err := client.Get("https://api.github.com/user")

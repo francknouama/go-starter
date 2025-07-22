@@ -1,5 +1,5 @@
 name: monolith-standard
-description: Traditional monolithic web application template with MVC architecture
+description: Modular monolith application
 version: 1.0.0
 type: monolith
 complexity: intermediate
@@ -65,6 +65,8 @@ files:
     destination: Dockerfile
   - source: docker-compose.yml.tmpl
     destination: docker-compose.yml
+  - source: golangci.yml.tmpl
+    destination: .golangci.yml
 
   # Configuration
   - source: config/config.go.tmpl
@@ -194,6 +196,9 @@ files:
   - source: esbuild.config.js.tmpl
     destination: esbuild.config.js
     condition: "{{eq .AssetPipeline \"esbuild\"}}"
+  - source: tailwind.config.js.tmpl
+    destination: tailwind.config.js
+    condition: "{{ne .AssetPipeline \"embedded\"}}"
   - source: package.json.tmpl
     destination: package.json
     condition: "{{and (ne .AssetPipeline \"embedded\") (ne .AssetPipeline \"\")}}"
@@ -208,6 +213,8 @@ files:
   - source: services/user_test.go.tmpl
     destination: services/user_test.go
     condition: "{{ne .AuthType \"\"}}"
+  - source: benchmarks/api_test.go.tmpl
+    destination: benchmarks/api_test.go
 
   # Scripts
   - source: scripts/setup.sh.tmpl
@@ -218,11 +225,15 @@ files:
     executable: true
     condition: "{{ne .DatabaseDriver \"\"}}"
 
-  # CI/CD
+  # CI/CD and Deployment
   - source: .github/workflows/ci.yml.tmpl
     destination: .github/workflows/ci.yml
   - source: .github/workflows/deploy.yml.tmpl
     destination: .github/workflows/deploy.yml
+  - source: kubernetes/deployment.yaml.tmpl
+    destination: kubernetes/deployment.yaml
+  - source: docker-compose.prod.yml.tmpl
+    destination: docker-compose.prod.yml
 
 dependencies:
   - module: github.com/gin-gonic/gin

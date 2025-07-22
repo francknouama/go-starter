@@ -202,7 +202,7 @@ func (ac *AuthController) Login(c *gin.Context) {
 	}
 
 	// Set user session
-	{{- if eq .AuthType "session" or eq .AuthType "oauth2"}}
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
 	middleware.SetUserSession(c, user.ID, user.Email)
 	{{- else if eq .AuthType "jwt"}}
 	token, err := ac.generateJWTToken(user)
@@ -331,7 +331,7 @@ func (ac *AuthController) Register(c *gin.Context) {
 func (ac *AuthController) Logout(c *gin.Context) {
 	userID, _ := middleware.GetUserID(c)
 	
-	{{- if eq .AuthType "session" or eq .AuthType "oauth2"}}
+	{{- if or (eq .AuthType "session") (eq .AuthType "oauth2")}}
 	middleware.ClearUserSession(c)
 	{{- else if eq .AuthType "jwt"}}
 	// Clear JWT cookie
