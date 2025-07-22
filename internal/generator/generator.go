@@ -290,6 +290,14 @@ func (g *Generator) validateConfig(config types.ProjectConfig) error {
 
 // getTemplateID maps project configuration to template ID
 func (g *Generator) getTemplateID(config types.ProjectConfig) string {
+	// First check if a specific blueprint_id is set by the interactive CLI
+	if config.Variables != nil {
+		if blueprintID, exists := config.Variables["blueprint_id"]; exists && blueprintID != "" {
+			return blueprintID
+		}
+	}
+	
+	// Fall back to architecture-based selection
 	if config.Architecture != "" && config.Architecture != "standard" {
 		return fmt.Sprintf("%s-%s", config.Type, config.Architecture)
 	}
