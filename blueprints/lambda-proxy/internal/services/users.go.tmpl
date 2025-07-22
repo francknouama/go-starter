@@ -1,0 +1,297 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/observability"
+)
+
+// UserService provides user management functionality
+type UserService interface {
+{{- if ne .AuthType "none"}}
+	GetProfile(ctx context.Context, userID string) (*models.UserProfile, error)
+	UpdateProfile(ctx context.Context, userID string, req models.UpdateProfileRequest) (*models.UserProfile, error)
+{{- else}}
+	ListUsers(ctx context.Context) (*models.UsersResponse, error)
+	GetUser(ctx context.Context, userID string) (*models.User, error)
+	CreateUser(ctx context.Context, req models.CreateUserRequest) (*models.User, error)
+	UpdateUser(ctx context.Context, userID string, req models.UpdateUserRequest) (*models.User, error)
+	DeleteUser(ctx context.Context, userID string) error
+{{- end}}
+}
+
+// mockUserService provides a mock implementation for demonstration
+type mockUserService struct{}
+
+// NewUserService creates a new user service
+func NewUserService() UserService {
+	return &mockUserService{}
+}
+
+{{- if ne .AuthType "none"}}
+func (s *mockUserService) GetProfile(ctx context.Context, userID string) (*models.UserProfile, error) {
+	// TODO: Implement actual user profile retrieval from your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Getting user profile", map[string]interface{}{
+		"user_id": userID,
+	})
+	
+	if userID == "" {
+		return nil, errors.New("user ID is required")
+	}
+	
+	// Mock user profile - replace with actual database lookup
+	profile := &models.UserProfile{
+		ID:        userID,
+		Email:     "user@example.com",
+		FirstName: "John",
+		LastName:  "Doe",
+		CreatedAt: time.Now().Add(-30 * 24 * time.Hour), // 30 days ago
+		UpdatedAt: time.Now(),
+	}
+	
+	return profile, nil
+}
+
+func (s *mockUserService) UpdateProfile(ctx context.Context, userID string, req models.UpdateProfileRequest) (*models.UserProfile, error) {
+	// TODO: Implement actual user profile update in your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Updating user profile", map[string]interface{}{
+		"user_id": userID,
+		"changes": fmt.Sprintf("%+v", req),
+	})
+	
+	if userID == "" {
+		return nil, errors.New("user ID is required")
+	}
+	
+	// Mock validation
+	if req.Email != "" && !isValidEmail(req.Email) {
+		return nil, errors.New("invalid email format")
+	}
+	
+	// Mock user profile update - replace with actual database update
+	profile := &models.UserProfile{
+		ID:        userID,
+		Email:     getStringOrDefault(req.Email, "user@example.com"),
+		FirstName: getStringOrDefault(req.FirstName, "John"),
+		LastName:  getStringOrDefault(req.LastName, "Doe"),
+		CreatedAt: time.Now().Add(-30 * 24 * time.Hour), // 30 days ago
+		UpdatedAt: time.Now(),
+	}
+	
+	observability.LogInfo("User profile updated", map[string]interface{}{
+		"user_id": userID,
+	})
+	
+	return profile, nil
+}
+
+{{- else}}
+func (s *mockUserService) ListUsers(ctx context.Context) (*models.UsersResponse, error) {
+	// TODO: Implement actual user listing from your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Listing users", nil)
+	
+	// Mock users - replace with actual database query
+	users := []models.User{
+		{
+			ID:        "user_1",
+			Email:     "user1@example.com",
+			FirstName: "John",
+			LastName:  "Doe",
+			Role:      "user",
+			Active:    true,
+			CreatedAt: time.Now().Add(-30 * 24 * time.Hour),
+			UpdatedAt: time.Now(),
+		},
+		{
+			ID:        "user_2",
+			Email:     "admin@example.com",
+			FirstName: "Jane",
+			LastName:  "Smith",
+			Role:      "admin",
+			Active:    true,
+			CreatedAt: time.Now().Add(-15 * 24 * time.Hour),
+			UpdatedAt: time.Now(),
+		},
+	}
+	
+	return &models.UsersResponse{
+		Users: users,
+		Total: len(users),
+		Page:  1,
+		Pages: 1,
+	}, nil
+}
+
+func (s *mockUserService) GetUser(ctx context.Context, userID string) (*models.User, error) {
+	// TODO: Implement actual user retrieval from your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Getting user", map[string]interface{}{
+		"user_id": userID,
+	})
+	
+	if userID == "" {
+		return nil, errors.New("user ID is required")
+	}
+	
+	// Mock user - replace with actual database lookup
+	user := &models.User{
+		ID:        userID,
+		Email:     "user@example.com",
+		FirstName: "John",
+		LastName:  "Doe",
+		Role:      "user",
+		Active:    true,
+		CreatedAt: time.Now().Add(-30 * 24 * time.Hour),
+		UpdatedAt: time.Now(),
+	}
+	
+	return user, nil
+}
+
+func (s *mockUserService) CreateUser(ctx context.Context, req models.CreateUserRequest) (*models.User, error) {
+	// TODO: Implement actual user creation in your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Creating user", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	// Mock validation
+	if req.Email == "" {
+		return nil, errors.New("email is required")
+	}
+	if !isValidEmail(req.Email) {
+		return nil, errors.New("invalid email format")
+	}
+	if req.FirstName == "" {
+		return nil, errors.New("first name is required")
+	}
+	if req.LastName == "" {
+		return nil, errors.New("last name is required")
+	}
+	
+	// Mock user creation - replace with actual database insert
+	user := &models.User{
+		ID:        fmt.Sprintf("user_%d", time.Now().Unix()),
+		Email:     req.Email,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Role:      getStringOrDefault(req.Role, "user"),
+		Active:    true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	
+	observability.LogInfo("User created", map[string]interface{}{
+		"user_id": user.ID,
+		"email":   user.Email,
+	})
+	
+	return user, nil
+}
+
+func (s *mockUserService) UpdateUser(ctx context.Context, userID string, req models.UpdateUserRequest) (*models.User, error) {
+	// TODO: Implement actual user update in your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Updating user", map[string]interface{}{
+		"user_id": userID,
+		"changes": fmt.Sprintf("%+v", req),
+	})
+	
+	if userID == "" {
+		return nil, errors.New("user ID is required")
+	}
+	
+	// Mock validation
+	if req.Email != "" && !isValidEmail(req.Email) {
+		return nil, errors.New("invalid email format")
+	}
+	
+	// Mock user update - replace with actual database update
+	user := &models.User{
+		ID:        userID,
+		Email:     getStringOrDefault(req.Email, "user@example.com"),
+		FirstName: getStringOrDefault(req.FirstName, "John"),
+		LastName:  getStringOrDefault(req.LastName, "Doe"),
+		Role:      getStringOrDefault(req.Role, "user"),
+		Active:    getBoolOrDefault(req.Active, true),
+		CreatedAt: time.Now().Add(-30 * 24 * time.Hour),
+		UpdatedAt: time.Now(),
+	}
+	
+	observability.LogInfo("User updated", map[string]interface{}{
+		"user_id": userID,
+	})
+	
+	return user, nil
+}
+
+func (s *mockUserService) DeleteUser(ctx context.Context, userID string) error {
+	// TODO: Implement actual user deletion from your data store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Deleting user", map[string]interface{}{
+		"user_id": userID,
+	})
+	
+	if userID == "" {
+		return errors.New("user ID is required")
+	}
+	
+	// Mock user deletion - replace with actual database deletion
+	// In a real implementation, you might want to do a soft delete instead
+	
+	observability.LogInfo("User deleted", map[string]interface{}{
+		"user_id": userID,
+	})
+	
+	return nil
+}
+{{- end}}
+
+// Helper functions
+
+func isValidEmail(email string) bool {
+	// Simple email validation - replace with more robust validation
+	return len(email) > 3 && 
+		   len(email) < 255 && 
+		   email[0] != '@' && 
+		   email[len(email)-1] != '@' &&
+		   containsChar(email, '@') &&
+		   containsChar(email, '.')
+}
+
+func containsChar(s string, c rune) bool {
+	for _, char := range s {
+		if char == c {
+			return true
+		}
+	}
+	return false
+}
+
+func getStringOrDefault(value, defaultValue string) string {
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
+func getBoolOrDefault(value *bool, defaultValue bool) bool {
+	if value == nil {
+		return defaultValue
+	}
+	return *value
+}

@@ -1,0 +1,315 @@
+name: lambda-proxy
+displayName: AWS Lambda API Proxy
+description: Serverless REST API with AWS API Gateway and Lambda proxy integration
+type: lambda-proxy
+category: serverless
+complexity: intermediate
+tags: [aws, lambda, api-gateway, serverless, rest-api, proxy]
+
+# Metadata
+metadata:
+  version: "1.0.0"
+  author: "go-starter"
+  license: "MIT"
+  goVersion: "1.21"
+  targetScore: "8.5/10"
+
+# Template Variables
+variables:
+  - name: ProjectName
+    type: string
+    description: "Name of the Lambda proxy project"
+    required: true
+  
+  - name: ModulePath
+    type: string
+    description: "Go module path (e.g., github.com/user/project)"
+    required: true
+  
+  - name: GoVersion
+    type: string
+    description: "Go version for the project"
+    default: "1.21"
+    
+  - name: Framework
+    type: select
+    description: "HTTP framework for API routing"
+    options: ["gin", "echo", "fiber", "chi", "stdlib"]
+    default: "gin"
+    
+  - name: LoggerType
+    type: select
+    description: "Logging library"
+    options: ["slog", "zap", "logrus", "zerolog"]
+    default: "slog"
+    
+  - name: AuthType
+    type: select
+    description: "Authentication method"
+    options: ["none", "jwt", "cognito", "custom"]
+    default: "jwt"
+    
+  - name: CorsOrigins
+    type: string
+    description: "CORS allowed origins (comma-separated or '*')"
+    default: "*"
+    
+  - name: JWTIssuer
+    type: string
+    description: "JWT token issuer URL"
+    default: "https://your-auth-provider.com"
+    condition: "{{eq .AuthType \"jwt\"}}"
+    
+  - name: CognitoUserPool
+    type: string
+    description: "AWS Cognito User Pool ID"
+    default: "us-east-1_XXXXXXXXX"
+    condition: "{{eq .AuthType \"cognito\"}}"
+
+# Features Configuration
+features:
+  authentication:
+    enabled: "{{ne .AuthType \"none\"}}"
+    type: "{{.AuthType}}"
+    jwt:
+      issuer: "{{.JWTIssuer}}"
+    cognito:
+      userPool: "{{.CognitoUserPool}}"
+  
+  cors:
+    enabled: true
+    origins: "{{.CorsOrigins}}"
+  
+  logging:
+    type: "{{.LoggerType}}"
+    level: "info"
+    structured: true
+    
+  observability:
+    tracing: true
+    metrics: true
+    cloudwatch: true
+    xray: true
+    
+  deployment:
+    sam: true
+    terraform: true
+    environments: ["dev", "staging", "prod"]
+
+# File Definitions
+files:
+  # Core Application Files
+  - source: main.go.tmpl
+    destination: main.go
+    description: "Lambda entry point with framework adapter"
+    
+  - source: handler.go.tmpl
+    destination: handler.go
+    description: "Framework-specific router setup and configuration"
+    condition: "{{ne .Framework \"stdlib\"}}"
+    
+  - source: handler_stdlib.go.tmpl
+    destination: handler.go
+    description: "Standard library HTTP handler"
+    condition: "{{eq .Framework \"stdlib\"}}"
+
+  # Internal Structure
+  - source: internal/config/config.go.tmpl
+    destination: internal/config/config.go
+    description: "Configuration management"
+    
+  - source: internal/handlers/health.go.tmpl
+    destination: internal/handlers/health.go
+    description: "Health check endpoints"
+    
+  - source: internal/handlers/auth.go.tmpl
+    destination: internal/handlers/auth.go
+    description: "Authentication endpoints"
+    condition: "{{ne .AuthType \"none\"}}"
+    
+  - source: internal/handlers/users.go.tmpl
+    destination: internal/handlers/users.go
+    description: "User management endpoints"
+    
+  - source: internal/handlers/api.go.tmpl
+    destination: internal/handlers/api.go
+    description: "Business logic API endpoints"
+
+  # Middleware
+  - source: internal/middleware/cors.go.tmpl
+    destination: internal/middleware/cors.go
+    description: "CORS handling middleware"
+    
+  - source: internal/middleware/logging.go.tmpl
+    destination: internal/middleware/logging.go
+    description: "Request logging middleware"
+    
+  - source: internal/middleware/auth.go.tmpl
+    destination: internal/middleware/auth.go
+    description: "Authentication middleware"
+    condition: "{{ne .AuthType \"none\"}}"
+    
+  - source: internal/middleware/recovery.go.tmpl
+    destination: internal/middleware/recovery.go
+    description: "Panic recovery middleware"
+
+  # Models and Services
+  - source: internal/models/request.go.tmpl
+    destination: internal/models/request.go
+    description: "API request models"
+    
+  - source: internal/models/response.go.tmpl
+    destination: internal/models/response.go
+    description: "API response models"
+    
+  - source: internal/services/auth.go.tmpl
+    destination: internal/services/auth.go
+    description: "Authentication service"
+    condition: "{{ne .AuthType \"none\"}}"
+    
+  - source: internal/services/users.go.tmpl
+    destination: internal/services/users.go
+    description: "User management service"
+
+  # Observability (from lambda-standard)
+  - source: internal/observability/tracing.go.tmpl
+    destination: internal/observability/tracing.go
+    description: "X-Ray tracing integration"
+    
+  - source: internal/observability/metrics.go.tmpl
+    destination: internal/observability/metrics.go
+    description: "CloudWatch metrics"
+    
+  - source: internal/observability/logger.go.tmpl
+    destination: internal/observability/logger.go
+    description: "Observability logger setup"
+
+  # Infrastructure as Code
+  - source: template.yaml.tmpl
+    destination: template.yaml
+    description: "AWS SAM template for deployment"
+    
+  - source: terraform/main.tf.tmpl
+    destination: terraform/main.tf
+    description: "Terraform main configuration"
+    
+  - source: terraform/variables.tf.tmpl
+    destination: terraform/variables.tf
+    description: "Terraform variables"
+    
+  - source: terraform/outputs.tf.tmpl
+    destination: terraform/outputs.tf
+    description: "Terraform outputs"
+
+  # Configuration Files
+  - source: .env.example.tmpl
+    destination: .env.example
+    description: "Environment variables example"
+    
+  - source: samconfig.toml.tmpl
+    destination: samconfig.toml
+    description: "SAM CLI configuration"
+
+  # Development Tools
+  - source: Dockerfile.tmpl
+    destination: Dockerfile
+    description: "Container for local development"
+    
+  - source: docker-compose.yml.tmpl
+    destination: docker-compose.yml
+    description: "Local development environment"
+    
+  - source: scripts/deploy.sh.tmpl
+    destination: scripts/deploy.sh
+    description: "Deployment script"
+    mode: 0755
+    
+  - source: scripts/local-dev.sh.tmpl
+    destination: scripts/local-dev.sh
+    description: "Local development script"
+    mode: 0755
+
+  # Testing
+  - source: tests/integration/api_test.go.tmpl
+    destination: tests/integration/api_test.go
+    description: "API integration tests"
+    
+  - source: tests/unit/handlers_test.go.tmpl
+    destination: tests/unit/handlers_test.go
+    description: "Handler unit tests"
+    
+  - source: event-examples/api-gateway-proxy.json.tmpl
+    destination: event-examples/api-gateway-proxy.json
+    description: "Example API Gateway proxy event"
+
+  # Documentation
+  - source: README.md.tmpl
+    destination: README.md
+    description: "Project documentation"
+    
+  - source: API.md.tmpl
+    destination: API.md
+    description: "API documentation"
+
+  # CI/CD (Inherited from shared infrastructure)
+  - source: ../.github/workflows/ci.yml.tmpl
+    destination: .github/workflows/ci.yml
+    description: "Continuous integration workflow"
+    
+  - source: ../.github/workflows/deploy.yml.tmpl
+    destination: .github/workflows/deploy.yml
+    description: "Deployment workflow"
+    
+  - source: ../.github/workflows/release.yml.tmpl
+    destination: .github/workflows/release.yml
+    description: "Release workflow"
+    
+  - source: ../.github/workflows/security.yml.tmpl
+    destination: .github/workflows/security.yml
+    description: "Security scanning workflow"
+
+# Dependencies by Framework
+dependencies:
+  common:
+    - github.com/aws/aws-lambda-go
+    - github.com/aws/aws-sdk-go-v2
+    - github.com/aws/aws-xray-sdk-go
+  
+  gin:
+    - github.com/gin-gonic/gin
+    - github.com/awslabs/aws-lambda-go-api-proxy/gin
+  
+  echo:
+    - github.com/labstack/echo/v4
+    - github.com/awslabs/aws-lambda-go-api-proxy/echo
+  
+  fiber:
+    - github.com/gofiber/fiber/v2
+    - github.com/awslabs/aws-lambda-go-api-proxy/fiber
+  
+  chi:
+    - github.com/go-chi/chi/v5
+    - github.com/awslabs/aws-lambda-go-api-proxy/chi
+  
+  auth_jwt:
+    condition: "{{eq .AuthType \"jwt\"}}"
+    dependencies:
+      - github.com/golang-jwt/jwt/v5
+  
+  auth_cognito:
+    condition: "{{eq .AuthType \"cognito\"}}"
+    dependencies:
+      - github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider
+
+# Quality Requirements
+quality:
+  target_score: 8.5
+  requirements:
+    - Cold start time < 500ms
+    - Response time < 100ms (warm)
+    - Memory usage < 256MB
+    - Security scan pass rate > 95%
+    - Test coverage > 85%
+    - API Gateway integration compliance
+    - CORS handling correctness
+    - Authentication security standards

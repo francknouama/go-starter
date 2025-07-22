@@ -1,0 +1,442 @@
+{{- if ne .AuthType "none"}}
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+{{- else if eq .Framework "stdlib"}}
+	"github.com/aws/aws-lambda-go/events"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// AuthHandler handles authentication requests
+type AuthHandler struct {
+	authService services.AuthService
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler() *AuthHandler {
+	return &AuthHandler{
+		authService: services.NewAuthService(),
+	}
+}
+
+{{- if eq .Framework "gin"}}
+// Login handles POST /auth/login
+func (h *AuthHandler) Login(c *gin.Context) {
+	var req models.LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+		return
+	}
+	
+	response, err := h.authService.Login(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "LOGIN_FAILED",
+		})
+		return
+	}
+	
+	c.JSON(http.StatusOK, response)
+}
+
+// Register handles POST /auth/register
+func (h *AuthHandler) Register(c *gin.Context) {
+	var req models.RegisterRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+		return
+	}
+	
+	response, err := h.authService.Register(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "REGISTRATION_FAILED",
+		})
+		return
+	}
+	
+	c.JSON(http.StatusCreated, response)
+}
+
+// RefreshToken handles POST /auth/refresh
+func (h *AuthHandler) RefreshToken(c *gin.Context) {
+	userID, exists := c.Get("userID")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: "User not authenticated",
+			Code:  "UNAUTHORIZED",
+		})
+		return
+	}
+	
+	response, err := h.authService.RefreshToken(c.Request.Context(), userID.(string))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "TOKEN_REFRESH_FAILED",
+		})
+		return
+	}
+	
+	c.JSON(http.StatusOK, response)
+}
+
+// Logout handles POST /auth/logout
+func (h *AuthHandler) Logout(c *gin.Context) {
+	c.JSON(http.StatusOK, models.MessageResponse{
+		Message: "Logged out successfully",
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+// Login handles POST /auth/login
+func (h *AuthHandler) Login(c echo.Context) error {
+	var req models.LoginRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+	}
+	
+	response, err := h.authService.Login(c.Request().Context(), req)
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "LOGIN_FAILED",
+		})
+	}
+	
+	return c.JSON(http.StatusOK, response)
+}
+
+// Register handles POST /auth/register
+func (h *AuthHandler) Register(c echo.Context) error {
+	var req models.RegisterRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+	}
+	
+	response, err := h.authService.Register(c.Request().Context(), req)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "REGISTRATION_FAILED",
+		})
+	}
+	
+	return c.JSON(http.StatusCreated, response)
+}
+
+// RefreshToken handles POST /auth/refresh
+func (h *AuthHandler) RefreshToken(c echo.Context) error {
+	userID := c.Get("userID")
+	if userID == nil {
+		return c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: "User not authenticated",
+			Code:  "UNAUTHORIZED",
+		})
+	}
+	
+	response, err := h.authService.RefreshToken(c.Request().Context(), userID.(string))
+	if err != nil {
+		return c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "TOKEN_REFRESH_FAILED",
+		})
+	}
+	
+	return c.JSON(http.StatusOK, response)
+}
+
+// Logout handles POST /auth/logout
+func (h *AuthHandler) Logout(c echo.Context) error {
+	return c.JSON(http.StatusOK, models.MessageResponse{
+		Message: "Logged out successfully",
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Login handles POST /auth/login
+func (h *AuthHandler) Login(c *fiber.Ctx) error {
+	var req models.LoginRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+	}
+	
+	response, err := h.authService.Login(c.Context(), req)
+	if err != nil {
+		return c.Status(http.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "LOGIN_FAILED",
+		})
+	}
+	
+	return c.JSON(response)
+}
+
+// Register handles POST /auth/register
+func (h *AuthHandler) Register(c *fiber.Ctx) error {
+	var req models.RegisterRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+	}
+	
+	response, err := h.authService.Register(c.Context(), req)
+	if err != nil {
+		return c.Status(http.StatusBadRequest).JSON(models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "REGISTRATION_FAILED",
+		})
+	}
+	
+	return c.Status(http.StatusCreated).JSON(response)
+}
+
+// RefreshToken handles POST /auth/refresh
+func (h *AuthHandler) RefreshToken(c *fiber.Ctx) error {
+	userID := c.Locals("userID")
+	if userID == nil {
+		return c.Status(http.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error: "User not authenticated",
+			Code:  "UNAUTHORIZED",
+		})
+	}
+	
+	response, err := h.authService.RefreshToken(c.Context(), userID.(string))
+	if err != nil {
+		return c.Status(http.StatusUnauthorized).JSON(models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "TOKEN_REFRESH_FAILED",
+		})
+	}
+	
+	return c.JSON(response)
+}
+
+// Logout handles POST /auth/logout
+func (h *AuthHandler) Logout(c *fiber.Ctx) error {
+	return c.JSON(models.MessageResponse{
+		Message: "Logged out successfully",
+	})
+}
+
+{{- else if eq .Framework "chi"}}
+// Login handles POST /auth/login
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var req models.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+		return
+	}
+	
+	response, err := h.authService.Login(r.Context(), req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "LOGIN_FAILED",
+		})
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// Register handles POST /auth/register
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	var req models.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+		return
+	}
+	
+	response, err := h.authService.Register(r.Context(), req)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "REGISTRATION_FAILED",
+		})
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+// RefreshToken handles POST /auth/refresh
+func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value("userID")
+	if userID == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: "User not authenticated",
+			Code:  "UNAUTHORIZED",
+		})
+		return
+	}
+	
+	response, err := h.authService.RefreshToken(r.Context(), userID.(string))
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: err.Error(),
+			Code:  "TOKEN_REFRESH_FAILED",
+		})
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// Logout handles POST /auth/logout
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(models.MessageResponse{
+		Message: "Logged out successfully",
+	})
+}
+
+{{- else if eq .Framework "stdlib"}}
+// LoginStdlib handles POST /auth/login for standard library
+func (h *AuthHandler) LoginStdlib(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	var req models.LoginRequest
+	if err := json.Unmarshal([]byte(request.Body), &req); err != nil {
+		return h.createErrorResponse(http.StatusBadRequest, "Invalid request body", "INVALID_REQUEST"), nil
+	}
+	
+	response, err := h.authService.Login(ctx, req)
+	if err != nil {
+		return h.createErrorResponse(http.StatusUnauthorized, err.Error(), "LOGIN_FAILED"), nil
+	}
+	
+	return h.createSuccessResponse(http.StatusOK, response), nil
+}
+
+// RegisterStdlib handles POST /auth/register for standard library
+func (h *AuthHandler) RegisterStdlib(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	var req models.RegisterRequest
+	if err := json.Unmarshal([]byte(request.Body), &req); err != nil {
+		return h.createErrorResponse(http.StatusBadRequest, "Invalid request body", "INVALID_REQUEST"), nil
+	}
+	
+	response, err := h.authService.Register(ctx, req)
+	if err != nil {
+		return h.createErrorResponse(http.StatusBadRequest, err.Error(), "REGISTRATION_FAILED"), nil
+	}
+	
+	return h.createSuccessResponse(http.StatusCreated, response), nil
+}
+
+// RefreshTokenStdlib handles POST /auth/refresh for standard library
+func (h *AuthHandler) RefreshTokenStdlib(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	userID := ctx.Value("userID")
+	if userID == nil {
+		return h.createErrorResponse(http.StatusUnauthorized, "User not authenticated", "UNAUTHORIZED"), nil
+	}
+	
+	response, err := h.authService.RefreshToken(ctx, userID.(string))
+	if err != nil {
+		return h.createErrorResponse(http.StatusUnauthorized, err.Error(), "TOKEN_REFRESH_FAILED"), nil
+	}
+	
+	return h.createSuccessResponse(http.StatusOK, response), nil
+}
+
+// LogoutStdlib handles POST /auth/logout for standard library
+func (h *AuthHandler) LogoutStdlib(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	response := models.MessageResponse{
+		Message: "Logged out successfully",
+	}
+	return h.createSuccessResponse(http.StatusOK, response), nil
+}
+
+// Helper methods for standard library responses
+func (h *AuthHandler) createErrorResponse(statusCode int, message string, code string) events.APIGatewayProxyResponse {
+	errorResponse := models.ErrorResponse{
+		Error: message,
+		Code:  code,
+	}
+	
+	body, _ := json.Marshal(errorResponse)
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+		},
+		Body: string(body),
+	}
+}
+
+func (h *AuthHandler) createSuccessResponse(statusCode int, data interface{}) events.APIGatewayProxyResponse {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return h.createErrorResponse(http.StatusInternalServerError, "Failed to marshal response", "INTERNAL_ERROR")
+	}
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+		},
+		Body: string(body),
+	}
+}
+{{- end}}
+{{- end}}

@@ -1,0 +1,309 @@
+package observability
+
+import (
+	"context"
+	"os"
+{{- if eq .LoggerType "slog"}}
+	"log/slog"
+{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+)
+
+var (
+{{- if eq .LoggerType "slog"}}
+	logger *slog.Logger
+{{- else if eq .LoggerType "zap"}}
+	logger *zap.Logger
+{{- else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+{{- else if eq .LoggerType "zerolog"}}
+	logger zerolog.Logger
+{{- end}}
+)
+
+// InitializeLogger initializes the logger based on configuration
+func InitializeLogger() {
+{{- if eq .LoggerType "slog"}}
+	// Configure slog for CloudWatch
+	opts := &slog.HandlerOptions{
+		Level: getLogLevel(),
+	}
+	
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger = slog.New(handler)
+	
+	// Set as default logger
+	slog.SetDefault(logger)
+
+{{- else if eq .LoggerType "zap"}}
+	// Configure zap for CloudWatch
+	var zapConfig zap.Config
+	if config.IsProduction() {
+		zapConfig = zap.NewProductionConfig()
+	} else {
+		zapConfig = zap.NewDevelopmentConfig()
+	}
+	
+	zapConfig.Level = zap.NewAtomicLevelAt(getZapLogLevel())
+	zapConfig.OutputPaths = []string{"stdout"}
+	zapConfig.ErrorOutputPaths = []string{"stdout"}
+	
+	var err error
+	logger, err = zapConfig.Build()
+	if err != nil {
+		panic("Failed to initialize zap logger: " + err.Error())
+	}
+
+{{- else if eq .LoggerType "logrus"}}
+	// Configure logrus for CloudWatch
+	logger = logrus.New()
+	logger.SetOutput(os.Stdout)
+	logger.SetFormatter(&logrus.JSONFormatter{})
+	logger.SetLevel(getLogrusLogLevel())
+
+{{- else if eq .LoggerType "zerolog"}}
+	// Configure zerolog for CloudWatch
+	zerolog.SetGlobalLevel(getZerologLogLevel())
+	logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	
+	// Set as global logger
+	log.Logger = logger
+{{- end}}
+	
+	LogInfo("Logger initialized", map[string]interface{}{
+		"type":    "{{.LoggerType}}",
+		"level":   config.GetLogLevel(),
+		"service": config.GetServiceName(),
+	})
+}
+
+// LogDebug logs a debug message
+func LogDebug(msg string, fields map[string]interface{}) {
+{{- if eq .LoggerType "slog"}}
+	ctx := context.Background()
+	if fields != nil {
+		args := make([]interface{}, 0, len(fields)*2)
+		for k, v := range fields {
+			args = append(args, k, v)
+		}
+		logger.DebugContext(ctx, msg, args...)
+	} else {
+		logger.DebugContext(ctx, msg)
+	}
+
+{{- else if eq .LoggerType "zap"}}
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	logger.Debug(msg, zapFields...)
+
+{{- else if eq .LoggerType "logrus"}}
+	if fields != nil {
+		logger.WithFields(logrus.Fields(fields)).Debug(msg)
+	} else {
+		logger.Debug(msg)
+	}
+
+{{- else if eq .LoggerType "zerolog"}}
+	event := logger.Debug()
+	if fields != nil {
+		for k, v := range fields {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end}}
+}
+
+// LogInfo logs an info message
+func LogInfo(msg string, fields map[string]interface{}) {
+{{- if eq .LoggerType "slog"}}
+	ctx := context.Background()
+	if fields != nil {
+		args := make([]interface{}, 0, len(fields)*2)
+		for k, v := range fields {
+			args = append(args, k, v)
+		}
+		logger.InfoContext(ctx, msg, args...)
+	} else {
+		logger.InfoContext(ctx, msg)
+	}
+
+{{- else if eq .LoggerType "zap"}}
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	logger.Info(msg, zapFields...)
+
+{{- else if eq .LoggerType "logrus"}}
+	if fields != nil {
+		logger.WithFields(logrus.Fields(fields)).Info(msg)
+	} else {
+		logger.Info(msg)
+	}
+
+{{- else if eq .LoggerType "zerolog"}}
+	event := logger.Info()
+	if fields != nil {
+		for k, v := range fields {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end}}
+}
+
+// LogWarn logs a warning message
+func LogWarn(msg string, fields map[string]interface{}) {
+{{- if eq .LoggerType "slog"}}
+	ctx := context.Background()
+	if fields != nil {
+		args := make([]interface{}, 0, len(fields)*2)
+		for k, v := range fields {
+			args = append(args, k, v)
+		}
+		logger.WarnContext(ctx, msg, args...)
+	} else {
+		logger.WarnContext(ctx, msg)
+	}
+
+{{- else if eq .LoggerType "zap"}}
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	logger.Warn(msg, zapFields...)
+
+{{- else if eq .LoggerType "logrus"}}
+	if fields != nil {
+		logger.WithFields(logrus.Fields(fields)).Warn(msg)
+	} else {
+		logger.Warn(msg)
+	}
+
+{{- else if eq .LoggerType "zerolog"}}
+	event := logger.Warn()
+	if fields != nil {
+		for k, v := range fields {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end}}
+}
+
+// LogError logs an error message
+func LogError(msg string, fields map[string]interface{}) {
+{{- if eq .LoggerType "slog"}}
+	ctx := context.Background()
+	if fields != nil {
+		args := make([]interface{}, 0, len(fields)*2)
+		for k, v := range fields {
+			args = append(args, k, v)
+		}
+		logger.ErrorContext(ctx, msg, args...)
+	} else {
+		logger.ErrorContext(ctx, msg)
+	}
+
+{{- else if eq .LoggerType "zap"}}
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	logger.Error(msg, zapFields...)
+
+{{- else if eq .LoggerType "logrus"}}
+	if fields != nil {
+		logger.WithFields(logrus.Fields(fields)).Error(msg)
+	} else {
+		logger.Error(msg)
+	}
+
+{{- else if eq .LoggerType "zerolog"}}
+	event := logger.Error()
+	if fields != nil {
+		for k, v := range fields {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end}}
+}
+
+// Helper functions to convert log levels
+
+{{- if eq .LoggerType "slog"}}
+func getLogLevel() slog.Level {
+	switch config.GetLogLevel() {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+{{- else if eq .LoggerType "zap"}}
+func getZapLogLevel() zap.AtomicLevel {
+	switch config.GetLogLevel() {
+	case "debug":
+		return zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "info":
+		return zap.NewAtomicLevelAt(zap.InfoLevel)
+	case "warn":
+		return zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		return zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		return zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+}
+
+{{- else if eq .LoggerType "logrus"}}
+func getLogrusLogLevel() logrus.Level {
+	switch config.GetLogLevel() {
+	case "debug":
+		return logrus.DebugLevel
+	case "info":
+		return logrus.InfoLevel
+	case "warn":
+		return logrus.WarnLevel
+	case "error":
+		return logrus.ErrorLevel
+	default:
+		return logrus.InfoLevel
+	}
+}
+
+{{- else if eq .LoggerType "zerolog"}}
+func getZerologLogLevel() zerolog.Level {
+	switch config.GetLogLevel() {
+	case "debug":
+		return zerolog.DebugLevel
+	case "info":
+		return zerolog.InfoLevel
+	case "warn":
+		return zerolog.WarnLevel
+	case "error":
+		return zerolog.ErrorLevel
+	default:
+		return zerolog.InfoLevel
+	}
+}
+{{- end}}

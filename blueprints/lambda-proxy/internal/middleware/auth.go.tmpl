@@ -1,0 +1,236 @@
+{{- if ne .AuthType "none"}}
+package middleware
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+{{- else if eq .Framework "stdlib"}}
+	"github.com/aws/aws-lambda-go/events"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+{{- if eq .Framework "gin"}}
+// Auth returns a Gin middleware for authentication
+func Auth() gin.HandlerFunc {
+	authService := services.NewAuthService()
+	
+	return gin.HandlerFunc(func(c *gin.Context) {
+		token := extractToken(c.GetHeader("Authorization"))
+		if token == "" {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+				Error: "Missing or invalid authorization token",
+				Code:  "UNAUTHORIZED",
+			})
+			c.Abort()
+			return
+		}
+		
+		claims, err := authService.ValidateToken(c.Request.Context(), token)
+		if err != nil {
+			c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+				Error: "Invalid token",
+				Code:  "INVALID_TOKEN",
+			})
+			c.Abort()
+			return
+		}
+		
+		// Store user information in context
+		c.Set("userID", claims.UserID)
+		c.Set("userEmail", claims.Email)
+		c.Set("userRole", claims.Role)
+		
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+// Auth returns an Echo middleware for authentication
+func Auth() echo.MiddlewareFunc {
+	authService := services.NewAuthService()
+	
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			token := extractToken(c.Request().Header.Get("Authorization"))
+			if token == "" {
+				return c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+					Error: "Missing or invalid authorization token",
+					Code:  "UNAUTHORIZED",
+				})
+			}
+			
+			claims, err := authService.ValidateToken(c.Request().Context(), token)
+			if err != nil {
+				return c.JSON(http.StatusUnauthorized, models.ErrorResponse{
+					Error: "Invalid token",
+					Code:  "INVALID_TOKEN",
+				})
+			}
+			
+			// Store user information in context
+			c.Set("userID", claims.UserID)
+			c.Set("userEmail", claims.Email)
+			c.Set("userRole", claims.Role)
+			
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Auth returns a Fiber middleware for authentication
+func Auth() fiber.Handler {
+	authService := services.NewAuthService()
+	
+	return func(c *fiber.Ctx) error {
+		token := extractToken(c.Get("Authorization"))
+		if token == "" {
+			return c.Status(http.StatusUnauthorized).JSON(models.ErrorResponse{
+				Error: "Missing or invalid authorization token",
+				Code:  "UNAUTHORIZED",
+			})
+		}
+		
+		claims, err := authService.ValidateToken(c.Context(), token)
+		if err != nil {
+			return c.Status(http.StatusUnauthorized).JSON(models.ErrorResponse{
+				Error: "Invalid token",
+				Code:  "INVALID_TOKEN",
+			})
+		}
+		
+		// Store user information in locals
+		c.Locals("userID", claims.UserID)
+		c.Locals("userEmail", claims.Email)
+		c.Locals("userRole", claims.Role)
+		
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+// Auth returns a Chi middleware for authentication
+func Auth(next http.Handler) http.Handler {
+	authService := services.NewAuthService()
+	
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := extractToken(r.Header.Get("Authorization"))
+		if token == "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(models.ErrorResponse{
+				Error: "Missing or invalid authorization token",
+				Code:  "UNAUTHORIZED",
+			})
+			return
+		}
+		
+		claims, err := authService.ValidateToken(r.Context(), token)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(models.ErrorResponse{
+				Error: "Invalid token",
+				Code:  "INVALID_TOKEN",
+			})
+			return
+		}
+		
+		// Store user information in context
+		ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+		ctx = context.WithValue(ctx, "userEmail", claims.Email)
+		ctx = context.WithValue(ctx, "userRole", claims.Role)
+		r = r.WithContext(ctx)
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+{{- else if eq .Framework "stdlib"}}
+// AuthStdlib handles authentication for standard library
+func AuthStdlib(ctx context.Context, request events.APIGatewayProxyRequest) events.APIGatewayProxyResponse {
+	authService := services.NewAuthService()
+	
+	token := extractTokenFromHeaders(request.Headers)
+	if token == "" {
+		return createAuthErrorResponse("Missing or invalid authorization token", "UNAUTHORIZED")
+	}
+	
+	claims, err := authService.ValidateToken(ctx, token)
+	if err != nil {
+		return createAuthErrorResponse("Invalid token", "INVALID_TOKEN")
+	}
+	
+	// Store user information in context
+	ctx = context.WithValue(ctx, "userID", claims.UserID)
+	ctx = context.WithValue(ctx, "userEmail", claims.Email)
+	ctx = context.WithValue(ctx, "userRole", claims.Role)
+	
+	// Return empty response to continue processing
+	return events.APIGatewayProxyResponse{}
+}
+
+func extractTokenFromHeaders(headers map[string]string) string {
+	if headers == nil {
+		return ""
+	}
+	
+	// Try different header cases
+	authHeaders := []string{"Authorization", "authorization", "AUTHORIZATION"}
+	for _, header := range authHeaders {
+		if auth, exists := headers[header]; exists {
+			return extractToken(auth)
+		}
+	}
+	
+	return ""
+}
+
+func createAuthErrorResponse(message, code string) events.APIGatewayProxyResponse {
+	errorResponse := models.ErrorResponse{
+		Error: message,
+		Code:  code,
+	}
+	
+	body, _ := json.Marshal(errorResponse)
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: http.StatusUnauthorized,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+		},
+		Body: string(body),
+	}
+}
+{{- end}}
+
+// extractToken extracts the JWT token from the Authorization header
+func extractToken(authHeader string) string {
+	if authHeader == "" {
+		return ""
+	}
+	
+	// Remove "Bearer " prefix
+	const bearerPrefix = "Bearer "
+	if len(authHeader) > len(bearerPrefix) && strings.HasPrefix(authHeader, bearerPrefix) {
+		return authHeader[len(bearerPrefix):]
+	}
+	
+	return ""
+}
+{{- end}}

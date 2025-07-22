@@ -1,0 +1,322 @@
+{{- if ne .AuthType "none"}}
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+{{- if eq .AuthType "jwt"}}
+	"github.com/golang-jwt/jwt/v5"
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/observability"
+)
+
+// AuthService provides authentication functionality
+type AuthService interface {
+	Login(ctx context.Context, req models.LoginRequest) (*models.AuthResponse, error)
+	Register(ctx context.Context, req models.RegisterRequest) (*models.AuthResponse, error)
+	ValidateToken(ctx context.Context, token string) (*TokenClaims, error)
+	RefreshToken(ctx context.Context, userID string) (*models.AuthResponse, error)
+}
+
+// TokenClaims represents JWT token claims
+type TokenClaims struct {
+	UserID string `json:"user_id"`
+	Email  string `json:"email"`
+	Role   string `json:"role"`
+{{- if eq .AuthType "jwt"}}
+	jwt.RegisteredClaims
+{{- end}}
+}
+
+{{- if eq .AuthType "jwt"}}
+// jwtAuthService implements AuthService using JWT tokens
+type jwtAuthService struct{}
+
+// NewAuthService creates a new JWT-based auth service
+func NewAuthService() AuthService {
+	return &jwtAuthService{}
+}
+
+func (s *jwtAuthService) Login(ctx context.Context, req models.LoginRequest) (*models.AuthResponse, error) {
+	// TODO: Implement actual user authentication against your user store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Login attempt", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	// Mock user validation
+	if req.Email == "" || req.Password == "" {
+		return nil, errors.New("email and password are required")
+	}
+	
+	// Mock user data - replace with actual user lookup
+	user := models.User{
+		ID:        "user_123",
+		Email:     req.Email,
+		FirstName: "John",
+		LastName:  "Doe",
+		Role:      "user",
+		Active:    true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	
+	// Generate JWT token
+	token, expiresAt, err := s.generateToken(user)
+	if err != nil {
+		observability.LogError("Failed to generate token", map[string]interface{}{
+			"email": req.Email,
+			"error": err.Error(),
+		})
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	
+	observability.LogInfo("Login successful", map[string]interface{}{
+		"user_id": user.ID,
+		"email":   user.Email,
+	})
+	
+	return &models.AuthResponse{
+		Token:     token,
+		User:      user,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+func (s *jwtAuthService) Register(ctx context.Context, req models.RegisterRequest) (*models.AuthResponse, error) {
+	// TODO: Implement actual user registration with your user store
+	// This is a mock implementation for demonstration
+	
+	observability.LogInfo("Registration attempt", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	// Mock validation
+	if req.Email == "" || req.Password == "" {
+		return nil, errors.New("email and password are required")
+	}
+	if len(req.Password) < 8 {
+		return nil, errors.New("password must be at least 8 characters")
+	}
+	
+	// Mock user creation - replace with actual user creation
+	user := models.User{
+		ID:        fmt.Sprintf("user_%d", time.Now().Unix()),
+		Email:     req.Email,
+		FirstName: req.FirstName,
+		LastName:  req.LastName,
+		Role:      "user",
+		Active:    true,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	
+	// Generate JWT token
+	token, expiresAt, err := s.generateToken(user)
+	if err != nil {
+		observability.LogError("Failed to generate token", map[string]interface{}{
+			"email": req.Email,
+			"error": err.Error(),
+		})
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	
+	observability.LogInfo("Registration successful", map[string]interface{}{
+		"user_id": user.ID,
+		"email":   user.Email,
+	})
+	
+	return &models.AuthResponse{
+		Token:     token,
+		User:      user,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+func (s *jwtAuthService) ValidateToken(ctx context.Context, tokenString string) (*TokenClaims, error) {
+	secret := config.GetJWTSecret()
+	if secret == "" {
+		return nil, errors.New("JWT secret not configured")
+	}
+	
+	token, err := jwt.ParseWithClaims(tokenString, &TokenClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(secret), nil
+	})
+	
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token: %w", err)
+	}
+	
+	if claims, ok := token.Claims.(*TokenClaims); ok && token.Valid {
+		return claims, nil
+	}
+	
+	return nil, errors.New("invalid token")
+}
+
+func (s *jwtAuthService) RefreshToken(ctx context.Context, userID string) (*models.AuthResponse, error) {
+	// TODO: Implement actual user lookup
+	// This is a mock implementation for demonstration
+	
+	// Mock user lookup - replace with actual user retrieval
+	user := models.User{
+		ID:        userID,
+		Email:     "user@example.com",
+		FirstName: "John",
+		LastName:  "Doe",
+		Role:      "user",
+		Active:    true,
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now(),
+	}
+	
+	// Generate new JWT token
+	token, expiresAt, err := s.generateToken(user)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate token: %w", err)
+	}
+	
+	return &models.AuthResponse{
+		Token:     token,
+		User:      user,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+func (s *jwtAuthService) generateToken(user models.User) (string, time.Time, error) {
+	secret := config.GetJWTSecret()
+	if secret == "" {
+		return "", time.Time{}, errors.New("JWT secret not configured")
+	}
+	
+	expiryHours := config.GetJWTExpiry()
+	expiresAt := time.Now().Add(time.Duration(expiryHours) * time.Hour)
+	
+	claims := TokenClaims{
+		UserID: user.ID,
+		Email:  user.Email,
+		Role:   user.Role,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expiresAt),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    config.GetJWTIssuer(),
+			Subject:   user.ID,
+			Audience:  []string{config.GetJWTAudience()},
+		},
+	}
+	
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to sign token: %w", err)
+	}
+	
+	return tokenString, expiresAt, nil
+}
+
+{{- else if eq .AuthType "cognito"}}
+// cognitoAuthService implements AuthService using AWS Cognito
+type cognitoAuthService struct {
+	client *cognitoidentityprovider.Client
+}
+
+// NewAuthService creates a new Cognito-based auth service
+func NewAuthService() AuthService {
+	// TODO: Initialize AWS Cognito client
+	// This requires proper AWS SDK v2 configuration
+	return &cognitoAuthService{
+		client: nil, // Initialize with actual Cognito client
+	}
+}
+
+func (s *cognitoAuthService) Login(ctx context.Context, req models.LoginRequest) (*models.AuthResponse, error) {
+	// TODO: Implement Cognito authentication
+	// This is a placeholder implementation
+	
+	observability.LogInfo("Cognito login attempt", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	return nil, errors.New("Cognito authentication not yet implemented")
+}
+
+func (s *cognitoAuthService) Register(ctx context.Context, req models.RegisterRequest) (*models.AuthResponse, error) {
+	// TODO: Implement Cognito user registration
+	// This is a placeholder implementation
+	
+	observability.LogInfo("Cognito registration attempt", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	return nil, errors.New("Cognito registration not yet implemented")
+}
+
+func (s *cognitoAuthService) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
+	// TODO: Implement Cognito token validation
+	// This involves validating the JWT token against Cognito's public keys
+	
+	return nil, errors.New("Cognito token validation not yet implemented")
+}
+
+func (s *cognitoAuthService) RefreshToken(ctx context.Context, userID string) (*models.AuthResponse, error) {
+	// TODO: Implement Cognito token refresh
+	
+	return nil, errors.New("Cognito token refresh not yet implemented")
+}
+
+{{- else}}
+// mockAuthService provides a mock implementation for custom auth types
+type mockAuthService struct{}
+
+// NewAuthService creates a new mock auth service
+func NewAuthService() AuthService {
+	return &mockAuthService{}
+}
+
+func (s *mockAuthService) Login(ctx context.Context, req models.LoginRequest) (*models.AuthResponse, error) {
+	// TODO: Implement your custom authentication logic
+	
+	observability.LogInfo("Custom auth login attempt", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	return nil, errors.New("custom authentication not yet implemented")
+}
+
+func (s *mockAuthService) Register(ctx context.Context, req models.RegisterRequest) (*models.AuthResponse, error) {
+	// TODO: Implement your custom registration logic
+	
+	observability.LogInfo("Custom auth registration attempt", map[string]interface{}{
+		"email": req.Email,
+	})
+	
+	return nil, errors.New("custom registration not yet implemented")
+}
+
+func (s *mockAuthService) ValidateToken(ctx context.Context, token string) (*TokenClaims, error) {
+	// TODO: Implement your custom token validation logic
+	
+	return nil, errors.New("custom token validation not yet implemented")
+}
+
+func (s *mockAuthService) RefreshToken(ctx context.Context, userID string) (*models.AuthResponse, error) {
+	// TODO: Implement your custom token refresh logic
+	
+	return nil, errors.New("custom token refresh not yet implemented")
+}
+{{- end}}
+{{- end}}

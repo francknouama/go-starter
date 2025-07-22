@@ -1,0 +1,316 @@
+package middleware
+
+import (
+	"context"
+	"time"
+	"fmt"
+	"net/http"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+{{- else if eq .Framework "stdlib"}}
+	"github.com/aws/aws-lambda-go/events"
+{{- end}}
+	"{{.ModulePath}}/internal/observability"
+)
+
+{{- if eq .Framework "gin"}}
+// Logger returns a Gin middleware for request logging
+func Logger() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		start := time.Now()
+		requestID := generateRequestID()
+		
+		// Store request ID in context
+		c.Set("request_id", requestID)
+		
+		// Log request
+		observability.LogInfo("Request started", map[string]interface{}{
+			"request_id": requestID,
+			"method":     c.Request.Method,
+			"path":       c.Request.URL.Path,
+			"user_agent": c.Request.UserAgent(),
+			"remote_ip":  c.ClientIP(),
+		})
+		
+		c.Next()
+		
+		// Log response
+		duration := time.Since(start)
+		status := c.Writer.Status()
+		
+		logLevel := "info"
+		if status >= 400 {
+			logLevel = "warn"
+		}
+		if status >= 500 {
+			logLevel = "error"
+		}
+		
+		logData := map[string]interface{}{
+			"request_id":     requestID,
+			"method":         c.Request.Method,
+			"path":           c.Request.URL.Path,
+			"status":         status,
+			"duration_ms":    duration.Milliseconds(),
+			"response_size":  c.Writer.Size(),
+		}
+		
+		if logLevel == "error" {
+			observability.LogError("Request completed", logData)
+		} else if logLevel == "warn" {
+			observability.LogWarn("Request completed", logData)
+		} else {
+			observability.LogInfo("Request completed", logData)
+		}
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+// Logger returns an Echo middleware for request logging
+func Logger() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			requestID := generateRequestID()
+			
+			// Store request ID in context
+			c.Set("request_id", requestID)
+			
+			// Log request
+			observability.LogInfo("Request started", map[string]interface{}{
+				"request_id": requestID,
+				"method":     c.Request().Method,
+				"path":       c.Request().URL.Path,
+				"user_agent": c.Request().UserAgent(),
+				"remote_ip":  c.RealIP(),
+			})
+			
+			err := next(c)
+			
+			// Log response
+			duration := time.Since(start)
+			status := c.Response().Status
+			
+			logLevel := "info"
+			if status >= 400 {
+				logLevel = "warn"
+			}
+			if status >= 500 {
+				logLevel = "error"
+			}
+			
+			logData := map[string]interface{}{
+				"request_id":     requestID,
+				"method":         c.Request().Method,
+				"path":           c.Request().URL.Path,
+				"status":         status,
+				"duration_ms":    duration.Milliseconds(),
+				"response_size":  c.Response().Size,
+			}
+			
+			if err != nil {
+				logData["error"] = err.Error()
+			}
+			
+			if logLevel == "error" {
+				observability.LogError("Request completed", logData)
+			} else if logLevel == "warn" {
+				observability.LogWarn("Request completed", logData)
+			} else {
+				observability.LogInfo("Request completed", logData)
+			}
+			
+			return err
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Logger returns a Fiber middleware for request logging
+func Logger() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+		requestID := generateRequestID()
+		
+		// Store request ID in locals
+		c.Locals("request_id", requestID)
+		
+		// Log request
+		observability.LogInfo("Request started", map[string]interface{}{
+			"request_id": requestID,
+			"method":     c.Method(),
+			"path":       c.Path(),
+			"user_agent": c.Get("User-Agent"),
+			"remote_ip":  c.IP(),
+		})
+		
+		err := c.Next()
+		
+		// Log response
+		duration := time.Since(start)
+		status := c.Response().StatusCode()
+		
+		logLevel := "info"
+		if status >= 400 {
+			logLevel = "warn"
+		}
+		if status >= 500 {
+			logLevel = "error"
+		}
+		
+		logData := map[string]interface{}{
+			"request_id":     requestID,
+			"method":         c.Method(),
+			"path":           c.Path(),
+			"status":         status,
+			"duration_ms":    duration.Milliseconds(),
+			"response_size":  len(c.Response().Body()),
+		}
+		
+		if err != nil {
+			logData["error"] = err.Error()
+		}
+		
+		if logLevel == "error" {
+			observability.LogError("Request completed", logData)
+		} else if logLevel == "warn" {
+			observability.LogWarn("Request completed", logData)
+		} else {
+			observability.LogInfo("Request completed", logData)
+		}
+		
+		return err
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+// Logger returns a Chi middleware for request logging
+func Logger(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		requestID := generateRequestID()
+		
+		// Store request ID in context
+		ctx := context.WithValue(r.Context(), "request_id", requestID)
+		r = r.WithContext(ctx)
+		
+		// Create a response writer wrapper to capture status and size
+		wrapped := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+		
+		// Log request
+		observability.LogInfo("Request started", map[string]interface{}{
+			"request_id": requestID,
+			"method":     r.Method,
+			"path":       r.URL.Path,
+			"user_agent": r.UserAgent(),
+			"remote_ip":  getClientIP(r),
+		})
+		
+		next.ServeHTTP(wrapped, r)
+		
+		// Log response
+		duration := time.Since(start)
+		status := wrapped.statusCode
+		
+		logLevel := "info"
+		if status >= 400 {
+			logLevel = "warn"
+		}
+		if status >= 500 {
+			logLevel = "error"
+		}
+		
+		logData := map[string]interface{}{
+			"request_id":     requestID,
+			"method":         r.Method,
+			"path":           r.URL.Path,
+			"status":         status,
+			"duration_ms":    duration.Milliseconds(),
+			"response_size":  wrapped.size,
+		}
+		
+		if logLevel == "error" {
+			observability.LogError("Request completed", logData)
+		} else if logLevel == "warn" {
+			observability.LogWarn("Request completed", logData)
+		} else {
+			observability.LogInfo("Request completed", logData)
+		}
+	})
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code and response size
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+	size       int
+}
+
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	size, err := rw.ResponseWriter.Write(b)
+	rw.size += size
+	return size, err
+}
+
+func getClientIP(r *http.Request) string {
+	forwarded := r.Header.Get("X-Forwarded-For")
+	if forwarded != "" {
+		return forwarded
+	}
+	return r.RemoteAddr
+}
+
+{{- else if eq .Framework "stdlib"}}
+// LoggerStdlib handles request logging for standard library
+func LoggerStdlib(ctx context.Context, request events.APIGatewayProxyRequest) context.Context {
+	requestID := generateRequestID()
+	
+	// Add request ID to context
+	ctx = context.WithValue(ctx, "request_id", requestID)
+	
+	// Log request
+	observability.LogInfo("Lambda request started", map[string]interface{}{
+		"request_id":    requestID,
+		"method":        request.HTTPMethod,
+		"path":          request.Path,
+		"resource":      request.Resource,
+		"user_agent":    getHeader(request.Headers, "User-Agent"),
+		"source_ip":     request.RequestContext.Identity.SourceIP,
+		"request_time":  request.RequestContext.RequestTime,
+		"request_id_gw": request.RequestContext.RequestID,
+	})
+	
+	return ctx
+}
+
+func getHeader(headers map[string]string, key string) string {
+	if headers == nil {
+		return ""
+	}
+	if value, exists := headers[key]; exists {
+		return value
+	}
+	// Try lowercase
+	if value, exists := headers[fmt.Sprintf("%s", key)]; exists {
+		return value
+	}
+	return ""
+}
+{{- end}}
+
+// generateRequestID generates a unique request ID
+func generateRequestID() string {
+	return fmt.Sprintf("req_%d", time.Now().UnixNano())
+}

@@ -1,0 +1,300 @@
+package observability
+
+import (
+	"context"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	appconfig "{{.ModulePath}}/internal/config"
+)
+
+var (
+	metricsClient   *cloudwatch.Client
+	metricsEnabled  = true
+	serviceName     = "{{.ProjectName}}"
+	namespace       = "AWS/Lambda/Custom"
+)
+
+// InitializeMetrics initializes CloudWatch metrics client
+func InitializeMetrics() {
+	// Check if metrics are disabled
+	if !appconfig.IsMetricsEnabled() {
+		metricsEnabled = false
+		LogInfo("CloudWatch metrics disabled", nil)
+		return
+	}
+	
+	// Set service name from config
+	if name := appconfig.GetServiceName(); name != "" {
+		serviceName = name
+		namespace = "Custom/" + serviceName
+	}
+	
+	// Initialize AWS config
+	cfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(appconfig.GetAWSRegion()),
+	)
+	if err != nil {
+		LogError("Failed to load AWS config for metrics", map[string]interface{}{
+			"error": err.Error(),
+		})
+		metricsEnabled = false
+		return
+	}
+	
+	metricsClient = cloudwatch.NewFromConfig(cfg)
+	
+	LogInfo("CloudWatch metrics initialized", map[string]interface{}{
+		"namespace":    namespace,
+		"service_name": serviceName,
+		"region":       appconfig.GetAWSRegion(),
+	})
+}
+
+// MetricDimension represents a CloudWatch metric dimension
+type MetricDimension struct {
+	Name  string
+	Value string
+}
+
+// PutMetric sends a metric to CloudWatch
+func PutMetric(metricName string, value float64, unit types.StandardUnit, dimensions ...MetricDimension) {
+	if !metricsEnabled {
+		return
+	}
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	// Convert dimensions
+	cwDimensions := make([]types.Dimension, len(dimensions))
+	for i, dim := range dimensions {
+		cwDimensions[i] = types.Dimension{
+			Name:  aws.String(dim.Name),
+			Value: aws.String(dim.Value),
+		}
+	}
+	
+	// Add default service dimension
+	cwDimensions = append(cwDimensions, types.Dimension{
+		Name:  aws.String("Service"),
+		Value: aws.String(serviceName),
+	})
+	
+	metricData := types.MetricDatum{
+		MetricName: aws.String(metricName),
+		Value:      aws.Float64(value),
+		Unit:       unit,
+		Timestamp:  aws.Time(time.Now()),
+		Dimensions: cwDimensions,
+	}
+	
+	input := &cloudwatch.PutMetricDataInput{
+		Namespace:  aws.String(namespace),
+		MetricData: []types.MetricDatum{metricData},
+	}
+	
+	_, err := metricsClient.PutMetricData(ctx, input)
+	if err != nil {
+		LogError("Failed to put metric", map[string]interface{}{
+			"metric":    metricName,
+			"value":     value,
+			"unit":      string(unit),
+			"namespace": namespace,
+			"error":     err.Error(),
+		})
+	} else {
+		LogDebug("Metric sent", map[string]interface{}{
+			"metric":    metricName,
+			"value":     value,
+			"unit":      string(unit),
+			"namespace": namespace,
+		})
+	}
+}
+
+// PutCountMetric sends a count metric to CloudWatch
+func PutCountMetric(metricName string, count float64, dimensions ...MetricDimension) {
+	PutMetric(metricName, count, types.StandardUnitCount, dimensions...)
+}
+
+// PutDurationMetric sends a duration metric to CloudWatch in milliseconds
+func PutDurationMetric(metricName string, duration time.Duration, dimensions ...MetricDimension) {
+	PutMetric(metricName, float64(duration.Milliseconds()), types.StandardUnitMilliseconds, dimensions...)
+}
+
+// PutTimestampMetric sends the current timestamp as a metric
+func PutTimestampMetric(metricName string, dimensions ...MetricDimension) {
+	PutMetric(metricName, float64(time.Now().Unix()), types.StandardUnitCount, dimensions...)
+}
+
+// RecordAPIRequest records metrics for an API request
+func RecordAPIRequest(method, path string, statusCode int, duration time.Duration) {
+	if !metricsEnabled {
+		return
+	}
+	
+	dimensions := []MetricDimension{
+		{Name: "Method", Value: method},
+		{Name: "Path", Value: path},
+		{Name: "StatusCode", Value: formatStatusCode(statusCode)},
+	}
+	
+	// Record request count
+	PutCountMetric("APIRequests", 1, dimensions...)
+	
+	// Record request duration
+	PutDurationMetric("APIRequestDuration", duration, dimensions...)
+	
+	// Record error metrics
+	if statusCode >= 400 {
+		PutCountMetric("APIErrors", 1, dimensions...)
+		
+		if statusCode >= 500 {
+			PutCountMetric("APIServerErrors", 1, dimensions...)
+		} else {
+			PutCountMetric("APIClientErrors", 1, dimensions...)
+		}
+	}
+}
+
+// RecordLambdaColdStart records a Lambda cold start metric
+func RecordLambdaColdStart(duration time.Duration) {
+	if !metricsEnabled {
+		return
+	}
+	
+	PutCountMetric("ColdStarts", 1)
+	PutDurationMetric("ColdStartDuration", duration)
+}
+
+// RecordLambdaInvocation records a Lambda invocation metric
+func RecordLambdaInvocation(duration time.Duration, success bool) {
+	if !metricsEnabled {
+		return
+	}
+	
+	dimensions := []MetricDimension{
+		{Name: "Success", Value: formatBool(success)},
+	}
+	
+	PutCountMetric("Invocations", 1, dimensions...)
+	PutDurationMetric("InvocationDuration", duration, dimensions...)
+	
+	if !success {
+		PutCountMetric("InvocationErrors", 1)
+	}
+}
+
+// RecordAuthenticationAttempt records authentication metrics
+func RecordAuthenticationAttempt(success bool, authType string) {
+	if !metricsEnabled {
+		return
+	}
+	
+	dimensions := []MetricDimension{
+		{Name: "AuthType", Value: authType},
+		{Name: "Success", Value: formatBool(success)},
+	}
+	
+	PutCountMetric("AuthenticationAttempts", 1, dimensions...)
+	
+	if !success {
+		PutCountMetric("AuthenticationFailures", 1, dimensions...)
+	}
+}
+
+// RecordBusinessMetric records a custom business metric
+func RecordBusinessMetric(metricName string, value float64, unit types.StandardUnit, dimensions ...MetricDimension) {
+	if !metricsEnabled {
+		return
+	}
+	
+	// Add business metric prefix to namespace
+	businessNamespace := namespace + "/Business"
+	
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
+	// Convert dimensions
+	cwDimensions := make([]types.Dimension, len(dimensions))
+	for i, dim := range dimensions {
+		cwDimensions[i] = types.Dimension{
+			Name:  aws.String(dim.Name),
+			Value: aws.String(dim.Value),
+		}
+	}
+	
+	metricData := types.MetricDatum{
+		MetricName: aws.String(metricName),
+		Value:      aws.Float64(value),
+		Unit:       unit,
+		Timestamp:  aws.Time(time.Now()),
+		Dimensions: cwDimensions,
+	}
+	
+	input := &cloudwatch.PutMetricDataInput{
+		Namespace:  aws.String(businessNamespace),
+		MetricData: []types.MetricDatum{metricData},
+	}
+	
+	_, err := metricsClient.PutMetricData(ctx, input)
+	if err != nil {
+		LogError("Failed to put business metric", map[string]interface{}{
+			"metric":    metricName,
+			"value":     value,
+			"unit":      string(unit),
+			"namespace": businessNamespace,
+			"error":     err.Error(),
+		})
+	}
+}
+
+// CreateDashboard creates a CloudWatch dashboard for the service
+func CreateDashboard() error {
+	if !metricsEnabled {
+		return nil
+	}
+	
+	// TODO: Implement dashboard creation
+	// This would create a CloudWatch dashboard with widgets for:
+	// - API request metrics
+	// - Error rates
+	// - Response times
+	// - Lambda invocation metrics
+	// - Authentication metrics
+	
+	LogInfo("Dashboard creation not implemented", nil)
+	return nil
+}
+
+// IsMetricsEnabled returns whether CloudWatch metrics are enabled
+func IsMetricsEnabled() bool {
+	return metricsEnabled
+}
+
+// Helper functions
+
+func formatStatusCode(statusCode int) string {
+	// Group status codes for better aggregation
+	switch {
+	case statusCode < 300:
+		return "2xx"
+	case statusCode < 400:
+		return "3xx"
+	case statusCode < 500:
+		return "4xx"
+	default:
+		return "5xx"
+	}
+}
+
+func formatBool(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}

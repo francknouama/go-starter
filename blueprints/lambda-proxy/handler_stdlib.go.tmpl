@@ -1,0 +1,199 @@
+{{- if eq .Framework "stdlib"}}
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/aws/aws-lambda-go/events"
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/middleware"
+	"{{.ModulePath}}/internal/models"
+)
+
+// Route represents a handler route
+type Route struct {
+	Method  string
+	Path    string
+	Handler func(context.Context, events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error)
+}
+
+var routes []Route
+
+func init() {
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+{{- if ne .AuthType "none"}}
+	authHandler := handlers.NewAuthHandler()
+{{- end}}
+
+	// Define routes
+	routes = []Route{
+		// Health endpoints
+		{"GET", "/api/v1/health", healthHandler.CheckStdlib},
+		{"GET", "/api/v1/health/ready", healthHandler.ReadyStdlib},
+		
+{{- if ne .AuthType "none"}}
+		// Auth endpoints (public)
+		{"POST", "/api/v1/auth/login", authHandler.LoginStdlib},
+		{"POST", "/api/v1/auth/register", authHandler.RegisterStdlib},
+		
+		// Protected endpoints
+		{"POST", "/api/v1/auth/refresh", withAuth(authHandler.RefreshTokenStdlib)},
+		{"POST", "/api/v1/auth/logout", withAuth(authHandler.LogoutStdlib)},
+		{"GET", "/api/v1/users/profile", withAuth(userHandler.GetProfileStdlib)},
+		{"PUT", "/api/v1/users/profile", withAuth(userHandler.UpdateProfileStdlib)},
+		{"GET", "/api/v1/api/data", withAuth(apiHandler.GetDataStdlib)},
+		{"POST", "/api/v1/api/data", withAuth(apiHandler.CreateDataStdlib)},
+{{- else}}
+		// User endpoints
+		{"GET", "/api/v1/users", userHandler.ListUsersStdlib},
+		{"GET", "/api/v1/users/{id}", userHandler.GetUserStdlib},
+		{"POST", "/api/v1/users", userHandler.CreateUserStdlib},
+		{"PUT", "/api/v1/users/{id}", userHandler.UpdateUserStdlib},
+		{"DELETE", "/api/v1/users/{id}", userHandler.DeleteUserStdlib},
+		
+		// API endpoints
+		{"GET", "/api/v1/api/data", apiHandler.GetDataStdlib},
+		{"POST", "/api/v1/api/data", apiHandler.CreateDataStdlib},
+{{- end}}
+	}
+}
+
+// HandleRequest processes the API Gateway proxy request using standard library
+func HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	// Apply CORS middleware
+	response := middleware.CORSStdlib(ctx, request)
+	if response.StatusCode != 0 {
+		return response, nil
+	}
+	
+	// Apply logging middleware
+	ctx = middleware.LoggerStdlib(ctx, request)
+	
+	// Find matching route
+	route := findRoute(request.HTTPMethod, request.Path)
+	if route == nil {
+		return createErrorResponse(http.StatusNotFound, "Route not found"), nil
+	}
+	
+	// Execute handler with recovery middleware
+	return middleware.RecoveryStdlib(ctx, request, route.Handler)
+}
+
+{{- if ne .AuthType "none"}}
+// withAuth wraps a handler with authentication middleware
+func withAuth(handler func(context.Context, events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error)) func(context.Context, events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	return func(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+		// Apply auth middleware
+		authResponse := middleware.AuthStdlib(ctx, request)
+		if authResponse.StatusCode != 0 {
+			return authResponse, nil
+		}
+		
+		return handler(ctx, request)
+	}
+}
+{{- end}}
+
+// findRoute finds a matching route for the given method and path
+func findRoute(method, path string) *Route {
+	for _, route := range routes {
+		if route.Method == method && matchPath(route.Path, path) {
+			return &route
+		}
+	}
+	return nil
+}
+
+// matchPath checks if a route path matches the request path
+// Supports simple path parameters like {id}
+func matchPath(routePath, requestPath string) bool {
+	routeParts := strings.Split(strings.Trim(routePath, "/"), "/")
+	requestParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+	
+	if len(routeParts) != len(requestParts) {
+		return false
+	}
+	
+	for i, routePart := range routeParts {
+		requestPart := requestParts[i]
+		
+		// Check for path parameter
+		if strings.HasPrefix(routePart, "{") && strings.HasSuffix(routePart, "}") {
+			continue // Path parameter matches any value
+		}
+		
+		// Exact match required
+		if routePart != requestPart {
+			return false
+		}
+	}
+	
+	return true
+}
+
+// extractPathParam extracts a path parameter value from the request path
+func extractPathParam(routePath, requestPath, paramName string) string {
+	routeParts := strings.Split(strings.Trim(routePath, "/"), "/")
+	requestParts := strings.Split(strings.Trim(requestPath, "/"), "/")
+	
+	if len(routeParts) != len(requestParts) {
+		return ""
+	}
+	
+	for i, routePart := range routeParts {
+		if routePart == "{"+paramName+"}" {
+			return requestParts[i]
+		}
+	}
+	
+	return ""
+}
+
+// createErrorResponse creates a standardized error response
+func createErrorResponse(statusCode int, message string) events.APIGatewayProxyResponse {
+	errorResponse := models.ErrorResponse{
+		Error: message,
+		Code:  fmt.Sprintf("HTTP_%d", statusCode),
+	}
+	
+	body, _ := json.Marshal(errorResponse)
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+			"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type, Authorization",
+		},
+		Body: string(body),
+	}
+}
+
+// createSuccessResponse creates a standardized success response
+func createSuccessResponse(statusCode int, data interface{}) events.APIGatewayProxyResponse {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return createErrorResponse(http.StatusInternalServerError, "Failed to marshal response")
+	}
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+			"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+			"Access-Control-Allow-Headers": "Content-Type, Authorization",
+		},
+		Body: string(body),
+	}
+}
+{{- end}}

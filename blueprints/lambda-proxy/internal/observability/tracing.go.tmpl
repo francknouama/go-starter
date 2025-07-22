@@ -1,0 +1,321 @@
+package observability
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-xray-sdk-go/xray"
+	"github.com/aws/aws-xray-sdk-go/xraylog"
+	"{{.ModulePath}}/internal/config"
+)
+
+var (
+	// Service name for X-Ray segments
+	serviceName    = "{{.ProjectName}}"
+	tracingEnabled = true
+)
+
+// InitializeTracing initializes X-Ray tracing for the Lambda function
+func InitializeTracing() {
+	// Set service name from environment variable if available
+	if name := config.GetServiceName(); name != "" {
+		serviceName = name
+	}
+	
+	// Check if tracing is disabled
+	if !config.IsTracingEnabled() {
+		tracingEnabled = false
+		LogInfo("X-Ray tracing disabled", nil)
+		return
+	}
+	
+	// Configure X-Ray logging
+	xray.SetLogger(xraylog.NewDefaultLogger(nil, xraylog.LogLevelInfo))
+	
+	// Configure X-Ray to capture all AWS SDK calls
+	xray.AWS(&xray.AWSConfig{
+		LogLevel:               xraylog.LogLevelInfo,
+		ContextMissingStrategy: xray.CtxMissingLogError,
+	})
+	
+	LogInfo("X-Ray tracing initialized", map[string]interface{}{
+		"service_name": serviceName,
+		"enabled":      tracingEnabled,
+	})
+}
+
+// TraceAPIGatewayRequest creates a segment for the entire API Gateway request
+func TraceAPIGatewayRequest(ctx context.Context, request events.APIGatewayProxyRequest, handler func(context.Context) (events.APIGatewayProxyResponse, error)) (events.APIGatewayProxyResponse, error) {
+	if !tracingEnabled {
+		return handler(ctx)
+	}
+	
+	segmentName := fmt.Sprintf("%s-%s", serviceName, "api-request")
+	_, seg := xray.BeginSegment(ctx, segmentName)
+	defer seg.Close(nil)
+	
+	// Add request metadata
+	seg.AddAnnotation("service", serviceName)
+	seg.AddAnnotation("http.method", request.HTTPMethod)
+	seg.AddAnnotation("http.url", request.Path)
+	seg.AddAnnotation("api.stage", request.RequestContext.Stage)
+	seg.AddAnnotation("api.request_id", request.RequestContext.RequestID)
+	
+	// Add request details as metadata
+	requestMetadata := map[string]interface{}{
+		"http": map[string]interface{}{
+			"method":      request.HTTPMethod,
+			"url":         request.Path,
+			"user_agent":  getHeaderValue(request.Headers, "User-Agent"),
+			"source_ip":   request.RequestContext.Identity.SourceIP,
+		},
+		"api_gateway": map[string]interface{}{
+			"request_id":   request.RequestContext.RequestID,
+			"stage":        request.RequestContext.Stage,
+			"resource":     request.Resource,
+			"request_time": request.RequestContext.RequestTime,
+		},
+	}
+	
+	seg.AddMetadata("request", requestMetadata)
+	
+	startTime := time.Now()
+	response, err := handler(seg.Ctx)
+	duration := time.Since(startTime)
+	
+	// Add response metadata
+	seg.AddAnnotation("http.status_code", response.StatusCode)
+	seg.AddAnnotation("duration_ms", duration.Milliseconds())
+	
+	responseMetadata := map[string]interface{}{
+		"status_code":  response.StatusCode,
+		"duration_ms":  duration.Milliseconds(),
+		"content_type": getHeaderValue(response.Headers, "Content-Type"),
+	}
+	
+	if err != nil {
+		seg.AddError(err)
+		seg.AddAnnotation("error", true)
+		responseMetadata["error"] = err.Error()
+		
+		LogError("API Gateway request failed", map[string]interface{}{
+			"method":     request.HTTPMethod,
+			"path":       request.Path,
+			"error":      err.Error(),
+			"duration":   duration.String(),
+			"request_id": request.RequestContext.RequestID,
+		})
+	} else {
+		seg.AddAnnotation("error", false)
+		
+		LogInfo("API Gateway request completed", map[string]interface{}{
+			"method":     request.HTTPMethod,
+			"path":       request.Path,
+			"status":     response.StatusCode,
+			"duration":   duration.String(),
+			"request_id": request.RequestContext.RequestID,
+		})
+	}
+	
+	seg.AddMetadata("response", responseMetadata)
+	
+	return response, err
+}
+
+// TraceSegment creates a new X-Ray segment for tracing operations
+func TraceSegment(ctx context.Context, name string, fn func(context.Context) error) error {
+	if !tracingEnabled {
+		return fn(ctx)
+	}
+	
+	_, seg := xray.BeginSegment(ctx, name)
+	defer seg.Close(nil)
+	
+	// Add service metadata
+	seg.AddAnnotation("service", serviceName)
+	seg.AddAnnotation("operation", name)
+	
+	startTime := time.Now()
+	err := fn(seg.Ctx)
+	duration := time.Since(startTime)
+	
+	// Add timing and status annotations
+	seg.AddMetadata("timing", map[string]interface{}{
+		"duration_ms": duration.Milliseconds(),
+		"start_time":  startTime.Format(time.RFC3339),
+	})
+	
+	if err != nil {
+		seg.AddError(err)
+		seg.AddAnnotation("error", true)
+		LogError("Traced operation failed", map[string]interface{}{
+			"operation": name,
+			"error":     err.Error(),
+			"duration":  duration.String(),
+		})
+	} else {
+		seg.AddAnnotation("error", false)
+		LogDebug("Traced operation completed", map[string]interface{}{
+			"operation": name,
+			"duration":  duration.String(),
+		})
+	}
+	
+	return err
+}
+
+// TraceSubsegment creates a subsegment within an existing segment
+func TraceSubsegment(ctx context.Context, name string, fn func(context.Context) error) error {
+	if !tracingEnabled {
+		return fn(ctx)
+	}
+	
+	_, subseg := xray.BeginSubsegment(ctx, name)
+	defer subseg.Close(nil)
+	
+	subseg.AddAnnotation("subsegment", name)
+	
+	startTime := time.Now()
+	err := fn(subseg.Ctx)
+	duration := time.Since(startTime)
+	
+	subseg.AddMetadata("timing", map[string]interface{}{
+		"duration_ms": duration.Milliseconds(),
+	})
+	
+	if err != nil {
+		subseg.AddError(err)
+		subseg.AddAnnotation("error", true)
+	} else {
+		subseg.AddAnnotation("error", false)
+	}
+	
+	return err
+}
+
+// AddTraceAnnotation adds an annotation to the current segment
+func AddTraceAnnotation(ctx context.Context, key string, value interface{}) {
+	if !tracingEnabled {
+		return
+	}
+	
+	if seg := xray.GetSegment(ctx); seg != nil {
+		seg.AddAnnotation(key, value)
+	}
+}
+
+// AddTraceMetadata adds metadata to the current segment
+func AddTraceMetadata(ctx context.Context, namespace string, data map[string]interface{}) {
+	if !tracingEnabled {
+		return
+	}
+	
+	if seg := xray.GetSegment(ctx); seg != nil {
+		seg.AddMetadata(namespace, data)
+	}
+}
+
+// TraceHTTPRequest traces an HTTP request with detailed information
+func TraceHTTPRequest(ctx context.Context, method, url string, statusCode int, fn func(context.Context) error) error {
+	return TraceSubsegment(ctx, "http_request", func(ctx context.Context) error {
+		if seg := xray.GetSegment(ctx); seg != nil {
+			seg.AddAnnotation("http.method", method)
+			seg.AddAnnotation("http.url", url)
+			
+			// Set namespace for HTTP data
+			seg.SetNamespace("remote")
+		}
+		
+		err := fn(ctx)
+		
+		if seg := xray.GetSegment(ctx); seg != nil {
+			seg.AddAnnotation("http.status_code", statusCode)
+			
+			// Add HTTP metadata
+			httpData := map[string]interface{}{
+				"request": map[string]interface{}{
+					"method": method,
+					"url":    url,
+				},
+				"response": map[string]interface{}{
+					"status": statusCode,
+				},
+			}
+			
+			if err != nil {
+				httpData["error"] = err.Error()
+			}
+			
+			seg.AddMetadata("http", httpData)
+		}
+		
+		return err
+	})
+}
+
+// TraceAWSService traces an AWS service call
+func TraceAWSService(ctx context.Context, service, operation string, fn func(context.Context) error) error {
+	return TraceSubsegment(ctx, fmt.Sprintf("aws_%s", service), func(ctx context.Context) error {
+		if seg := xray.GetSegment(ctx); seg != nil {
+			seg.AddAnnotation("aws.service", service)
+			seg.AddAnnotation("aws.operation", operation)
+			seg.SetNamespace("aws")
+		}
+		
+		err := fn(ctx)
+		
+		if seg := xray.GetSegment(ctx); seg != nil {
+			awsData := map[string]interface{}{
+				"service":   service,
+				"operation": operation,
+				"region":    config.GetAWSRegion(),
+			}
+			
+			if err != nil {
+				awsData["error"] = err.Error()
+			}
+			
+			seg.AddMetadata("aws", awsData)
+		}
+		
+		return err
+	})
+}
+
+// GetTraceID returns the current trace ID for correlation
+func GetTraceID(ctx context.Context) string {
+	if !tracingEnabled {
+		return ""
+	}
+	
+	if seg := xray.GetSegment(ctx); seg != nil {
+		return seg.TraceID
+	}
+	return ""
+}
+
+// IsTracingEnabled returns whether X-Ray tracing is enabled
+func IsTracingEnabled() bool {
+	return tracingEnabled
+}
+
+// Helper function to safely get header values
+func getHeaderValue(headers map[string]string, key string) string {
+	if headers == nil {
+		return ""
+	}
+	
+	// Try exact match first
+	if value, exists := headers[key]; exists {
+		return value
+	}
+	
+	// Try lowercase
+	if value, exists := headers[fmt.Sprintf("%s", key)]; exists {
+		return value
+	}
+	
+	return ""
+}

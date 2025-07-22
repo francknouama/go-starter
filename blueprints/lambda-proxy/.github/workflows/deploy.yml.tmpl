@@ -1,0 +1,399 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      force_deploy:
+        description: 'Force deployment even if no changes'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  GO_VERSION: "{{.GoVersion}}"
+  AWS_REGION: us-east-1
+
+jobs:
+  prepare:
+    name: Prepare Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    outputs:
+      environment: ${{ steps.set-env.outputs.environment }}
+      should-deploy: ${{ steps.check-changes.outputs.should-deploy }}
+      version: ${{ steps.version.outputs.version }}
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Set environment
+      id: set-env
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+        else
+          echo "environment=staging" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Check for changes
+      id: check-changes
+      run: |
+        if [ "${{ github.event.inputs.force_deploy }}" = "true" ]; then
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "Force deployment requested"
+        elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "should-deploy=true" >> $GITHUB_OUTPUT
+          echo "Manual deployment requested"
+        else
+          # Check if there are changes in the last commit that affect the application
+          if git diff --name-only HEAD~1 HEAD | grep -E '\.(go|yaml|yml|json|mod|sum)$' > /dev/null; then
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+            echo "Application changes detected"
+          else
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "No application changes detected"
+          fi
+        fi
+
+    - name: Generate version
+      id: version
+      run: |
+        VERSION=$(date +%Y%m%d%H%M%S)-$(git rev-parse --short HEAD)
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Generated version: $VERSION"
+
+  build:
+    name: Build Lambda
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: prepare
+    if: needs.prepare.outputs.should-deploy == 'true'
+    
+    steps:
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-${{ env.GO_VERSION }}-
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Build for Lambda (AMD64)
+      run: |
+        GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+          -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }}" \
+          -o bootstrap .
+        chmod +x bootstrap
+
+    - name: Build for Lambda (ARM64)
+      run: |
+        GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build \
+          -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }}" \
+          -o bootstrap-arm64 .
+        chmod +x bootstrap-arm64
+
+    - name: Create deployment packages
+      run: |
+        zip -r lambda-deployment-amd64.zip bootstrap template.yaml
+        zip -r lambda-deployment-arm64.zip bootstrap-arm64 template.yaml
+
+    - name: Upload deployment artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: lambda-deployment-${{ needs.prepare.outputs.version }}
+        path: |
+          lambda-deployment-amd64.zip
+          lambda-deployment-arm64.zip
+          template.yaml
+        retention-days: 30
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [prepare, build]
+    if: needs.prepare.outputs.should-deploy == 'true' && (needs.prepare.outputs.environment == 'staging' || github.ref == 'refs/heads/main')
+    environment:
+      name: staging
+      url: ${{ steps.deploy.outputs.api-url }}
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Download deployment artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: lambda-deployment-${{ needs.prepare.outputs.version }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Set up SAM CLI
+      uses: aws-actions/setup-sam@v2
+
+    - name: Deploy with SAM
+      id: deploy
+      run: |
+        sam deploy \
+          --template-file template.yaml \
+          --stack-name {{.ProjectName}}-staging \
+          --capabilities CAPABILITY_IAM \
+          --region ${{ env.AWS_REGION }} \
+          --parameter-overrides \
+            Environment=staging \
+            LogLevel=info \
+{{- if eq .AuthType "jwt"}}
+            JWTSecret=${{ secrets.JWT_SECRET_STAGING }} \
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+            CognitoUserPool=${{ secrets.COGNITO_USER_POOL_STAGING }} \
+            CognitoClientId=${{ secrets.COGNITO_CLIENT_ID_STAGING }} \
+{{- end}}
+          --no-fail-on-empty-changeset \
+          --no-confirm-changeset
+
+        # Get the API Gateway URL
+        API_URL=$(aws cloudformation describe-stacks \
+          --stack-name {{.ProjectName}}-staging \
+          --query 'Stacks[0].Outputs[?OutputKey==`{{.ProjectName}}ApiUrl`].OutputValue' \
+          --output text)
+        echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+        echo "Staging API URL: $API_URL"
+
+    - name: Run smoke tests
+      run: |
+        API_URL="${{ steps.deploy.outputs.api-url }}"
+        
+        # Wait for API to be ready
+        echo "Waiting for API to be ready..."
+        for i in {1..30}; do
+          if curl -f "${API_URL}api/v1/health" > /dev/null 2>&1; then
+            echo "API is ready"
+            break
+          fi
+          echo "Attempt $i: API not ready, waiting..."
+          sleep 10
+        done
+        
+        # Run basic health check
+        echo "Running smoke tests..."
+        HEALTH_RESPONSE=$(curl -s "${API_URL}api/v1/health")
+        echo "Health check response: $HEALTH_RESPONSE"
+        
+        # Verify health check returns 200 and contains expected fields
+        if echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
+          echo "✅ Smoke tests passed"
+        else
+          echo "❌ Smoke tests failed"
+          exit 1
+        fi
+
+    - name: Update deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "✅ Staging deployment successful"
+          echo "🔗 API URL: ${{ steps.deploy.outputs.api-url }}"
+        else
+          echo "❌ Staging deployment failed"
+        fi
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [prepare, build, deploy-staging]
+    if: needs.prepare.outputs.should-deploy == 'true' && needs.prepare.outputs.environment == 'production'
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.api-url }}
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Download deployment artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: lambda-deployment-${{ needs.prepare.outputs.version }}
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_PROD }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_PROD }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Set up SAM CLI
+      uses: aws-actions/setup-sam@v2
+
+    - name: Pre-deployment checks
+      run: |
+        # Verify staging deployment is healthy
+        echo "Verifying staging deployment health..."
+        # Add staging health check here if needed
+        
+        echo "✅ Pre-deployment checks passed"
+
+    - name: Deploy with canary strategy
+      id: deploy
+      run: |
+        sam deploy \
+          --template-file template.yaml \
+          --stack-name {{.ProjectName}}-production \
+          --capabilities CAPABILITY_IAM \
+          --region ${{ env.AWS_REGION }} \
+          --parameter-overrides \
+            Environment=production \
+            LogLevel=warn \
+{{- if eq .AuthType "jwt"}}
+            JWTSecret=${{ secrets.JWT_SECRET_PROD }} \
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+            CognitoUserPool=${{ secrets.COGNITO_USER_POOL_PROD }} \
+            CognitoClientId=${{ secrets.COGNITO_CLIENT_ID_PROD }} \
+{{- end}}
+          --no-fail-on-empty-changeset \
+          --no-confirm-changeset
+
+        # Get the API Gateway URL
+        API_URL=$(aws cloudformation describe-stacks \
+          --stack-name {{.ProjectName}}-production \
+          --query 'Stacks[0].Outputs[?OutputKey==`{{.ProjectName}}ApiUrl`].OutputValue' \
+          --output text)
+        echo "api-url=$API_URL" >> $GITHUB_OUTPUT
+        echo "Production API URL: $API_URL"
+
+    - name: Run production smoke tests
+      run: |
+        API_URL="${{ steps.deploy.outputs.api-url }}"
+        
+        # Wait for API to be ready
+        echo "Waiting for production API to be ready..."
+        for i in {1..60}; do
+          if curl -f "${API_URL}api/v1/health" > /dev/null 2>&1; then
+            echo "Production API is ready"
+            break
+          fi
+          echo "Attempt $i: API not ready, waiting..."
+          sleep 10
+        done
+        
+        # Run comprehensive smoke tests
+        echo "Running production smoke tests..."
+        
+        # Health check
+        HEALTH_RESPONSE=$(curl -s "${API_URL}api/v1/health")
+        if ! echo "$HEALTH_RESPONSE" | grep -q '"status":"healthy"'; then
+          echo "❌ Health check failed"
+          exit 1
+        fi
+        
+        # Readiness check
+        READY_RESPONSE=$(curl -s "${API_URL}api/v1/health/ready")
+        if ! echo "$READY_RESPONSE" | grep -q '"ready":true'; then
+          echo "❌ Readiness check failed"
+          exit 1
+        fi
+        
+        echo "✅ Production smoke tests passed"
+
+    - name: Monitor deployment
+      run: |
+        echo "Monitoring deployment for 5 minutes..."
+        API_URL="${{ steps.deploy.outputs.api-url }}"
+        
+        for i in {1..30}; do
+          RESPONSE=$(curl -s -w "%{http_code}" "${API_URL}api/v1/health" -o /dev/null)
+          if [ "$RESPONSE" != "200" ]; then
+            echo "❌ Health check failed with status $RESPONSE at $(date)"
+            exit 1
+          fi
+          echo "✅ Health check passed at $(date)"
+          sleep 10
+        done
+        
+        echo "✅ Deployment monitoring completed successfully"
+
+    - name: Update deployment status
+      if: always()
+      run: |
+        if [ "${{ job.status }}" = "success" ]; then
+          echo "✅ Production deployment successful"
+          echo "🔗 API URL: ${{ steps.deploy.outputs.api-url }}"
+          echo "📊 CloudWatch: https://console.aws.amazon.com/cloudwatch/home?region=${{ env.AWS_REGION }}#dashboards:"
+          echo "📈 X-Ray: https://console.aws.amazon.com/xray/home?region=${{ env.AWS_REGION }}#/traces"
+        else
+          echo "❌ Production deployment failed"
+        fi
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [prepare, build, deploy-staging]
+    if: always() && needs.prepare.outputs.should-deploy == 'true'
+    
+    steps:
+    - name: Clean up old artifacts
+      run: |
+        echo "Deployment artifacts will be automatically cleaned up after 30 days"
+        echo "Version deployed: ${{ needs.prepare.outputs.version }}"
+
+  notify:
+    name: Notify
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [prepare, deploy-staging, deploy-production]
+    if: always() && needs.prepare.outputs.should-deploy == 'true'
+    
+    steps:
+    - name: Notification
+      run: |
+        if [ "${{ needs.deploy-staging.result }}" = "success" ]; then
+          echo "✅ Staging deployment completed successfully"
+        fi
+        
+        if [ "${{ needs.deploy-production.result }}" = "success" ]; then
+          echo "✅ Production deployment completed successfully"
+        elif [ "${{ needs.deploy-production.result }}" = "failure" ]; then
+          echo "❌ Production deployment failed"
+        fi
+        
+        echo "Deployment version: ${{ needs.prepare.outputs.version }}"

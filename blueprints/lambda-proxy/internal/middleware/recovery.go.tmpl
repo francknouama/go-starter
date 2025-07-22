@@ -1,0 +1,176 @@
+package middleware
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"runtime/debug"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+{{- else if eq .Framework "stdlib"}}
+	"github.com/aws/aws-lambda-go/events"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/observability"
+)
+
+{{- if eq .Framework "gin"}}
+// Recovery returns a Gin middleware for panic recovery
+func Recovery() gin.HandlerFunc {
+	return gin.HandlerFunc(func(c *gin.Context) {
+		defer func() {
+			if err := recover(); err != nil {
+				handlePanic(c.Request.Context(), err, func(status int, response models.ErrorResponse) {
+					c.JSON(status, response)
+					c.Abort()
+				})
+			}
+		}()
+		
+		c.Next()
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+// Recovery returns an Echo middleware for panic recovery
+func Recovery() echo.MiddlewareFunc {
+	return echo.MiddlewareFunc(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			defer func() {
+				if err := recover(); err != nil {
+					handlePanic(c.Request().Context(), err, func(status int, response models.ErrorResponse) {
+						c.JSON(status, response)
+					})
+				}
+			}()
+			
+			return next(c)
+		}
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Recovery returns a Fiber middleware for panic recovery
+func Recovery() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		defer func() {
+			if err := recover(); err != nil {
+				handlePanic(c.Context(), err, func(status int, response models.ErrorResponse) {
+					c.Status(status).JSON(response)
+				})
+			}
+		}()
+		
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+// Recovery returns a Chi middleware for panic recovery
+func Recovery(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				handlePanic(r.Context(), err, func(status int, response models.ErrorResponse) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					json.NewEncoder(w).Encode(response)
+				})
+			}
+		}()
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+{{- else if eq .Framework "stdlib"}}
+// RecoveryStdlib handles panic recovery for standard library
+func RecoveryStdlib(ctx context.Context, request events.APIGatewayProxyRequest, handler func(context.Context, events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error)) (events.APIGatewayProxyResponse, error) {
+	defer func() {
+		if err := recover(); err != nil {
+			handlePanicStdlib(ctx, err)
+		}
+	}()
+	
+	return handler(ctx, request)
+}
+
+func handlePanicStdlib(ctx context.Context, err interface{}) events.APIGatewayProxyResponse {
+	stack := debug.Stack()
+	requestID := getRequestID(ctx)
+	
+	// Log the panic
+	observability.LogError("Panic recovered", map[string]interface{}{
+		"request_id": requestID,
+		"panic":      fmt.Sprintf("%v", err),
+		"stack":      string(stack),
+	})
+	
+	// Create error response
+	errorResponse := models.ErrorResponse{
+		Error: "Internal server error",
+		Code:  "INTERNAL_SERVER_ERROR",
+	}
+	
+	// Include panic details in development
+	if config.IsDevelopment() {
+		errorResponse.Error = fmt.Sprintf("Panic: %v", err)
+	}
+	
+	body, _ := json.Marshal(errorResponse)
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: http.StatusInternalServerError,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+		},
+		Body: string(body),
+	}
+}
+{{- end}}
+
+// handlePanic processes a recovered panic
+func handlePanic(ctx context.Context, err interface{}, respond func(int, models.ErrorResponse)) {
+	stack := debug.Stack()
+	requestID := getRequestID(ctx)
+	
+	// Log the panic
+	observability.LogError("Panic recovered", map[string]interface{}{
+		"request_id": requestID,
+		"panic":      fmt.Sprintf("%v", err),
+		"stack":      string(stack),
+	})
+	
+	// Create error response
+	errorResponse := models.ErrorResponse{
+		Error: "Internal server error",
+		Code:  "INTERNAL_SERVER_ERROR",
+	}
+	
+	// Include panic details in development
+	if config.IsDevelopment() {
+		errorResponse.Error = fmt.Sprintf("Panic: %v", err)
+	}
+	
+	respond(http.StatusInternalServerError, errorResponse)
+}
+
+// getRequestID extracts the request ID from context
+func getRequestID(ctx context.Context) string {
+	if requestID := ctx.Value("request_id"); requestID != nil {
+		if id, ok := requestID.(string); ok {
+			return id
+		}
+	}
+	return "unknown"
+}

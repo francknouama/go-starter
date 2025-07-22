@@ -1,0 +1,329 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  {{.ProjectName}}
+  
+  Serverless API using AWS Lambda and API Gateway with {{.Framework}} framework
+
+# Globals for all Lambda functions and APIs
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 256
+    Runtime: provided.al2
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        SERVICE_NAME: {{.ProjectName}}
+        ENVIRONMENT: !Ref Environment
+        LOG_LEVEL: !Ref LogLevel
+{{- if ne .AuthType "none"}}
+        AUTH_TYPE: {{.AuthType}}
+{{- if eq .AuthType "jwt"}}
+        JWT_SECRET: !Ref JWTSecret
+        JWT_ISSUER: {{.JWTIssuer}}
+        JWT_AUDIENCE: {{.ProjectName}}
+        JWT_EXPIRY_HOURS: 24
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+        COGNITO_USER_POOL: !Ref CognitoUserPool
+        COGNITO_CLIENT_ID: !Ref CognitoClientId
+        COGNITO_REGION: !Ref AWS::Region
+{{- end}}
+{{- end}}
+        CORS_ORIGINS: {{.CorsOrigins}}
+        TRACING_ENABLED: true
+        METRICS_ENABLED: true
+    Tracing: Active
+  Api:
+    TracingConfig:
+      PassthroughBehavior: Active
+    Cors:
+      AllowMethods: "'GET,POST,PUT,DELETE,OPTIONS'"
+      AllowHeaders: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token'"
+      AllowOrigin: "'{{.CorsOrigins}}'"
+      MaxAge: "'600'"
+
+# Parameters
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Deployment environment
+    
+  LogLevel:
+    Type: String
+    Default: info
+    AllowedValues:
+      - debug
+      - info
+      - warn
+      - error
+    Description: Log level for the application
+    
+{{- if eq .AuthType "jwt"}}
+  JWTSecret:
+    Type: String
+    NoEcho: true
+    Description: JWT signing secret (store in AWS Secrets Manager)
+    MinLength: 32
+{{- end}}
+
+{{- if eq .AuthType "cognito"}}
+  CognitoUserPool:
+    Type: String
+    Description: Cognito User Pool ID
+    
+  CognitoClientId:
+    Type: String
+    Description: Cognito User Pool Client ID
+{{- end}}
+
+# Resources
+Resources:
+  # Lambda Function
+  {{.ProjectName}}Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-{{.ProjectName}}"
+      CodeUri: ./
+      Handler: bootstrap
+      Description: {{.ProjectName}} Lambda function with {{.Framework}} framework
+      Environment:
+        Variables:
+          AWS_LAMBDA_EXEC_WRAPPER: /opt/otel-instrument
+      Layers:
+        - !Sub "arn:aws:lambda:${AWS::Region}:901920570463:layer:aws-otel-collector-amd64-ver-0-97-0:1"
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref {{.ProjectName}}Api
+            Path: /{proxy+}
+            Method: ANY
+        RootApiEvent:
+          Type: Api
+          Properties:
+            RestApiId: !Ref {{.ProjectName}}Api
+            Path: /
+            Method: ANY
+      Policies:
+        - AWSLambdaBasicExecutionRole
+        - AWSXRayDaemonWriteAccess
+        - CloudWatchPutMetricPolicy: {}
+{{- if eq .AuthType "cognito"}}
+        - Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:AdminGetUser
+                - cognito-idp:AdminListGroupsForUser
+              Resource: 
+                - !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPool}"
+{{- end}}
+      Tags:
+        Service: {{.ProjectName}}
+        Environment: !Ref Environment
+        Framework: {{.Framework}}
+
+  # API Gateway
+  {{.ProjectName}}Api:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "${AWS::StackName}-{{.ProjectName}}-api"
+      StageName: !Ref Environment
+      Description: API Gateway for {{.ProjectName}}
+{{- if ne .AuthType "none"}}
+      Auth:
+{{- if eq .AuthType "jwt"}}
+        DefaultAuthorizer: {{.ProjectName}}JWTAuthorizer
+        Authorizers:
+          {{.ProjectName}}JWTAuthorizer:
+            FunctionArn: !GetAtt {{.ProjectName}}AuthorizerFunction.Arn
+            Identity:
+              Header: Authorization
+              ValidationExpression: "^Bearer [-0-9A-Za-z._~+/]+=*$"
+              ReauthorizeEvery: 300
+{{- else if eq .AuthType "cognito"}}
+        DefaultAuthorizer: {{.ProjectName}}CognitoAuthorizer
+        Authorizers:
+          {{.ProjectName}}CognitoAuthorizer:
+            UserPoolArn: !Sub "arn:aws:cognito-idp:${AWS::Region}:${AWS::AccountId}:userpool/${CognitoUserPool}"
+            Header: Authorization
+{{- end}}
+{{- end}}
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          LoggingLevel: INFO
+          DataTraceEnabled: true
+          MetricsEnabled: true
+          ThrottlingBurstLimit: 100
+          ThrottlingRateLimit: 50
+      AccessLogSetting:
+        DestinationArn: !GetAtt {{.ProjectName}}ApiLogGroup.Arn
+        Format: >
+          {"requestId":"$context.requestId","ip":"$context.identity.sourceIp","caller":"$context.identity.caller","user":"$context.identity.user","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","resourcePath":"$context.resourcePath","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","responseTime":"$context.responseTime","error":"$context.error.message","integrationError":"$context.integration.error"}
+      Tags:
+        Service: {{.ProjectName}}
+        Environment: !Ref Environment
+
+{{- if eq .AuthType "jwt"}}
+  # JWT Authorizer Lambda Function
+  {{.ProjectName}}AuthorizerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-{{.ProjectName}}-authorizer"
+      CodeUri: ./authorizer/
+      Handler: authorizer
+      Description: JWT Authorizer for {{.ProjectName}} API
+      Timeout: 10
+      MemorySize: 128
+      Environment:
+        Variables:
+          JWT_SECRET: !Ref JWTSecret
+          JWT_ISSUER: {{.JWTIssuer}}
+          JWT_AUDIENCE: {{.ProjectName}}
+      Tags:
+        Service: {{.ProjectName}}
+        Environment: !Ref Environment
+        Component: Authorizer
+
+  # Permission for API Gateway to invoke the authorizer
+  {{.ProjectName}}AuthorizerPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt {{.ProjectName}}AuthorizerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${{{.ProjectName}}Api}/authorizers/*"
+{{- end}}
+
+  # CloudWatch Log Group for API Gateway
+  {{.ProjectName}}ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/apigateway/${AWS::StackName}-{{.ProjectName}}-api"
+      RetentionInDays: 14
+
+  # CloudWatch Log Group for Lambda
+  {{.ProjectName}}FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-{{.ProjectName}}"
+      RetentionInDays: 14
+
+{{- if eq .AuthType "jwt"}}
+  # CloudWatch Log Group for Authorizer
+  {{.ProjectName}}AuthorizerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-{{.ProjectName}}-authorizer"
+      RetentionInDays: 14
+{{- end}}
+
+  # Custom Domain (Optional - uncomment and configure as needed)
+  # {{.ProjectName}}DomainName:
+  #   Type: AWS::ApiGateway::DomainName
+  #   Properties:
+  #     DomainName: api.yourdomain.com
+  #     CertificateArn: arn:aws:acm:region:account-id:certificate/certificate-id
+  #     SecurityPolicy: TLS_1_2
+  #
+  # {{.ProjectName}}BasePathMapping:
+  #   Type: AWS::ApiGateway::BasePathMapping
+  #   Properties:
+  #     DomainName: !Ref {{.ProjectName}}DomainName
+  #     RestApiId: !Ref {{.ProjectName}}Api
+  #     Stage: !Ref Environment
+
+  # CloudWatch Alarms
+  {{.ProjectName}}ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-{{.ProjectName}}-errors"
+      AlarmDescription: "Lambda function errors"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref {{.ProjectName}}Function
+      TreatMissingData: notBreaching
+
+  {{.ProjectName}}DurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-{{.ProjectName}}-duration"
+      AlarmDescription: "Lambda function duration"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10000  # 10 seconds
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref {{.ProjectName}}Function
+      TreatMissingData: notBreaching
+
+  {{.ProjectName}}ThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-{{.ProjectName}}-throttles"
+      AlarmDescription: "Lambda function throttles"
+      MetricName: Throttles
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref {{.ProjectName}}Function
+      TreatMissingData: notBreaching
+
+# Outputs
+Outputs:
+  {{.ProjectName}}ApiUrl:
+    Description: "API Gateway endpoint URL"
+    Value: !Sub "https://${{{.ProjectName}}Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/"
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiUrl"
+
+  {{.ProjectName}}FunctionArn:
+    Description: "Lambda Function ARN"
+    Value: !GetAtt {{.ProjectName}}Function.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-FunctionArn"
+
+  {{.ProjectName}}ApiId:
+    Description: "API Gateway ID"
+    Value: !Ref {{.ProjectName}}Api
+    Export:
+      Name: !Sub "${AWS::StackName}-ApiId"
+
+{{- if eq .AuthType "jwt"}}
+  {{.ProjectName}}AuthorizerArn:
+    Description: "JWT Authorizer Function ARN"
+    Value: !GetAtt {{.ProjectName}}AuthorizerFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AuthorizerArn"
+{{- end}}
+
+  Environment:
+    Description: "Deployment environment"
+    Value: !Ref Environment
+    Export:
+      Name: !Sub "${AWS::StackName}-Environment"

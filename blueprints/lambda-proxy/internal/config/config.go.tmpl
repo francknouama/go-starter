@@ -1,0 +1,224 @@
+package config
+
+import (
+	"os"
+	"strconv"
+	"strings"
+)
+
+// Config holds the application configuration
+type Config struct {
+	// Application settings
+	ServiceName string
+	Environment string
+	LogLevel    string
+	
+	// API settings
+	CORSOrigins []string
+	
+	// Authentication settings
+{{- if ne .AuthType "none"}}
+	AuthType     string
+{{- if eq .AuthType "jwt"}}
+	JWTSecret    string
+	JWTIssuer    string
+	JWTAudience  string
+	JWTExpiry    int // in hours
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+	CognitoUserPool   string
+	CognitoClientID   string
+	CognitoRegion     string
+{{- end}}
+{{- end}}
+	
+	// AWS settings
+	AWSRegion string
+	
+	// Observability settings
+	TracingEnabled bool
+	MetricsEnabled bool
+}
+
+var config *Config
+
+// Load initializes the configuration from environment variables
+func Load() {
+	config = &Config{
+		ServiceName: getEnvString("SERVICE_NAME", "{{.ProjectName}}"),
+		Environment: getEnvString("ENVIRONMENT", "production"),
+		LogLevel:    getEnvString("LOG_LEVEL", "info"),
+		
+		CORSOrigins: parseCORSOrigins(getEnvString("CORS_ORIGINS", "{{.CorsOrigins}}")),
+		
+{{- if ne .AuthType "none"}}
+		AuthType: "{{.AuthType}}",
+{{- if eq .AuthType "jwt"}}
+		JWTSecret:   getEnvString("JWT_SECRET", ""),
+		JWTIssuer:   getEnvString("JWT_ISSUER", "{{.JWTIssuer}}"),
+		JWTAudience: getEnvString("JWT_AUDIENCE", "{{.ProjectName}}"),
+		JWTExpiry:   getEnvInt("JWT_EXPIRY_HOURS", 24),
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+		CognitoUserPool: getEnvString("COGNITO_USER_POOL", "{{.CognitoUserPool}}"),
+		CognitoClientID: getEnvString("COGNITO_CLIENT_ID", ""),
+		CognitoRegion:   getEnvString("COGNITO_REGION", "us-east-1"),
+{{- end}}
+{{- end}}
+		
+		AWSRegion: getEnvString("AWS_REGION", "us-east-1"),
+		
+		TracingEnabled: getEnvBool("TRACING_ENABLED", true),
+		MetricsEnabled: getEnvBool("METRICS_ENABLED", true),
+	}
+}
+
+// GetConfig returns the current configuration
+func GetConfig() *Config {
+	if config == nil {
+		Load()
+	}
+	return config
+}
+
+// GetServiceName returns the service name
+func GetServiceName() string {
+	return GetConfig().ServiceName
+}
+
+// GetEnv returns the current environment
+func GetEnv() string {
+	return GetConfig().Environment
+}
+
+// GetLogLevel returns the log level
+func GetLogLevel() string {
+	return GetConfig().LogLevel
+}
+
+// GetCORSOrigins returns the CORS origins as a string
+func GetCORSOrigins() string {
+	origins := GetConfig().CORSOrigins
+	if len(origins) == 0 {
+		return "*"
+	}
+	return strings.Join(origins, ",")
+}
+
+// GetCORSOriginsList returns the CORS origins as a slice
+func GetCORSOriginsList() []string {
+	return GetConfig().CORSOrigins
+}
+
+{{- if ne .AuthType "none"}}
+// GetAuthType returns the authentication type
+func GetAuthType() string {
+	return GetConfig().AuthType
+}
+
+{{- if eq .AuthType "jwt"}}
+// GetJWTSecret returns the JWT secret
+func GetJWTSecret() string {
+	return GetConfig().JWTSecret
+}
+
+// GetJWTIssuer returns the JWT issuer
+func GetJWTIssuer() string {
+	return GetConfig().JWTIssuer
+}
+
+// GetJWTAudience returns the JWT audience
+func GetJWTAudience() string {
+	return GetConfig().JWTAudience
+}
+
+// GetJWTExpiry returns the JWT expiry time in hours
+func GetJWTExpiry() int {
+	return GetConfig().JWTExpiry
+}
+{{- end}}
+
+{{- if eq .AuthType "cognito"}}
+// GetCognitoUserPool returns the Cognito user pool ID
+func GetCognitoUserPool() string {
+	return GetConfig().CognitoUserPool
+}
+
+// GetCognitoClientID returns the Cognito client ID
+func GetCognitoClientID() string {
+	return GetConfig().CognitoClientID
+}
+
+// GetCognitoRegion returns the Cognito region
+func GetCognitoRegion() string {
+	return GetConfig().CognitoRegion
+}
+{{- end}}
+{{- end}}
+
+// GetAWSRegion returns the AWS region
+func GetAWSRegion() string {
+	return GetConfig().AWSRegion
+}
+
+// IsTracingEnabled returns whether tracing is enabled
+func IsTracingEnabled() bool {
+	return GetConfig().TracingEnabled
+}
+
+// IsMetricsEnabled returns whether metrics are enabled
+func IsMetricsEnabled() bool {
+	return GetConfig().MetricsEnabled
+}
+
+// IsDevelopment returns true if running in development mode
+func IsDevelopment() bool {
+	env := GetEnv()
+	return env == "development" || env == "dev" || env == "local"
+}
+
+// IsProduction returns true if running in production mode
+func IsProduction() bool {
+	return GetEnv() == "production"
+}
+
+// Helper functions for reading environment variables
+
+func getEnvString(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+func parseCORSOrigins(origins string) []string {
+	if origins == "" || origins == "*" {
+		return []string{"*"}
+	}
+	
+	parts := strings.Split(origins, ",")
+	result := make([]string, len(parts))
+	for i, part := range parts {
+		result[i] = strings.TrimSpace(part)
+	}
+	
+	return result
+}

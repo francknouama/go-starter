@@ -1,0 +1,343 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  GO_VERSION: "{{.GoVersion}}"
+
+jobs:
+  prepare:
+    name: Prepare Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      is-prerelease: ${{ steps.version.outputs.is-prerelease }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Determine version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+          IS_PRERELEASE="${{ github.event.inputs.prerelease }}"
+        else
+          VERSION="${{ github.ref_name }}"
+          # Check if it's a pre-release (contains alpha, beta, rc)
+          if echo "$VERSION" | grep -qE "(alpha|beta|rc)"; then
+            IS_PRERELEASE="true"
+          else
+            IS_PRERELEASE="false"
+          fi
+        fi
+        
+        echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+        echo "tag=$VERSION" >> $GITHUB_OUTPUT
+        echo "is-prerelease=$IS_PRERELEASE" >> $GITHUB_OUTPUT
+        
+        echo "Release version: $VERSION"
+        echo "Is pre-release: $IS_PRERELEASE"
+
+    - name: Generate changelog
+      id: changelog
+      run: |
+        # Get the previous tag
+        PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        
+        if [ -z "$PREV_TAG" ]; then
+          echo "First release - no previous tag found"
+          CHANGELOG="Initial release of {{.ProjectName}}"
+        else
+          echo "Generating changelog from $PREV_TAG to ${{ steps.version.outputs.tag }}"
+          
+          # Generate changelog from commits
+          CHANGELOG=$(git log --pretty=format:"- %s" $PREV_TAG..HEAD | head -20)
+          
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="No changes since $PREV_TAG"
+          fi
+        fi
+        
+        # Escape newlines for GitHub output
+        CHANGELOG="${CHANGELOG//'%'/'%25'}"
+        CHANGELOG="${CHANGELOG//$'\n'/'%0A'}"
+        CHANGELOG="${CHANGELOG//$'\r'/'%0D'}"
+        
+        echo "changelog=$CHANGELOG" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build Release Artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: prepare
+    
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            name: linux-amd64
+          - goos: linux
+            goarch: arm64
+            name: linux-arm64
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run tests
+      run: go test -v ./...
+
+    - name: Build binary
+      run: |
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build \
+          -ldflags="-s -w -X main.version=${{ needs.prepare.outputs.version }}" \
+          -o bootstrap-${{ matrix.name }} .
+        chmod +x bootstrap-${{ matrix.name }}
+
+    - name: Create deployment package
+      run: |
+        # Create Lambda deployment package
+        cp bootstrap-${{ matrix.name }} bootstrap
+        zip {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.zip bootstrap template.yaml
+        
+        # Create release archive with all files
+        tar -czf {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.tar.gz \
+          bootstrap-${{ matrix.name }} \
+          template.yaml \
+          terraform/ \
+          README.md \
+          LICENSE 2>/dev/null || true
+
+    - name: Generate checksums
+      run: |
+        sha256sum {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.zip > {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.zip.sha256
+        sha256sum {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.tar.gz > {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.tar.gz.sha256
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-artifacts-${{ matrix.name }}
+        path: |
+          {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.zip
+          {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.tar.gz
+          {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.zip.sha256
+          {{.ProjectName}}-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.tar.gz.sha256
+          bootstrap-${{ matrix.name }}
+
+  security-scan:
+    name: Security Scan for Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: build
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        cache: true
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Run security scans
+      run: |
+        # Install security tools
+        go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        
+        # Run Gosec
+        echo "Running Gosec security scan..."
+        gosec -fmt=json -out=gosec-results.json ./... || true
+        
+        # Run govulncheck
+        echo "Running vulnerability check..."
+        govulncheck ./...
+        
+        echo "✅ Security scans completed"
+
+    - name: Upload security results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-scan-results
+        path: gosec-results.json
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [prepare, build, security-scan]
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        
+        # Move all release artifacts to a single directory
+        find . -name "{{.ProjectName}}-${{ needs.prepare.outputs.version }}-*" -exec mv {} release-assets/ \;
+        find . -name "bootstrap-*" -exec mv {} release-assets/ \;
+        
+        # List all release assets
+        echo "Release assets:"
+        ls -la release-assets/
+
+    - name: Create release notes
+      run: |
+        cat > release-notes.md << 'EOF'
+        # {{.ProjectName}} ${{ needs.prepare.outputs.tag }}
+        
+        ## What's Changed
+        ${{ needs.prepare.outputs.changelog }}
+        
+        ## Features
+        - AWS Lambda function with {{.Framework}} framework
+{{- if ne .AuthType "none"}}
+        - {{.AuthType}} authentication support
+{{- end}}
+        - API Gateway integration with proxy pattern
+        - CloudWatch logging and X-Ray tracing
+        - Infrastructure as Code (SAM and Terraform)
+        - Comprehensive CI/CD workflows
+        - Multi-architecture support (AMD64 and ARM64)
+        
+        ## Installation
+        
+        ### Using SAM CLI
+        ```bash
+        # Download the deployment package
+        wget https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/{{.ProjectName}}-${{ needs.prepare.outputs.version }}-linux-amd64.zip
+        
+        # Deploy using SAM
+        sam deploy --guided
+        ```
+        
+        ### Using Terraform
+        ```bash
+        # Download the source code
+        wget https://github.com/${{ github.repository }}/releases/download/${{ needs.prepare.outputs.tag }}/{{.ProjectName}}-${{ needs.prepare.outputs.version }}-linux-amd64.tar.gz
+        tar -xzf {{.ProjectName}}-${{ needs.prepare.outputs.version }}-linux-amd64.tar.gz
+        
+        # Deploy using Terraform
+        cd terraform
+        terraform init
+        terraform plan
+        terraform apply
+        ```
+        
+        ## Checksums
+        All release artifacts include SHA256 checksums for verification.
+        
+        ## Support
+        - 🐛 [Report Issues](https://github.com/${{ github.repository }}/issues)
+        - 📖 [Documentation](https://github.com/${{ github.repository }}/blob/main/README.md)
+        - 💬 [Discussions](https://github.com/${{ github.repository }}/discussions)
+        EOF
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ needs.prepare.outputs.tag }}
+        name: ${{ needs.prepare.outputs.tag }}
+        body_path: release-notes.md
+        draft: false
+        prerelease: ${{ needs.prepare.outputs.is-prerelease }}
+        files: |
+          release-assets/*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  post-release:
+    name: Post Release Actions
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [prepare, create-release]
+    if: success()
+    
+    steps:
+    - name: Update release metrics
+      run: |
+        echo "✅ Release ${{ needs.prepare.outputs.tag }} created successfully"
+        echo "📦 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.tag }}"
+        echo "🏗️ Architecture: Multi-platform (AMD64, ARM64)"
+        echo "🔧 Framework: {{.Framework}}"
+{{- if ne .AuthType "none"}}
+        echo "🔐 Authentication: {{.AuthType}}"
+{{- end}}
+        echo "☁️ Platform: AWS Lambda + API Gateway"
+
+    - name: Trigger documentation update
+      run: |
+        # This could trigger a documentation update workflow
+        echo "Documentation update triggered for version ${{ needs.prepare.outputs.version }}"
+
+  cleanup:
+    name: Cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [create-release]
+    if: always()
+    
+    steps:
+    - name: Clean up artifacts
+      run: |
+        echo "Artifacts will be automatically cleaned up by GitHub after retention period"
+        echo "Release artifacts are now available at: https://github.com/${{ github.repository }}/releases"
+
+  notify:
+    name: Notify Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    needs: [prepare, create-release]
+    if: success()
+    
+    steps:
+    - name: Release notification
+      run: |
+        echo "🎉 {{.ProjectName}} ${{ needs.prepare.outputs.tag }} has been released!"
+        echo "📦 Download: https://github.com/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.tag }}"
+        echo "📋 Changelog included in release notes"
+        echo "🚀 Ready for deployment to AWS Lambda"

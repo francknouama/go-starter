@@ -1,0 +1,317 @@
+#!/bin/bash
+
+# {{.ProjectName}} Deployment Script
+# This script builds and deploys the Lambda function using AWS SAM
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default values
+ENVIRONMENT="staging"
+STACK_NAME=""
+AWS_REGION="${AWS_REGION:-us-east-1}"
+SAM_BUCKET=""
+GUIDED=false
+DRY_RUN=false
+VERBOSE=false
+
+# Function to print colored output
+print_status() {
+    echo -e "${GREEN}[INFO]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_header() {
+    echo -e "${BLUE}[DEPLOY]${NC} $1"
+}
+
+# Function to show usage
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Deploy {{.ProjectName}} Lambda function to AWS using SAM
+
+OPTIONS:
+    -e, --environment ENV      Deployment environment (staging|production) [default: staging]
+    -s, --stack-name NAME      CloudFormation stack name [default: {{.ProjectName}}-ENV]
+    -r, --region REGION        AWS region [default: us-east-1]
+    -b, --bucket BUCKET        S3 bucket for SAM artifacts [optional]
+    -g, --guided              Run guided deployment (interactive)
+    -d, --dry-run             Show what would be deployed without actually deploying
+    -v, --verbose             Enable verbose output
+    -h, --help                Show this help message
+
+EXAMPLES:
+    # Deploy to staging with guided setup
+    $0 --environment staging --guided
+
+    # Deploy to production
+    $0 --environment production --stack-name {{.ProjectName}}-prod
+
+    # Dry run to see what would be deployed
+    $0 --environment staging --dry-run
+
+ENVIRONMENT VARIABLES:
+    AWS_REGION                AWS region [default: us-east-1]
+    AWS_PROFILE               AWS profile to use
+{{- if eq .AuthType "jwt"}}
+    JWT_SECRET                JWT signing secret for authentication
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+    COGNITO_USER_POOL         Cognito User Pool ID
+    COGNITO_CLIENT_ID         Cognito Client ID
+{{- end}}
+
+EOF
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -e|--environment)
+            ENVIRONMENT="$2"
+            shift 2
+            ;;
+        -s|--stack-name)
+            STACK_NAME="$2"
+            shift 2
+            ;;
+        -r|--region)
+            AWS_REGION="$2"
+            shift 2
+            ;;
+        -b|--bucket)
+            SAM_BUCKET="$2"
+            shift 2
+            ;;
+        -g|--guided)
+            GUIDED=true
+            shift
+            ;;
+        -d|--dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            print_error "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Validate environment
+if [[ ! "$ENVIRONMENT" =~ ^(staging|production)$ ]]; then
+    print_error "Environment must be 'staging' or 'production'"
+    exit 1
+fi
+
+# Set default stack name if not provided
+if [[ -z "$STACK_NAME" ]]; then
+    STACK_NAME="{{.ProjectName}}-${ENVIRONMENT}"
+fi
+
+# Verbose output
+if [[ "$VERBOSE" == true ]]; then
+    set -x
+fi
+
+print_header "{{.ProjectName}} Deployment"
+echo "Environment: $ENVIRONMENT"
+echo "Stack Name: $STACK_NAME"
+echo "AWS Region: $AWS_REGION"
+echo "Dry Run: $DRY_RUN"
+echo ""
+
+# Check prerequisites
+print_status "Checking prerequisites..."
+
+# Check if AWS CLI is installed
+if ! command -v aws &> /dev/null; then
+    print_error "AWS CLI is not installed. Please install it first."
+    exit 1
+fi
+
+# Check if SAM CLI is installed
+if ! command -v sam &> /dev/null; then
+    print_error "SAM CLI is not installed. Please install it first."
+    exit 1
+fi
+
+# Check if Go is installed
+if ! command -v go &> /dev/null; then
+    print_error "Go is not installed. Please install it first."
+    exit 1
+fi
+
+# Check AWS credentials
+if ! aws sts get-caller-identity &> /dev/null; then
+    print_error "AWS credentials not configured. Please run 'aws configure' first."
+    exit 1
+fi
+
+print_status "All prerequisites met."
+
+# Build the application
+print_status "Building {{.ProjectName}}..."
+
+# Clean previous build artifacts
+rm -f bootstrap {{.ProjectName}}.zip
+
+# Set Go build environment for Lambda
+export GOOS=linux
+export GOARCH=amd64
+export CGO_ENABLED=0
+
+# Build the application
+if ! go build -ldflags="-s -w" -o bootstrap .; then
+    print_error "Failed to build the application"
+    exit 1
+fi
+
+print_status "Build completed successfully."
+
+# Validate SAM template
+print_status "Validating SAM template..."
+if ! sam validate --template template.yaml; then
+    print_error "SAM template validation failed"
+    exit 1
+fi
+
+print_status "SAM template is valid."
+
+# Prepare SAM deploy command
+SAM_DEPLOY_CMD="sam deploy"
+
+if [[ "$GUIDED" == true ]]; then
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --guided"
+else
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --template-file template.yaml"
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --stack-name $STACK_NAME"
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --capabilities CAPABILITY_IAM"
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --region $AWS_REGION"
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --no-fail-on-empty-changeset"
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --no-confirm-changeset"
+    
+    # Add S3 bucket if specified
+    if [[ -n "$SAM_BUCKET" ]]; then
+        SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --s3-bucket $SAM_BUCKET"
+    fi
+    
+    # Prepare parameter overrides
+    PARAMETERS="Environment=$ENVIRONMENT"
+    
+    # Set log level based on environment
+    if [[ "$ENVIRONMENT" == "production" ]]; then
+        PARAMETERS="$PARAMETERS LogLevel=warn"
+    else
+        PARAMETERS="$PARAMETERS LogLevel=info"
+    fi
+    
+{{- if eq .AuthType "jwt"}}
+    # Add JWT secret parameter
+    if [[ -n "$JWT_SECRET" ]]; then
+        PARAMETERS="$PARAMETERS JWTSecret=$JWT_SECRET"
+    else
+        print_warning "JWT_SECRET environment variable not set"
+    fi
+{{- end}}
+
+{{- if eq .AuthType "cognito"}}
+    # Add Cognito parameters
+    if [[ -n "$COGNITO_USER_POOL" ]]; then
+        PARAMETERS="$PARAMETERS CognitoUserPool=$COGNITO_USER_POOL"
+    fi
+    if [[ -n "$COGNITO_CLIENT_ID" ]]; then
+        PARAMETERS="$PARAMETERS CognitoClientId=$COGNITO_CLIENT_ID"
+    fi
+{{- end}}
+    
+    SAM_DEPLOY_CMD="$SAM_DEPLOY_CMD --parameter-overrides $PARAMETERS"
+fi
+
+# Show deployment command in dry run mode
+if [[ "$DRY_RUN" == true ]]; then
+    print_status "Dry run mode - would execute:"
+    echo "$SAM_DEPLOY_CMD"
+    echo ""
+    print_status "Parameters that would be used:"
+    echo "  Environment: $ENVIRONMENT"
+    echo "  Stack Name: $STACK_NAME"
+    echo "  AWS Region: $AWS_REGION"
+{{- if eq .AuthType "jwt"}}
+    echo "  JWT Secret: ${JWT_SECRET:+***SET***}"
+{{- end}}
+{{- if eq .AuthType "cognito"}}
+    echo "  Cognito User Pool: ${COGNITO_USER_POOL:-NOT_SET}"
+    echo "  Cognito Client ID: ${COGNITO_CLIENT_ID:-NOT_SET}"
+{{- end}}
+    exit 0
+fi
+
+# Deploy the application
+print_status "Deploying {{.ProjectName}} to AWS..."
+print_status "This may take a few minutes..."
+
+if eval "$SAM_DEPLOY_CMD"; then
+    print_status "Deployment completed successfully!"
+    
+    # Get the API Gateway URL
+    API_URL=$(aws cloudformation describe-stacks \
+        --stack-name "$STACK_NAME" \
+        --region "$AWS_REGION" \
+        --query 'Stacks[0].Outputs[?OutputKey==`{{.ProjectName}}ApiUrl`].OutputValue' \
+        --output text 2>/dev/null || echo "")
+    
+    if [[ -n "$API_URL" ]]; then
+        echo ""
+        print_status "🚀 Deployment successful!"
+        echo "📍 API Gateway URL: $API_URL"
+        echo "🏥 Health Check: ${API_URL}api/v1/health"
+        echo "📊 CloudWatch Logs: https://${AWS_REGION}.console.aws.amazon.com/cloudwatch/home?region=${AWS_REGION}#logsV2:log-groups/log-group/%252Faws%252Flambda%252F${STACK_NAME}"
+        echo "📈 X-Ray Traces: https://${AWS_REGION}.console.aws.amazon.com/xray/home?region=${AWS_REGION}#/traces"
+        echo ""
+        
+        # Test the health endpoint
+        print_status "Testing health endpoint..."
+        if curl -f "${API_URL}api/v1/health" > /dev/null 2>&1; then
+            print_status "✅ Health check passed!"
+        else
+            print_warning "⚠️  Health check failed - API might still be starting up"
+        fi
+    else
+        print_warning "Could not retrieve API Gateway URL from CloudFormation stack"
+    fi
+    
+else
+    print_error "Deployment failed!"
+    exit 1
+fi
+
+# Clean up build artifacts
+print_status "Cleaning up build artifacts..."
+rm -f bootstrap
+
+print_status "Deployment script completed."

@@ -1,0 +1,285 @@
+package handlers
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+{{- else if eq .Framework "stdlib"}}
+	"github.com/aws/aws-lambda-go/events"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/models"
+)
+
+// APIHandler handles general API requests
+type APIHandler struct{}
+
+// NewAPIHandler creates a new API handler
+func NewAPIHandler() *APIHandler {
+	return &APIHandler{}
+}
+
+{{- if eq .Framework "gin"}}
+// GetData handles GET /api/data
+func (h *APIHandler) GetData(c *gin.Context) {
+	// Simulate data retrieval
+	data := models.DataResponse{
+		Items: []models.DataItem{
+			{
+				ID:    "1",
+				Name:  "Sample Item 1",
+				Value: "Value 1",
+			},
+			{
+				ID:    "2",
+				Name:  "Sample Item 2",
+				Value: "Value 2",
+			},
+		},
+		Total: 2,
+	}
+	
+	c.JSON(http.StatusOK, data)
+}
+
+// CreateData handles POST /api/data
+func (h *APIHandler) CreateData(c *gin.Context) {
+	var req models.CreateDataRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+		return
+	}
+	
+	// Simulate data creation
+	item := models.DataItem{
+		ID:    "new-id",
+		Name:  req.Name,
+		Value: req.Value,
+	}
+	
+	c.JSON(http.StatusCreated, item)
+}
+
+{{- else if eq .Framework "echo"}}
+// GetData handles GET /api/data
+func (h *APIHandler) GetData(c echo.Context) error {
+	// Simulate data retrieval
+	data := models.DataResponse{
+		Items: []models.DataItem{
+			{
+				ID:    "1",
+				Name:  "Sample Item 1",
+				Value: "Value 1",
+			},
+			{
+				ID:    "2",
+				Name:  "Sample Item 2",
+				Value: "Value 2",
+			},
+		},
+		Total: 2,
+	}
+	
+	return c.JSON(http.StatusOK, data)
+}
+
+// CreateData handles POST /api/data
+func (h *APIHandler) CreateData(c echo.Context) error {
+	var req models.CreateDataRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+	}
+	
+	// Simulate data creation
+	item := models.DataItem{
+		ID:    "new-id",
+		Name:  req.Name,
+		Value: req.Value,
+	}
+	
+	return c.JSON(http.StatusCreated, item)
+}
+
+{{- else if eq .Framework "fiber"}}
+// GetData handles GET /api/data
+func (h *APIHandler) GetData(c *fiber.Ctx) error {
+	// Simulate data retrieval
+	data := models.DataResponse{
+		Items: []models.DataItem{
+			{
+				ID:    "1",
+				Name:  "Sample Item 1",
+				Value: "Value 1",
+			},
+			{
+				ID:    "2",
+				Name:  "Sample Item 2",
+				Value: "Value 2",
+			},
+		},
+		Total: 2,
+	}
+	
+	return c.JSON(data)
+}
+
+// CreateData handles POST /api/data
+func (h *APIHandler) CreateData(c *fiber.Ctx) error {
+	var req models.CreateDataRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(http.StatusBadRequest).JSON(models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+	}
+	
+	// Simulate data creation
+	item := models.DataItem{
+		ID:    "new-id",
+		Name:  req.Name,
+		Value: req.Value,
+	}
+	
+	return c.Status(http.StatusCreated).JSON(item)
+}
+
+{{- else if eq .Framework "chi"}}
+// GetData handles GET /api/data
+func (h *APIHandler) GetData(w http.ResponseWriter, r *http.Request) {
+	// Simulate data retrieval
+	data := models.DataResponse{
+		Items: []models.DataItem{
+			{
+				ID:    "1",
+				Name:  "Sample Item 1",
+				Value: "Value 1",
+			},
+			{
+				ID:    "2",
+				Name:  "Sample Item 2",
+				Value: "Value 2",
+			},
+		},
+		Total: 2,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(data)
+}
+
+// CreateData handles POST /api/data
+func (h *APIHandler) CreateData(w http.ResponseWriter, r *http.Request) {
+	var req models.CreateDataRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(models.ErrorResponse{
+			Error: "Invalid request body",
+			Code:  "INVALID_REQUEST",
+		})
+		return
+	}
+	
+	// Simulate data creation
+	item := models.DataItem{
+		ID:    "new-id",
+		Name:  req.Name,
+		Value: req.Value,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(item)
+}
+
+{{- else if eq .Framework "stdlib"}}
+// GetDataStdlib handles GET /api/data for standard library
+func (h *APIHandler) GetDataStdlib(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	// Simulate data retrieval
+	data := models.DataResponse{
+		Items: []models.DataItem{
+			{
+				ID:    "1",
+				Name:  "Sample Item 1",
+				Value: "Value 1",
+			},
+			{
+				ID:    "2",
+				Name:  "Sample Item 2",
+				Value: "Value 2",
+			},
+		},
+		Total: 2,
+	}
+	
+	return h.createSuccessResponse(http.StatusOK, data), nil
+}
+
+// CreateDataStdlib handles POST /api/data for standard library
+func (h *APIHandler) CreateDataStdlib(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	var req models.CreateDataRequest
+	if err := json.Unmarshal([]byte(request.Body), &req); err != nil {
+		return h.createErrorResponse(http.StatusBadRequest, "Invalid request body", "INVALID_REQUEST"), nil
+	}
+	
+	// Simulate data creation
+	item := models.DataItem{
+		ID:    "new-id",
+		Name:  req.Name,
+		Value: req.Value,
+	}
+	
+	return h.createSuccessResponse(http.StatusCreated, item), nil
+}
+
+// Helper methods for standard library responses
+func (h *APIHandler) createErrorResponse(statusCode int, message string, code string) events.APIGatewayProxyResponse {
+	errorResponse := models.ErrorResponse{
+		Error: message,
+		Code:  code,
+	}
+	
+	body, _ := json.Marshal(errorResponse)
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+		},
+		Body: string(body),
+	}
+}
+
+func (h *APIHandler) createSuccessResponse(statusCode int, data interface{}) events.APIGatewayProxyResponse {
+	body, err := json.Marshal(data)
+	if err != nil {
+		return h.createErrorResponse(http.StatusInternalServerError, "Failed to marshal response", "INTERNAL_ERROR")
+	}
+	
+	return events.APIGatewayProxyResponse{
+		StatusCode: statusCode,
+		Headers: map[string]string{
+			"Content-Type": "application/json",
+			"Access-Control-Allow-Origin": config.GetCORSOrigins(),
+		},
+		Body: string(body),
+	}
+}
+{{- end}}

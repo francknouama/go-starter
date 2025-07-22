@@ -1,0 +1,261 @@
+{{- if ne .Framework "stdlib"}}
+package main
+
+import (
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	"net/http"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/middleware"
+)
+
+{{- if eq .Framework "gin"}}
+// NewHandler creates a new Gin router with all routes configured
+func NewHandler() *gin.Engine {
+	// Set Gin mode based on environment
+	if config.GetEnv() == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+	
+	router := gin.New()
+	
+	// Add middleware
+	router.Use(middleware.CORS())
+	router.Use(middleware.Logger())
+	router.Use(middleware.Recovery())
+{{- if ne .AuthType "none"}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	authHandler := handlers.NewAuthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// Public routes
+	public := router.Group("/api/v1")
+	{
+		public.GET("/health", healthHandler.Check)
+		public.GET("/health/ready", healthHandler.Ready)
+		public.POST("/auth/login", authHandler.Login)
+		public.POST("/auth/register", authHandler.Register)
+	}
+	
+	// Protected routes
+	protected := router.Group("/api/v1")
+	protected.Use(middleware.Auth())
+	{
+		protected.POST("/auth/refresh", authHandler.RefreshToken)
+		protected.POST("/auth/logout", authHandler.Logout)
+		protected.GET("/users/profile", userHandler.GetProfile)
+		protected.PUT("/users/profile", userHandler.UpdateProfile)
+		protected.GET("/api/data", apiHandler.GetData)
+		protected.POST("/api/data", apiHandler.CreateData)
+	}
+{{- else}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// API routes
+	api := router.Group("/api/v1")
+	{
+		api.GET("/health", healthHandler.Check)
+		api.GET("/health/ready", healthHandler.Ready)
+		api.GET("/users", userHandler.ListUsers)
+		api.GET("/users/:id", userHandler.GetUser)
+		api.POST("/users", userHandler.CreateUser)
+		api.PUT("/users/:id", userHandler.UpdateUser)
+		api.DELETE("/users/:id", userHandler.DeleteUser)
+		api.GET("/api/data", apiHandler.GetData)
+		api.POST("/api/data", apiHandler.CreateData)
+	}
+{{- end}}
+	
+	return router
+}
+
+{{- else if eq .Framework "echo"}}
+// NewHandler creates a new Echo router with all routes configured
+func NewHandler() *echo.Echo {
+	e := echo.New()
+	
+	// Add middleware
+	e.Use(middleware.CORS())
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recovery())
+{{- if ne .AuthType "none"}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	authHandler := handlers.NewAuthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// Public routes
+	public := e.Group("/api/v1")
+	public.GET("/health", healthHandler.Check)
+	public.GET("/health/ready", healthHandler.Ready)
+	public.POST("/auth/login", authHandler.Login)
+	public.POST("/auth/register", authHandler.Register)
+	
+	// Protected routes
+	protected := e.Group("/api/v1")
+	protected.Use(middleware.Auth())
+	protected.POST("/auth/refresh", authHandler.RefreshToken)
+	protected.POST("/auth/logout", authHandler.Logout)
+	protected.GET("/users/profile", userHandler.GetProfile)
+	protected.PUT("/users/profile", userHandler.UpdateProfile)
+	protected.GET("/api/data", apiHandler.GetData)
+	protected.POST("/api/data", apiHandler.CreateData)
+{{- else}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// API routes
+	api := e.Group("/api/v1")
+	api.GET("/health", healthHandler.Check)
+	api.GET("/health/ready", healthHandler.Ready)
+	api.GET("/users", userHandler.ListUsers)
+	api.GET("/users/:id", userHandler.GetUser)
+	api.POST("/users", userHandler.CreateUser)
+	api.PUT("/users/:id", userHandler.UpdateUser)
+	api.DELETE("/users/:id", userHandler.DeleteUser)
+	api.GET("/api/data", apiHandler.GetData)
+	api.POST("/api/data", apiHandler.CreateData)
+{{- end}}
+	
+	return e
+}
+
+{{- else if eq .Framework "fiber"}}
+// NewHandler creates a new Fiber app with all routes configured
+func NewHandler() *fiber.App {
+	app := fiber.New(fiber.Config{
+		ServerHeader: "{{.ProjectName}}",
+		AppName:      "{{.ProjectName}} v1.0.0",
+	})
+	
+	// Add middleware
+	app.Use(middleware.CORS())
+	app.Use(middleware.Logger())
+	app.Use(middleware.Recovery())
+{{- if ne .AuthType "none"}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	authHandler := handlers.NewAuthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// Public routes
+	public := app.Group("/api/v1")
+	public.Get("/health", healthHandler.Check)
+	public.Get("/health/ready", healthHandler.Ready)
+	public.Post("/auth/login", authHandler.Login)
+	public.Post("/auth/register", authHandler.Register)
+	
+	// Protected routes
+	protected := app.Group("/api/v1")
+	protected.Use(middleware.Auth())
+	protected.Post("/auth/refresh", authHandler.RefreshToken)
+	protected.Post("/auth/logout", authHandler.Logout)
+	protected.Get("/users/profile", userHandler.GetProfile)
+	protected.Put("/users/profile", userHandler.UpdateProfile)
+	protected.Get("/api/data", apiHandler.GetData)
+	protected.Post("/api/data", apiHandler.CreateData)
+{{- else}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// API routes
+	api := app.Group("/api/v1")
+	api.Get("/health", healthHandler.Check)
+	api.Get("/health/ready", healthHandler.Ready)
+	api.Get("/users", userHandler.ListUsers)
+	api.Get("/users/:id", userHandler.GetUser)
+	api.Post("/users", userHandler.CreateUser)
+	api.Put("/users/:id", userHandler.UpdateUser)
+	api.Delete("/users/:id", userHandler.DeleteUser)
+	api.Get("/api/data", apiHandler.GetData)
+	api.Post("/api/data", apiHandler.CreateData)
+{{- end}}
+	
+	return app
+}
+
+{{- else if eq .Framework "chi"}}
+// NewHandler creates a new Chi router with all routes configured
+func NewHandler() http.Handler {
+	r := chi.NewRouter()
+	
+	// Add middleware
+	r.Use(middleware.CORS)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recovery)
+{{- if ne .AuthType "none"}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	authHandler := handlers.NewAuthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// Public routes
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/health", healthHandler.Check)
+		r.Get("/health/ready", healthHandler.Ready)
+		r.Post("/auth/login", authHandler.Login)
+		r.Post("/auth/register", authHandler.Register)
+		
+		// Protected routes
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.Auth)
+			r.Post("/auth/refresh", authHandler.RefreshToken)
+			r.Post("/auth/logout", authHandler.Logout)
+			r.Get("/users/profile", userHandler.GetProfile)
+			r.Put("/users/profile", userHandler.UpdateProfile)
+			r.Get("/api/data", apiHandler.GetData)
+			r.Post("/api/data", apiHandler.CreateData)
+		})
+	})
+{{- else}}
+	
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler()
+	userHandler := handlers.NewUserHandler()
+	apiHandler := handlers.NewAPIHandler()
+	
+	// API routes
+	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/health", healthHandler.Check)
+		r.Get("/health/ready", healthHandler.Ready)
+		r.Get("/users", userHandler.ListUsers)
+		r.Get("/users/{id}", userHandler.GetUser)
+		r.Post("/users", userHandler.CreateUser)
+		r.Put("/users/{id}", userHandler.UpdateUser)
+		r.Delete("/users/{id}", userHandler.DeleteUser)
+		r.Get("/api/data", apiHandler.GetData)
+		r.Post("/api/data", apiHandler.CreateData)
+	})
+{{- end}}
+	
+	return r
+}
+{{- end}}
+{{- end}}

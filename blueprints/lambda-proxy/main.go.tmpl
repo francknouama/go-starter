@@ -1,0 +1,94 @@
+package main
+
+import (
+	"context"
+	"log"
+
+	"github.com/aws/aws-lambda-go/lambda"
+{{- if eq .Framework "gin"}}
+	"github.com/aws/aws-lambda-go/events"
+	ginadapter "github.com/awslabs/aws-lambda-go-api-proxy/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/aws/aws-lambda-go/events"
+	echoadapter "github.com/awslabs/aws-lambda-go-api-proxy/echo"
+{{- else if eq .Framework "fiber"}}
+	"github.com/aws/aws-lambda-go/events"
+	fiberadapter "github.com/awslabs/aws-lambda-go-api-proxy/fiber"
+{{- else if eq .Framework "chi"}}
+	"github.com/aws/aws-lambda-go/events"
+	chiadapter "github.com/awslabs/aws-lambda-go-api-proxy/chi"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/observability"
+)
+
+var (
+{{- if eq .Framework "gin"}}
+	ginLambda *ginadapter.GinLambda
+{{- else if eq .Framework "echo"}}
+	echoLambda *echoadapter.EchoLambda
+{{- else if eq .Framework "fiber"}}
+	fiberLambda *fiberadapter.FiberLambda
+{{- else if eq .Framework "chi"}}
+	chiLambda *chiadapter.ChiLambda
+{{- end}}
+)
+
+func init() {
+	// Initialize configuration
+	config.Load()
+	
+	// Initialize observability
+	observability.InitializeLogger()
+	observability.InitializeTracing()
+	observability.InitializeMetrics()
+	
+	// Initialize the Lambda adapter with our handler
+	handler := NewHandler()
+{{- if eq .Framework "gin"}}
+	ginLambda = ginadapter.New(handler)
+{{- else if eq .Framework "echo"}}
+	echoLambda = echoadapter.New(handler)
+{{- else if eq .Framework "fiber"}}
+	fiberLambda = fiberadapter.New(handler)
+{{- else if eq .Framework "chi"}}
+	chiLambda = chiadapter.New(handler)
+{{- else if eq .Framework "stdlib"}}
+	// Standard library handler is used directly
+{{- end}}
+	
+	observability.LogInfo("Lambda proxy initialized", map[string]interface{}{
+		"framework": "{{.Framework}}",
+		"service": "{{.ProjectName}}",
+	})
+}
+
+{{- if ne .Framework "stdlib"}}
+// Handler processes API Gateway proxy requests
+func Handler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	// Add tracing for the request
+	return observability.TraceAPIGatewayRequest(ctx, req, func(ctx context.Context) (events.APIGatewayProxyResponse, error) {
+{{- if eq .Framework "gin"}}
+		return ginLambda.ProxyWithContext(ctx, req)
+{{- else if eq .Framework "echo"}}
+		return echoLambda.ProxyWithContext(ctx, req)
+{{- else if eq .Framework "fiber"}}
+		return fiberLambda.ProxyWithContext(ctx, req)
+{{- else if eq .Framework "chi"}}
+		return chiLambda.ProxyWithContext(ctx, req)
+{{- end}}
+	})
+}
+{{- else}}
+// Handler processes API Gateway proxy requests using standard library
+func Handler(ctx context.Context, req events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	return observability.TraceAPIGatewayRequest(ctx, req, func(ctx context.Context) (events.APIGatewayProxyResponse, error) {
+		return HandleRequest(ctx, req)
+	})
+}
+{{- end}}
+
+func main() {
+	// Start the Lambda handler
+	lambda.Start(Handler)
+}

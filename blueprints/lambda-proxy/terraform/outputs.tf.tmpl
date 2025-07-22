@@ -1,0 +1,136 @@
+# Outputs
+output "api_gateway_url" {
+  description = "URL of the API Gateway"
+  value       = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.environment}/"
+}
+
+output "api_gateway_id" {
+  description = "ID of the API Gateway"
+  value       = aws_api_gateway_rest_api.main.id
+}
+
+output "lambda_function_name" {
+  description = "Name of the Lambda function"
+  value       = aws_lambda_function.main.function_name
+}
+
+output "lambda_function_arn" {
+  description = "ARN of the Lambda function"
+  value       = aws_lambda_function.main.arn
+}
+
+output "lambda_function_invoke_arn" {
+  description = "Invoke ARN of the Lambda function"
+  value       = aws_lambda_function.main.invoke_arn
+}
+
+{{- if eq .AuthType "jwt"}}
+output "authorizer_function_name" {
+  description = "Name of the JWT Authorizer Lambda function"
+  value       = aws_lambda_function.authorizer.function_name
+}
+
+output "authorizer_function_arn" {
+  description = "ARN of the JWT Authorizer Lambda function"
+  value       = aws_lambda_function.authorizer.arn
+}
+
+output "api_gateway_authorizer_id" {
+  description = "ID of the API Gateway authorizer"
+  value       = aws_api_gateway_authorizer.jwt.id
+}
+{{- end}}
+
+output "cloudwatch_log_group_name" {
+  description = "Name of the CloudWatch log group for Lambda"
+  value       = aws_cloudwatch_log_group.lambda_logs.name
+}
+
+output "cloudwatch_log_group_arn" {
+  description = "ARN of the CloudWatch log group for Lambda"
+  value       = aws_cloudwatch_log_group.lambda_logs.arn
+}
+
+output "api_gateway_log_group_name" {
+  description = "Name of the CloudWatch log group for API Gateway"
+  value       = aws_cloudwatch_log_group.api_gateway_logs.name
+}
+
+output "api_gateway_log_group_arn" {
+  description = "ARN of the CloudWatch log group for API Gateway"
+  value       = aws_cloudwatch_log_group.api_gateway_logs.arn
+}
+
+output "environment" {
+  description = "Deployment environment"
+  value       = var.environment
+}
+
+output "project_name" {
+  description = "Project name"
+  value       = var.project_name
+}
+
+output "aws_region" {
+  description = "AWS region"
+  value       = data.aws_region.current.name
+}
+
+output "aws_account_id" {
+  description = "AWS account ID"
+  value       = data.aws_caller_identity.current.account_id
+}
+
+# Health check endpoint
+output "health_check_url" {
+  description = "Health check endpoint URL"
+  value       = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.environment}/api/v1/health"
+}
+
+# API endpoints
+output "api_base_url" {
+  description = "Base URL for API endpoints"
+  value       = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.environment}/api/v1"
+}
+
+{{- if ne .AuthType "none"}}
+# Authentication endpoints
+output "auth_login_url" {
+  description = "Authentication login endpoint"
+  value       = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.environment}/api/v1/auth/login"
+}
+
+output "auth_register_url" {
+  description = "Authentication register endpoint"
+  value       = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.environment}/api/v1/auth/register"
+}
+{{- end}}
+
+# CloudWatch Dashboard URL
+output "cloudwatch_dashboard_url" {
+  description = "CloudWatch Dashboard URL"
+  value       = "https://${data.aws_region.current.name}.console.aws.amazon.com/cloudwatch/home?region=${data.aws_region.current.name}#dashboards:name=${var.project_name}-${var.environment}"
+}
+
+# X-Ray traces URL
+output "xray_traces_url" {
+  description = "X-Ray traces URL"
+  value       = "https://${data.aws_region.current.name}.console.aws.amazon.com/xray/home?region=${data.aws_region.current.name}#/traces"
+}
+
+# Deployment information
+output "deployment_info" {
+  description = "Deployment information"
+  value = {
+    project_name    = var.project_name
+    environment     = var.environment
+    aws_region      = data.aws_region.current.name
+    aws_account_id  = data.aws_caller_identity.current.account_id
+    framework       = "{{.Framework}}"
+    auth_type       = "{{.AuthType}}"
+    lambda_runtime  = "provided.al2"
+    lambda_timeout  = var.lambda_timeout
+    lambda_memory   = var.lambda_memory_size
+    api_gateway_url = "https://${aws_api_gateway_rest_api.main.id}.execute-api.${data.aws_region.current.name}.amazonaws.com/${var.environment}/"
+  }
+}
