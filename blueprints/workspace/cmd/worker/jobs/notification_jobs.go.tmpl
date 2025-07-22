@@ -1,0 +1,489 @@
+package jobs
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/pkg/models"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// NotificationJobHandler handles notification-related background jobs
+type NotificationJobHandler struct {
+	logger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus
+{{- end}}
+}
+
+// NewNotificationJobHandler creates a new notification job handler
+func NewNotificationJobHandler(
+	logger logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) *NotificationJobHandler {
+	return &NotificationJobHandler{
+		logger: logger,
+{{- if ne .DatabaseType "none"}}
+		db:     db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events: events,
+{{- end}}
+	}
+}
+
+// SendNotification processes and sends notifications
+func (h *NotificationJobHandler) SendNotification(ctx context.Context, job Job) error {
+	h.logger.Info("Starting send notification job", "job_id", job.ID)
+	
+	// Extract notification data from job
+	notificationID, ok := job.Data["notification_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid notification_id in job data")
+	}
+	
+	userID, ok := job.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid user_id in job data")
+	}
+	
+	notificationType, ok := job.Data["type"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid type in job data")
+	}
+	
+	message, ok := job.Data["message"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid message in job data")
+	}
+	
+	h.logger.Info("Processing notification", 
+		"notification_id", notificationID,
+		"user_id", userID,
+		"type", notificationType,
+	)
+	
+	// Send notification based on type
+	var err error
+	switch notificationType {
+	case "email":
+		err = h.sendEmailNotification(ctx, userID, message, job.Data)
+	case "sms":
+		err = h.sendSMSNotification(ctx, userID, message, job.Data)
+	case "push":
+		err = h.sendPushNotification(ctx, userID, message, job.Data)
+	case "in_app":
+		err = h.sendInAppNotification(ctx, userID, message, job.Data)
+	default:
+		return fmt.Errorf("unsupported notification type: %s", notificationType)
+	}
+	
+	if err != nil {
+		h.logger.Error("Failed to send notification", 
+			"notification_id", notificationID,
+			"type", notificationType,
+			"error", err,
+		)
+{{- if ne .DatabaseType "none"}}
+		// Update notification status to failed
+		if updateErr := h.updateNotificationStatus(ctx, notificationID, "failed", err.Error()); updateErr != nil {
+			h.logger.Error("Failed to update notification status", "error", updateErr)
+		}
+{{- end}}
+		return err
+	}
+	
+{{- if ne .DatabaseType "none"}}
+	// Update notification status to sent
+	if err := h.updateNotificationStatus(ctx, notificationID, "sent", ""); err != nil {
+		h.logger.Error("Failed to update notification status", "error", err)
+	}
+{{- end}}
+	
+	h.logger.Info("Notification sent successfully", 
+		"notification_id", notificationID,
+		"type", notificationType,
+	)
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish notification sent event
+	if h.events != nil {
+		event := events.NewEvent("notification.sent", "worker", map[string]interface{}{
+			"notification_id": notificationID,
+			"user_id":         userID,
+			"type":            notificationType,
+			"job_id":          job.ID,
+		})
+		
+		if err := h.events.Publish(ctx, "notification.events", event); err != nil {
+			h.logger.Error("Failed to publish notification sent event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}
+
+// CleanupOldNotifications removes old notifications to keep the database clean
+func (h *NotificationJobHandler) CleanupOldNotifications(ctx context.Context, job Job) error {
+	h.logger.Info("Starting notification cleanup job", "job_id", job.ID)
+	
+	// Extract parameters
+	retentionDays := 90 // default retention period
+	if days, ok := job.Data["retention_days"].(float64); ok {
+		retentionDays = int(days)
+	}
+	
+	cutoffDate := time.Now().AddDate(0, 0, -retentionDays)
+	deletedCount := 0
+	
+{{- if ne .DatabaseType "none"}}
+	h.logger.Info("Cleaning up old notifications", 
+		"retention_days", retentionDays,
+		"cutoff_date", cutoffDate,
+	)
+	
+	// In a real implementation, this would query and delete from database
+	// Example: DELETE FROM notifications WHERE created_at < ? AND status IN ('sent', 'failed')
+	
+	// Mock implementation
+	oldNotifications := []string{} // This would be populated from database query
+	
+	for _, notificationID := range oldNotifications {
+		select {
+		case <-ctx.Done():
+			h.logger.Info("Notification cleanup cancelled", "deleted_count", deletedCount)
+			return ctx.Err()
+		default:
+		}
+		
+		// Delete notification
+		if err := h.deleteNotification(ctx, notificationID); err != nil {
+			h.logger.Error("Failed to delete notification", "notification_id", notificationID, "error", err)
+			continue
+		}
+		
+		deletedCount++
+		h.logger.Debug("Notification deleted", "notification_id", notificationID)
+	}
+{{- else}}
+	h.logger.Info("Mock notification cleanup - no database configured")
+{{- end}}
+	
+	h.logger.Info("Notification cleanup completed", 
+		"job_id", job.ID,
+		"deleted_count", deletedCount,
+		"retention_days", retentionDays,
+	)
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish cleanup completion event
+	if h.events != nil {
+		event := events.NewEvent("notification.cleanup.completed", "worker", map[string]interface{}{
+			"job_id":         job.ID,
+			"deleted_count":  deletedCount,
+			"retention_days": retentionDays,
+		})
+		
+		if err := h.events.Publish(ctx, "notification.events", event); err != nil {
+			h.logger.Error("Failed to publish cleanup completion event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}
+
+// RetryFailedNotifications retries notifications that failed to send
+func (h *NotificationJobHandler) RetryFailedNotifications(ctx context.Context, job Job) error {
+	h.logger.Info("Starting retry failed notifications job", "job_id", job.ID)
+	
+	maxRetryAge := 24 * time.Hour // don't retry notifications older than 24 hours
+	if hours, ok := job.Data["max_retry_age_hours"].(float64); ok {
+		maxRetryAge = time.Duration(hours) * time.Hour
+	}
+	
+	cutoffDate := time.Now().Add(-maxRetryAge)
+	retriedCount := 0
+	
+{{- if ne .DatabaseType "none"}}
+	h.logger.Info("Retrying failed notifications", 
+		"max_retry_age", maxRetryAge,
+		"cutoff_date", cutoffDate,
+	)
+	
+	// In a real implementation, this would query failed notifications
+	// Example: SELECT * FROM notifications WHERE status = 'failed' AND created_at > ? AND retry_count < 3
+	
+	failedNotifications := []models.Notification{} // This would be populated from database
+	
+	for _, notification := range failedNotifications {
+		select {
+		case <-ctx.Done():
+			h.logger.Info("Retry failed notifications cancelled", "retried_count", retriedCount)
+			return ctx.Err()
+		default:
+		}
+		
+		// Create retry job
+		retryJob := NewJob("notification.send", map[string]interface{}{
+			"notification_id": notification.ID,
+			"user_id":         notification.UserID,
+			"type":            notification.Type,
+			"message":         notification.Message,
+			"retry":           true,
+		})
+		
+		// In a real implementation, you'd enqueue this job
+		h.logger.Debug("Retry job created", 
+			"notification_id", notification.ID,
+			"retry_job_id", retryJob.ID,
+		)
+		
+		retriedCount++
+	}
+{{- else}}
+	h.logger.Info("Mock retry failed notifications - no database configured")
+{{- end}}
+	
+	h.logger.Info("Retry failed notifications completed", 
+		"job_id", job.ID,
+		"retried_count", retriedCount,
+	)
+	
+	return nil
+}
+
+// sendEmailNotification sends an email notification
+func (h *NotificationJobHandler) sendEmailNotification(ctx context.Context, userID, message string, data map[string]interface{}) error {
+	h.logger.Debug("Sending email notification", "user_id", userID)
+	
+	// In a real implementation, this would:
+	// 1. Get user email address from database
+	// 2. Load email template
+	// 3. Render template with data
+	// 4. Send via email service (SendGrid, SES, etc.)
+	// 5. Handle delivery tracking
+	
+	// Mock email sending
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(1 * time.Second):
+		// Email "sent"
+	}
+	
+	return nil
+}
+
+// sendSMSNotification sends an SMS notification
+func (h *NotificationJobHandler) sendSMSNotification(ctx context.Context, userID, message string, data map[string]interface{}) error {
+	h.logger.Debug("Sending SMS notification", "user_id", userID)
+	
+	// In a real implementation, this would:
+	// 1. Get user phone number from database
+	// 2. Validate phone number format
+	// 3. Send via SMS service (Twilio, AWS SNS, etc.)
+	// 4. Handle delivery tracking
+	
+	// Mock SMS sending
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(500 * time.Millisecond):
+		// SMS "sent"
+	}
+	
+	return nil
+}
+
+// sendPushNotification sends a push notification
+func (h *NotificationJobHandler) sendPushNotification(ctx context.Context, userID, message string, data map[string]interface{}) error {
+	h.logger.Debug("Sending push notification", "user_id", userID)
+	
+	// In a real implementation, this would:
+	// 1. Get user device tokens from database
+	// 2. Format push notification payload
+	// 3. Send via push service (FCM, APNs, etc.)
+	// 4. Handle delivery tracking
+	
+	// Mock push notification sending
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(300 * time.Millisecond):
+		// Push notification "sent"
+	}
+	
+	return nil
+}
+
+// sendInAppNotification creates an in-app notification
+func (h *NotificationJobHandler) sendInAppNotification(ctx context.Context, userID, message string, data map[string]interface{}) error {
+	h.logger.Debug("Creating in-app notification", "user_id", userID)
+	
+	// In a real implementation, this would:
+	// 1. Store notification in database for user
+	// 2. Send real-time update via WebSocket
+	// 3. Update user's notification count
+	
+	// Mock in-app notification creation
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(100 * time.Millisecond):
+		// In-app notification "created"
+	}
+	
+	return nil
+}
+
+{{- if ne .DatabaseType "none"}}
+// updateNotificationStatus updates the status of a notification in the database
+func (h *NotificationJobHandler) updateNotificationStatus(ctx context.Context, notificationID, status, errorMsg string) error {
+	h.logger.Debug("Updating notification status", 
+		"notification_id", notificationID,
+		"status", status,
+	)
+	
+	// In a real implementation, this would update the database
+	// Example: UPDATE notifications SET status = ?, error = ?, updated_at = NOW() WHERE id = ?
+	
+	return nil
+}
+
+// deleteNotification removes a notification from the database
+func (h *NotificationJobHandler) deleteNotification(ctx context.Context, notificationID string) error {
+	h.logger.Debug("Deleting notification", "notification_id", notificationID)
+	
+	// In a real implementation, this would delete from database
+	// Example: DELETE FROM notifications WHERE id = ?
+	
+	return nil
+}
+{{- end}}
+
+// ProcessNotificationTemplate processes and renders notification templates
+func (h *NotificationJobHandler) ProcessNotificationTemplate(ctx context.Context, job Job) error {
+	h.logger.Info("Starting notification template processing job", "job_id", job.ID)
+	
+	templateID, ok := job.Data["template_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid template_id in job data")
+	}
+	
+	templateData, ok := job.Data["template_data"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("missing or invalid template_data in job data")
+	}
+	
+	h.logger.Info("Processing notification template", 
+		"template_id", templateID,
+		"data_keys", len(templateData),
+	)
+	
+	// In a real implementation, this would:
+	// 1. Load template from database or file system
+	// 2. Render template with provided data
+	// 3. Validate rendered content
+	// 4. Store rendered notification for sending
+	
+	// Mock template processing
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(200 * time.Millisecond):
+		// Template "processed"
+	}
+	
+	h.logger.Info("Notification template processed", "template_id", templateID)
+	
+	return nil
+}
+
+// ProcessNotificationBatch processes a batch of notifications for bulk sending
+func (h *NotificationJobHandler) ProcessNotificationBatch(ctx context.Context, job Job) error {
+	h.logger.Info("Starting notification batch processing job", "job_id", job.ID)
+	
+	batchID, ok := job.Data["batch_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid batch_id in job data")
+	}
+	
+	batchSize := 100 // default batch size
+	if size, ok := job.Data["batch_size"].(float64); ok {
+		batchSize = int(size)
+	}
+	
+	h.logger.Info("Processing notification batch", 
+		"batch_id", batchID,
+		"batch_size", batchSize,
+	)
+	
+{{- if ne .DatabaseType "none"}}
+	// In a real implementation, this would:
+	// 1. Query notifications in the batch
+	// 2. Process them in smaller chunks
+	// 3. Update batch status
+	// 4. Handle any failures
+	
+	processedCount := 0
+	
+	// Mock batch processing
+	for i := 0; i < batchSize; i++ {
+		select {
+		case <-ctx.Done():
+			h.logger.Info("Batch processing cancelled", 
+				"batch_id", batchID,
+				"processed_count", processedCount,
+			)
+			return ctx.Err()
+		default:
+		}
+		
+		// Simulate processing each notification
+		time.Sleep(10 * time.Millisecond)
+		processedCount++
+	}
+{{- else}}
+	processedCount := batchSize // mock
+	h.logger.Info("Mock batch processing - no database configured")
+{{- end}}
+	
+	h.logger.Info("Notification batch processing completed", 
+		"batch_id", batchID,
+		"processed_count", processedCount,
+	)
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish batch completion event
+	if h.events != nil {
+		event := events.NewEvent("notification.batch.completed", "worker", map[string]interface{}{
+			"batch_id":        batchID,
+			"processed_count": processedCount,
+			"job_id":          job.ID,
+		})
+		
+		if err := h.events.Publish(ctx, "notification.events", event); err != nil {
+			h.logger.Error("Failed to publish batch completion event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}

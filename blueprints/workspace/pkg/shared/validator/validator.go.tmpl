@@ -1,0 +1,572 @@
+package validator
+
+import (
+	"fmt"
+	"reflect"
+	"regexp"
+	"strconv"
+	"strings"
+	"unicode"
+)
+
+// ValidationError represents a validation error
+type ValidationError struct {
+	Field   string `json:"field"`
+	Value   interface{} `json:"value"`
+	Tag     string `json:"tag"`
+	Message string `json:"message"`
+}
+
+// Error implements the error interface
+func (ve ValidationError) Error() string {
+	return fmt.Sprintf("validation failed for field '%s': %s", ve.Field, ve.Message)
+}
+
+// ValidationErrors is a collection of validation errors
+type ValidationErrors []ValidationError
+
+// Error implements the error interface for ValidationErrors
+func (ve ValidationErrors) Error() string {
+	if len(ve) == 0 {
+		return ""
+	}
+	
+	if len(ve) == 1 {
+		return ve[0].Error()
+	}
+	
+	var messages []string
+	for _, err := range ve {
+		messages = append(messages, err.Error())
+	}
+	
+	return strings.Join(messages, "; ")
+}
+
+// HasErrors returns true if there are validation errors
+func (ve ValidationErrors) HasErrors() bool {
+	return len(ve) > 0
+}
+
+// Validator provides struct validation functionality
+type Validator struct {
+	tagName string
+}
+
+// New creates a new validator instance
+func New() *Validator {
+	return &Validator{
+		tagName: "validate",
+	}
+}
+
+// Validate validates a struct based on struct tags
+func (v *Validator) Validate(s interface{}) error {
+	val := reflect.ValueOf(s)
+	typ := reflect.TypeOf(s)
+	
+	// Handle pointers
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+		typ = typ.Elem()
+	}
+	
+	if val.Kind() != reflect.Struct {
+		return fmt.Errorf("validate requires a struct, got %T", s)
+	}
+	
+	var errors ValidationErrors
+	
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		fieldType := typ.Field(i)
+		
+		// Skip unexported fields
+		if !field.CanInterface() {
+			continue
+		}
+		
+		tag := fieldType.Tag.Get(v.tagName)
+		if tag == "" || tag == "-" {
+			continue
+		}
+		
+		fieldErrors := v.validateField(fieldType.Name, field.Interface(), tag)
+		errors = append(errors, fieldErrors...)
+	}
+	
+	if len(errors) > 0 {
+		return errors
+	}
+	
+	return nil
+}
+
+// validateField validates a single field based on validation tags
+func (v *Validator) validateField(fieldName string, value interface{}, tag string) []ValidationError {
+	var errors []ValidationError
+	
+	rules := strings.Split(tag, ",")
+	for _, rule := range rules {
+		rule = strings.TrimSpace(rule)
+		if rule == "" {
+			continue
+		}
+		
+		if err := v.validateRule(fieldName, value, rule); err != nil {
+			errors = append(errors, *err)
+		}
+	}
+	
+	return errors
+}
+
+// validateRule validates a single validation rule
+func (v *Validator) validateRule(fieldName string, value interface{}, rule string) *ValidationError {
+	parts := strings.SplitN(rule, "=", 2)
+	ruleName := parts[0]
+	ruleValue := ""
+	if len(parts) > 1 {
+		ruleValue = parts[1]
+	}
+	
+	switch ruleName {
+	case "required":
+		return v.validateRequired(fieldName, value)
+	case "min":
+		return v.validateMin(fieldName, value, ruleValue)
+	case "max":
+		return v.validateMax(fieldName, value, ruleValue)
+	case "len":
+		return v.validateLen(fieldName, value, ruleValue)
+	case "email":
+		return v.validateEmail(fieldName, value)
+	case "url":
+		return v.validateURL(fieldName, value)
+	case "uuid":
+		return v.validateUUID(fieldName, value)
+	case "alpha":
+		return v.validateAlpha(fieldName, value)
+	case "alphanum":
+		return v.validateAlphaNum(fieldName, value)
+	case "numeric":
+		return v.validateNumeric(fieldName, value)
+	case "oneof":
+		return v.validateOneOf(fieldName, value, ruleValue)
+	case "regex":
+		return v.validateRegex(fieldName, value, ruleValue)
+	default:
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     rule,
+			Message: fmt.Sprintf("unknown validation rule: %s", ruleName),
+		}
+	}
+}
+
+// validateRequired checks if a value is present
+func (v *Validator) validateRequired(fieldName string, value interface{}) *ValidationError {
+	if v.isEmpty(value) {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "required",
+			Message: "field is required",
+		}
+	}
+	return nil
+}
+
+// validateMin checks minimum length/value
+func (v *Validator) validateMin(fieldName string, value interface{}, minStr string) *ValidationError {
+	min, err := strconv.Atoi(minStr)
+	if err != nil {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "min",
+			Message: "invalid min parameter",
+		}
+	}
+	
+	val := reflect.ValueOf(value)
+	switch val.Kind() {
+	case reflect.String:
+		if len(val.String()) < min {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "min",
+				Message: fmt.Sprintf("must be at least %d characters long", min),
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if val.Len() < min {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "min",
+				Message: fmt.Sprintf("must contain at least %d items", min),
+			}
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if val.Int() < int64(min) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "min",
+				Message: fmt.Sprintf("must be at least %d", min),
+			}
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if val.Uint() < uint64(min) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "min",
+				Message: fmt.Sprintf("must be at least %d", min),
+			}
+		}
+	case reflect.Float32, reflect.Float64:
+		if val.Float() < float64(min) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "min",
+				Message: fmt.Sprintf("must be at least %d", min),
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateMax checks maximum length/value
+func (v *Validator) validateMax(fieldName string, value interface{}, maxStr string) *ValidationError {
+	max, err := strconv.Atoi(maxStr)
+	if err != nil {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "max",
+			Message: "invalid max parameter",
+		}
+	}
+	
+	val := reflect.ValueOf(value)
+	switch val.Kind() {
+	case reflect.String:
+		if len(val.String()) > max {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "max",
+				Message: fmt.Sprintf("must be at most %d characters long", max),
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if val.Len() > max {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "max",
+				Message: fmt.Sprintf("must contain at most %d items", max),
+			}
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		if val.Int() > int64(max) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "max",
+				Message: fmt.Sprintf("must be at most %d", max),
+			}
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		if val.Uint() > uint64(max) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "max",
+				Message: fmt.Sprintf("must be at most %d", max),
+			}
+		}
+	case reflect.Float32, reflect.Float64:
+		if val.Float() > float64(max) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "max",
+				Message: fmt.Sprintf("must be at most %d", max),
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateLen checks exact length
+func (v *Validator) validateLen(fieldName string, value interface{}, lenStr string) *ValidationError {
+	expectedLen, err := strconv.Atoi(lenStr)
+	if err != nil {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "len",
+			Message: "invalid len parameter",
+		}
+	}
+	
+	val := reflect.ValueOf(value)
+	switch val.Kind() {
+	case reflect.String:
+		if len(val.String()) != expectedLen {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "len",
+				Message: fmt.Sprintf("must be exactly %d characters long", expectedLen),
+			}
+		}
+	case reflect.Slice, reflect.Array:
+		if val.Len() != expectedLen {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "len",
+				Message: fmt.Sprintf("must contain exactly %d items", expectedLen),
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateEmail checks if a string is a valid email
+func (v *Validator) validateEmail(fieldName string, value interface{}) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "email",
+			Message: "must be a string",
+		}
+	}
+	
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	if !emailRegex.MatchString(str) {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "email",
+			Message: "must be a valid email address",
+		}
+	}
+	
+	return nil
+}
+
+// validateURL checks if a string is a valid URL
+func (v *Validator) validateURL(fieldName string, value interface{}) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "url",
+			Message: "must be a string",
+		}
+	}
+	
+	urlRegex := regexp.MustCompile(`^https?://[^\s/$.?#].[^\s]*$`)
+	if !urlRegex.MatchString(str) {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "url",
+			Message: "must be a valid URL",
+		}
+	}
+	
+	return nil
+}
+
+// validateUUID checks if a string is a valid UUID
+func (v *Validator) validateUUID(fieldName string, value interface{}) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "uuid",
+			Message: "must be a string",
+		}
+	}
+	
+	uuidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	if !uuidRegex.MatchString(str) {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "uuid",
+			Message: "must be a valid UUID",
+		}
+	}
+	
+	return nil
+}
+
+// validateAlpha checks if a string contains only alphabetic characters
+func (v *Validator) validateAlpha(fieldName string, value interface{}) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "alpha",
+			Message: "must be a string",
+		}
+	}
+	
+	for _, r := range str {
+		if !unicode.IsLetter(r) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "alpha",
+				Message: "must contain only alphabetic characters",
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateAlphaNum checks if a string contains only alphanumeric characters
+func (v *Validator) validateAlphaNum(fieldName string, value interface{}) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "alphanum",
+			Message: "must be a string",
+		}
+	}
+	
+	for _, r := range str {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "alphanum",
+				Message: "must contain only alphanumeric characters",
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateNumeric checks if a string contains only numeric characters
+func (v *Validator) validateNumeric(fieldName string, value interface{}) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "numeric",
+			Message: "must be a string",
+		}
+	}
+	
+	for _, r := range str {
+		if !unicode.IsDigit(r) {
+			return &ValidationError{
+				Field:   fieldName,
+				Value:   value,
+				Tag:     "numeric",
+				Message: "must contain only numeric characters",
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateOneOf checks if a value is one of the allowed values
+func (v *Validator) validateOneOf(fieldName string, value interface{}, allowedValues string) *ValidationError {
+	str := fmt.Sprintf("%v", value)
+	allowed := strings.Split(allowedValues, " ")
+	
+	for _, allowedValue := range allowed {
+		if str == allowedValue {
+			return nil
+		}
+	}
+	
+	return &ValidationError{
+		Field:   fieldName,
+		Value:   value,
+		Tag:     "oneof",
+		Message: fmt.Sprintf("must be one of: %s", strings.Join(allowed, ", ")),
+	}
+}
+
+// validateRegex checks if a string matches a regular expression
+func (v *Validator) validateRegex(fieldName string, value interface{}, pattern string) *ValidationError {
+	str, ok := value.(string)
+	if !ok {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "regex",
+			Message: "must be a string",
+		}
+	}
+	
+	regex, err := regexp.Compile(pattern)
+	if err != nil {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "regex",
+			Message: "invalid regex pattern",
+		}
+	}
+	
+	if !regex.MatchString(str) {
+		return &ValidationError{
+			Field:   fieldName,
+			Value:   value,
+			Tag:     "regex",
+			Message: fmt.Sprintf("must match pattern: %s", pattern),
+		}
+	}
+	
+	return nil
+}
+
+// isEmpty checks if a value is considered empty
+func (v *Validator) isEmpty(value interface{}) bool {
+	if value == nil {
+		return true
+	}
+	
+	val := reflect.ValueOf(value)
+	switch val.Kind() {
+	case reflect.String:
+		return strings.TrimSpace(val.String()) == ""
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.Chan:
+		return val.Len() == 0
+	case reflect.Ptr, reflect.Interface:
+		return val.IsNil()
+	default:
+		return false
+	}
+}
+
+// Global validator instance
+var Default = New()

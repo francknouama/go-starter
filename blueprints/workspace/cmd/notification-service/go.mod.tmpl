@@ -1,0 +1,54 @@
+module {{.ModulePath}}/cmd/notification-service
+
+go {{.GoVersion}}
+
+require (
+	// Local packages
+	{{.ModulePath}}/pkg/shared v0.0.0
+	{{.ModulePath}}/pkg/models v0.0.0
+{{- if ne .DatabaseType "none"}}
+	{{.ModulePath}}/pkg/storage v0.0.0
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	{{.ModulePath}}/pkg/events v0.0.0
+{{- end}}
+
+	// HTTP framework
+{{- if eq .Framework "gin"}}
+	github.com/gin-gonic/gin v1.9.1
+{{- else if eq .Framework "echo"}}
+	github.com/labstack/echo/v4 v4.11.2
+{{- else if eq .Framework "fiber"}}
+	github.com/gofiber/fiber/v2 v2.51.0
+{{- else if eq .Framework "chi"}}
+	github.com/go-chi/chi/v5 v5.0.10
+{{- end}}
+
+	// Utilities
+	github.com/google/uuid v1.4.0
+	github.com/spf13/viper v1.17.0
+	
+	// Email and messaging
+	github.com/go-mail/mail/v2 v2.3.0
+	
+{{- if .EnableObservability}}
+	// Observability
+	go.opentelemetry.io/otel v1.21.0
+	go.opentelemetry.io/otel/trace v1.21.0
+	github.com/prometheus/client_golang v1.17.0
+{{- end}}
+
+{{- if .EnableTesting}}
+	// Testing
+	github.com/stretchr/testify v1.8.4
+{{- end}}
+)
+
+replace {{.ModulePath}}/pkg/shared => ../../pkg/shared
+replace {{.ModulePath}}/pkg/models => ../../pkg/models
+{{- if ne .DatabaseType "none"}}
+replace {{.ModulePath}}/pkg/storage => ../../pkg/storage
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+replace {{.ModulePath}}/pkg/events => ../../pkg/events
+{{- end}}

@@ -1,0 +1,555 @@
+name: "workspace"
+description: "Go Multi-Module Workspace for monorepo projects with shared libraries and services"
+type: "workspace"
+architecture: "workspace"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the workspace project"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Base module path (e.g., github.com/user/workspace)"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "GoVersion"
+    description: "Go version to use across all modules"
+    type: "string"
+    required: false
+    default: "1.21"
+
+  - name: "LoggerType"
+    description: "Logging library for all modules"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+  - name: "EnableWebAPI"
+    description: "Include web API service module"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableCLI"
+    description: "Include CLI tool module"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableWorker"
+    description: "Include background worker module"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableMicroservices"
+    description: "Include microservice modules (user-service, notification-service)"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "DatabaseType"
+    description: "Database type for services"
+    type: "string"
+    required: false
+    default: "postgres"
+    choices:
+      - "none"
+      - "postgres"
+      - "mysql"
+      - "mongodb"
+      - "sqlite"
+
+  - name: "MessageQueue"
+    description: "Message queue system for inter-service communication"
+    type: "string"
+    required: false
+    default: "redis"
+    choices:
+      - "none"
+      - "redis"
+      - "nats"
+      - "kafka"
+      - "rabbitmq"
+
+  - name: "EnableObservability"
+    description: "Enable comprehensive observability (metrics, tracing, health checks)"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableDocumentation"
+    description: "Generate module documentation and API docs"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableTesting"
+    description: "Include comprehensive testing infrastructure"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableDocker"
+    description: "Generate Docker configurations for all services"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableKubernetes"
+    description: "Generate Kubernetes manifests for deployment"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "Framework"
+    description: "HTTP framework for web API module"
+    type: "string"
+    required: false
+    default: "gin"
+    choices:
+      - "gin"
+      - "echo"
+      - "fiber"
+      - "chi"
+
+files:
+  # Workspace configuration
+  - source: "go.work.tmpl"
+    destination: "go.work"
+
+  - source: "README.md.tmpl"
+    destination: "README.md"
+
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+  - source: "workspace.yaml.tmpl"
+    destination: "workspace.yaml"
+
+  # Development tools and scripts
+  - source: "tools/tools.go.tmpl"
+    destination: "tools/tools.go"
+
+  - source: "tools/go.mod.tmpl"
+    destination: "tools/go.mod"
+
+  - source: "scripts/build-all.sh.tmpl"
+    destination: "scripts/build-all.sh"
+
+  - source: "scripts/test-all.sh.tmpl"
+    destination: "scripts/test-all.sh"
+
+  - source: "scripts/lint-all.sh.tmpl"
+    destination: "scripts/lint-all.sh"
+
+  - source: "scripts/clean-all.sh.tmpl"
+    destination: "scripts/clean-all.sh"
+
+  - source: "scripts/deps-update.sh.tmpl"
+    destination: "scripts/deps-update.sh"
+
+  # Shared package modules
+  - source: "pkg/shared/go.mod.tmpl"
+    destination: "pkg/shared/go.mod"
+
+  - source: "pkg/shared/config/config.go.tmpl"
+    destination: "pkg/shared/config/config.go"
+
+  - source: "pkg/shared/errors/errors.go.tmpl"
+    destination: "pkg/shared/errors/errors.go"
+
+  - source: "pkg/shared/logger/logger.go.tmpl"
+    destination: "pkg/shared/logger/logger.go"
+
+  - source: "pkg/shared/utils/utils.go.tmpl"
+    destination: "pkg/shared/utils/utils.go"
+
+  - source: "pkg/shared/validator/validator.go.tmpl"
+    destination: "pkg/shared/validator/validator.go"
+
+  # Models package
+  - source: "pkg/models/go.mod.tmpl"
+    destination: "pkg/models/go.mod"
+
+  - source: "pkg/models/user.go.tmpl"
+    destination: "pkg/models/user.go"
+
+  - source: "pkg/models/notification.go.tmpl"
+    destination: "pkg/models/notification.go"
+
+  # Events package (message queue integration)
+  - source: "pkg/events/go.mod.tmpl"
+    destination: "pkg/events/go.mod"
+    condition: "{{ne .MessageQueue \"none\"}}"
+
+  - source: "pkg/events/publisher.go.tmpl"
+    destination: "pkg/events/publisher.go"
+    condition: "{{ne .MessageQueue \"none\"}}"
+
+  - source: "pkg/events/subscriber.go.tmpl"
+    destination: "pkg/events/subscriber.go"
+    condition: "{{ne .MessageQueue \"none\"}}"
+
+  # Storage package
+  - source: "pkg/storage/go.mod.tmpl"
+    destination: "pkg/storage/go.mod"
+    condition: "{{ne .DatabaseType \"none\"}}"
+
+  - source: "pkg/storage/interfaces.go.tmpl"
+    destination: "pkg/storage/interfaces.go"
+    condition: "{{ne .DatabaseType \"none\"}}"
+
+  - source: "pkg/storage/postgres.go.tmpl"
+    destination: "pkg/storage/postgres.go"
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+
+  - source: "pkg/storage/mysql.go.tmpl"
+    destination: "pkg/storage/mysql.go"
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+
+  - source: "pkg/storage/mongodb.go.tmpl"
+    destination: "pkg/storage/mongodb.go"
+    condition: "{{eq .DatabaseType \"mongodb\"}}"
+
+  - source: "pkg/storage/sqlite.go.tmpl"
+    destination: "pkg/storage/sqlite.go"
+    condition: "{{eq .DatabaseType \"sqlite\"}}"
+
+  # Web API module
+  - source: "cmd/api/go.mod.tmpl"
+    destination: "cmd/api/go.mod"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/main.go.tmpl"
+    destination: "cmd/api/main.go"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/config/config.go.tmpl"
+    destination: "cmd/api/config/config.go"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/handlers/health.go.tmpl"
+    destination: "cmd/api/handlers/health.go"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/handlers/users.go.tmpl"
+    destination: "cmd/api/handlers/users.go"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/middleware/middleware.go.tmpl"
+    destination: "cmd/api/middleware/middleware.go"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/routes/routes.go.tmpl"
+    destination: "cmd/api/routes/routes.go"
+    condition: "{{.EnableWebAPI}}"
+
+  - source: "cmd/api/Dockerfile.tmpl"
+    destination: "cmd/api/Dockerfile"
+    condition: "{{and .EnableWebAPI .EnableDocker}}"
+
+  # CLI module
+  - source: "cmd/cli/go.mod.tmpl"
+    destination: "cmd/cli/go.mod"
+    condition: "{{.EnableCLI}}"
+
+  - source: "cmd/cli/main.go.tmpl"
+    destination: "cmd/cli/main.go"
+    condition: "{{.EnableCLI}}"
+
+  - source: "cmd/cli/cmd/root.go.tmpl"
+    destination: "cmd/cli/cmd/root.go"
+    condition: "{{.EnableCLI}}"
+
+  - source: "cmd/cli/cmd/users.go.tmpl"
+    destination: "cmd/cli/cmd/users.go"
+    condition: "{{.EnableCLI}}"
+
+  - source: "cmd/cli/cmd/notifications.go.tmpl"
+    destination: "cmd/cli/cmd/notifications.go"
+    condition: "{{.EnableCLI}}"
+
+  # Worker module
+  - source: "cmd/worker/go.mod.tmpl"
+    destination: "cmd/worker/go.mod"
+    condition: "{{.EnableWorker}}"
+
+  - source: "cmd/worker/main.go.tmpl"
+    destination: "cmd/worker/main.go"
+    condition: "{{.EnableWorker}}"
+
+  - source: "cmd/worker/jobs/user_jobs.go.tmpl"
+    destination: "cmd/worker/jobs/user_jobs.go"
+    condition: "{{.EnableWorker}}"
+
+  - source: "cmd/worker/jobs/notification_jobs.go.tmpl"
+    destination: "cmd/worker/jobs/notification_jobs.go"
+    condition: "{{.EnableWorker}}"
+
+  - source: "cmd/worker/Dockerfile.tmpl"
+    destination: "cmd/worker/Dockerfile"
+    condition: "{{and .EnableWorker .EnableDocker}}"
+
+  # Microservice modules
+  - source: "services/user-service/go.mod.tmpl"
+    destination: "services/user-service/go.mod"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/user-service/main.go.tmpl"
+    destination: "services/user-service/main.go"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/user-service/handlers/users.go.tmpl"
+    destination: "services/user-service/handlers/users.go"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/user-service/repository/user_repository.go.tmpl"
+    destination: "services/user-service/repository/user_repository.go"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/user-service/Dockerfile.tmpl"
+    destination: "services/user-service/Dockerfile"
+    condition: "{{and .EnableMicroservices .EnableDocker}}"
+
+  - source: "services/notification-service/go.mod.tmpl"
+    destination: "services/notification-service/go.mod"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/notification-service/main.go.tmpl"
+    destination: "services/notification-service/main.go"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/notification-service/handlers/notifications.go.tmpl"
+    destination: "services/notification-service/handlers/notifications.go"
+    condition: "{{.EnableMicroservices}}"
+
+  - source: "services/notification-service/Dockerfile.tmpl"
+    destination: "services/notification-service/Dockerfile"
+    condition: "{{and .EnableMicroservices .EnableDocker}}"
+
+  # Docker configurations
+  - source: "docker-compose.yml.tmpl"
+    destination: "docker-compose.yml"
+    condition: "{{.EnableDocker}}"
+
+  - source: "docker-compose.dev.yml.tmpl"
+    destination: "docker-compose.dev.yml"
+    condition: "{{.EnableDocker}}"
+
+  # Kubernetes configurations
+  - source: "deployments/k8s/namespace.yaml.tmpl"
+    destination: "deployments/k8s/namespace.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  - source: "deployments/k8s/api-deployment.yaml.tmpl"
+    destination: "deployments/k8s/api-deployment.yaml"
+    condition: "{{and .EnableKubernetes .EnableWebAPI}}"
+
+  - source: "deployments/k8s/worker-deployment.yaml.tmpl"
+    destination: "deployments/k8s/worker-deployment.yaml"
+    condition: "{{and .EnableKubernetes .EnableWorker}}"
+
+  - source: "deployments/k8s/user-service-deployment.yaml.tmpl"
+    destination: "deployments/k8s/user-service-deployment.yaml"
+    condition: "{{and .EnableKubernetes .EnableMicroservices}}"
+
+  - source: "deployments/k8s/notification-service-deployment.yaml.tmpl"
+    destination: "deployments/k8s/notification-service-deployment.yaml"
+    condition: "{{and .EnableKubernetes .EnableMicroservices}}"
+
+  - source: "deployments/k8s/configmap.yaml.tmpl"
+    destination: "deployments/k8s/configmap.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  - source: "deployments/k8s/secrets.yaml.tmpl"
+    destination: "deployments/k8s/secrets.yaml"
+    condition: "{{.EnableKubernetes}}"
+
+  # CI/CD workflows
+  - source: ".github/workflows/ci.yml.tmpl"
+    destination: ".github/workflows/ci.yml"
+
+  - source: ".github/workflows/release.yml.tmpl"
+    destination: ".github/workflows/release.yml"
+
+  - source: ".github/workflows/security.yml.tmpl"
+    destination: ".github/workflows/security.yml"
+
+  # Testing infrastructure
+  - source: "tests/integration/go.mod.tmpl"
+    destination: "tests/integration/go.mod"
+    condition: "{{.EnableTesting}}"
+
+  - source: "tests/integration/api_test.go.tmpl"
+    destination: "tests/integration/api_test.go"
+    condition: "{{and .EnableTesting .EnableWebAPI}}"
+
+  - source: "tests/integration/services_test.go.tmpl"
+    destination: "tests/integration/services_test.go"
+    condition: "{{and .EnableTesting .EnableMicroservices}}"
+
+  - source: "tests/helpers/test_helpers.go.tmpl"
+    destination: "tests/helpers/test_helpers.go"
+    condition: "{{.EnableTesting}}"
+
+  # Documentation
+  - source: "docs/architecture.md.tmpl"
+    destination: "docs/architecture.md"
+    condition: "{{.EnableDocumentation}}"
+
+  - source: "docs/modules.md.tmpl"
+    destination: "docs/modules.md"
+    condition: "{{.EnableDocumentation}}"
+
+  - source: "docs/development.md.tmpl"
+    destination: "docs/development.md"
+    condition: "{{.EnableDocumentation}}"
+
+  - source: "docs/deployment.md.tmpl"
+    destination: "docs/deployment.md"
+    condition: "{{.EnableDocumentation}}"
+
+  - source: "docs/api.md.tmpl"
+    destination: "docs/api.md"
+    condition: "{{and .EnableDocumentation .EnableWebAPI}}"
+
+dependencies:
+  # Core workspace tools
+  - module: "golang.org/x/tools"
+    version: "v0.15.0"
+  - module: "github.com/golangci/golangci-lint"
+    version: "v1.55.0"
+
+  # Shared dependencies for all modules
+  - module: "github.com/spf13/viper"
+    version: "v1.17.0"
+  - module: "github.com/spf13/cobra"
+    version: "v1.8.0"
+
+  # HTTP framework dependencies (conditional)
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+    condition: "{{eq .Framework \"gin\"}}"
+  - module: "github.com/labstack/echo/v4"
+    version: "v4.11.3"
+    condition: "{{eq .Framework \"echo\"}}"
+  - module: "github.com/gofiber/fiber/v2"
+    version: "v2.51.0"
+    condition: "{{eq .Framework \"fiber\"}}"
+  - module: "github.com/go-chi/chi/v5"
+    version: "v5.0.10"
+    condition: "{{eq .Framework \"chi\"}}"
+
+  # Database dependencies (conditional)
+  - module: "github.com/lib/pq"
+    version: "v1.10.9"
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - module: "github.com/go-sql-driver/mysql"
+    version: "v1.7.1"
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+  - module: "go.mongodb.org/mongo-driver"
+    version: "v1.12.1"
+    condition: "{{eq .DatabaseType \"mongodb\"}}"
+  - module: "github.com/mattn/go-sqlite3"
+    version: "v1.14.18"
+    condition: "{{eq .DatabaseType \"sqlite\"}}"
+
+  # ORM
+  - module: "gorm.io/gorm"
+    version: "v1.25.5"
+    condition: "{{or (eq .DatabaseType \"postgres\") (eq .DatabaseType \"mysql\") (eq .DatabaseType \"sqlite\")}}"
+  - module: "gorm.io/driver/postgres"
+    version: "v1.5.4"
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - module: "gorm.io/driver/mysql"
+    version: "v1.5.2"
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+  - module: "gorm.io/driver/sqlite"
+    version: "v1.5.4"
+    condition: "{{eq .DatabaseType \"sqlite\"}}"
+
+  # Message queue dependencies (conditional)
+  - module: "github.com/redis/go-redis/v9"
+    version: "v9.2.1"
+    condition: "{{eq .MessageQueue \"redis\"}}"
+  - module: "github.com/nats-io/nats.go"
+    version: "v1.30.0"
+    condition: "{{eq .MessageQueue \"nats\"}}"
+  - module: "github.com/segmentio/kafka-go"
+    version: "v0.4.47"
+    condition: "{{eq .MessageQueue \"kafka\"}}"
+  - module: "github.com/streadway/amqp"
+    version: "v1.1.0"
+    condition: "{{eq .MessageQueue \"rabbitmq\"}}"
+
+  # Logging dependencies (conditional)
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .LoggerType \"zap\"}}"
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .LoggerType \"logrus\"}}"
+  - module: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .LoggerType \"zerolog\"}}"
+
+  # Observability dependencies (conditional)
+  - module: "go.opentelemetry.io/otel"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/trace"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/sdk"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "github.com/prometheus/client_golang"
+    version: "v1.17.0"
+    condition: "{{.EnableObservability}}"
+
+  # Testing dependencies (conditional)
+  - module: "github.com/stretchr/testify"
+    version: "v1.8.4"
+    condition: "{{.EnableTesting}}"
+  - module: "github.com/testcontainers/testcontainers-go"
+    version: "v0.24.1"
+    condition: "{{.EnableTesting}}"
+
+  # Utilities
+  - module: "github.com/google/uuid"
+    version: "v1.4.0"
+  - module: "golang.org/x/sync"
+    version: "v0.5.0"
+  - module: "github.com/go-playground/validator/v10"
+    version: "v10.16.0"
+
+post_hooks:
+  - name: "workspace_init"
+    command: "go work sync"
+    work_dir: "{{.OutputPath}}"
+  - name: "tools_tidy"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}/tools"
+  - name: "generate_docs"
+    command: "go generate ./..."
+    work_dir: "{{.OutputPath}}"
+    condition: "{{.EnableDocumentation}}"
+  - name: "build_all"
+    command: "make build-all"
+    work_dir: "{{.OutputPath}}"

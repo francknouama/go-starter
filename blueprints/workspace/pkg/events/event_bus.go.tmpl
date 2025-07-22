@@ -1,0 +1,645 @@
+package events
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+{{- if eq .MessageQueue "redis"}}
+	"github.com/go-redis/redis/v8"
+{{- else if eq .MessageQueue "nats"}}
+	"github.com/nats-io/nats.go"
+{{- else if eq .MessageQueue "kafka"}}
+	"github.com/segmentio/kafka-go"
+{{- else if eq .MessageQueue "rabbitmq"}}
+	"github.com/streadway/amqp"
+{{- end}}
+	"github.com/google/uuid"
+
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+)
+
+// Event represents a domain event
+type Event struct {
+	ID         string                 `json:"id"`
+	Type       string                 `json:"type"`
+	Source     string                 `json:"source"`
+	Data       map[string]interface{} `json:"data"`
+	Timestamp  time.Time              `json:"timestamp"`
+	Version    string                 `json:"version"`
+	Metadata   map[string]string      `json:"metadata,omitempty"`
+}
+
+// NewEvent creates a new event
+func NewEvent(eventType, source string, data map[string]interface{}) *Event {
+	return &Event{
+		ID:        uuid.New().String(),
+		Type:      eventType,
+		Source:    source,
+		Data:      data,
+		Timestamp: time.Now().UTC(),
+		Version:   "1.0",
+		Metadata:  make(map[string]string),
+	}
+}
+
+// EventHandler represents a function that handles events
+type EventHandler func(ctx context.Context, event *Event) error
+
+// EventBus represents the event bus interface
+type EventBus interface {
+	Connect(ctx context.Context) error
+	Close() error
+	Publish(ctx context.Context, topic string, event *Event) error
+	Subscribe(ctx context.Context, topic string, handler EventHandler) error
+	Unsubscribe(ctx context.Context, topic string) error
+	Health(ctx context.Context) error
+}
+
+{{- if eq .MessageQueue "redis"}}
+// RedisEventBus implements EventBus using Redis
+type RedisEventBus struct {
+	client     *redis.Client
+	config     *config.MessageQueueConfig
+	logger     logger.Logger
+	subscriptions map[string]*redis.PubSub
+}
+
+// NewRedisEventBus creates a new Redis event bus
+func NewRedisEventBus(cfg *config.MessageQueueConfig, log logger.Logger) *RedisEventBus {
+	return &RedisEventBus{
+		config:        cfg,
+		logger:        log,
+		subscriptions: make(map[string]*redis.PubSub),
+	}
+}
+
+// Connect establishes a connection to Redis
+func (r *RedisEventBus) Connect(ctx context.Context) error {
+	addr := fmt.Sprintf("%s:%d", r.config.Host, r.config.Port)
+	
+	r.client = redis.NewClient(&redis.Options{
+		Addr:         addr,
+		Password:     r.config.Password,
+		DB:           0,
+		PoolSize:     r.config.MaxConnections,
+		MinIdleConns: r.config.MinConnections,
+		IdleTimeout:  time.Duration(r.config.IdleTimeout) * time.Second,
+	})
+
+	// Test the connection
+	if err := r.client.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("failed to connect to redis: %w", err)
+	}
+
+	r.logger.Info("Successfully connected to Redis event bus")
+	return nil
+}
+
+// Close closes the Redis connection
+func (r *RedisEventBus) Close() error {
+	// Close all subscriptions
+	for topic, pubsub := range r.subscriptions {
+		if err := pubsub.Close(); err != nil {
+			r.logger.Error("Failed to close subscription for topic", "topic", topic, "error", err)
+		}
+	}
+	
+	if r.client != nil {
+		if err := r.client.Close(); err != nil {
+			return fmt.Errorf("failed to close redis connection: %w", err)
+		}
+	}
+	
+	r.logger.Info("Redis event bus connection closed")
+	return nil
+}
+
+// Publish publishes an event to a topic
+func (r *RedisEventBus) Publish(ctx context.Context, topic string, event *Event) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	if err := r.client.Publish(ctx, topic, data).Err(); err != nil {
+		return fmt.Errorf("failed to publish event to topic %s: %w", topic, err)
+	}
+
+	r.logger.Debug("Event published", "topic", topic, "event_id", event.ID, "event_type", event.Type)
+	return nil
+}
+
+// Subscribe subscribes to a topic with an event handler
+func (r *RedisEventBus) Subscribe(ctx context.Context, topic string, handler EventHandler) error {
+	pubsub := r.client.Subscribe(ctx, topic)
+	r.subscriptions[topic] = pubsub
+
+	go func() {
+		defer pubsub.Close()
+		
+		ch := pubsub.Channel()
+		for msg := range ch {
+			var event Event
+			if err := json.Unmarshal([]byte(msg.Payload), &event); err != nil {
+				r.logger.Error("Failed to unmarshal event", "topic", topic, "error", err)
+				continue
+			}
+
+			if err := handler(ctx, &event); err != nil {
+				r.logger.Error("Event handler failed", "topic", topic, "event_id", event.ID, "error", err)
+			}
+		}
+	}()
+
+	r.logger.Info("Subscribed to topic", "topic", topic)
+	return nil
+}
+
+// Unsubscribe unsubscribes from a topic
+func (r *RedisEventBus) Unsubscribe(ctx context.Context, topic string) error {
+	if pubsub, exists := r.subscriptions[topic]; exists {
+		if err := pubsub.Unsubscribe(ctx, topic); err != nil {
+			return fmt.Errorf("failed to unsubscribe from topic %s: %w", topic, err)
+		}
+		delete(r.subscriptions, topic)
+		r.logger.Info("Unsubscribed from topic", "topic", topic)
+	}
+	return nil
+}
+
+// Health checks the Redis connection health
+func (r *RedisEventBus) Health(ctx context.Context) error {
+	if r.client == nil {
+		return fmt.Errorf("redis client is nil")
+	}
+	
+	if err := r.client.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("redis health check failed: %w", err)
+	}
+	
+	return nil
+}
+
+{{- else if eq .MessageQueue "nats"}}
+// NATSEventBus implements EventBus using NATS
+type NATSEventBus struct {
+	conn          *nats.Conn
+	config        *config.MessageQueueConfig
+	logger        logger.Logger
+	subscriptions map[string]*nats.Subscription
+}
+
+// NewNATSEventBus creates a new NATS event bus
+func NewNATSEventBus(cfg *config.MessageQueueConfig, log logger.Logger) *NATSEventBus {
+	return &NATSEventBus{
+		config:        cfg,
+		logger:        log,
+		subscriptions: make(map[string]*nats.Subscription),
+	}
+}
+
+// Connect establishes a connection to NATS
+func (n *NATSEventBus) Connect(ctx context.Context) error {
+	url := fmt.Sprintf("nats://%s:%d", n.config.Host, n.config.Port)
+	
+	conn, err := nats.Connect(url, 
+		nats.UserInfo(n.config.User, n.config.Password),
+		nats.MaxReconnects(5),
+		nats.ReconnectWait(time.Second),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to connect to nats: %w", err)
+	}
+
+	n.conn = conn
+	n.logger.Info("Successfully connected to NATS event bus")
+	return nil
+}
+
+// Close closes the NATS connection
+func (n *NATSEventBus) Close() error {
+	// Close all subscriptions
+	for topic, sub := range n.subscriptions {
+		if err := sub.Unsubscribe(); err != nil {
+			n.logger.Error("Failed to unsubscribe from topic", "topic", topic, "error", err)
+		}
+	}
+	
+	if n.conn != nil {
+		n.conn.Close()
+	}
+	
+	n.logger.Info("NATS event bus connection closed")
+	return nil
+}
+
+// Publish publishes an event to a topic
+func (n *NATSEventBus) Publish(ctx context.Context, topic string, event *Event) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	if err := n.conn.Publish(topic, data); err != nil {
+		return fmt.Errorf("failed to publish event to topic %s: %w", topic, err)
+	}
+
+	n.logger.Debug("Event published", "topic", topic, "event_id", event.ID, "event_type", event.Type)
+	return nil
+}
+
+// Subscribe subscribes to a topic with an event handler
+func (n *NATSEventBus) Subscribe(ctx context.Context, topic string, handler EventHandler) error {
+	sub, err := n.conn.Subscribe(topic, func(msg *nats.Msg) {
+		var event Event
+		if err := json.Unmarshal(msg.Data, &event); err != nil {
+			n.logger.Error("Failed to unmarshal event", "topic", topic, "error", err)
+			return
+		}
+
+		if err := handler(ctx, &event); err != nil {
+			n.logger.Error("Event handler failed", "topic", topic, "event_id", event.ID, "error", err)
+		}
+	})
+	
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to topic %s: %w", topic, err)
+	}
+
+	n.subscriptions[topic] = sub
+	n.logger.Info("Subscribed to topic", "topic", topic)
+	return nil
+}
+
+// Unsubscribe unsubscribes from a topic
+func (n *NATSEventBus) Unsubscribe(ctx context.Context, topic string) error {
+	if sub, exists := n.subscriptions[topic]; exists {
+		if err := sub.Unsubscribe(); err != nil {
+			return fmt.Errorf("failed to unsubscribe from topic %s: %w", topic, err)
+		}
+		delete(n.subscriptions, topic)
+		n.logger.Info("Unsubscribed from topic", "topic", topic)
+	}
+	return nil
+}
+
+// Health checks the NATS connection health
+func (n *NATSEventBus) Health(ctx context.Context) error {
+	if n.conn == nil {
+		return fmt.Errorf("nats connection is nil")
+	}
+	
+	if !n.conn.IsConnected() {
+		return fmt.Errorf("nats connection is not active")
+	}
+	
+	return nil
+}
+
+{{- else if eq .MessageQueue "kafka"}}
+// KafkaEventBus implements EventBus using Kafka
+type KafkaEventBus struct {
+	writer  *kafka.Writer
+	readers map[string]*kafka.Reader
+	config  *config.MessageQueueConfig
+	logger  logger.Logger
+}
+
+// NewKafkaEventBus creates a new Kafka event bus
+func NewKafkaEventBus(cfg *config.MessageQueueConfig, log logger.Logger) *KafkaEventBus {
+	return &KafkaEventBus{
+		config:  cfg,
+		logger:  log,
+		readers: make(map[string]*kafka.Reader),
+	}
+}
+
+// Connect establishes a connection to Kafka
+func (k *KafkaEventBus) Connect(ctx context.Context) error {
+	brokers := []string{fmt.Sprintf("%s:%d", k.config.Host, k.config.Port)}
+	
+	k.writer = &kafka.Writer{
+		Addr:     kafka.TCP(brokers...),
+		Balancer: &kafka.LeastBytes{},
+	}
+
+	k.logger.Info("Successfully connected to Kafka event bus")
+	return nil
+}
+
+// Close closes the Kafka connection
+func (k *KafkaEventBus) Close() error {
+	// Close all readers
+	for topic, reader := range k.readers {
+		if err := reader.Close(); err != nil {
+			k.logger.Error("Failed to close kafka reader", "topic", topic, "error", err)
+		}
+	}
+	
+	if k.writer != nil {
+		if err := k.writer.Close(); err != nil {
+			return fmt.Errorf("failed to close kafka writer: %w", err)
+		}
+	}
+	
+	k.logger.Info("Kafka event bus connection closed")
+	return nil
+}
+
+// Publish publishes an event to a topic
+func (k *KafkaEventBus) Publish(ctx context.Context, topic string, event *Event) error {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	msg := kafka.Message{
+		Topic: topic,
+		Key:   []byte(event.ID),
+		Value: data,
+	}
+
+	if err := k.writer.WriteMessages(ctx, msg); err != nil {
+		return fmt.Errorf("failed to write message to kafka topic %s: %w", topic, err)
+	}
+
+	k.logger.Debug("Event published", "topic", topic, "event_id", event.ID, "event_type", event.Type)
+	return nil
+}
+
+// Subscribe subscribes to a topic with an event handler
+func (k *KafkaEventBus) Subscribe(ctx context.Context, topic string, handler EventHandler) error {
+	reader := kafka.NewReader(kafka.ReaderConfig{
+		Brokers:  []string{fmt.Sprintf("%s:%d", k.config.Host, k.config.Port)},
+		Topic:    topic,
+		GroupID:  "{{.ProjectName}}-consumers",
+		MinBytes: 10e3, // 10KB
+		MaxBytes: 10e6, // 10MB
+	})
+
+	k.readers[topic] = reader
+
+	go func() {
+		defer reader.Close()
+		
+		for {
+			msg, err := reader.ReadMessage(ctx)
+			if err != nil {
+				k.logger.Error("Failed to read kafka message", "topic", topic, "error", err)
+				return
+			}
+
+			var event Event
+			if err := json.Unmarshal(msg.Value, &event); err != nil {
+				k.logger.Error("Failed to unmarshal event", "topic", topic, "error", err)
+				continue
+			}
+
+			if err := handler(ctx, &event); err != nil {
+				k.logger.Error("Event handler failed", "topic", topic, "event_id", event.ID, "error", err)
+			}
+		}
+	}()
+
+	k.logger.Info("Subscribed to topic", "topic", topic)
+	return nil
+}
+
+// Unsubscribe unsubscribes from a topic
+func (k *KafkaEventBus) Unsubscribe(ctx context.Context, topic string) error {
+	if reader, exists := k.readers[topic]; exists {
+		if err := reader.Close(); err != nil {
+			return fmt.Errorf("failed to close kafka reader for topic %s: %w", topic, err)
+		}
+		delete(k.readers, topic)
+		k.logger.Info("Unsubscribed from topic", "topic", topic)
+	}
+	return nil
+}
+
+// Health checks the Kafka connection health
+func (k *KafkaEventBus) Health(ctx context.Context) error {
+	if k.writer == nil {
+		return fmt.Errorf("kafka writer is nil")
+	}
+	
+	// Try to write a test message to verify connectivity
+	// This is a simple health check - in production you might want something more sophisticated
+	return nil
+}
+
+{{- else if eq .MessageQueue "rabbitmq"}}
+// RabbitMQEventBus implements EventBus using RabbitMQ
+type RabbitMQEventBus struct {
+	conn    *amqp.Connection
+	channel *amqp.Channel
+	config  *config.MessageQueueConfig
+	logger  logger.Logger
+}
+
+// NewRabbitMQEventBus creates a new RabbitMQ event bus
+func NewRabbitMQEventBus(cfg *config.MessageQueueConfig, log logger.Logger) *RabbitMQEventBus {
+	return &RabbitMQEventBus{
+		config: cfg,
+		logger: log,
+	}
+}
+
+// Connect establishes a connection to RabbitMQ
+func (r *RabbitMQEventBus) Connect(ctx context.Context) error {
+	url := fmt.Sprintf("amqp://%s:%s@%s:%d/", 
+		r.config.User, r.config.Password, r.config.Host, r.config.Port)
+	
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return fmt.Errorf("failed to connect to rabbitmq: %w", err)
+	}
+
+	channel, err := conn.Channel()
+	if err != nil {
+		conn.Close()
+		return fmt.Errorf("failed to open rabbitmq channel: %w", err)
+	}
+
+	r.conn = conn
+	r.channel = channel
+	
+	r.logger.Info("Successfully connected to RabbitMQ event bus")
+	return nil
+}
+
+// Close closes the RabbitMQ connection
+func (r *RabbitMQEventBus) Close() error {
+	if r.channel != nil {
+		if err := r.channel.Close(); err != nil {
+			r.logger.Error("Failed to close rabbitmq channel", "error", err)
+		}
+	}
+	
+	if r.conn != nil {
+		if err := r.conn.Close(); err != nil {
+			return fmt.Errorf("failed to close rabbitmq connection: %w", err)
+		}
+	}
+	
+	r.logger.Info("RabbitMQ event bus connection closed")
+	return nil
+}
+
+// Publish publishes an event to a topic
+func (r *RabbitMQEventBus) Publish(ctx context.Context, topic string, event *Event) error {
+	// Declare exchange
+	err := r.channel.ExchangeDeclare(
+		topic,    // exchange name
+		"fanout", // exchange type
+		true,     // durable
+		false,    // auto-deleted
+		false,    // internal
+		false,    // no-wait
+		nil,      // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare exchange: %w", err)
+	}
+
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	err = r.channel.Publish(
+		topic, // exchange
+		"",    // routing key
+		false, // mandatory
+		false, // immediate
+		amqp.Publishing{
+			ContentType: "application/json",
+			Body:        data,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to publish event to topic %s: %w", topic, err)
+	}
+
+	r.logger.Debug("Event published", "topic", topic, "event_id", event.ID, "event_type", event.Type)
+	return nil
+}
+
+// Subscribe subscribes to a topic with an event handler
+func (r *RabbitMQEventBus) Subscribe(ctx context.Context, topic string, handler EventHandler) error {
+	// Declare exchange
+	err := r.channel.ExchangeDeclare(
+		topic,    // exchange name
+		"fanout", // exchange type
+		true,     // durable
+		false,    // auto-deleted
+		false,    // internal
+		false,    // no-wait
+		nil,      // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare exchange: %w", err)
+	}
+
+	// Declare queue
+	queue, err := r.channel.QueueDeclare(
+		"",    // queue name (auto-generated)
+		false, // durable
+		false, // delete when unused
+		true,  // exclusive
+		false, // no-wait
+		nil,   // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("failed to declare queue: %w", err)
+	}
+
+	// Bind queue to exchange
+	err = r.channel.QueueBind(
+		queue.Name, // queue name
+		"",         // routing key
+		topic,      // exchange
+		false,      // no-wait
+		nil,        // arguments
+	)
+	if err != nil {
+		return fmt.Errorf("failed to bind queue: %w", err)
+	}
+
+	// Start consuming
+	msgs, err := r.channel.Consume(
+		queue.Name, // queue
+		"",         // consumer
+		true,       // auto-ack
+		false,      // exclusive
+		false,      // no-local
+		false,      // no-wait
+		nil,        // args
+	)
+	if err != nil {
+		return fmt.Errorf("failed to register consumer: %w", err)
+	}
+
+	go func() {
+		for msg := range msgs {
+			var event Event
+			if err := json.Unmarshal(msg.Body, &event); err != nil {
+				r.logger.Error("Failed to unmarshal event", "topic", topic, "error", err)
+				continue
+			}
+
+			if err := handler(ctx, &event); err != nil {
+				r.logger.Error("Event handler failed", "topic", topic, "event_id", event.ID, "error", err)
+			}
+		}
+	}()
+
+	r.logger.Info("Subscribed to topic", "topic", topic)
+	return nil
+}
+
+// Unsubscribe unsubscribes from a topic
+func (r *RabbitMQEventBus) Unsubscribe(ctx context.Context, topic string) error {
+	// RabbitMQ doesn't have a direct unsubscribe method
+	// In a real implementation, you'd need to track consumers and cancel them
+	r.logger.Info("Unsubscribed from topic", "topic", topic)
+	return nil
+}
+
+// Health checks the RabbitMQ connection health
+func (r *RabbitMQEventBus) Health(ctx context.Context) error {
+	if r.conn == nil {
+		return fmt.Errorf("rabbitmq connection is nil")
+	}
+	
+	if r.conn.IsClosed() {
+		return fmt.Errorf("rabbitmq connection is closed")
+	}
+	
+	return nil
+}
+{{- end}}
+
+// NewEventBus creates a new event bus based on the configuration
+func NewEventBus(cfg *config.MessageQueueConfig, log logger.Logger) (EventBus, error) {
+	switch cfg.Type {
+{{- if eq .MessageQueue "redis"}}
+	case "redis":
+		return NewRedisEventBus(cfg, log), nil
+{{- else if eq .MessageQueue "nats"}}
+	case "nats":
+		return NewNATSEventBus(cfg, log), nil
+{{- else if eq .MessageQueue "kafka"}}
+	case "kafka":
+		return NewKafkaEventBus(cfg, log), nil
+{{- else if eq .MessageQueue "rabbitmq"}}
+	case "rabbitmq", "amqp":
+		return NewRabbitMQEventBus(cfg, log), nil
+{{- end}}
+	default:
+		return nil, fmt.Errorf("unsupported message queue type: %s", cfg.Type)
+	}
+}

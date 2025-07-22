@@ -1,0 +1,350 @@
+# {{.ProjectName}} Workspace Configuration
+# Metadata and configuration for the Go multi-module workspace
+
+workspace:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+  go_version: "{{.GoVersion}}"
+  module_path: "{{.ModulePath}}"
+  
+  # Workspace features
+  features:
+    web_api: {{.EnableWebAPI}}
+    cli: {{.EnableCLI}}
+    worker: {{.EnableWorker}}
+    microservices: {{.EnableMicroservices}}
+    docker: {{.EnableDocker}}
+    kubernetes: {{.EnableKubernetes}}
+    testing: {{.EnableTesting}}
+    documentation: {{.EnableDocumentation}}
+    observability: {{.EnableObservability}}
+
+  # Technology stack
+  stack:
+    framework: "{{.Framework}}"
+    database: "{{.DatabaseType}}"
+    message_queue: "{{.MessageQueue}}"
+    logger: "{{.LoggerType}}"
+
+# Module registry
+modules:
+  # Shared packages
+  shared:
+    path: "pkg/shared"
+    type: "library"
+    description: "Common utilities, configuration, and shared code"
+    dependencies: []
+    
+  models:
+    path: "pkg/models"
+    type: "library"
+    description: "Data models and business entities"
+    dependencies: ["shared"]
+
+{{- if ne .DatabaseType "none"}}
+  storage:
+    path: "pkg/storage"
+    type: "library"
+    description: "Database abstractions and implementations"
+    dependencies: ["shared", "models"]
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+  events:
+    path: "pkg/events"
+    type: "library"
+    description: "Event publishing and subscribing"
+    dependencies: ["shared", "models"]
+{{- end}}
+
+  # Applications
+{{- if .EnableWebAPI}}
+  api:
+    path: "cmd/api"
+    type: "service"
+    description: "Web API server"
+    port: 8080
+    dependencies: ["shared", "models"{{- if ne .DatabaseType "none"}}, "storage"{{- end}}{{- if ne .MessageQueue "none"}}, "events"{{- end}}]
+    health_check: "/health"
+{{- end}}
+
+{{- if .EnableCLI}}
+  cli:
+    path: "cmd/cli"
+    type: "application"
+    description: "Command-line interface"
+    dependencies: ["shared", "models"{{- if ne .DatabaseType "none"}}, "storage"{{- end}}{{- if ne .MessageQueue "none"}}, "events"{{- end}}]
+{{- end}}
+
+{{- if .EnableWorker}}
+  worker:
+    path: "cmd/worker"
+    type: "service"
+    description: "Background job processor"
+    dependencies: ["shared", "models"{{- if ne .DatabaseType "none"}}, "storage"{{- end}}{{- if ne .MessageQueue "none"}}, "events"{{- end}}]
+{{- end}}
+
+  # Microservices
+{{- if .EnableMicroservices}}
+  user-service:
+    path: "services/user-service"
+    type: "microservice"
+    description: "User management microservice"
+    port: 8081
+    dependencies: ["shared", "models"{{- if ne .DatabaseType "none"}}, "storage"{{- end}}]
+    health_check: "/health"
+    
+  notification-service:
+    path: "services/notification-service"
+    type: "microservice"
+    description: "Notification handling microservice"
+    port: 8082
+    dependencies: ["shared", "models"{{- if ne .MessageQueue "none"}}, "events"{{- end}}]
+    health_check: "/health"
+{{- end}}
+
+# Build configuration
+build:
+  # Build order (topological sort of dependencies)
+  order:
+    - "pkg/shared"
+    - "pkg/models"
+{{- if ne .DatabaseType "none"}}
+    - "pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+    - "pkg/events"
+{{- end}}
+{{- if .EnableWebAPI}}
+    - "cmd/api"
+{{- end}}
+{{- if .EnableCLI}}
+    - "cmd/cli"
+{{- end}}
+{{- if .EnableWorker}}
+    - "cmd/worker"
+{{- end}}
+{{- if .EnableMicroservices}}
+    - "services/user-service"
+    - "services/notification-service"
+{{- end}}
+
+  # Build flags
+  flags:
+    - "-ldflags=-s -w"
+    - "-trimpath"
+  
+  # Environment-specific builds
+  environments:
+    development:
+      flags: ["-race"]
+      tags: ["dev"]
+    
+    production:
+      flags: ["-ldflags=-s -w", "-trimpath"]
+      tags: ["prod"]
+
+# Testing configuration
+testing:
+  # Test categories
+  categories:
+    unit:
+      pattern: "."
+      flags: ["-short"]
+      
+    integration:
+      pattern: "./tests/integration/..."
+      flags: ["-v"]
+      timeout: "10m"
+      
+    race:
+      pattern: "."
+      flags: ["-race"]
+      
+  # Coverage settings
+  coverage:
+    threshold: 80
+    output: "coverage"
+    format: "html"
+
+# Development tools
+tools:
+  required:
+    - name: "golangci-lint"
+      version: "latest"
+      install: "github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+      
+    - name: "goimports"
+      version: "latest"
+      install: "golang.org/x/tools/cmd/goimports@latest"
+      
+    - name: "swag"
+      version: "latest"
+      install: "github.com/swaggo/swag/cmd/swag@latest"
+
+{{- if .EnableDocumentation}}
+    - name: "godoc"
+      version: "latest"
+      install: "golang.org/x/tools/cmd/godoc@latest"
+{{- end}}
+
+# Lint configuration
+lint:
+  golangci:
+    config: ".golangci.yml"
+    deadline: "5m"
+    
+  rules:
+    - "gofmt"
+    - "goimports"
+    - "govet"
+    - "ineffassign"
+    - "misspell"
+
+{{- if .EnableDocker}}
+# Docker configuration
+docker:
+  registry: "{{.ProjectName}}"
+  
+  services:
+{{- if .EnableWebAPI}}
+    api:
+      dockerfile: "cmd/api/Dockerfile"
+      image: "{{.ProjectName}}-api"
+      port: 8080
+{{- end}}
+
+{{- if .EnableWorker}}
+    worker:
+      dockerfile: "cmd/worker/Dockerfile"
+      image: "{{.ProjectName}}-worker"
+{{- end}}
+
+{{- if .EnableMicroservices}}
+    user-service:
+      dockerfile: "services/user-service/Dockerfile"
+      image: "{{.ProjectName}}-user-service"
+      port: 8081
+      
+    notification-service:
+      dockerfile: "services/notification-service/Dockerfile"
+      image: "{{.ProjectName}}-notification-service"
+      port: 8082
+{{- end}}
+
+  # Development compose
+  compose:
+    file: "docker-compose.dev.yml"
+    services:
+{{- if ne .DatabaseType "none"}}
+      - "{{.DatabaseType}}"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+      - "{{.MessageQueue}}"
+{{- end}}
+      - "app"
+{{- end}}
+
+{{- if .EnableKubernetes}}
+# Kubernetes configuration
+kubernetes:
+  namespace: "{{.ProjectName}}"
+  
+  manifests:
+    - "deployments/k8s/namespace.yaml"
+    - "deployments/k8s/configmap.yaml"
+    - "deployments/k8s/secrets.yaml"
+{{- if .EnableWebAPI}}
+    - "deployments/k8s/api-deployment.yaml"
+{{- end}}
+{{- if .EnableWorker}}
+    - "deployments/k8s/worker-deployment.yaml"
+{{- end}}
+{{- if .EnableMicroservices}}
+    - "deployments/k8s/user-service-deployment.yaml"
+    - "deployments/k8s/notification-service-deployment.yaml"
+{{- end}}
+
+  resources:
+    limits:
+      cpu: "1000m"
+      memory: "512Mi"
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+{{- end}}
+
+# Monitoring and observability
+{{- if .EnableObservability}}
+observability:
+  metrics:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+    
+  tracing:
+    enabled: true
+    jaeger_endpoint: "http://localhost:14268/api/traces"
+    
+  health_checks:
+    enabled: true
+    path: "/health"
+    interval: "30s"
+    
+  logging:
+    level: "info"
+    format: "json"
+    output: "stdout"
+{{- end}}
+
+# Environment configuration
+environments:
+  development:
+    database_url: "{{.DatabaseType}}://localhost:5432/{{.ProjectName}}_dev"
+{{- if ne .MessageQueue "none"}}
+    message_queue_url: "{{.MessageQueue}}://localhost:6379"
+{{- end}}
+    log_level: "debug"
+    
+  staging:
+    database_url: "${DATABASE_URL}"
+{{- if ne .MessageQueue "none"}}
+    message_queue_url: "${MESSAGE_QUEUE_URL}"
+{{- end}}
+    log_level: "info"
+    
+  production:
+    database_url: "${DATABASE_URL}"
+{{- if ne .MessageQueue "none"}}
+    message_queue_url: "${MESSAGE_QUEUE_URL}"
+{{- end}}
+    log_level: "warn"
+
+# Documentation
+{{- if .EnableDocumentation}}
+documentation:
+  api_docs:
+    enabled: true
+    swagger_path: "/swagger"
+    
+  module_docs:
+    enabled: true
+    output: "docs/modules"
+    
+  architecture_docs:
+    enabled: true
+    diagrams: true
+{{- end}}
+
+# Quality gates
+quality:
+  code_coverage:
+    minimum: 80
+    
+  performance:
+    max_build_time: "5m"
+    max_test_time: "10m"
+    
+  security:
+    vulnerability_scan: true
+    license_check: true

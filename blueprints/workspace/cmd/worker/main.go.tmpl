@@ -1,0 +1,499 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/robfig/cron/v3"
+	"golang.org/x/sync/errgroup"
+
+	"{{.ModulePath}}/cmd/worker/jobs"
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// WorkerConfig holds worker-specific configuration
+type WorkerConfig struct {
+	Workers        int `mapstructure:"workers" validate:"min=1,max=100"`
+	MaxRetries     int `mapstructure:"max_retries" validate:"min=0,max=10"`
+	RetryDelay     int `mapstructure:"retry_delay" validate:"min=1"`
+	ShutdownGrace  int `mapstructure:"shutdown_grace" validate:"min=5,max=300"`
+	HealthPort     int `mapstructure:"health_port" validate:"min=1,max=65535"`
+}
+
+// Application holds the application dependencies
+type Application struct {
+	config       *config.Config
+	workerConfig WorkerConfig
+	logger       logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db           storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events       events.EventBus
+{{- end}}
+	cron         *cron.Cron
+	jobHandlers  map[string]jobs.Handler
+	shutdownCh   chan struct{}
+	wg           sync.WaitGroup
+}
+
+func main() {
+	// Load configuration
+	cfg, err := loadConfig()
+	if err != nil {
+		fmt.Printf("Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger
+	log := logger.New(logger.Config{
+		Level:  cfg.Logger.Level,
+		Format: cfg.Logger.Format,
+		Output: cfg.Logger.Output,
+	})
+
+	// Create application instance
+	app := &Application{
+		config:       cfg,
+		workerConfig: getWorkerConfig(),
+		logger:       log,
+		jobHandlers:  make(map[string]jobs.Handler),
+		shutdownCh:   make(chan struct{}),
+	}
+
+	// Initialize services
+	if err := app.initializeServices(); err != nil {
+		log.Fatal("Failed to initialize services", "error", err)
+	}
+
+	// Register job handlers
+	app.registerJobHandlers()
+
+	// Start worker
+	if err := app.run(); err != nil {
+		log.Fatal("Worker failed", "error", err)
+	}
+}
+
+// loadConfig loads the worker configuration
+func loadConfig() (*config.Config, error) {
+	// This would typically load from the same config as other services
+	// For now, we'll use a simplified version
+	return &config.Config{
+		Logger: config.LoggerConfig{
+			Level:  "info",
+			Format: "json",
+			Output: "stdout",
+		},
+{{- if ne .DatabaseType "none"}}
+		Database: config.DatabaseConfig{
+			Type:            "{{.DatabaseType}}",
+			Host:            getEnv("{{upper .ProjectName}}_DATABASE_HOST", "localhost"),
+			Port:            getEnvInt("{{upper .ProjectName}}_DATABASE_PORT", {{if eq .DatabaseType "postgres"}}5432{{else if eq .DatabaseType "mysql"}}3306{{else if eq .DatabaseType "mongodb"}}27017{{else}}0{{end}}),
+			Name:            getEnv("{{upper .ProjectName}}_DATABASE_NAME", "{{.ProjectName}}"),
+			User:            getEnv("{{upper .ProjectName}}_DATABASE_USER", "{{.ProjectName}}"),
+			Password:        getEnv("{{upper .ProjectName}}_DATABASE_PASSWORD", ""),
+			MaxOpenConns:    25,
+			MaxIdleConns:    5,
+			ConnMaxLifetime: 300,
+		},
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		MessageQueue: config.MessageQueueConfig{
+			Type:           "{{.MessageQueue}}",
+			Host:           getEnv("{{upper .ProjectName}}_MESSAGE_QUEUE_HOST", "localhost"),
+			Port:           getEnvInt("{{upper .ProjectName}}_MESSAGE_QUEUE_PORT", {{if eq .MessageQueue "redis"}}6379{{else if eq .MessageQueue "nats"}}4222{{else if eq .MessageQueue "kafka"}}9092{{else if eq .MessageQueue "rabbitmq"}}5672{{end}}),
+			User:           getEnv("{{upper .ProjectName}}_MESSAGE_QUEUE_USER", ""),
+			Password:       getEnv("{{upper .ProjectName}}_MESSAGE_QUEUE_PASSWORD", ""),
+			MaxConnections: 10,
+			MinConnections: 2,
+			IdleTimeout:    300,
+		},
+{{- end}}
+	}, nil
+}
+
+// getWorkerConfig returns worker-specific configuration
+func getWorkerConfig() WorkerConfig {
+	return WorkerConfig{
+		Workers:       getEnvInt("{{upper .ProjectName}}_WORKER_COUNT", 5),
+		MaxRetries:    getEnvInt("{{upper .ProjectName}}_WORKER_MAX_RETRIES", 3),
+		RetryDelay:    getEnvInt("{{upper .ProjectName}}_WORKER_RETRY_DELAY", 30),
+		ShutdownGrace: getEnvInt("{{upper .ProjectName}}_WORKER_SHUTDOWN_GRACE", 30),
+		HealthPort:    getEnvInt("{{upper .ProjectName}}_WORKER_HEALTH_PORT", 8081),
+	}
+}
+
+// initializeServices initializes all application services
+func (app *Application) initializeServices() error {
+	ctx := context.Background()
+
+{{- if ne .DatabaseType "none"}}
+	// Initialize database
+	app.logger.Info("Initializing database connection...")
+	db, err := storage.NewDatabase(&app.config.Database, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create database instance: %w", err)
+	}
+
+	if err := db.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	app.db = db
+	app.logger.Info("Database initialized successfully")
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Initialize event bus
+	app.logger.Info("Initializing event bus...")
+	eventBus, err := events.NewEventBus(&app.config.MessageQueue, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create event bus: %w", err)
+	}
+
+	if err := eventBus.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to event bus: %w", err)
+	}
+
+	app.events = eventBus
+	app.logger.Info("Event bus initialized successfully")
+{{- end}}
+
+	// Initialize cron scheduler
+	app.cron = cron.New(cron.WithLogger(cron.VerbosePrintfLogger(app.logger)))
+
+	return nil
+}
+
+// registerJobHandlers registers all job handlers
+func (app *Application) registerJobHandlers() {
+	// Register user job handlers
+	userJobHandler := jobs.NewUserJobHandler(
+		app.logger,
+{{- if ne .DatabaseType "none"}}
+		app.db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		app.events,
+{{- end}}
+	)
+	app.jobHandlers["user.cleanup"] = userJobHandler.CleanupExpiredUsers
+	app.jobHandlers["user.welcome"] = userJobHandler.SendWelcomeEmail
+	app.jobHandlers["user.export"] = userJobHandler.ExportUserData
+
+	// Register notification job handlers
+	notificationJobHandler := jobs.NewNotificationJobHandler(
+		app.logger,
+{{- if ne .DatabaseType "none"}}
+		app.db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		app.events,
+{{- end}}
+	)
+	app.jobHandlers["notification.send"] = notificationJobHandler.SendNotification
+	app.jobHandlers["notification.cleanup"] = notificationJobHandler.CleanupOldNotifications
+	app.jobHandlers["notification.retry"] = notificationJobHandler.RetryFailedNotifications
+
+	// Schedule recurring jobs
+	app.scheduleRecurringJobs()
+
+	app.logger.Info("Job handlers registered", "count", len(app.jobHandlers))
+}
+
+// scheduleRecurringJobs schedules recurring jobs using cron
+func (app *Application) scheduleRecurringJobs() {
+	// Cleanup expired users daily at 2 AM
+	app.cron.AddFunc("0 2 * * *", func() {
+		app.processJob("user.cleanup", map[string]interface{}{
+			"scheduled": true,
+			"type":      "recurring",
+		})
+	})
+
+	// Cleanup old notifications weekly on Sunday at 3 AM
+	app.cron.AddFunc("0 3 * * 0", func() {
+		app.processJob("notification.cleanup", map[string]interface{}{
+			"scheduled": true,
+			"type":      "recurring",
+		})
+	})
+
+	// Retry failed notifications every 30 minutes
+	app.cron.AddFunc("*/30 * * * *", func() {
+		app.processJob("notification.retry", map[string]interface{}{
+			"scheduled": true,
+			"type":      "recurring",
+		})
+	})
+
+	app.logger.Info("Recurring jobs scheduled")
+}
+
+// run starts the worker and handles graceful shutdown
+func (app *Application) run() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start cron scheduler
+	app.cron.Start()
+	app.logger.Info("Cron scheduler started")
+
+{{- if ne .MessageQueue "none"}}
+	// Start event listeners
+	if err := app.startEventListeners(ctx); err != nil {
+		return fmt.Errorf("failed to start event listeners: %w", err)
+	}
+{{- end}}
+
+	// Start worker pool
+	if err := app.startWorkerPool(ctx); err != nil {
+		return fmt.Errorf("failed to start worker pool: %w", err)
+	}
+
+	// Start health check server
+	go app.startHealthServer()
+
+	app.logger.Info("Worker started successfully", 
+		"workers", app.workerConfig.Workers,
+		"health_port", app.workerConfig.HealthPort)
+
+	// Wait for shutdown signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-quit:
+		app.logger.Info("Received shutdown signal", "signal", sig.String())
+	case <-app.shutdownCh:
+		app.logger.Info("Received shutdown from internal signal")
+	}
+
+	// Graceful shutdown
+	return app.shutdown(ctx, cancel)
+}
+
+{{- if ne .MessageQueue "none"}}
+// startEventListeners starts listening for events from the message queue
+func (app *Application) startEventListeners(ctx context.Context) error {
+	// Subscribe to user events
+	err := app.events.Subscribe(ctx, "users", func(ctx context.Context, event *events.Event) error {
+		app.logger.Debug("Received user event", "event_type", event.Type, "event_id", event.ID)
+		
+		switch event.Type {
+		case "user.created":
+			return app.processJob("user.welcome", event.Data)
+		default:
+			app.logger.Debug("Unhandled user event", "event_type", event.Type)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to user events: %w", err)
+	}
+
+	// Subscribe to notification events
+	err = app.events.Subscribe(ctx, "notifications", func(ctx context.Context, event *events.Event) error {
+		app.logger.Debug("Received notification event", "event_type", event.Type, "event_id", event.ID)
+		
+		switch event.Type {
+		case "notification.created":
+			return app.processJob("notification.send", event.Data)
+		default:
+			app.logger.Debug("Unhandled notification event", "event_type", event.Type)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to subscribe to notification events: %w", err)
+	}
+
+	app.logger.Info("Event listeners started")
+	return nil
+}
+{{- end}}
+
+// startWorkerPool starts the worker pool for processing jobs
+func (app *Application) startWorkerPool(ctx context.Context) error {
+	jobQueue := make(chan jobs.Job, app.workerConfig.Workers*2)
+
+	// Start workers
+	for i := 0; i < app.workerConfig.Workers; i++ {
+		app.wg.Add(1)
+		go app.worker(ctx, i, jobQueue)
+	}
+
+	app.logger.Info("Worker pool started", "workers", app.workerConfig.Workers)
+	return nil
+}
+
+// worker processes jobs from the job queue
+func (app *Application) worker(ctx context.Context, id int, jobQueue <-chan jobs.Job) {
+	defer app.wg.Done()
+
+	app.logger.Debug("Worker started", "worker_id", id)
+
+	for {
+		select {
+		case job := <-jobQueue:
+			app.processJobWithRetry(ctx, job)
+		case <-ctx.Done():
+			app.logger.Debug("Worker shutting down", "worker_id", id)
+			return
+		}
+	}
+}
+
+// processJob processes a single job
+func (app *Application) processJob(jobType string, data map[string]interface{}) error {
+	handler, exists := app.jobHandlers[jobType]
+	if !exists {
+		return fmt.Errorf("unknown job type: %s", jobType)
+	}
+
+	job := jobs.Job{
+		ID:        fmt.Sprintf("%s-%s", jobType, time.Now().Format("20060102-150405")),
+		Type:      jobType,
+		Data:      data,
+		CreatedAt: time.Now(),
+		Attempts:  0,
+	}
+
+	return app.processJobWithRetry(context.Background(), job)
+}
+
+// processJobWithRetry processes a job with retry logic
+func (app *Application) processJobWithRetry(ctx context.Context, job jobs.Job) error {
+	handler := app.jobHandlers[job.Type]
+	
+	for attempt := 0; attempt <= app.workerConfig.MaxRetries; attempt++ {
+		job.Attempts = attempt + 1
+		
+		app.logger.Info("Processing job", 
+			"job_id", job.ID, 
+			"job_type", job.Type, 
+			"attempt", job.Attempts)
+
+		err := handler(ctx, job)
+		if err == nil {
+			app.logger.Info("Job completed successfully", 
+				"job_id", job.ID, 
+				"job_type", job.Type, 
+				"attempts", job.Attempts)
+			return nil
+		}
+
+		app.logger.Error("Job failed", 
+			"job_id", job.ID, 
+			"job_type", job.Type, 
+			"attempt", job.Attempts, 
+			"error", err)
+
+		if attempt < app.workerConfig.MaxRetries {
+			// Wait before retrying
+			delay := time.Duration(app.workerConfig.RetryDelay) * time.Second
+			app.logger.Info("Retrying job", 
+				"job_id", job.ID, 
+				"delay", delay)
+			
+			select {
+			case <-time.After(delay):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	app.logger.Error("Job failed permanently", 
+		"job_id", job.ID, 
+		"job_type", job.Type, 
+		"max_attempts", app.workerConfig.MaxRetries+1)
+	
+	return fmt.Errorf("job failed after %d attempts", app.workerConfig.MaxRetries+1)
+}
+
+// startHealthServer starts the health check HTTP server
+func (app *Application) startHealthServer() {
+	// Simple health check implementation
+	// In a real implementation, you'd use a proper HTTP framework
+	app.logger.Info("Health server would start here", "port", app.workerConfig.HealthPort)
+}
+
+// shutdown performs graceful shutdown
+func (app *Application) shutdown(ctx context.Context, cancel context.CancelFunc) error {
+	app.logger.Info("Starting graceful shutdown...")
+
+	// Stop accepting new jobs
+	cancel()
+
+	// Stop cron scheduler
+	cronCtx := app.cron.Stop()
+	<-cronCtx.Done()
+	app.logger.Info("Cron scheduler stopped")
+
+	// Wait for workers to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		app.wg.Wait()
+		close(done)
+	}()
+
+	timeout := time.Duration(app.workerConfig.ShutdownGrace) * time.Second
+	select {
+	case <-done:
+		app.logger.Info("All workers stopped")
+	case <-time.After(timeout):
+		app.logger.Warn("Shutdown timeout reached, forcing exit")
+	}
+
+	// Close connections
+{{- if ne .DatabaseType "none"}}
+	if app.db != nil {
+		if err := app.db.Close(); err != nil {
+			app.logger.Error("Failed to close database connection", "error", err)
+		}
+	}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	if app.events != nil {
+		if err := app.events.Close(); err != nil {
+			app.logger.Error("Failed to close event bus connection", "error", err)
+		}
+	}
+{{- end}}
+
+	app.logger.Info("Graceful shutdown completed")
+	return nil
+}
+
+// Helper functions
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}

@@ -1,0 +1,562 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
+	"{{.ModulePath}}/pkg/models"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// UserService provides user-related business logic
+type UserService struct {
+	logger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus
+{{- end}}
+}
+
+// NewUserService creates a new user service
+func NewUserService(
+	logger logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) *UserService {
+	return &UserService{
+		logger: logger,
+{{- if ne .DatabaseType "none"}}
+		db:     db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events: events,
+{{- end}}
+	}
+}
+
+// CreateUser creates a new user
+func (s *UserService) CreateUser(ctx context.Context, req CreateUserRequest) (*models.User, error) {
+	s.logger.Info("Creating user", "email", req.Email, "name", req.Name)
+
+	// Validate request
+	if err := s.validateCreateUserRequest(req); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Check if user already exists
+	if exists, err := s.userExists(ctx, req.Email); err != nil {
+		return nil, fmt.Errorf("failed to check if user exists: %w", err)
+	} else if exists {
+		return nil, fmt.Errorf("user with email %s already exists", req.Email)
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	// Create user model
+	user := &models.User{
+		ID:           uuid.New().String(),
+		Name:         req.Name,
+		Email:        req.Email,
+		PasswordHash: string(hashedPassword),
+		Status:       "pending_verification",
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Save user to database
+	if err := s.saveUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to save user: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if s.events != nil {
+		event := events.NewEvent("user.created", "user-service", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	// Return user without password hash
+	userResponse := *user
+	userResponse.PasswordHash = ""
+	return &userResponse, nil
+}
+
+// GetUser retrieves a user by ID
+func (s *UserService) GetUser(ctx context.Context, userID string) (*models.User, error) {
+	s.logger.Debug("Getting user", "user_id", userID)
+
+	if userID == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+{{- else}}
+	// Mock user when no database is configured
+	user := &models.User{
+		ID:        userID,
+		Name:      "Mock User",
+		Email:     "mock@example.com",
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+{{- end}}
+
+	// Return user without password hash
+	userResponse := *user
+	userResponse.PasswordHash = ""
+	return &userResponse, nil
+}
+
+// UpdateUser updates an existing user
+func (s *UserService) UpdateUser(ctx context.Context, userID string, req UpdateUserRequest) (*models.User, error) {
+	s.logger.Info("Updating user", "user_id", userID)
+
+	if userID == "" {
+		return nil, fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Load existing user
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+
+	// Update fields
+	if req.Name != "" {
+		user.Name = req.Name
+	}
+	if req.Email != "" {
+		// Check if new email is already in use
+		if exists, err := s.userExistsByEmail(ctx, req.Email, userID); err != nil {
+			return nil, fmt.Errorf("failed to check email availability: %w", err)
+		} else if exists {
+			return nil, fmt.Errorf("email %s is already in use", req.Email)
+		}
+		user.Email = req.Email
+	}
+
+	user.UpdatedAt = time.Now()
+
+	// Save updated user
+	if err := s.saveUser(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to save user: %w", err)
+	}
+{{- else}}
+	// Mock user update when no database is configured
+	user := &models.User{
+		ID:        userID,
+		Name:      req.Name,
+		Email:     req.Email,
+		Status:    "active",
+		UpdatedAt: time.Now(),
+	}
+{{- end}}
+
+	s.logger.Info("User updated successfully", "user_id", userID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user updated event
+	if s.events != nil {
+		event := events.NewEvent("user.updated", "user-service", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish user updated event", "error", err)
+		}
+	}
+{{- end}}
+
+	// Return user without password hash
+	userResponse := *user
+	userResponse.PasswordHash = ""
+	return &userResponse, nil
+}
+
+// DeleteUser deletes a user
+func (s *UserService) DeleteUser(ctx context.Context, userID string) error {
+	s.logger.Info("Deleting user", "user_id", userID)
+
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Check if user exists
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to load user: %w", err)
+	}
+
+	// Soft delete by updating status
+	user.Status = "deleted"
+	user.UpdatedAt = time.Now()
+
+	if err := s.saveUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("User deleted successfully", "user_id", userID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user deleted event
+	if s.events != nil {
+		event := events.NewEvent("user.deleted", "user-service", map[string]interface{}{
+			"user_id": userID,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish user deleted event", "error", err)
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// ListUsers retrieves a list of users with pagination
+func (s *UserService) ListUsers(ctx context.Context, req ListUsersRequest) (*ListUsersResponse, error) {
+	s.logger.Debug("Listing users", "page", req.Page, "per_page", req.PerPage)
+
+{{- if ne .DatabaseType "none"}}
+	users, total, err := s.loadUsers(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load users: %w", err)
+	}
+{{- else}}
+	// Mock users when no database is configured
+	users := []*models.User{
+		{
+			ID:        uuid.New().String(),
+			Name:      "Mock User 1",
+			Email:     "user1@example.com",
+			Status:    "active",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			ID:        uuid.New().String(),
+			Name:      "Mock User 2", 
+			Email:     "user2@example.com",
+			Status:    "active",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+	total := int64(len(users))
+{{- end}}
+
+	// Remove password hashes from response
+	for _, user := range users {
+		user.PasswordHash = ""
+	}
+
+	response := &ListUsersResponse{
+		Users: users,
+		Pagination: PaginationResponse{
+			Page:       req.Page,
+			PerPage:    req.PerPage,
+			Total:      total,
+			TotalPages: (total + int64(req.PerPage) - 1) / int64(req.PerPage),
+		},
+	}
+
+	return response, nil
+}
+
+// VerifyUser verifies a user's email address
+func (s *UserService) VerifyUser(ctx context.Context, userID string, verificationToken string) error {
+	s.logger.Info("Verifying user", "user_id", userID)
+
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to load user: %w", err)
+	}
+
+	if user.Status != "pending_verification" {
+		return fmt.Errorf("user is not pending verification")
+	}
+
+	// In a real implementation, you'd validate the verification token
+	// For now, we'll just mark the user as verified
+	user.Status = "active"
+	user.VerifiedAt = &time.Time{}
+	*user.VerifiedAt = time.Now()
+	user.UpdatedAt = time.Now()
+
+	if err := s.saveUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to save user: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("User verified successfully", "user_id", userID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user verified event
+	if s.events != nil {
+		event := events.NewEvent("user.verified", "user-service", map[string]interface{}{
+			"user_id": userID,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish user verified event", "error", err)
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// ActivateUser activates a user account
+func (s *UserService) ActivateUser(ctx context.Context, userID string) error {
+	s.logger.Info("Activating user", "user_id", userID)
+
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to load user: %w", err)
+	}
+
+	user.Status = "active"
+	user.UpdatedAt = time.Now()
+
+	if err := s.saveUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to save user: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("User activated successfully", "user_id", userID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user activated event
+	if s.events != nil {
+		event := events.NewEvent("user.activated", "user-service", map[string]interface{}{
+			"user_id": userID,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish user activated event", "error", err)
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// DeactivateUser deactivates a user account
+func (s *UserService) DeactivateUser(ctx context.Context, userID string) error {
+	s.logger.Info("Deactivating user", "user_id", userID)
+
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to load user: %w", err)
+	}
+
+	user.Status = "inactive"
+	user.UpdatedAt = time.Now()
+
+	if err := s.saveUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to save user: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("User deactivated successfully", "user_id", userID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user deactivated event
+	if s.events != nil {
+		event := events.NewEvent("user.deactivated", "user-service", map[string]interface{}{
+			"user_id": userID,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish user deactivated event", "error", err)
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// ChangePassword changes a user's password
+func (s *UserService) ChangePassword(ctx context.Context, userID string, req ChangePasswordRequest) error {
+	s.logger.Info("Changing user password", "user_id", userID)
+
+	if userID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	user, err := s.loadUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to load user: %w", err)
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return fmt.Errorf("current password is incorrect")
+	}
+
+	// Hash new password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash new password: %w", err)
+	}
+
+	user.PasswordHash = string(hashedPassword)
+	user.UpdatedAt = time.Now()
+
+	if err := s.saveUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to save user: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("User password changed successfully", "user_id", userID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish password changed event
+	if s.events != nil {
+		event := events.NewEvent("user.password_changed", "user-service", map[string]interface{}{
+			"user_id": userID,
+		})
+
+		if err := s.events.Publish(ctx, "user.events", event); err != nil {
+			s.logger.Error("Failed to publish password changed event", "error", err)
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// Helper methods
+
+func (s *UserService) validateCreateUserRequest(req CreateUserRequest) error {
+	if req.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if req.Email == "" {
+		return fmt.Errorf("email is required")
+	}
+	if req.Password == "" {
+		return fmt.Errorf("password is required")
+	}
+	if len(req.Password) < 8 {
+		return fmt.Errorf("password must be at least 8 characters long")
+	}
+	return nil
+}
+
+{{- if ne .DatabaseType "none"}}
+func (s *UserService) userExists(ctx context.Context, email string) (bool, error) {
+	// In a real implementation, this would query the database
+	// Example: SELECT COUNT(*) FROM users WHERE email = ? AND status != 'deleted'
+	return false, nil
+}
+
+func (s *UserService) userExistsByEmail(ctx context.Context, email, excludeUserID string) (bool, error) {
+	// In a real implementation, this would query the database
+	// Example: SELECT COUNT(*) FROM users WHERE email = ? AND id != ? AND status != 'deleted'
+	return false, nil
+}
+
+func (s *UserService) saveUser(ctx context.Context, user *models.User) error {
+	// In a real implementation, this would save to database
+	// Example: INSERT/UPDATE users table
+	s.logger.Debug("Saving user", "user_id", user.ID)
+	return nil
+}
+
+func (s *UserService) loadUser(ctx context.Context, userID string) (*models.User, error) {
+	// In a real implementation, this would load from database
+	// Example: SELECT * FROM users WHERE id = ? AND status != 'deleted'
+	user := &models.User{
+		ID:        userID,
+		Name:      "Mock User",
+		Email:     "mock@example.com",
+		Status:    "active",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	return user, nil
+}
+
+func (s *UserService) loadUsers(ctx context.Context, req ListUsersRequest) ([]*models.User, int64, error) {
+	// In a real implementation, this would query the database with pagination
+	// Example: SELECT * FROM users WHERE status != 'deleted' ORDER BY created_at DESC LIMIT ? OFFSET ?
+	users := []*models.User{
+		{
+			ID:        uuid.New().String(),
+			Name:      "Mock User 1",
+			Email:     "user1@example.com",
+			Status:    "active",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			ID:        uuid.New().String(),
+			Name:      "Mock User 2",
+			Email:     "user2@example.com",
+			Status:    "active",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+	return users, int64(len(users)), nil
+}
+{{- end}}

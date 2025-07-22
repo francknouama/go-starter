@@ -1,0 +1,288 @@
+package routes
+
+import (
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+	"github.com/go-chi/chi/v5"
+{{- end}}
+
+	"{{.ModulePath}}/cmd/api/config"
+	"{{.ModulePath}}/cmd/api/handlers"
+	"{{.ModulePath}}/cmd/api/middleware"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+{{- if eq .Framework "gin"}}
+// Setup configures all routes for the Gin router
+func Setup(
+	r *gin.Engine,
+	cfg *config.Config,
+	log logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) {
+	// Setup middleware
+	r.Use(middleware.RequestIDMiddleware())
+	r.Use(middleware.LoggerMiddleware(log))
+	r.Use(middleware.RecoveryMiddleware(log))
+	r.Use(middleware.CORSMiddleware(cfg.CORS))
+
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+	
+	userHandler := handlers.NewUserHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+
+	// Health check routes
+	r.GET("/health", healthHandler.Health)
+	r.GET("/health/ready", healthHandler.Readiness)
+	r.GET("/health/live", healthHandler.Liveness)
+
+	// API routes
+	api := r.Group("/api/v1")
+	{
+		// User routes
+		users := api.Group("/users")
+		{
+			users.GET("", userHandler.ListUsers)
+			users.POST("", userHandler.CreateUser)
+			users.GET("/:id", userHandler.GetUser)
+			users.PUT("/:id", userHandler.UpdateUser)
+			users.DELETE("/:id", userHandler.DeleteUser)
+		}
+	}
+
+	// Root route
+	r.GET("/", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"service": "{{.ProjectName}} API",
+			"version": "1.0.0",
+			"status":  "running",
+		})
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+// Setup configures all routes for the Echo router
+func Setup(
+	e *echo.Echo,
+	cfg *config.Config,
+	log logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) {
+	// Setup middleware
+	middleware.SetupMiddleware(e, cfg, log)
+
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+	
+	userHandler := handlers.NewUserHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+
+	// Health check routes
+	e.GET("/health", healthHandler.Health)
+	e.GET("/health/ready", healthHandler.Readiness)
+	e.GET("/health/live", healthHandler.Liveness)
+
+	// API routes
+	api := e.Group("/api/v1")
+	{
+		// User routes
+		users := api.Group("/users")
+		users.GET("", userHandler.ListUsers)
+		users.POST("", userHandler.CreateUser)
+		users.GET("/:id", userHandler.GetUser)
+		users.PUT("/:id", userHandler.UpdateUser)
+		users.DELETE("/:id", userHandler.DeleteUser)
+	}
+
+	// Root route
+	e.GET("/", func(c echo.Context) error {
+		return c.JSON(200, map[string]interface{}{
+			"service": "{{.ProjectName}} API",
+			"version": "1.0.0",
+			"status":  "running",
+		})
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Setup configures all routes for the Fiber app
+func Setup(
+	app *fiber.App,
+	cfg *config.Config,
+	log logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) {
+	// Setup middleware
+	middleware.SetupMiddleware(app, cfg, log)
+
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+	
+	userHandler := handlers.NewUserHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+
+	// Health check routes
+	app.Get("/health", healthHandler.Health)
+	app.Get("/health/ready", healthHandler.Readiness)
+	app.Get("/health/live", healthHandler.Liveness)
+
+	// API routes
+	api := app.Group("/api/v1")
+
+	// User routes
+	users := api.Group("/users")
+	users.Get("/", userHandler.ListUsers)
+	users.Post("/", userHandler.CreateUser)
+	users.Get("/:id", userHandler.GetUser)
+	users.Put("/:id", userHandler.UpdateUser)
+	users.Delete("/:id", userHandler.DeleteUser)
+
+	// Root route
+	app.Get("/", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"service": "{{.ProjectName}} API",
+			"version": "1.0.0",
+			"status":  "running",
+		})
+	})
+}
+
+{{- else if eq .Framework "chi"}}
+// Setup configures all routes for the Chi router
+func Setup(
+	r chi.Router,
+	cfg *config.Config,
+	log logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) {
+	// Setup middleware
+	middleware.SetupMiddleware(r, cfg, log)
+
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+	
+	userHandler := handlers.NewUserHandler(
+		log,
+{{- if ne .DatabaseType "none"}}
+		db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events,
+{{- end}}
+	)
+
+	// Health check routes
+	r.Get("/health", healthHandler.Health)
+	r.Get("/health/ready", healthHandler.Readiness)
+	r.Get("/health/live", healthHandler.Liveness)
+
+	// API routes
+	r.Route("/api/v1", func(r chi.Router) {
+		// User routes
+		r.Route("/users", func(r chi.Router) {
+			r.Get("/", userHandler.ListUsers)
+			r.Post("/", userHandler.CreateUser)
+			r.Get("/{id}", userHandler.GetUser)
+			r.Put("/{id}", userHandler.UpdateUser)
+			r.Delete("/{id}", userHandler.DeleteUser)
+		})
+	})
+
+	// Root route
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{
+			"service": "{{.ProjectName}} API",
+			"version": "1.0.0",
+			"status": "running"
+		}`))
+	})
+}
+{{- end}}

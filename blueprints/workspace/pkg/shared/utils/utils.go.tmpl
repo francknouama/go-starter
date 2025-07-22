@@ -1,0 +1,351 @@
+package utils
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"reflect"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// StringUtils provides string manipulation utilities
+type StringUtils struct{}
+
+// NewStringUtils creates a new StringUtils instance
+func NewStringUtils() *StringUtils {
+	return &StringUtils{}
+}
+
+// IsEmpty checks if a string is empty or contains only whitespace
+func (s *StringUtils) IsEmpty(str string) bool {
+	return strings.TrimSpace(str) == ""
+}
+
+// IsNotEmpty checks if a string is not empty and contains non-whitespace characters
+func (s *StringUtils) IsNotEmpty(str string) bool {
+	return !s.IsEmpty(str)
+}
+
+// TrimToNil trims whitespace and returns nil if the result is empty
+func (s *StringUtils) TrimToNil(str string) *string {
+	trimmed := strings.TrimSpace(str)
+	if trimmed == "" {
+		return nil
+	}
+	return &trimmed
+}
+
+// DefaultIfEmpty returns the default value if the string is empty
+func (s *StringUtils) DefaultIfEmpty(str, defaultValue string) string {
+	if s.IsEmpty(str) {
+		return defaultValue
+	}
+	return str
+}
+
+// ToSnakeCase converts a string to snake_case
+func (s *StringUtils) ToSnakeCase(str string) string {
+	re := regexp.MustCompile("([a-z0-9])([A-Z])")
+	snake := re.ReplaceAllString(str, "${1}_${2}")
+	return strings.ToLower(snake)
+}
+
+// ToCamelCase converts a string to camelCase
+func (s *StringUtils) ToCamelCase(str string) string {
+	words := strings.FieldsFunc(str, func(r rune) bool {
+		return r == '_' || r == '-' || r == ' '
+	})
+	
+	if len(words) == 0 {
+		return ""
+	}
+	
+	result := strings.ToLower(words[0])
+	for i := 1; i < len(words); i++ {
+		if len(words[i]) > 0 {
+			result += strings.ToUpper(string(words[i][0])) + strings.ToLower(words[i][1:])
+		}
+	}
+	
+	return result
+}
+
+// ToPascalCase converts a string to PascalCase
+func (s *StringUtils) ToPascalCase(str string) string {
+	camel := s.ToCamelCase(str)
+	if len(camel) == 0 {
+		return ""
+	}
+	return strings.ToUpper(string(camel[0])) + camel[1:]
+}
+
+// Truncate truncates a string to the specified length
+func (s *StringUtils) Truncate(str string, length int) string {
+	if len(str) <= length {
+		return str
+	}
+	return str[:length]
+}
+
+// TruncateWithEllipsis truncates a string and adds ellipsis if needed
+func (s *StringUtils) TruncateWithEllipsis(str string, length int) string {
+	if len(str) <= length {
+		return str
+	}
+	if length <= 3 {
+		return s.Truncate(str, length)
+	}
+	return str[:length-3] + "..."
+}
+
+// SliceUtils provides slice manipulation utilities
+type SliceUtils struct{}
+
+// NewSliceUtils creates a new SliceUtils instance
+func NewSliceUtils() *SliceUtils {
+	return &SliceUtils{}
+}
+
+// Contains checks if a slice contains a specific value
+func (s *SliceUtils) Contains(slice interface{}, item interface{}) bool {
+	sliceValue := reflect.ValueOf(slice)
+	if sliceValue.Kind() != reflect.Slice {
+		return false
+	}
+	
+	for i := 0; i < sliceValue.Len(); i++ {
+		if reflect.DeepEqual(sliceValue.Index(i).Interface(), item) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// ContainsString checks if a string slice contains a specific string
+func (s *SliceUtils) ContainsString(slice []string, item string) bool {
+	for _, v := range slice {
+		if v == item {
+			return true
+		}
+	}
+	return false
+}
+
+// UniqueStrings returns a slice with duplicate strings removed
+func (s *SliceUtils) UniqueStrings(slice []string) []string {
+	keys := make(map[string]bool)
+	var result []string
+	
+	for _, item := range slice {
+		if !keys[item] {
+			keys[item] = true
+			result = append(result, item)
+		}
+	}
+	
+	return result
+}
+
+// FilterStrings filters a string slice based on a predicate function
+func (s *SliceUtils) FilterStrings(slice []string, predicate func(string) bool) []string {
+	var result []string
+	for _, item := range slice {
+		if predicate(item) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+// MapStrings transforms a string slice using a mapper function
+func (s *SliceUtils) MapStrings(slice []string, mapper func(string) string) []string {
+	result := make([]string, len(slice))
+	for i, item := range slice {
+		result[i] = mapper(item)
+	}
+	return result
+}
+
+// CryptoUtils provides cryptographic utilities
+type CryptoUtils struct{}
+
+// NewCryptoUtils creates a new CryptoUtils instance
+func NewCryptoUtils() *CryptoUtils {
+	return &CryptoUtils{}
+}
+
+// GenerateRandomString generates a random string of specified length
+func (c *CryptoUtils) GenerateRandomString(length int) (string, error) {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate random string: %w", err)
+	}
+	
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	for i, b := range bytes {
+		bytes[i] = charset[b%byte(len(charset))]
+	}
+	
+	return string(bytes), nil
+}
+
+// GenerateRandomHex generates a random hexadecimal string
+func (c *CryptoUtils) GenerateRandomHex(length int) (string, error) {
+	bytes := make([]byte, (length+1)/2)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate random hex: %w", err)
+	}
+	
+	hex := hex.EncodeToString(bytes)
+	return hex[:length], nil
+}
+
+// HashSHA256 generates a SHA-256 hash of the input string
+func (c *CryptoUtils) HashSHA256(input string) string {
+	hash := sha256.Sum256([]byte(input))
+	return hex.EncodeToString(hash[:])
+}
+
+// HashSHA256Bytes generates a SHA-256 hash of the input bytes
+func (c *CryptoUtils) HashSHA256Bytes(input []byte) string {
+	hash := sha256.Sum256(input)
+	return hex.EncodeToString(hash[:])
+}
+
+// TimeUtils provides time manipulation utilities
+type TimeUtils struct{}
+
+// NewTimeUtils creates a new TimeUtils instance
+func NewTimeUtils() *TimeUtils {
+	return &TimeUtils{}
+}
+
+// Now returns the current time
+func (t *TimeUtils) Now() time.Time {
+	return time.Now()
+}
+
+// NowUTC returns the current time in UTC
+func (t *TimeUtils) NowUTC() time.Time {
+	return time.Now().UTC()
+}
+
+// ToUnixTimestamp converts a time to Unix timestamp
+func (t *TimeUtils) ToUnixTimestamp(time time.Time) int64 {
+	return time.Unix()
+}
+
+// FromUnixTimestamp converts a Unix timestamp to time
+func (t *TimeUtils) FromUnixTimestamp(timestamp int64) time.Time {
+	return time.Unix(timestamp, 0)
+}
+
+// FormatISO8601 formats a time as ISO 8601 string
+func (t *TimeUtils) FormatISO8601(time time.Time) string {
+	return time.Format(time.RFC3339)
+}
+
+// ParseISO8601 parses an ISO 8601 time string
+func (t *TimeUtils) ParseISO8601(timeStr string) (time.Time, error) {
+	return time.Parse(time.RFC3339, timeStr)
+}
+
+// FormatDateTime formats a time as a readable date-time string
+func (t *TimeUtils) FormatDateTime(time time.Time) string {
+	return time.Format("2006-01-02 15:04:05")
+}
+
+// FormatDate formats a time as a readable date string
+func (t *TimeUtils) FormatDate(time time.Time) string {
+	return time.Format("2006-01-02")
+}
+
+// IsWeekend checks if a time falls on a weekend
+func (t *TimeUtils) IsWeekend(time time.Time) bool {
+	weekday := time.Weekday()
+	return weekday == time.Saturday || weekday == time.Sunday
+}
+
+// StartOfDay returns the start of the day for the given time
+func (t *TimeUtils) StartOfDay(t2 time.Time) time.Time {
+	return time.Date(t2.Year(), t2.Month(), t2.Day(), 0, 0, 0, 0, t2.Location())
+}
+
+// EndOfDay returns the end of the day for the given time
+func (t *TimeUtils) EndOfDay(t2 time.Time) time.Time {
+	return time.Date(t2.Year(), t2.Month(), t2.Day(), 23, 59, 59, 999999999, t2.Location())
+}
+
+// DurationToHumanReadable converts a duration to a human-readable string
+func (t *TimeUtils) DurationToHumanReadable(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%.0fs", d.Seconds())
+	} else if d < time.Hour {
+		return fmt.Sprintf("%.0fm %.0fs", d.Minutes(), d.Seconds()-60*d.Minutes())
+	} else if d < 24*time.Hour {
+		hours := int(d.Hours())
+		minutes := int(d.Minutes()) - 60*hours
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	} else {
+		days := int(d.Hours()) / 24
+		hours := int(d.Hours()) - 24*days
+		return fmt.Sprintf("%dd %dh", days, hours)
+	}
+}
+
+// ValidationUtils provides validation utilities
+type ValidationUtils struct{}
+
+// NewValidationUtils creates a new ValidationUtils instance
+func NewValidationUtils() *ValidationUtils {
+	return &ValidationUtils{}
+}
+
+// IsValidEmail checks if a string is a valid email address
+func (v *ValidationUtils) IsValidEmail(email string) bool {
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(email)
+}
+
+// IsValidURL checks if a string is a valid URL
+func (v *ValidationUtils) IsValidURL(url string) bool {
+	urlRegex := regexp.MustCompile(`^https?://[^\s/$.?#].[^\s]*$`)
+	return urlRegex.MatchString(url)
+}
+
+// IsValidUUID checks if a string is a valid UUID
+func (v *ValidationUtils) IsValidUUID(uuid string) bool {
+	uuidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	return uuidRegex.MatchString(uuid)
+}
+
+// IsValidPhoneNumber checks if a string is a valid phone number (basic format)
+func (v *ValidationUtils) IsValidPhoneNumber(phone string) bool {
+	phoneRegex := regexp.MustCompile(`^\+?[1-9]\d{1,14}$`)
+	return phoneRegex.MatchString(strings.ReplaceAll(phone, " ", ""))
+}
+
+// IsAlphanumeric checks if a string contains only alphanumeric characters
+func (v *ValidationUtils) IsAlphanumeric(str string) bool {
+	alphanumericRegex := regexp.MustCompile(`^[a-zA-Z0-9]+$`)
+	return alphanumericRegex.MatchString(str)
+}
+
+// IsNumeric checks if a string contains only numeric characters
+func (v *ValidationUtils) IsNumeric(str string) bool {
+	numericRegex := regexp.MustCompile(`^[0-9]+$`)
+	return numericRegex.MatchString(str)
+}
+
+// Global utility instances for convenience
+var (
+	String     = NewStringUtils()
+	Slice      = NewSliceUtils()
+	Crypto     = NewCryptoUtils()
+	Time       = NewTimeUtils()
+	Validation = NewValidationUtils()
+)

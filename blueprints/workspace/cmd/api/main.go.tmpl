@@ -1,0 +1,449 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+{{- end}}
+
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// Application holds the application dependencies
+type Application struct {
+	config    *config.Config
+	logger    logger.Logger
+	startTime time.Time
+{{- if ne .DatabaseType "none"}}
+	db        storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events    events.EventBus
+{{- end}}
+{{- if eq .Framework "gin"}}
+	router    *gin.Engine
+{{- else if eq .Framework "echo"}}
+	router    *echo.Echo
+{{- else if eq .Framework "fiber"}}
+	router    *fiber.App
+{{- else if eq .Framework "chi"}}
+	router    *chi.Mux
+{{- end}}
+}
+
+// NewApplication creates a new application instance
+func NewApplication() *Application {
+	return &Application{
+		startTime: time.Now(),
+	}
+}
+
+// Initialize sets up the application dependencies
+func (app *Application) Initialize(ctx context.Context) error {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+	app.config = cfg
+
+	// Initialize logger
+	log, err := logger.New(cfg.Logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	app.logger = log
+
+	app.logger.Info("Starting {{.ProjectName}} API Server", 
+		"version", app.config.App.Version,
+		"environment", app.config.App.Environment,
+		"port", app.config.Server.Port,
+	)
+
+{{- if ne .DatabaseType "none"}}
+	// Initialize database
+	db, err := storage.NewDatabase(cfg.Database, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create database: %w", err)
+	}
+
+	if err := db.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	if err := db.Migrate(ctx); err != nil {
+		app.logger.Warn("Database migration failed", "error", err)
+	}
+
+	app.db = db
+	app.logger.Info("Database connected successfully")
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Initialize event bus
+	eventBus, err := events.NewEventBus(cfg.MessageQueue, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create event bus: %w", err)
+	}
+
+	if err := eventBus.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to event bus: %w", err)
+	}
+
+	app.events = eventBus
+	app.logger.Info("Event bus connected successfully")
+{{- end}}
+
+	// Initialize HTTP router
+	app.setupRouter()
+
+	app.logger.Info("Application initialized successfully")
+	return nil
+}
+
+// setupRouter configures the HTTP router with routes and middleware
+func (app *Application) setupRouter() {
+{{- if eq .Framework "gin"}}
+	// Set Gin mode based on environment
+	if app.config.App.Environment == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.New()
+	
+	// Add middleware
+	router.Use(app.loggingMiddleware())
+	router.Use(app.recoveryMiddleware())
+	router.Use(app.corsMiddleware())
+	router.Use(app.requestIDMiddleware())
+	
+	// Health check routes
+	router.GET("/health", app.healthHandler)
+	router.GET("/health/ready", app.readinessHandler)
+	router.GET("/health/live", app.livenessHandler)
+	
+	// API routes
+	v1 := router.Group("/api/v1")
+	{
+		// User routes
+		users := v1.Group("/users")
+		users.GET("", app.listUsersHandler)
+		users.POST("", app.createUserHandler)
+		users.GET("/:id", app.getUserHandler)
+		users.PUT("/:id", app.updateUserHandler)
+		users.DELETE("/:id", app.deleteUserHandler)
+		
+		// Notification routes  
+		notifications := v1.Group("/notifications")
+		notifications.GET("", app.listNotificationsHandler)
+		notifications.POST("", app.createNotificationHandler)
+		notifications.GET("/:id", app.getNotificationHandler)
+		notifications.PUT("/:id", app.updateNotificationHandler)
+		notifications.DELETE("/:id", app.deleteNotificationHandler)
+	}
+
+	app.router = router
+
+{{- else if eq .Framework "echo"}}
+	router := echo.New()
+	
+	// Add middleware
+	router.Use(app.loggingMiddleware())
+	router.Use(app.recoveryMiddleware())
+	router.Use(app.corsMiddleware())
+	router.Use(app.requestIDMiddleware())
+	
+	// Health check routes
+	router.GET("/health", app.healthHandler)
+	router.GET("/health/ready", app.readinessHandler)
+	router.GET("/health/live", app.livenessHandler)
+	
+	// API routes
+	v1 := router.Group("/api/v1")
+	{
+		// User routes
+		users := v1.Group("/users")
+		users.GET("", app.listUsersHandler)
+		users.POST("", app.createUserHandler)
+		users.GET("/:id", app.getUserHandler)
+		users.PUT("/:id", app.updateUserHandler)
+		users.DELETE("/:id", app.deleteUserHandler)
+		
+		// Notification routes
+		notifications := v1.Group("/notifications")
+		notifications.GET("", app.listNotificationsHandler)
+		notifications.POST("", app.createNotificationHandler)
+		notifications.GET("/:id", app.getNotificationHandler)
+		notifications.PUT("/:id", app.updateNotificationHandler)
+		notifications.DELETE("/:id", app.deleteNotificationHandler)
+	}
+
+	app.router = router
+
+{{- else if eq .Framework "fiber"}}
+	router := fiber.New(fiber.Config{
+		AppName:               "{{.ProjectName}} API",
+		DisableStartupMessage: app.config.App.Environment == "production",
+		ErrorHandler:          app.errorHandler,
+	})
+	
+	// Add middleware
+	router.Use(app.loggingMiddleware())
+	router.Use(app.recoveryMiddleware())
+	router.Use(app.corsMiddleware())
+	router.Use(app.requestIDMiddleware())
+	
+	// Health check routes
+	router.Get("/health", app.healthHandler)
+	router.Get("/health/ready", app.readinessHandler)
+	router.Get("/health/live", app.livenessHandler)
+	
+	// API routes
+	v1 := router.Group("/api/v1")
+	
+	// User routes
+	users := v1.Group("/users")
+	users.Get("", app.listUsersHandler)
+	users.Post("", app.createUserHandler)
+	users.Get("/:id", app.getUserHandler)
+	users.Put("/:id", app.updateUserHandler)
+	users.Delete("/:id", app.deleteUserHandler)
+	
+	// Notification routes
+	notifications := v1.Group("/notifications")
+	notifications.Get("", app.listNotificationsHandler)
+	notifications.Post("", app.createNotificationHandler)
+	notifications.Get("/:id", app.getNotificationHandler)
+	notifications.Put("/:id", app.updateNotificationHandler)
+	notifications.Delete("/:id", app.deleteNotificationHandler)
+
+	app.router = router
+
+{{- else if eq .Framework "chi"}}
+	router := chi.NewRouter()
+	
+	// Add middleware
+	router.Use(app.loggingMiddleware())
+	router.Use(app.recoveryMiddleware())
+	router.Use(app.corsMiddleware())
+	router.Use(app.requestIDMiddleware())
+	
+	// Health check routes
+	router.Get("/health", app.healthHandler)
+	router.Get("/health/ready", app.readinessHandler)
+	router.Get("/health/live", app.livenessHandler)
+	
+	// API routes
+	router.Route("/api/v1", func(r chi.Router) {
+		// User routes
+		r.Route("/users", func(r chi.Router) {
+			r.Get("/", app.listUsersHandler)
+			r.Post("/", app.createUserHandler)
+			r.Get("/{id}", app.getUserHandler)
+			r.Put("/{id}", app.updateUserHandler)
+			r.Delete("/{id}", app.deleteUserHandler)
+		})
+		
+		// Notification routes
+		r.Route("/notifications", func(r chi.Router) {
+			r.Get("/", app.listNotificationsHandler)
+			r.Post("/", app.createNotificationHandler)
+			r.Get("/{id}", app.getNotificationHandler)
+			r.Put("/{id}", app.updateNotificationHandler)
+			r.Delete("/{id}", app.deleteNotificationHandler)
+		})
+	})
+
+	app.router = router
+{{- end}}
+}
+
+// Start starts the HTTP server
+func (app *Application) Start() error {
+	addr := fmt.Sprintf(":%d", app.config.Server.Port)
+	
+{{- if eq .Framework "gin"}}
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      app.router,
+		ReadTimeout:  time.Duration(app.config.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(app.config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(app.config.Server.IdleTimeout) * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+{{- else if eq .Framework "echo"}}
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := app.router.Start(addr); err != nil && err != http.ErrServerClosed {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := app.router.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+{{- else if eq .Framework "fiber"}}
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := app.router.Listen(addr); err != nil {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Shutdown server
+	if err := app.router.Shutdown(); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+{{- else if eq .Framework "chi"}}
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      app.router,
+		ReadTimeout:  time.Duration(app.config.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(app.config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(app.config.Server.IdleTimeout) * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+{{- end}}
+
+	return nil
+}
+
+// Shutdown gracefully shuts down the application
+func (app *Application) Shutdown() error {
+	app.logger.Info("Shutting down application...")
+
+{{- if ne .MessageQueue "none"}}
+	// Close event bus
+	if app.events != nil {
+		if err := app.events.Close(); err != nil {
+			app.logger.Error("Failed to close event bus", "error", err)
+		}
+	}
+{{- end}}
+
+{{- if ne .DatabaseType "none"}}
+	// Close database
+	if app.db != nil {
+		if err := app.db.Close(); err != nil {
+			app.logger.Error("Failed to close database", "error", err)
+		}
+	}
+{{- end}}
+
+	app.logger.Info("Application shutdown complete")
+	return nil
+}
+
+func main() {
+	app := NewApplication()
+
+	// Initialize application
+	ctx := context.Background()
+	if err := app.Initialize(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize application: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		if err := app.Shutdown(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to shutdown application: %v\n", err)
+		}
+	}()
+
+	// Start the server
+	if err := app.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		os.Exit(1)
+	}
+}

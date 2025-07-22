@@ -1,0 +1,403 @@
+package jobs
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/pkg/models"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// UserJobHandler handles user-related background jobs
+type UserJobHandler struct {
+	logger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus
+{{- end}}
+}
+
+// NewUserJobHandler creates a new user job handler
+func NewUserJobHandler(
+	logger logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) *UserJobHandler {
+	return &UserJobHandler{
+		logger: logger,
+{{- if ne .DatabaseType "none"}}
+		db:     db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events: events,
+{{- end}}
+	}
+}
+
+// CleanupExpiredUsers removes users that have been marked for deletion
+func (h *UserJobHandler) CleanupExpiredUsers(ctx context.Context, job Job) error {
+	h.logger.Info("Starting user cleanup job", "job_id", job.ID)
+	
+	cutoffDate := time.Now().AddDate(0, 0, -30) // 30 days ago
+	deletedCount := 0
+	
+{{- if ne .DatabaseType "none"}}
+	// In a real implementation, this would query the database
+	// Example query: SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < ?
+	
+	h.logger.Info("Querying expired users", "cutoff_date", cutoffDate)
+	
+	// Mock implementation - in reality, you'd fetch from database
+	expiredUsers := []string{} // This would be populated from database query
+	
+	for _, userID := range expiredUsers {
+		select {
+		case <-ctx.Done():
+			h.logger.Info("User cleanup job cancelled", "deleted_count", deletedCount)
+			return ctx.Err()
+		default:
+		}
+		
+		// Delete user and associated data
+		if err := h.deleteUserData(ctx, userID); err != nil {
+			h.logger.Error("Failed to delete user data", "user_id", userID, "error", err)
+			continue
+		}
+		
+		deletedCount++
+		h.logger.Debug("User data deleted", "user_id", userID)
+	}
+{{- else}}
+	// Mock implementation when no database is configured
+	h.logger.Info("Mock user cleanup - no database configured")
+{{- end}}
+	
+	h.logger.Info("User cleanup job completed", 
+		"job_id", job.ID,
+		"deleted_count", deletedCount,
+		"cutoff_date", cutoffDate,
+	)
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish cleanup completion event
+	if h.events != nil {
+		event := events.NewEvent("user.cleanup.completed", "worker", map[string]interface{}{
+			"job_id":        job.ID,
+			"deleted_count": deletedCount,
+			"cutoff_date":   cutoffDate,
+		})
+		
+		if err := h.events.Publish(ctx, "user.events", event); err != nil {
+			h.logger.Error("Failed to publish cleanup completion event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}
+
+// SendWelcomeEmail sends a welcome email to newly registered users
+func (h *UserJobHandler) SendWelcomeEmail(ctx context.Context, job Job) error {
+	h.logger.Info("Starting welcome email job", "job_id", job.ID)
+	
+	// Extract user data from job
+	userID, ok := job.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid user_id in job data")
+	}
+	
+	userName, ok := job.Data["name"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid name in job data")
+	}
+	
+	userEmail, ok := job.Data["email"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid email in job data")
+	}
+	
+	h.logger.Info("Sending welcome email", 
+		"user_id", userID,
+		"email", userEmail,
+		"name", userName,
+	)
+	
+	// In a real implementation, this would:
+	// 1. Load email template
+	// 2. Personalize the content
+	// 3. Send via email service (SendGrid, SES, etc.)
+	// 4. Track delivery status
+	
+	// Mock email sending with delay to simulate real work
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(2 * time.Second):
+		// Email "sent"
+	}
+	
+	h.logger.Info("Welcome email sent successfully", 
+		"user_id", userID,
+		"email", userEmail,
+	)
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish email sent event
+	if h.events != nil {
+		event := events.NewEvent("user.welcome_email.sent", "worker", map[string]interface{}{
+			"user_id": userID,
+			"email":   userEmail,
+			"job_id":  job.ID,
+		})
+		
+		if err := h.events.Publish(ctx, "user.events", event); err != nil {
+			h.logger.Error("Failed to publish welcome email sent event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}
+
+// ExportUserData exports user data for GDPR compliance or backup purposes
+func (h *UserJobHandler) ExportUserData(ctx context.Context, job Job) error {
+	h.logger.Info("Starting user data export job", "job_id", job.ID)
+	
+	// Extract parameters from job data
+	userID, ok := job.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid user_id in job data")
+	}
+	
+	exportFormat, ok := job.Data["format"].(string)
+	if !ok {
+		exportFormat = "json" // default format
+	}
+	
+	h.logger.Info("Exporting user data", 
+		"user_id", userID,
+		"format", exportFormat,
+	)
+	
+{{- if ne .DatabaseType "none"}}
+	// Collect user data from various sources
+	userData, err := h.collectUserData(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to collect user data: %w", err)
+	}
+	
+	// Export data in requested format
+	exportData, err := h.formatExportData(userData, exportFormat)
+	if err != nil {
+		return fmt.Errorf("failed to format export data: %w", err)
+	}
+	
+	// Store export file (in practice, this might be S3, GCS, etc.)
+	exportPath := fmt.Sprintf("/exports/user_%s_%s.%s", 
+		userID, 
+		time.Now().Format("20060102_150405"),
+		exportFormat,
+	)
+	
+	h.logger.Info("User data export created", 
+		"user_id", userID,
+		"export_path", exportPath,
+		"size_bytes", len(exportData),
+	)
+{{- else}}
+	// Mock implementation when no database is configured
+	exportPath := fmt.Sprintf("/exports/user_%s_%s.%s", 
+		userID, 
+		time.Now().Format("20060102_150405"),
+		exportFormat,
+	)
+	
+	h.logger.Info("Mock user data export - no database configured", 
+		"user_id", userID,
+		"export_path", exportPath,
+	)
+{{- end}}
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish export completion event
+	if h.events != nil {
+		event := events.NewEvent("user.data_export.completed", "worker", map[string]interface{}{
+			"user_id":     userID,
+			"export_path": exportPath,
+			"format":      exportFormat,
+			"job_id":      job.ID,
+		})
+		
+		if err := h.events.Publish(ctx, "user.events", event); err != nil {
+			h.logger.Error("Failed to publish export completion event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}
+
+{{- if ne .DatabaseType "none"}}
+// deleteUserData deletes all data associated with a user
+func (h *UserJobHandler) deleteUserData(ctx context.Context, userID string) error {
+	// In a real implementation, this would:
+	// 1. Delete user profile
+	// 2. Delete user content
+	// 3. Delete user sessions
+	// 4. Delete user notifications
+	// 5. Anonymize user analytics data
+	// 6. Remove from search indexes
+	
+	h.logger.Debug("Deleting user data", "user_id", userID)
+	
+	// Mock deletion with delay
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(100 * time.Millisecond):
+		// Data "deleted"
+	}
+	
+	return nil
+}
+
+// collectUserData gathers all user data for export
+func (h *UserJobHandler) collectUserData(ctx context.Context, userID string) (map[string]interface{}, error) {
+	userData := map[string]interface{}{
+		"user_profile": map[string]interface{}{
+			"id":         userID,
+			"created_at": time.Now().Format(time.RFC3339),
+			// In reality, this would query the database
+		},
+		"user_content": []map[string]interface{}{
+			// User-generated content
+		},
+		"user_activity": []map[string]interface{}{
+			// User activity logs
+		},
+		"user_preferences": map[string]interface{}{
+			// User settings and preferences
+		},
+	}
+	
+	h.logger.Debug("User data collected", 
+		"user_id", userID,
+		"data_keys", len(userData),
+	)
+	
+	return userData, nil
+}
+
+// formatExportData formats the user data for export
+func (h *UserJobHandler) formatExportData(userData map[string]interface{}, format string) ([]byte, error) {
+	switch format {
+	case "json":
+		// In a real implementation, you'd use json.Marshal
+		return []byte(`{"mock": "export data"}`), nil
+	case "xml":
+		return []byte(`<export><mock>export data</mock></export>`), nil
+	case "csv":
+		return []byte(`field1,field2\nvalue1,value2`), nil
+	default:
+		return nil, fmt.Errorf("unsupported export format: %s", format)
+	}
+}
+{{- end}}
+
+// SendPasswordResetEmail sends a password reset email to users
+func (h *UserJobHandler) SendPasswordResetEmail(ctx context.Context, job Job) error {
+	h.logger.Info("Starting password reset email job", "job_id", job.ID)
+	
+	userEmail, ok := job.Data["email"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid email in job data")
+	}
+	
+	resetToken, ok := job.Data["reset_token"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid reset_token in job data")
+	}
+	
+	h.logger.Info("Sending password reset email", "email", userEmail)
+	
+	// Mock email sending
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(1 * time.Second):
+		// Email "sent"
+	}
+	
+	h.logger.Info("Password reset email sent", "email", userEmail)
+	
+{{- if ne .MessageQueue "none"}}
+	// Publish password reset email sent event
+	if h.events != nil {
+		event := events.NewEvent("user.password_reset_email.sent", "worker", map[string]interface{}{
+			"email":       userEmail,
+			"reset_token": resetToken,
+			"job_id":      job.ID,
+		})
+		
+		if err := h.events.Publish(ctx, "user.events", event); err != nil {
+			h.logger.Error("Failed to publish password reset email sent event", "error", err)
+		}
+	}
+{{- end}}
+	
+	return nil
+}
+
+// ProcessUserAnalytics processes user analytics data
+func (h *UserJobHandler) ProcessUserAnalytics(ctx context.Context, job Job) error {
+	h.logger.Info("Starting user analytics processing job", "job_id", job.ID)
+	
+	userID, ok := job.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid user_id in job data")
+	}
+	
+	eventType, ok := job.Data["event_type"].(string)
+	if !ok {
+		return fmt.Errorf("missing or invalid event_type in job data")
+	}
+	
+	h.logger.Info("Processing user analytics", 
+		"user_id", userID,
+		"event_type", eventType,
+	)
+	
+	// In a real implementation, this would:
+	// 1. Aggregate user activity data
+	// 2. Update user metrics
+	// 3. Generate insights
+	// 4. Store analytics data
+	
+	// Mock processing
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(500 * time.Millisecond):
+		// Analytics "processed"
+	}
+	
+	h.logger.Info("User analytics processed", 
+		"user_id", userID,
+		"event_type", eventType,
+	)
+	
+	return nil
+}

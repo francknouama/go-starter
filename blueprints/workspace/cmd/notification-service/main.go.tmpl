@@ -1,0 +1,634 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+{{- else if eq .Framework "chi"}}
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+{{- end}}
+
+	"{{.ModulePath}}/cmd/notification-service/handlers"
+	"{{.ModulePath}}/cmd/notification-service/services"
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// Application holds the application dependencies
+type Application struct {
+	config             *config.Config
+	logger             logger.Logger
+	notificationService *services.NotificationService
+{{- if ne .DatabaseType "none"}}
+	db                 storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events             events.EventBus
+{{- end}}
+{{- if eq .Framework "gin"}}
+	router             *gin.Engine
+{{- else if eq .Framework "echo"}}
+	router             *echo.Echo
+{{- else if eq .Framework "fiber"}}
+	router             *fiber.App
+{{- else if eq .Framework "chi"}}
+	router             *chi.Mux
+{{- end}}
+}
+
+// NewApplication creates a new application instance
+func NewApplication() *Application {
+	return &Application{}
+}
+
+// Initialize sets up the application dependencies
+func (app *Application) Initialize(ctx context.Context) error {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+	app.config = cfg
+
+	// Initialize logger
+	log, err := logger.New(cfg.Logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	app.logger = log
+
+	app.logger.Info("Starting {{.ProjectName}} Notification Service", 
+		"version", app.config.App.Version,
+		"environment", app.config.App.Environment,
+		"port", app.config.Server.Port,
+	)
+
+{{- if ne .DatabaseType "none"}}
+	// Initialize database
+	db, err := storage.NewDatabase(cfg.Database, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create database: %w", err)
+	}
+
+	if err := db.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	if err := db.Migrate(ctx); err != nil {
+		app.logger.Warn("Database migration failed", "error", err)
+	}
+
+	app.db = db
+	app.logger.Info("Database connected successfully")
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Initialize event bus
+	eventBus, err := events.NewEventBus(cfg.MessageQueue, app.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create event bus: %w", err)
+	}
+
+	if err := eventBus.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect to event bus: %w", err)
+	}
+
+	app.events = eventBus
+	app.logger.Info("Event bus connected successfully")
+	
+	// Start message processing
+	go app.startMessageProcessing(ctx)
+{{- end}}
+
+	// Initialize notification service
+	app.notificationService = services.NewNotificationService(
+		app.logger,
+{{- if ne .DatabaseType "none"}}
+		app.db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		app.events,
+{{- end}}
+	)
+
+	// Initialize HTTP router
+	app.setupRouter()
+
+	app.logger.Info("Notification service initialized successfully")
+	return nil
+}
+
+{{- if ne .MessageQueue "none"}}
+// startMessageProcessing starts processing messages from the event bus
+func (app *Application) startMessageProcessing(ctx context.Context) {
+	// Subscribe to notification events
+	if err := app.events.Subscribe(ctx, "notification.events", app.handleNotificationMessage); err != nil {
+		app.logger.Error("Failed to subscribe to notification events", "error", err)
+		return
+	}
+	
+	// Subscribe to user events to send notifications
+	if err := app.events.Subscribe(ctx, "user.events", app.handleUserMessage); err != nil {
+		app.logger.Error("Failed to subscribe to user events", "error", err)
+		return
+	}
+	
+	app.logger.Info("Message processing started")
+}
+
+// handleNotificationMessage processes notification events
+func (app *Application) handleNotificationMessage(event *events.Event) error {
+	app.logger.Info("Processing notification message", 
+		"event_id", event.ID,
+		"event_type", event.Type,
+		"source", event.Source,
+	)
+	
+	switch event.Type {
+	case "notification.created":
+		return app.processNotificationCreated(event)
+	case "notification.send":
+		return app.processNotificationSend(event)
+	case "notification.retry":
+		return app.processNotificationRetry(event)
+	default:
+		app.logger.Warn("Unknown notification event type", "type", event.Type)
+	}
+	
+	return nil
+}
+
+// handleUserMessage processes user-related events for notifications
+func (app *Application) handleUserMessage(event *events.Event) error {
+	app.logger.Info("Processing user message for notifications", 
+		"event_id", event.ID,
+		"event_type", event.Type,
+		"source", event.Source,
+	)
+	
+	switch event.Type {
+	case "user.created":
+		return app.sendWelcomeNotification(event)
+	case "user.verified":
+		return app.sendVerificationConfirmation(event)
+	case "user.password_changed":
+		return app.sendPasswordChangeConfirmation(event)
+	default:
+		app.logger.Debug("No notification needed for user event", "type", event.Type)
+	}
+	
+	return nil
+}
+
+// Event processing methods
+func (app *Application) processNotificationCreated(event *events.Event) error {
+	notificationID, ok := event.Data["notification_id"].(string)
+	if !ok {
+		return fmt.Errorf("invalid notification_id in event data")
+	}
+	
+	// Process the notification (send it)
+	return app.notificationService.ProcessNotification(context.Background(), notificationID)
+}
+
+func (app *Application) processNotificationSend(event *events.Event) error {
+	// Direct send request from another service
+	return app.notificationService.SendNotificationFromEvent(context.Background(), event.Data)
+}
+
+func (app *Application) processNotificationRetry(event *events.Event) error {
+	notificationID, ok := event.Data["notification_id"].(string)
+	if !ok {
+		return fmt.Errorf("invalid notification_id in event data")
+	}
+	
+	// Retry sending the notification
+	return app.notificationService.RetryNotification(context.Background(), notificationID)
+}
+
+func (app *Application) sendWelcomeNotification(event *events.Event) error {
+	userID, ok := event.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("invalid user_id in event data")
+	}
+	
+	email, ok := event.Data["email"].(string)
+	if !ok {
+		return fmt.Errorf("invalid email in event data")
+	}
+	
+	name, ok := event.Data["name"].(string)
+	if !ok {
+		return fmt.Errorf("invalid name in event data")
+	}
+	
+	// Create and send welcome notification
+	return app.notificationService.SendWelcomeNotification(context.Background(), userID, email, name)
+}
+
+func (app *Application) sendVerificationConfirmation(event *events.Event) error {
+	userID, ok := event.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("invalid user_id in event data")
+	}
+	
+	// Send verification confirmation
+	return app.notificationService.SendVerificationConfirmation(context.Background(), userID)
+}
+
+func (app *Application) sendPasswordChangeConfirmation(event *events.Event) error {
+	userID, ok := event.Data["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("invalid user_id in event data")
+	}
+	
+	// Send password change confirmation
+	return app.notificationService.SendPasswordChangeConfirmation(context.Background(), userID)
+}
+{{- end}}
+
+// setupRouter configures the HTTP router with routes and middleware
+func (app *Application) setupRouter() {
+{{- if eq .Framework "gin"}}
+	// Set Gin mode based on environment
+	if app.config.App.Environment == "production" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	router := gin.New()
+	
+	// Add middleware
+	router.Use(app.loggingMiddleware())
+	router.Use(app.recoveryMiddleware())
+	router.Use(app.corsMiddleware())
+	
+	// Health check routes
+	router.GET("/health", app.healthHandler)
+	router.GET("/health/ready", app.readinessHandler)
+	router.GET("/health/live", app.livenessHandler)
+	
+	// Notification service routes
+	notificationHandler := handlers.NewNotificationHandler(app.notificationService, app.logger)
+	v1 := router.Group("/api/v1")
+	{
+		notifications := v1.Group("/notifications")
+		notifications.GET("", notificationHandler.ListNotifications)
+		notifications.POST("", notificationHandler.CreateNotification)
+		notifications.GET("/:id", notificationHandler.GetNotification)
+		notifications.PUT("/:id", notificationHandler.UpdateNotification)
+		notifications.DELETE("/:id", notificationHandler.DeleteNotification)
+		notifications.POST("/:id/send", notificationHandler.SendNotification)
+		notifications.POST("/:id/retry", notificationHandler.RetryNotification)
+		notifications.POST("/send-bulk", notificationHandler.SendBulkNotifications)
+		
+		// Template management
+		templates := v1.Group("/templates")
+		templates.GET("", notificationHandler.ListTemplates)
+		templates.POST("", notificationHandler.CreateTemplate)
+		templates.GET("/:id", notificationHandler.GetTemplate)
+		templates.PUT("/:id", notificationHandler.UpdateTemplate)
+		templates.DELETE("/:id", notificationHandler.DeleteTemplate)
+		templates.POST("/:id/preview", notificationHandler.PreviewTemplate)
+		
+		// Statistics and analytics
+		stats := v1.Group("/stats")
+		stats.GET("/summary", notificationHandler.GetStatsSummary)
+		stats.GET("/delivery", notificationHandler.GetDeliveryStats)
+		stats.GET("/performance", notificationHandler.GetPerformanceStats)
+	}
+
+	app.router = router
+
+{{- else if eq .Framework "echo"}}
+	router := echo.New()
+	
+	// Add middleware
+	router.Use(middleware.Logger())
+	router.Use(middleware.Recover())
+	router.Use(middleware.CORS())
+	
+	// Health check routes
+	router.GET("/health", app.healthHandler)
+	router.GET("/health/ready", app.readinessHandler)
+	router.GET("/health/live", app.livenessHandler)
+	
+	// Notification service routes
+	notificationHandler := handlers.NewNotificationHandler(app.notificationService, app.logger)
+	v1 := router.Group("/api/v1")
+	{
+		notifications := v1.Group("/notifications")
+		notifications.GET("", notificationHandler.ListNotifications)
+		notifications.POST("", notificationHandler.CreateNotification)
+		notifications.GET("/:id", notificationHandler.GetNotification)
+		notifications.PUT("/:id", notificationHandler.UpdateNotification)
+		notifications.DELETE("/:id", notificationHandler.DeleteNotification)
+		notifications.POST("/:id/send", notificationHandler.SendNotification)
+		notifications.POST("/:id/retry", notificationHandler.RetryNotification)
+		notifications.POST("/send-bulk", notificationHandler.SendBulkNotifications)
+		
+		// Template management
+		templates := v1.Group("/templates")
+		templates.GET("", notificationHandler.ListTemplates)
+		templates.POST("", notificationHandler.CreateTemplate)
+		templates.GET("/:id", notificationHandler.GetTemplate)
+		templates.PUT("/:id", notificationHandler.UpdateTemplate)
+		templates.DELETE("/:id", notificationHandler.DeleteTemplate)
+		templates.POST("/:id/preview", notificationHandler.PreviewTemplate)
+		
+		// Statistics and analytics
+		stats := v1.Group("/stats")
+		stats.GET("/summary", notificationHandler.GetStatsSummary)
+		stats.GET("/delivery", notificationHandler.GetDeliveryStats)
+		stats.GET("/performance", notificationHandler.GetPerformanceStats)
+	}
+
+	app.router = router
+
+{{- else if eq .Framework "fiber"}}
+	router := fiber.New(fiber.Config{
+		AppName:               "{{.ProjectName}} Notification Service",
+		DisableStartupMessage: app.config.App.Environment == "production",
+	})
+	
+	// Add middleware
+	router.Use(logger.New())
+	router.Use(recover.New())
+	router.Use(cors.New())
+	
+	// Health check routes
+	router.Get("/health", app.healthHandler)
+	router.Get("/health/ready", app.readinessHandler)
+	router.Get("/health/live", app.livenessHandler)
+	
+	// Notification service routes
+	notificationHandler := handlers.NewNotificationHandler(app.notificationService, app.logger)
+	v1 := router.Group("/api/v1")
+	
+	notifications := v1.Group("/notifications")
+	notifications.Get("", notificationHandler.ListNotifications)
+	notifications.Post("", notificationHandler.CreateNotification)
+	notifications.Get("/:id", notificationHandler.GetNotification)
+	notifications.Put("/:id", notificationHandler.UpdateNotification)
+	notifications.Delete("/:id", notificationHandler.DeleteNotification)
+	notifications.Post("/:id/send", notificationHandler.SendNotification)
+	notifications.Post("/:id/retry", notificationHandler.RetryNotification)
+	notifications.Post("/send-bulk", notificationHandler.SendBulkNotifications)
+	
+	// Template management
+	templates := v1.Group("/templates")
+	templates.Get("", notificationHandler.ListTemplates)
+	templates.Post("", notificationHandler.CreateTemplate)
+	templates.Get("/:id", notificationHandler.GetTemplate)
+	templates.Put("/:id", notificationHandler.UpdateTemplate)
+	templates.Delete("/:id", notificationHandler.DeleteTemplate)
+	templates.Post("/:id/preview", notificationHandler.PreviewTemplate)
+	
+	// Statistics and analytics
+	stats := v1.Group("/stats")
+	stats.Get("/summary", notificationHandler.GetStatsSummary)
+	stats.Get("/delivery", notificationHandler.GetDeliveryStats)
+	stats.Get("/performance", notificationHandler.GetPerformanceStats)
+
+	app.router = router
+
+{{- else if eq .Framework "chi"}}
+	router := chi.NewRouter()
+	
+	// Add middleware
+	router.Use(middleware.Logger)
+	router.Use(middleware.Recoverer)
+	router.Use(middleware.RealIP)
+	router.Use(middleware.RequestID)
+	
+	// Health check routes
+	router.Get("/health", app.healthHandler)
+	router.Get("/health/ready", app.readinessHandler)
+	router.Get("/health/live", app.livenessHandler)
+	
+	// Notification service routes
+	notificationHandler := handlers.NewNotificationHandler(app.notificationService, app.logger)
+	router.Route("/api/v1", func(r chi.Router) {
+		r.Route("/notifications", func(r chi.Router) {
+			r.Get("/", notificationHandler.ListNotifications)
+			r.Post("/", notificationHandler.CreateNotification)
+			r.Get("/{id}", notificationHandler.GetNotification)
+			r.Put("/{id}", notificationHandler.UpdateNotification)
+			r.Delete("/{id}", notificationHandler.DeleteNotification)
+			r.Post("/{id}/send", notificationHandler.SendNotification)
+			r.Post("/{id}/retry", notificationHandler.RetryNotification)
+			r.Post("/send-bulk", notificationHandler.SendBulkNotifications)
+		})
+		
+		// Template management
+		r.Route("/templates", func(r chi.Router) {
+			r.Get("/", notificationHandler.ListTemplates)
+			r.Post("/", notificationHandler.CreateTemplate)
+			r.Get("/{id}", notificationHandler.GetTemplate)
+			r.Put("/{id}", notificationHandler.UpdateTemplate)
+			r.Delete("/{id}", notificationHandler.DeleteTemplate)
+			r.Post("/{id}/preview", notificationHandler.PreviewTemplate)
+		})
+		
+		// Statistics and analytics
+		r.Route("/stats", func(r chi.Router) {
+			r.Get("/summary", notificationHandler.GetStatsSummary)
+			r.Get("/delivery", notificationHandler.GetDeliveryStats)
+			r.Get("/performance", notificationHandler.GetPerformanceStats)
+		})
+	})
+
+	app.router = router
+{{- end}}
+}
+
+// Start starts the HTTP server
+func (app *Application) Start() error {
+	addr := fmt.Sprintf(":%d", app.config.Server.Port)
+	
+{{- if eq .Framework "gin"}}
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      app.router,
+		ReadTimeout:  time.Duration(app.config.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(app.config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(app.config.Server.IdleTimeout) * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+{{- else if eq .Framework "echo"}}
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := app.router.Start(addr); err != nil && err != http.ErrServerClosed {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := app.router.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+{{- else if eq .Framework "fiber"}}
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := app.router.Listen(addr); err != nil {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Shutdown server
+	if err := app.router.Shutdown(); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+
+{{- else if eq .Framework "chi"}}
+	srv := &http.Server{
+		Addr:         addr,
+		Handler:      app.router,
+		ReadTimeout:  time.Duration(app.config.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(app.config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(app.config.Server.IdleTimeout) * time.Second,
+	}
+
+	// Start server in a goroutine
+	go func() {
+		app.logger.Info("Starting HTTP server", "addr", addr)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			app.logger.Error("HTTP server failed", "error", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	app.logger.Info("Shutting down server...")
+
+	// Create a deadline for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Shutdown server
+	if err := srv.Shutdown(ctx); err != nil {
+		return fmt.Errorf("server forced to shutdown: %w", err)
+	}
+{{- end}}
+
+	return nil
+}
+
+// Shutdown gracefully shuts down the application
+func (app *Application) Shutdown() error {
+	app.logger.Info("Shutting down application...")
+
+{{- if ne .MessageQueue "none"}}
+	// Close event bus
+	if app.events != nil {
+		if err := app.events.Close(); err != nil {
+			app.logger.Error("Failed to close event bus", "error", err)
+		}
+	}
+{{- end}}
+
+{{- if ne .DatabaseType "none"}}
+	// Close database
+	if app.db != nil {
+		if err := app.db.Close(); err != nil {
+			app.logger.Error("Failed to close database", "error", err)
+		}
+	}
+{{- end}}
+
+	app.logger.Info("Application shutdown complete")
+	return nil
+}
+
+func main() {
+	app := NewApplication()
+
+	// Initialize application
+	ctx := context.Background()
+	if err := app.Initialize(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize application: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Ensure cleanup on exit
+	defer func() {
+		if err := app.Shutdown(); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to shutdown application: %v\n", err)
+		}
+	}()
+
+	// Start the server
+	if err := app.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "Server error: %v\n", err)
+		os.Exit(1)
+	}
+}

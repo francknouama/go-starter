@@ -1,0 +1,70 @@
+# Build stage
+FROM golang:{{.GoVersion}}-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
+
+# Set working directory
+WORKDIR /app
+
+# Copy workspace files
+COPY go.work go.work.sum ./
+
+# Copy module files for dependency caching
+COPY pkg/shared/go.mod pkg/shared/go.sum ./pkg/shared/
+COPY pkg/models/go.mod pkg/models/go.sum ./pkg/models/
+{{- if ne .DatabaseType "none"}}
+COPY pkg/storage/go.mod pkg/storage/go.sum ./pkg/storage/
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+COPY pkg/events/go.mod pkg/events/go.sum ./pkg/events/
+{{- end}}
+COPY cmd/api/go.mod cmd/api/go.sum ./cmd/api/
+
+# Download dependencies
+RUN cd cmd/api && go mod download
+
+# Copy source code
+COPY pkg/ ./pkg/
+COPY cmd/api/ ./cmd/api/
+
+# Build the application
+RUN cd cmd/api && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build -ldflags="-w -s" -o /app/bin/api ./main.go
+
+# Runtime stage
+FROM alpine:3.18
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates tzdata && \
+    addgroup -g 1001 -S appgroup && \
+    adduser -u 1001 -S appuser -G appgroup
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder /app/bin/api /app/api
+
+# Change ownership
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health/live || exit 1
+
+# Set default environment variables
+ENV PORT=8080
+ENV ENVIRONMENT=production
+ENV LOG_LEVEL=info
+ENV LOG_FORMAT=json
+
+# Run the application
+ENTRYPOINT ["/app/api"]

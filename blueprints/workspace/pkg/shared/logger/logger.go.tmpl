@@ -1,0 +1,488 @@
+// Package logger provides a unified logging interface for the {{.ProjectName}} workspace.
+package logger
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"os"
+
+{{- if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+{{- end}}
+)
+
+// Logger defines the logging interface used throughout the workspace
+type Logger interface {
+	Debug(msg string, args ...interface{})
+	Info(msg string, args ...interface{})
+	Warn(msg string, args ...interface{})
+	Error(msg string, args ...interface{})
+	Fatal(msg string, args ...interface{})
+	
+	DebugContext(ctx context.Context, msg string, args ...interface{})
+	InfoContext(ctx context.Context, msg string, args ...interface{})
+	WarnContext(ctx context.Context, msg string, args ...interface{})
+	ErrorContext(ctx context.Context, msg string, args ...interface{})
+	
+	With(args ...interface{}) Logger
+	WithContext(ctx context.Context) Logger
+}
+
+// Config holds logger configuration
+type Config struct {
+	Level  string // debug, info, warn, error
+	Format string // json, text
+	Output string // stdout, stderr, or file path
+}
+
+// New creates a new logger instance based on the configuration
+func New(config Config) Logger {
+{{- if eq .LoggerType "slog"}}
+	return newSlogLogger(config)
+{{- else if eq .LoggerType "zap"}}
+	return newZapLogger(config)
+{{- else if eq .LoggerType "logrus"}}
+	return newLogrusLogger(config)
+{{- else if eq .LoggerType "zerolog"}}
+	return newZerologLogger(config)
+{{- end}}
+}
+
+// Default returns a default logger instance
+func Default() Logger {
+	return New(Config{
+		Level:  "info",
+		Format: "json",
+		Output: "stdout",
+	})
+}
+
+{{- if eq .LoggerType "slog"}}
+// slogLogger implements Logger using slog
+type slogLogger struct {
+	logger *slog.Logger
+}
+
+func newSlogLogger(config Config) Logger {
+	var output io.Writer
+	switch config.Output {
+	case "stderr":
+		output = os.Stderr
+	case "stdout", "":
+		output = os.Stdout
+	default:
+		// Try to open file
+		if file, err := os.OpenFile(config.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+			output = file
+		} else {
+			output = os.Stdout
+		}
+	}
+
+	var level slog.Level
+	switch config.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	var handler slog.Handler
+	if config.Format == "json" {
+		handler = slog.NewJSONHandler(output, &slog.HandlerOptions{Level: level})
+	} else {
+		handler = slog.NewTextHandler(output, &slog.HandlerOptions{Level: level})
+	}
+
+	return &slogLogger{
+		logger: slog.New(handler),
+	}
+}
+
+func (l *slogLogger) Debug(msg string, args ...interface{}) {
+	l.logger.Debug(msg, args...)
+}
+
+func (l *slogLogger) Info(msg string, args ...interface{}) {
+	l.logger.Info(msg, args...)
+}
+
+func (l *slogLogger) Warn(msg string, args ...interface{}) {
+	l.logger.Warn(msg, args...)
+}
+
+func (l *slogLogger) Error(msg string, args ...interface{}) {
+	l.logger.Error(msg, args...)
+}
+
+func (l *slogLogger) Fatal(msg string, args ...interface{}) {
+	l.logger.Error(msg, args...)
+	os.Exit(1)
+}
+
+func (l *slogLogger) DebugContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.DebugContext(ctx, msg, args...)
+}
+
+func (l *slogLogger) InfoContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.InfoContext(ctx, msg, args...)
+}
+
+func (l *slogLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.WarnContext(ctx, msg, args...)
+}
+
+func (l *slogLogger) ErrorContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.ErrorContext(ctx, msg, args...)
+}
+
+func (l *slogLogger) With(args ...interface{}) Logger {
+	return &slogLogger{
+		logger: l.logger.With(args...),
+	}
+}
+
+func (l *slogLogger) WithContext(ctx context.Context) Logger {
+	return &slogLogger{
+		logger: l.logger.With("trace_id", getTraceIDFromContext(ctx)),
+	}
+}
+{{- end}}
+
+{{- if eq .LoggerType "zap"}}
+// zapLogger implements Logger using zap
+type zapLogger struct {
+	logger *zap.SugaredLogger
+}
+
+func newZapLogger(config Config) Logger {
+	var zapConfig zap.Config
+	if config.Format == "json" {
+		zapConfig = zap.NewProductionConfig()
+	} else {
+		zapConfig = zap.NewDevelopmentConfig()
+	}
+
+	// Set log level
+	switch config.Level {
+	case "debug":
+		zapConfig.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "warn":
+		zapConfig.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		zapConfig.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		zapConfig.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	// Set output
+	if config.Output != "" && config.Output != "stdout" {
+		zapConfig.OutputPaths = []string{config.Output}
+	}
+
+	logger, _ := zapConfig.Build()
+	return &zapLogger{
+		logger: logger.Sugar(),
+	}
+}
+
+func (l *zapLogger) Debug(msg string, args ...interface{}) {
+	l.logger.Debugw(msg, args...)
+}
+
+func (l *zapLogger) Info(msg string, args ...interface{}) {
+	l.logger.Infow(msg, args...)
+}
+
+func (l *zapLogger) Warn(msg string, args ...interface{}) {
+	l.logger.Warnw(msg, args...)
+}
+
+func (l *zapLogger) Error(msg string, args ...interface{}) {
+	l.logger.Errorw(msg, args...)
+}
+
+func (l *zapLogger) Fatal(msg string, args ...interface{}) {
+	l.logger.Fatalw(msg, args...)
+}
+
+func (l *zapLogger) DebugContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.Debugw(msg, append(args, "trace_id", getTraceIDFromContext(ctx))...)
+}
+
+func (l *zapLogger) InfoContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.Infow(msg, append(args, "trace_id", getTraceIDFromContext(ctx))...)
+}
+
+func (l *zapLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.Warnw(msg, append(args, "trace_id", getTraceIDFromContext(ctx))...)
+}
+
+func (l *zapLogger) ErrorContext(ctx context.Context, msg string, args ...interface{}) {
+	l.logger.Errorw(msg, append(args, "trace_id", getTraceIDFromContext(ctx))...)
+}
+
+func (l *zapLogger) With(args ...interface{}) Logger {
+	return &zapLogger{
+		logger: l.logger.With(args...),
+	}
+}
+
+func (l *zapLogger) WithContext(ctx context.Context) Logger {
+	return &zapLogger{
+		logger: l.logger.With("trace_id", getTraceIDFromContext(ctx)),
+	}
+}
+{{- end}}
+
+{{- if eq .LoggerType "logrus"}}
+// logrusLogger implements Logger using logrus
+type logrusLogger struct {
+	logger *logrus.Logger
+}
+
+func newLogrusLogger(config Config) Logger {
+	logger := logrus.New()
+
+	// Set format
+	if config.Format == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{})
+	}
+
+	// Set level
+	switch config.Level {
+	case "debug":
+		logger.SetLevel(logrus.DebugLevel)
+	case "warn":
+		logger.SetLevel(logrus.WarnLevel)
+	case "error":
+		logger.SetLevel(logrus.ErrorLevel)
+	default:
+		logger.SetLevel(logrus.InfoLevel)
+	}
+
+	// Set output
+	switch config.Output {
+	case "stderr":
+		logger.SetOutput(os.Stderr)
+	case "stdout", "":
+		logger.SetOutput(os.Stdout)
+	default:
+		if file, err := os.OpenFile(config.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+			logger.SetOutput(file)
+		}
+	}
+
+	return &logrusLogger{
+		logger: logger,
+	}
+}
+
+func (l *logrusLogger) Debug(msg string, args ...interface{}) {
+	l.logger.WithFields(argsToFields(args...)).Debug(msg)
+}
+
+func (l *logrusLogger) Info(msg string, args ...interface{}) {
+	l.logger.WithFields(argsToFields(args...)).Info(msg)
+}
+
+func (l *logrusLogger) Warn(msg string, args ...interface{}) {
+	l.logger.WithFields(argsToFields(args...)).Warn(msg)
+}
+
+func (l *logrusLogger) Error(msg string, args ...interface{}) {
+	l.logger.WithFields(argsToFields(args...)).Error(msg)
+}
+
+func (l *logrusLogger) Fatal(msg string, args ...interface{}) {
+	l.logger.WithFields(argsToFields(args...)).Fatal(msg)
+}
+
+func (l *logrusLogger) DebugContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToFields(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.WithFields(fields).Debug(msg)
+}
+
+func (l *logrusLogger) InfoContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToFields(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.WithFields(fields).Info(msg)
+}
+
+func (l *logrusLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToFields(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.WithFields(fields).Warn(msg)
+}
+
+func (l *logrusLogger) ErrorContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToFields(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.WithFields(fields).Error(msg)
+}
+
+func (l *logrusLogger) With(args ...interface{}) Logger {
+	return &logrusLogger{
+		logger: l.logger.WithFields(argsToFields(args...)).Logger,
+	}
+}
+
+func (l *logrusLogger) WithContext(ctx context.Context) Logger {
+	return &logrusLogger{
+		logger: l.logger.WithField("trace_id", getTraceIDFromContext(ctx)).Logger,
+	}
+}
+
+func argsToFields(args ...interface{}) logrus.Fields {
+	fields := make(logrus.Fields)
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			if key, ok := args[i].(string); ok {
+				fields[key] = args[i+1]
+			}
+		}
+	}
+	return fields
+}
+{{- end}}
+
+{{- if eq .LoggerType "zerolog"}}
+// zerologLogger implements Logger using zerolog
+type zerologLogger struct {
+	logger zerolog.Logger
+}
+
+func newZerologLogger(config Config) Logger {
+	var output io.Writer
+	switch config.Output {
+	case "stderr":
+		output = os.Stderr
+	case "stdout", "":
+		output = os.Stdout
+	default:
+		if file, err := os.OpenFile(config.Output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666); err == nil {
+			output = file
+		} else {
+			output = os.Stdout
+		}
+	}
+
+	// Set global level
+	switch config.Level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+
+	logger := zerolog.New(output).With().Timestamp().Logger()
+
+	return &zerologLogger{
+		logger: logger,
+	}
+}
+
+func (l *zerologLogger) Debug(msg string, args ...interface{}) {
+	l.logger.Debug().Fields(argsToMap(args...)).Msg(msg)
+}
+
+func (l *zerologLogger) Info(msg string, args ...interface{}) {
+	l.logger.Info().Fields(argsToMap(args...)).Msg(msg)
+}
+
+func (l *zerologLogger) Warn(msg string, args ...interface{}) {
+	l.logger.Warn().Fields(argsToMap(args...)).Msg(msg)
+}
+
+func (l *zerologLogger) Error(msg string, args ...interface{}) {
+	l.logger.Error().Fields(argsToMap(args...)).Msg(msg)
+}
+
+func (l *zerologLogger) Fatal(msg string, args ...interface{}) {
+	l.logger.Fatal().Fields(argsToMap(args...)).Msg(msg)
+}
+
+func (l *zerologLogger) DebugContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToMap(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.Debug().Fields(fields).Msg(msg)
+}
+
+func (l *zerologLogger) InfoContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToMap(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.Info().Fields(fields).Msg(msg)
+}
+
+func (l *zerologLogger) WarnContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToMap(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.Warn().Fields(fields).Msg(msg)
+}
+
+func (l *zerologLogger) ErrorContext(ctx context.Context, msg string, args ...interface{}) {
+	fields := argsToMap(args...)
+	fields["trace_id"] = getTraceIDFromContext(ctx)
+	l.logger.Error().Fields(fields).Msg(msg)
+}
+
+func (l *zerologLogger) With(args ...interface{}) Logger {
+	return &zerologLogger{
+		logger: l.logger.With().Fields(argsToMap(args...)).Logger(),
+	}
+}
+
+func (l *zerologLogger) WithContext(ctx context.Context) Logger {
+	return &zerologLogger{
+		logger: l.logger.With().Str("trace_id", getTraceIDFromContext(ctx)).Logger(),
+	}
+}
+
+func argsToMap(args ...interface{}) map[string]interface{} {
+	fields := make(map[string]interface{})
+	for i := 0; i < len(args); i += 2 {
+		if i+1 < len(args) {
+			if key, ok := args[i].(string); ok {
+				fields[key] = args[i+1]
+			}
+		}
+	}
+	return fields
+}
+{{- end}}
+
+// Helper function to extract trace ID from context
+func getTraceIDFromContext(ctx context.Context) string {
+{{- if .EnableObservability}}
+	// Try to get trace ID from OpenTelemetry
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		return span.SpanContext().TraceID().String()
+	}
+{{- end}}
+	
+	// Fallback to context value
+	if traceID := ctx.Value("trace_id"); traceID != nil {
+		if id, ok := traceID.(string); ok {
+			return id
+		}
+	}
+	
+	return ""
+}

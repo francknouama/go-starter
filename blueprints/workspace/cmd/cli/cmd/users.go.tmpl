@@ -1,0 +1,362 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/olekukonko/tablewriter"
+	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
+
+	"{{.ModulePath}}/pkg/models"
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+var (
+	// User command flags
+	userName     string
+	userEmail    string
+	userUsername string
+	userID       string
+	limit        int
+	offset       int
+)
+
+// usersCmd represents the users command
+var usersCmd = &cobra.Command{
+	Use:   "users",
+	Short: "Manage users in the {{.ProjectName}} workspace",
+	Long: `The users command provides subcommands for managing users in the {{.ProjectName}} workspace.
+
+You can list, create, update, and delete users using this command.
+
+Examples:
+  {{.ProjectName}}-cli users list
+  {{.ProjectName}}-cli users create --name "John Doe" --email "john@example.com" --username "johndoe"
+  {{.ProjectName}}-cli users get --id "user-123"
+  {{.ProjectName}}-cli users update --id "user-123" --name "Jane Doe"
+  {{.ProjectName}}-cli users delete --id "user-123"`,
+}
+
+// usersListCmd represents the users list command
+var usersListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all users",
+	Long:  "List all users in the {{.ProjectName}} workspace with optional pagination.",
+	RunE:  runUsersList,
+}
+
+// usersCreateCmd represents the users create command
+var usersCreateCmd = &cobra.Command{
+	Use:   "create",
+	Short: "Create a new user",
+	Long:  "Create a new user in the {{.ProjectName}} workspace.",
+	RunE:  runUsersCreate,
+}
+
+// usersGetCmd represents the users get command
+var usersGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get a user by ID",
+	Long:  "Get detailed information about a specific user by their ID.",
+	RunE:  runUsersGet,
+}
+
+// usersUpdateCmd represents the users update command
+var usersUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update an existing user",
+	Long:  "Update an existing user's information in the {{.ProjectName}} workspace.",
+	RunE:  runUsersUpdate,
+}
+
+// usersDeleteCmd represents the users delete command
+var usersDeleteCmd = &cobra.Command{
+	Use:   "delete",
+	Short: "Delete a user",
+	Long:  "Delete a user from the {{.ProjectName}} workspace.",
+	RunE:  runUsersDelete,
+}
+
+func init() {
+	rootCmd.AddCommand(usersCmd)
+
+	// Add subcommands
+	usersCmd.AddCommand(usersListCmd)
+	usersCmd.AddCommand(usersCreateCmd)
+	usersCmd.AddCommand(usersGetCmd)
+	usersCmd.AddCommand(usersUpdateCmd)
+	usersCmd.AddCommand(usersDeleteCmd)
+
+	// List command flags
+	usersListCmd.Flags().IntVar(&limit, "limit", 10, "Maximum number of users to return")
+	usersListCmd.Flags().IntVar(&offset, "offset", 0, "Number of users to skip")
+
+	// Create command flags
+	usersCreateCmd.Flags().StringVar(&userName, "name", "", "User's full name")
+	usersCreateCmd.Flags().StringVar(&userEmail, "email", "", "User's email address")
+	usersCreateCmd.Flags().StringVar(&userUsername, "username", "", "User's username")
+	usersCreateCmd.MarkFlagRequired("name")
+	usersCreateCmd.MarkFlagRequired("email")
+	usersCreateCmd.MarkFlagRequired("username")
+
+	// Get command flags
+	usersGetCmd.Flags().StringVar(&userID, "id", "", "User ID")
+	usersGetCmd.MarkFlagRequired("id")
+
+	// Update command flags
+	usersUpdateCmd.Flags().StringVar(&userID, "id", "", "User ID")
+	usersUpdateCmd.Flags().StringVar(&userName, "name", "", "User's full name")
+	usersUpdateCmd.Flags().StringVar(&userEmail, "email", "", "User's email address")
+	usersUpdateCmd.Flags().StringVar(&userUsername, "username", "", "User's username")
+	usersUpdateCmd.MarkFlagRequired("id")
+
+	// Delete command flags
+	usersDeleteCmd.Flags().StringVar(&userID, "id", "", "User ID")
+	usersDeleteCmd.MarkFlagRequired("id")
+}
+
+// In-memory user storage for demo purposes
+var users []models.User
+
+// runUsersList executes the users list command
+func runUsersList(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Listing users", "limit", limit, "offset", offset)
+
+	// Apply pagination
+	start := offset
+	end := offset + limit
+
+	var paginatedUsers []models.User
+	if start < len(users) {
+		if end > len(users) {
+			end = len(users)
+		}
+		paginatedUsers = users[start:end]
+	} else {
+		paginatedUsers = []models.User{}
+	}
+
+	return outputUsers(paginatedUsers, fmt.Sprintf("Users (%d-%d of %d)", start+1, end, len(users)))
+}
+
+// runUsersCreate executes the users create command
+func runUsersCreate(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Creating user", "name", userName, "email", userEmail, "username", userUsername)
+
+	// Check if user already exists
+	for _, user := range users {
+		if user.Email == userEmail || user.Username == userUsername {
+			return fmt.Errorf("user with email '%s' or username '%s' already exists", userEmail, userUsername)
+		}
+	}
+
+	// Create new user
+	user := models.User{
+		ID:        uuid.New().String(),
+		Name:      userName,
+		Email:     userEmail,
+		Username:  userUsername,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	users = append(users, user)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if appEvents != nil {
+		event := events.NewEvent("user.created", "cli", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+		
+		if err := appEvents.Publish(cmd.Context(), "users", event); err != nil {
+			appLogger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	appLogger.Info("User created successfully", "user_id", user.ID)
+	
+	if !quiet {
+		fmt.Printf("User created successfully with ID: %s\n", user.ID)
+	}
+
+	return outputUsers([]models.User{user}, "Created User")
+}
+
+// runUsersGet executes the users get command
+func runUsersGet(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Getting user", "user_id", userID)
+
+	for _, user := range users {
+		if user.ID == userID {
+			return outputUsers([]models.User{user}, "User Details")
+		}
+	}
+
+	return fmt.Errorf("user with ID '%s' not found", userID)
+}
+
+// runUsersUpdate executes the users update command
+func runUsersUpdate(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Updating user", "user_id", userID)
+
+	for i, user := range users {
+		if user.ID == userID {
+			// Update fields if provided
+			if userName != "" {
+				users[i].Name = userName
+			}
+			if userEmail != "" {
+				users[i].Email = userEmail
+			}
+			if userUsername != "" {
+				users[i].Username = userUsername
+			}
+			users[i].UpdatedAt = time.Now().UTC()
+
+{{- if ne .MessageQueue "none"}}
+			// Publish user updated event
+			if appEvents != nil {
+				event := events.NewEvent("user.updated", "cli", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   users[i].Email,
+					"name":    users[i].Name,
+				})
+				
+				if err := appEvents.Publish(cmd.Context(), "users", event); err != nil {
+					appLogger.Error("Failed to publish user updated event", "error", err)
+				}
+			}
+{{- end}}
+
+			appLogger.Info("User updated successfully", "user_id", user.ID)
+			
+			if !quiet {
+				fmt.Printf("User updated successfully: %s\n", user.ID)
+			}
+
+			return outputUsers([]models.User{users[i]}, "Updated User")
+		}
+	}
+
+	return fmt.Errorf("user with ID '%s' not found", userID)
+}
+
+// runUsersDelete executes the users delete command
+func runUsersDelete(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Deleting user", "user_id", userID)
+
+	for i, user := range users {
+		if user.ID == userID {
+{{- if ne .MessageQueue "none"}}
+			// Publish user deleted event
+			if appEvents != nil {
+				event := events.NewEvent("user.deleted", "cli", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   user.Email,
+				})
+				
+				if err := appEvents.Publish(cmd.Context(), "users", event); err != nil {
+					appLogger.Error("Failed to publish user deleted event", "error", err)
+				}
+			}
+{{- end}}
+
+			// Remove user from slice
+			users = append(users[:i], users[i+1:]...)
+			
+			appLogger.Info("User deleted successfully", "user_id", user.ID)
+			
+			if !quiet {
+				fmt.Printf("User deleted successfully: %s\n", user.ID)
+			}
+
+			return nil
+		}
+	}
+
+	return fmt.Errorf("user with ID '%s' not found", userID)
+}
+
+// outputUsers formats and outputs users based on the specified output format
+func outputUsers(userList []models.User, title string) error {
+	switch output {
+	case "json":
+		return outputUsersJSON(userList)
+	case "yaml":
+		return outputUsersYAML(userList)
+	case "table":
+		fallthrough
+	default:
+		return outputUsersTable(userList, title)
+	}
+}
+
+// outputUsersTable outputs users in table format
+func outputUsersTable(userList []models.User, title string) error {
+	if len(userList) == 0 {
+		fmt.Println("No users found.")
+		return nil
+	}
+
+	fmt.Printf("\n%s:\n\n", title)
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "Name", "Email", "Username", "Created", "Updated"})
+	table.SetBorder(false)
+	table.SetHeaderLine(false)
+	table.SetRowLine(false)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator(" ")
+	table.SetRowSeparator("")
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, user := range userList {
+		row := []string{
+			truncateString(user.ID, 8),
+			user.Name,
+			user.Email,
+			user.Username,
+			user.CreatedAt.Format("2006-01-02 15:04"),
+			user.UpdatedAt.Format("2006-01-02 15:04"),
+		}
+		table.Append(row)
+	}
+
+	table.Render()
+	fmt.Println()
+	return nil
+}
+
+// outputUsersJSON outputs users in JSON format
+func outputUsersJSON(userList []models.User) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(userList)
+}
+
+// outputUsersYAML outputs users in YAML format
+func outputUsersYAML(userList []models.User) error {
+	encoder := yaml.NewEncoder(os.Stdout)
+	defer encoder.Close()
+	return encoder.Encode(userList)
+}
+
+// truncateString truncates a string to the specified length
+func truncateString(s string, length int) string {
+	if len(s) <= length {
+		return s
+	}
+	return s[:length-3] + "..."
+}

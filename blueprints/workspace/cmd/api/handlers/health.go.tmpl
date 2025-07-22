@@ -1,0 +1,355 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"encoding/json"
+	"github.com/go-chi/chi/v5"
+{{- end}}
+
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// HealthHandler handles health check endpoints
+type HealthHandler struct {
+	logger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus
+{{- end}}
+}
+
+// NewHealthHandler creates a new health handler
+func NewHealthHandler(
+	log logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) *HealthHandler {
+	return &HealthHandler{
+		logger: log,
+{{- if ne .DatabaseType "none"}}
+		db:     db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events: events,
+{{- end}}
+	}
+}
+
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Timestamp time.Time         `json:"timestamp"`
+	Version   string            `json:"version"`
+	Services  map[string]string `json:"services"`
+	Uptime    string            `json:"uptime"`
+}
+
+var startTime = time.Now()
+
+{{- if eq .Framework "gin"}}
+// Health returns the health status of the API and its dependencies
+func (h *HealthHandler) Health(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	status := "healthy"
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			status = "unhealthy"
+			break
+		}
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now().UTC(),
+		Version:   "1.0.0", // You might want to inject this from build info
+		Services:  services,
+		Uptime:    time.Since(startTime).String(),
+	}
+
+	if status == "healthy" {
+		c.JSON(http.StatusOK, response)
+	} else {
+		c.JSON(http.StatusServiceUnavailable, response)
+	}
+}
+
+// Readiness returns the readiness status of the API
+func (h *HealthHandler) Readiness(c *gin.Context) {
+	ctx, cancel := context.WithTimeout(c.Request.Context(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "not ready",
+				"reason": "dependent services not healthy",
+			})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status": "ready",
+	})
+}
+
+// Liveness returns the liveness status of the API
+func (h *HealthHandler) Liveness(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "alive",
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+{{- else if eq .Framework "echo"}}
+// Health returns the health status of the API and its dependencies
+func (h *HealthHandler) Health(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	status := "healthy"
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			status = "unhealthy"
+			break
+		}
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now().UTC(),
+		Version:   "1.0.0",
+		Services:  services,
+		Uptime:    time.Since(startTime).String(),
+	}
+
+	if status == "healthy" {
+		return c.JSON(http.StatusOK, response)
+	} else {
+		return c.JSON(http.StatusServiceUnavailable, response)
+	}
+}
+
+// Readiness returns the readiness status of the API
+func (h *HealthHandler) Readiness(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			return c.JSON(http.StatusServiceUnavailable, map[string]string{
+				"status": "not ready",
+				"reason": "dependent services not healthy",
+			})
+		}
+	}
+
+	return c.JSON(http.StatusOK, map[string]string{
+		"status": "ready",
+	})
+}
+
+// Liveness returns the liveness status of the API
+func (h *HealthHandler) Liveness(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"status": "alive",
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Health returns the health status of the API and its dependencies
+func (h *HealthHandler) Health(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	status := "healthy"
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			status = "unhealthy"
+			break
+		}
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now().UTC(),
+		Version:   "1.0.0",
+		Services:  services,
+		Uptime:    time.Since(startTime).String(),
+	}
+
+	if status == "healthy" {
+		return c.Status(http.StatusOK).JSON(response)
+	} else {
+		return c.Status(http.StatusServiceUnavailable).JSON(response)
+	}
+}
+
+// Readiness returns the readiness status of the API
+func (h *HealthHandler) Readiness(c *fiber.Ctx) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			return c.Status(http.StatusServiceUnavailable).JSON(fiber.Map{
+				"status": "not ready",
+				"reason": "dependent services not healthy",
+			})
+		}
+	}
+
+	return c.Status(http.StatusOK).JSON(fiber.Map{
+		"status": "ready",
+	})
+}
+
+// Liveness returns the liveness status of the API
+func (h *HealthHandler) Liveness(c *fiber.Ctx) error {
+	return c.Status(http.StatusOK).JSON(fiber.Map{
+		"status": "alive",
+		"timestamp": time.Now().UTC(),
+	})
+}
+
+{{- else if eq .Framework "chi"}}
+// Health returns the health status of the API and its dependencies
+func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	status := "healthy"
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			status = "unhealthy"
+			break
+		}
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now().UTC(),
+		Version:   "1.0.0",
+		Services:  services,
+		Uptime:    time.Since(startTime).String(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if status == "healthy" {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}
+	json.NewEncoder(w).Encode(response)
+}
+
+// Readiness returns the readiness status of the API
+func (h *HealthHandler) Readiness(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	services := h.checkServices(ctx)
+	
+	for _, serviceStatus := range services {
+		if serviceStatus != "healthy" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(map[string]string{
+				"status": "not ready",
+				"reason": "dependent services not healthy",
+			})
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"status": "ready",
+	})
+}
+
+// Liveness returns the liveness status of the API
+func (h *HealthHandler) Liveness(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"status": "alive",
+		"timestamp": time.Now().UTC(),
+	})
+}
+{{- end}}
+
+// checkServices checks the health of all dependent services
+func (h *HealthHandler) checkServices(ctx context.Context) map[string]string {
+	services := make(map[string]string)
+
+{{- if ne .DatabaseType "none"}}
+	// Check database
+	if h.db != nil {
+		if err := h.db.Health(ctx); err != nil {
+			h.logger.Error("Database health check failed", "error", err)
+			services["database"] = "unhealthy"
+		} else {
+			services["database"] = "healthy"
+		}
+	} else {
+		services["database"] = "not configured"
+	}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Check event bus
+	if h.events != nil {
+		if err := h.events.Health(ctx); err != nil {
+			h.logger.Error("Event bus health check failed", "error", err)
+			services["event_bus"] = "unhealthy"
+		} else {
+			services["event_bus"] = "healthy"
+		}
+	} else {
+		services["event_bus"] = "not configured"
+	}
+{{- end}}
+
+	return services
+}

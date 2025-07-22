@@ -1,0 +1,644 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/go-mail/mail/v2"
+
+	"{{.ModulePath}}/pkg/models"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// NotificationService provides notification-related business logic
+type NotificationService struct {
+	logger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus
+{{- end}}
+}
+
+// NewNotificationService creates a new notification service
+func NewNotificationService(
+	logger logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus,
+{{- end}}
+) *NotificationService {
+	return &NotificationService{
+		logger: logger,
+{{- if ne .DatabaseType "none"}}
+		db:     db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events: events,
+{{- end}}
+	}
+}
+
+// CreateNotification creates a new notification
+func (s *NotificationService) CreateNotification(ctx context.Context, req CreateNotificationRequest) (*models.Notification, error) {
+	s.logger.Info("Creating notification", "user_id", req.UserID, "type", req.Type)
+
+	// Validate request
+	if err := s.validateCreateNotificationRequest(req); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	// Create notification model
+	notification := &models.Notification{
+		ID:        uuid.New().String(),
+		UserID:    req.UserID,
+		Type:      req.Type,
+		Message:   req.Message,
+		Status:    "pending",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Save notification to database
+	if err := s.saveNotification(ctx, notification); err != nil {
+		return nil, fmt.Errorf("failed to save notification: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("Notification created successfully", 
+		"notification_id", notification.ID, 
+		"user_id", notification.UserID,
+		"type", notification.Type,
+	)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish notification created event
+	if s.events != nil {
+		event := events.NewEvent("notification.created", "notification-service", map[string]interface{}{
+			"notification_id": notification.ID,
+			"user_id":         notification.UserID,
+			"type":            notification.Type,
+			"message":         notification.Message,
+		})
+
+		if err := s.events.Publish(ctx, "notification.events", event); err != nil {
+			s.logger.Error("Failed to publish notification created event", "error", err)
+		}
+	}
+{{- end}}
+
+	return notification, nil
+}
+
+// GetNotification retrieves a notification by ID
+func (s *NotificationService) GetNotification(ctx context.Context, notificationID string) (*models.Notification, error) {
+	s.logger.Debug("Getting notification", "notification_id", notificationID)
+
+	if notificationID == "" {
+		return nil, fmt.Errorf("notification ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	notification, err := s.loadNotification(ctx, notificationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load notification: %w", err)
+	}
+{{- else}}
+	// Mock notification when no database is configured
+	notification := &models.Notification{
+		ID:        notificationID,
+		UserID:    uuid.New().String(),
+		Type:      "email",
+		Message:   "Mock notification message",
+		Status:    "sent",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+{{- end}}
+
+	return notification, nil
+}
+
+// ListNotifications retrieves a list of notifications with pagination
+func (s *NotificationService) ListNotifications(ctx context.Context, req ListNotificationsRequest) (*ListNotificationsResponse, error) {
+	s.logger.Debug("Listing notifications", "page", req.Page, "per_page", req.PerPage)
+
+{{- if ne .DatabaseType "none"}}
+	notifications, total, err := s.loadNotifications(ctx, req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load notifications: %w", err)
+	}
+{{- else}}
+	// Mock notifications when no database is configured
+	notifications := []*models.Notification{
+		{
+			ID:        uuid.New().String(),
+			UserID:    uuid.New().String(),
+			Type:      "email",
+			Message:   "Welcome to {{.ProjectName}}!",
+			Status:    "sent",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			ID:        uuid.New().String(),
+			UserID:    uuid.New().String(),
+			Type:      "sms",
+			Message:   "Your verification code is 123456",
+			Status:    "pending",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+	total := int64(len(notifications))
+{{- end}}
+
+	response := &ListNotificationsResponse{
+		Notifications: notifications,
+		Pagination: PaginationResponse{
+			Page:       req.Page,
+			PerPage:    req.PerPage,
+			Total:      total,
+			TotalPages: (total + int64(req.PerPage) - 1) / int64(req.PerPage),
+		},
+	}
+
+	return response, nil
+}
+
+// UpdateNotification updates an existing notification
+func (s *NotificationService) UpdateNotification(ctx context.Context, notificationID string, req UpdateNotificationRequest) (*models.Notification, error) {
+	s.logger.Info("Updating notification", "notification_id", notificationID)
+
+	if notificationID == "" {
+		return nil, fmt.Errorf("notification ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Load existing notification
+	notification, err := s.loadNotification(ctx, notificationID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load notification: %w", err)
+	}
+
+	// Update fields
+	if req.Message != "" {
+		notification.Message = req.Message
+	}
+	if req.Status != "" {
+		notification.Status = req.Status
+	}
+
+	notification.UpdatedAt = time.Now()
+
+	// Save updated notification
+	if err := s.saveNotification(ctx, notification); err != nil {
+		return nil, fmt.Errorf("failed to save notification: %w", err)
+	}
+{{- else}}
+	// Mock notification update when no database is configured
+	notification := &models.Notification{
+		ID:        notificationID,
+		UserID:    uuid.New().String(),
+		Type:      "email",
+		Message:   req.Message,
+		Status:    req.Status,
+		UpdatedAt: time.Now(),
+	}
+{{- end}}
+
+	s.logger.Info("Notification updated successfully", "notification_id", notificationID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish notification updated event
+	if s.events != nil {
+		event := events.NewEvent("notification.updated", "notification-service", map[string]interface{}{
+			"notification_id": notification.ID,
+			"user_id":         notification.UserID,
+			"status":          notification.Status,
+		})
+
+		if err := s.events.Publish(ctx, "notification.events", event); err != nil {
+			s.logger.Error("Failed to publish notification updated event", "error", err)
+		}
+	}
+{{- end}}
+
+	return notification, nil
+}
+
+// DeleteNotification deletes a notification
+func (s *NotificationService) DeleteNotification(ctx context.Context, notificationID string) error {
+	s.logger.Info("Deleting notification", "notification_id", notificationID)
+
+	if notificationID == "" {
+		return fmt.Errorf("notification ID is required")
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Check if notification exists
+	notification, err := s.loadNotification(ctx, notificationID)
+	if err != nil {
+		return fmt.Errorf("failed to load notification: %w", err)
+	}
+
+	// Soft delete by updating status
+	notification.Status = "deleted"
+	notification.UpdatedAt = time.Now()
+
+	if err := s.saveNotification(ctx, notification); err != nil {
+		return fmt.Errorf("failed to delete notification: %w", err)
+	}
+{{- end}}
+
+	s.logger.Info("Notification deleted successfully", "notification_id", notificationID)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish notification deleted event
+	if s.events != nil {
+		event := events.NewEvent("notification.deleted", "notification-service", map[string]interface{}{
+			"notification_id": notificationID,
+		})
+
+		if err := s.events.Publish(ctx, "notification.events", event); err != nil {
+			s.logger.Error("Failed to publish notification deleted event", "error", err)
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// ProcessNotification processes a notification for sending
+func (s *NotificationService) ProcessNotification(ctx context.Context, notificationID string) error {
+	s.logger.Info("Processing notification", "notification_id", notificationID)
+
+{{- if ne .DatabaseType "none"}}
+	notification, err := s.loadNotification(ctx, notificationID)
+	if err != nil {
+		return fmt.Errorf("failed to load notification: %w", err)
+	}
+
+	if notification.Status != "pending" {
+		return fmt.Errorf("notification is not in pending status")
+	}
+
+	// Update status to processing
+	notification.Status = "processing"
+	notification.UpdatedAt = time.Now()
+	if err := s.saveNotification(ctx, notification); err != nil {
+		s.logger.Error("Failed to update notification status", "error", err)
+	}
+
+	// Send notification based on type
+	err = s.sendNotification(ctx, notification)
+	if err != nil {
+		// Update status to failed
+		notification.Status = "failed"
+		notification.UpdatedAt = time.Now()
+		if saveErr := s.saveNotification(ctx, notification); saveErr != nil {
+			s.logger.Error("Failed to update notification status", "error", saveErr)
+		}
+		return fmt.Errorf("failed to send notification: %w", err)
+	}
+
+	// Update status to sent
+	notification.Status = "sent"
+	notification.UpdatedAt = time.Now()
+	if err := s.saveNotification(ctx, notification); err != nil {
+		s.logger.Error("Failed to update notification status", "error", err)
+	}
+{{- else}}
+	// Mock notification processing
+	s.logger.Info("Mock notification processing - no database configured")
+{{- end}}
+
+	s.logger.Info("Notification processed successfully", "notification_id", notificationID)
+	return nil
+}
+
+// SendNotificationFromEvent sends a notification from event data
+func (s *NotificationService) SendNotificationFromEvent(ctx context.Context, eventData map[string]interface{}) error {
+	// Extract notification details from event
+	userID, ok := eventData["user_id"].(string)
+	if !ok {
+		return fmt.Errorf("missing user_id in event data")
+	}
+
+	notificationType, ok := eventData["type"].(string)
+	if !ok {
+		return fmt.Errorf("missing type in event data")
+	}
+
+	message, ok := eventData["message"].(string)
+	if !ok {
+		return fmt.Errorf("missing message in event data")
+	}
+
+	// Create and send notification
+	req := CreateNotificationRequest{
+		UserID:  userID,
+		Type:    notificationType,
+		Message: message,
+	}
+
+	notification, err := s.CreateNotification(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create notification: %w", err)
+	}
+
+	return s.ProcessNotification(ctx, notification.ID)
+}
+
+// RetryNotification retries sending a failed notification
+func (s *NotificationService) RetryNotification(ctx context.Context, notificationID string) error {
+	s.logger.Info("Retrying notification", "notification_id", notificationID)
+
+{{- if ne .DatabaseType "none"}}
+	notification, err := s.loadNotification(ctx, notificationID)
+	if err != nil {
+		return fmt.Errorf("failed to load notification: %w", err)
+	}
+
+	if notification.Status != "failed" {
+		return fmt.Errorf("notification is not in failed status")
+	}
+
+	// Reset status to pending for retry
+	notification.Status = "pending"
+	notification.UpdatedAt = time.Now()
+	if err := s.saveNotification(ctx, notification); err != nil {
+		return fmt.Errorf("failed to update notification status: %w", err)
+	}
+
+	// Process the notification again
+	return s.ProcessNotification(ctx, notificationID)
+{{- else}}
+	s.logger.Info("Mock notification retry - no database configured")
+	return nil
+{{- end}}
+}
+
+// SendWelcomeNotification sends a welcome notification to a new user
+func (s *NotificationService) SendWelcomeNotification(ctx context.Context, userID, email, name string) error {
+	message := fmt.Sprintf("Welcome to {{.ProjectName}}, %s! Thank you for joining us.", name)
+	
+	req := CreateNotificationRequest{
+		UserID:  userID,
+		Type:    "email",
+		Message: message,
+	}
+
+	notification, err := s.CreateNotification(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create welcome notification: %w", err)
+	}
+
+	return s.ProcessNotification(ctx, notification.ID)
+}
+
+// SendVerificationConfirmation sends verification confirmation
+func (s *NotificationService) SendVerificationConfirmation(ctx context.Context, userID string) error {
+	message := "Your email has been verified successfully. Welcome to {{.ProjectName}}!"
+	
+	req := CreateNotificationRequest{
+		UserID:  userID,
+		Type:    "email",
+		Message: message,
+	}
+
+	notification, err := s.CreateNotification(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create verification confirmation: %w", err)
+	}
+
+	return s.ProcessNotification(ctx, notification.ID)
+}
+
+// SendPasswordChangeConfirmation sends password change confirmation
+func (s *NotificationService) SendPasswordChangeConfirmation(ctx context.Context, userID string) error {
+	message := "Your password has been changed successfully. If you didn't make this change, please contact support."
+	
+	req := CreateNotificationRequest{
+		UserID:  userID,
+		Type:    "email",
+		Message: message,
+	}
+
+	notification, err := s.CreateNotification(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to create password change confirmation: %w", err)
+	}
+
+	return s.ProcessNotification(ctx, notification.ID)
+}
+
+// SendBulkNotifications sends multiple notifications
+func (s *NotificationService) SendBulkNotifications(ctx context.Context, req BulkNotificationRequest) (*BulkNotificationResponse, error) {
+	s.logger.Info("Sending bulk notifications", "count", len(req.Recipients))
+
+	successCount := 0
+	failedCount := 0
+	var failedRecipients []string
+
+	for _, recipient := range req.Recipients {
+		notifReq := CreateNotificationRequest{
+			UserID:  recipient.UserID,
+			Type:    req.Type,
+			Message: req.Message,
+		}
+
+		notification, err := s.CreateNotification(ctx, notifReq)
+		if err != nil {
+			s.logger.Error("Failed to create bulk notification", 
+				"user_id", recipient.UserID, 
+				"error", err,
+			)
+			failedCount++
+			failedRecipients = append(failedRecipients, recipient.UserID)
+			continue
+		}
+
+		if err := s.ProcessNotification(ctx, notification.ID); err != nil {
+			s.logger.Error("Failed to process bulk notification", 
+				"notification_id", notification.ID,
+				"user_id", recipient.UserID, 
+				"error", err,
+			)
+			failedCount++
+			failedRecipients = append(failedRecipients, recipient.UserID)
+			continue
+		}
+
+		successCount++
+	}
+
+	response := &BulkNotificationResponse{
+		SuccessCount:     successCount,
+		FailedCount:      failedCount,
+		FailedRecipients: failedRecipients,
+		Message:          fmt.Sprintf("Bulk notification completed: %d success, %d failed", successCount, failedCount),
+	}
+
+	s.logger.Info("Bulk notifications completed", 
+		"success_count", successCount,
+		"failed_count", failedCount,
+	)
+
+	return response, nil
+}
+
+// Helper methods
+
+func (s *NotificationService) validateCreateNotificationRequest(req CreateNotificationRequest) error {
+	if req.UserID == "" {
+		return fmt.Errorf("user ID is required")
+	}
+	if req.Type == "" {
+		return fmt.Errorf("notification type is required")
+	}
+	if req.Message == "" {
+		return fmt.Errorf("message is required")
+	}
+	// Validate notification type
+	validTypes := []string{"email", "sms", "push", "in_app"}
+	for _, validType := range validTypes {
+		if req.Type == validType {
+			return nil
+		}
+	}
+	return fmt.Errorf("invalid notification type: %s", req.Type)
+}
+
+func (s *NotificationService) sendNotification(ctx context.Context, notification *models.Notification) error {
+	switch notification.Type {
+	case "email":
+		return s.sendEmailNotification(ctx, notification)
+	case "sms":
+		return s.sendSMSNotification(ctx, notification)
+	case "push":
+		return s.sendPushNotification(ctx, notification)
+	case "in_app":
+		return s.sendInAppNotification(ctx, notification)
+	default:
+		return fmt.Errorf("unsupported notification type: %s", notification.Type)
+	}
+}
+
+func (s *NotificationService) sendEmailNotification(ctx context.Context, notification *models.Notification) error {
+	s.logger.Debug("Sending email notification", "notification_id", notification.ID)
+
+	// In a real implementation, this would:
+	// 1. Load user email from database or user service
+	// 2. Load email template
+	// 3. Render template with notification data
+	// 4. Send via email service (SMTP, SendGrid, SES, etc.)
+
+	// Mock email sending
+	time.Sleep(100 * time.Millisecond)
+	
+	s.logger.Info("Email notification sent", "notification_id", notification.ID)
+	return nil
+}
+
+func (s *NotificationService) sendSMSNotification(ctx context.Context, notification *models.Notification) error {
+	s.logger.Debug("Sending SMS notification", "notification_id", notification.ID)
+
+	// In a real implementation, this would:
+	// 1. Load user phone number from database or user service
+	// 2. Send via SMS service (Twilio, AWS SNS, etc.)
+
+	// Mock SMS sending
+	time.Sleep(50 * time.Millisecond)
+	
+	s.logger.Info("SMS notification sent", "notification_id", notification.ID)
+	return nil
+}
+
+func (s *NotificationService) sendPushNotification(ctx context.Context, notification *models.Notification) error {
+	s.logger.Debug("Sending push notification", "notification_id", notification.ID)
+
+	// In a real implementation, this would:
+	// 1. Load user device tokens from database
+	// 2. Send via push service (FCM, APNs, etc.)
+
+	// Mock push notification sending
+	time.Sleep(30 * time.Millisecond)
+	
+	s.logger.Info("Push notification sent", "notification_id", notification.ID)
+	return nil
+}
+
+func (s *NotificationService) sendInAppNotification(ctx context.Context, notification *models.Notification) error {
+	s.logger.Debug("Creating in-app notification", "notification_id", notification.ID)
+
+	// In a real implementation, this would:
+	// 1. Store notification in database for user
+	// 2. Send real-time update via WebSocket
+	// 3. Update notification badge count
+
+	// Mock in-app notification creation
+	time.Sleep(10 * time.Millisecond)
+	
+	s.logger.Info("In-app notification created", "notification_id", notification.ID)
+	return nil
+}
+
+{{- if ne .DatabaseType "none"}}
+func (s *NotificationService) saveNotification(ctx context.Context, notification *models.Notification) error {
+	// In a real implementation, this would save to database
+	s.logger.Debug("Saving notification", "notification_id", notification.ID)
+	return nil
+}
+
+func (s *NotificationService) loadNotification(ctx context.Context, notificationID string) (*models.Notification, error) {
+	// In a real implementation, this would load from database
+	notification := &models.Notification{
+		ID:        notificationID,
+		UserID:    uuid.New().String(),
+		Type:      "email",
+		Message:   "Mock notification message",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+	return notification, nil
+}
+
+func (s *NotificationService) loadNotifications(ctx context.Context, req ListNotificationsRequest) ([]*models.Notification, int64, error) {
+	// In a real implementation, this would query the database with pagination
+	notifications := []*models.Notification{
+		{
+			ID:        uuid.New().String(),
+			UserID:    uuid.New().String(),
+			Type:      "email",
+			Message:   "Welcome to {{.ProjectName}}!",
+			Status:    "sent",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			ID:        uuid.New().String(),
+			UserID:    uuid.New().String(),
+			Type:      "sms",
+			Message:   "Your verification code is 123456",
+			Status:    "pending",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+	return notifications, int64(len(notifications)), nil
+}
+{{- end}}

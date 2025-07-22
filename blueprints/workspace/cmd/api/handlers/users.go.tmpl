@@ -1,0 +1,969 @@
+package handlers
+
+import (
+	"context"
+	"net/http"
+	"strconv"
+	"time"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- else if eq .Framework "chi"}}
+	"encoding/json"
+	"github.com/go-chi/chi/v5"
+{{- end}}
+	"github.com/google/uuid"
+	"github.com/go-playground/validator/v10"
+
+	"{{.ModulePath}}/pkg/models"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// UserHandler handles user-related HTTP requests
+type UserHandler struct {
+	logger    logger.Logger
+	validator *validator.Validate
+{{- if ne .DatabaseType "none"}}
+	db        storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events    events.EventBus
+{{- end}}
+	users     []models.User // In-memory storage for demo purposes
+}
+
+// NewUserHandler creates a new user handler
+func NewUserHandler(
+	log logger.Logger,
+{{- if ne .DatabaseType "none"}}
+	db storage.Database,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	eventBus events.EventBus,
+{{- end}}
+) *UserHandler {
+	return &UserHandler{
+		logger:    log,
+		validator: validator.New(),
+{{- if ne .DatabaseType "none"}}
+		db:        db,
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+		events:    eventBus,
+{{- end}}
+		users:     make([]models.User, 0),
+	}
+}
+
+// CreateUserRequest represents the request to create a user
+type CreateUserRequest struct {
+	Name     string `json:"name" validate:"required,min=2,max=100"`
+	Email    string `json:"email" validate:"required,email"`
+	Username string `json:"username" validate:"required,min=3,max=50,alphanum"`
+}
+
+// UpdateUserRequest represents the request to update a user
+type UpdateUserRequest struct {
+	Name     string `json:"name,omitempty" validate:"omitempty,min=2,max=100"`
+	Email    string `json:"email,omitempty" validate:"omitempty,email"`
+	Username string `json:"username,omitempty" validate:"omitempty,min=3,max=50,alphanum"`
+}
+
+// UserResponse represents the user response
+type UserResponse struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Username  string    `json:"username"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// ListUsersResponse represents the response for listing users
+type ListUsersResponse struct {
+	Users []UserResponse `json:"users"`
+	Total int            `json:"total"`
+	Page  int            `json:"page"`
+	Size  int            `json:"size"`
+}
+
+{{- if eq .Framework "gin"}}
+// CreateUser creates a new user
+func (h *UserHandler) CreateUser(c *gin.Context) {
+	var req CreateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Check if user already exists
+	for _, user := range h.users {
+		if user.Email == req.Email || user.Username == req.Username {
+			c.JSON(http.StatusConflict, gin.H{"error": "User already exists"})
+			return
+		}
+	}
+
+	// Create new user
+	user := models.User{
+		ID:        uuid.New().String(),
+		Name:      req.Name,
+		Email:     req.Email,
+		Username:  req.Username,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	h.users = append(h.users, user)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if h.events != nil {
+		event := events.NewEvent("user.created", "api", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+		
+		if err := h.events.Publish(c.Request.Context(), "users", event); err != nil {
+			h.logger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	h.logger.Info("User created", "user_id", user.ID, "email", user.Email)
+	
+	response := h.toUserResponse(user)
+	c.JSON(http.StatusCreated, response)
+}
+
+// GetUser retrieves a user by ID
+func (h *UserHandler) GetUser(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	for _, user := range h.users {
+		if user.ID == id {
+			response := h.toUserResponse(user)
+			c.JSON(http.StatusOK, response)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+}
+
+// ListUsers retrieves all users with pagination
+func (h *UserHandler) ListUsers(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 10
+	}
+
+	start := (page - 1) * size
+	end := start + size
+
+	var paginatedUsers []models.User
+	if start < len(h.users) {
+		if end > len(h.users) {
+			end = len(h.users)
+		}
+		paginatedUsers = h.users[start:end]
+	} else {
+		paginatedUsers = []models.User{}
+	}
+
+	userResponses := make([]UserResponse, len(paginatedUsers))
+	for i, user := range paginatedUsers {
+		userResponses[i] = h.toUserResponse(user)
+	}
+
+	response := ListUsersResponse{
+		Users: userResponses,
+		Total: len(h.users),
+		Page:  page,
+		Size:  size,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// UpdateUser updates an existing user
+func (h *UserHandler) UpdateUser(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	var req UpdateUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+			// Update fields if provided
+			if req.Name != "" {
+				h.users[i].Name = req.Name
+			}
+			if req.Email != "" {
+				h.users[i].Email = req.Email
+			}
+			if req.Username != "" {
+				h.users[i].Username = req.Username
+			}
+			h.users[i].UpdatedAt = time.Now().UTC()
+
+{{- if ne .MessageQueue "none"}}
+			// Publish user updated event
+			if h.events != nil {
+				event := events.NewEvent("user.updated", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   h.users[i].Email,
+					"name":    h.users[i].Name,
+				})
+				
+				if err := h.events.Publish(c.Request.Context(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user updated event", "error", err)
+				}
+			}
+{{- end}}
+
+			h.logger.Info("User updated", "user_id", user.ID)
+			
+			response := h.toUserResponse(h.users[i])
+			c.JSON(http.StatusOK, response)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+}
+
+// DeleteUser deletes a user by ID
+func (h *UserHandler) DeleteUser(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "User ID is required"})
+		return
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+{{- if ne .MessageQueue "none"}}
+			// Publish user deleted event
+			if h.events != nil {
+				event := events.NewEvent("user.deleted", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   user.Email,
+				})
+				
+				if err := h.events.Publish(c.Request.Context(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user deleted event", "error", err)
+				}
+			}
+{{- end}}
+
+			// Remove user from slice
+			h.users = append(h.users[:i], h.users[i+1:]...)
+			
+			h.logger.Info("User deleted", "user_id", user.ID)
+			c.JSON(http.StatusNoContent, nil)
+			return
+		}
+	}
+
+	c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+}
+
+{{- else if eq .Framework "echo"}}
+// CreateUser creates a new user
+func (h *UserHandler) CreateUser(c echo.Context) error {
+	var req CreateUserRequest
+	if err := c.Bind(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	// Check if user already exists
+	for _, user := range h.users {
+		if user.Email == req.Email || user.Username == req.Username {
+			return c.JSON(http.StatusConflict, map[string]string{"error": "User already exists"})
+		}
+	}
+
+	// Create new user
+	user := models.User{
+		ID:        uuid.New().String(),
+		Name:      req.Name,
+		Email:     req.Email,
+		Username:  req.Username,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	h.users = append(h.users, user)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if h.events != nil {
+		event := events.NewEvent("user.created", "api", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+		
+		if err := h.events.Publish(c.Request().Context(), "users", event); err != nil {
+			h.logger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	h.logger.Info("User created", "user_id", user.ID, "email", user.Email)
+	
+	response := h.toUserResponse(user)
+	return c.JSON(http.StatusCreated, response)
+}
+
+// GetUser retrieves a user by ID
+func (h *UserHandler) GetUser(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "User ID is required"})
+	}
+
+	for _, user := range h.users {
+		if user.ID == id {
+			response := h.toUserResponse(user)
+			return c.JSON(http.StatusOK, response)
+		}
+	}
+
+	return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+}
+
+// ListUsers retrieves all users with pagination
+func (h *UserHandler) ListUsers(c echo.Context) error {
+	page, _ := strconv.Atoi(c.QueryParam("page"))
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.Atoi(c.QueryParam("size"))
+	if size < 1 || size > 100 {
+		size = 10
+	}
+
+	start := (page - 1) * size
+	end := start + size
+
+	var paginatedUsers []models.User
+	if start < len(h.users) {
+		if end > len(h.users) {
+			end = len(h.users)
+		}
+		paginatedUsers = h.users[start:end]
+	} else {
+		paginatedUsers = []models.User{}
+	}
+
+	userResponses := make([]UserResponse, len(paginatedUsers))
+	for i, user := range paginatedUsers {
+		userResponses[i] = h.toUserResponse(user)
+	}
+
+	response := ListUsersResponse{
+		Users: userResponses,
+		Total: len(h.users),
+		Page:  page,
+		Size:  size,
+	}
+
+	return c.JSON(http.StatusOK, response)
+}
+
+// UpdateUser updates an existing user
+func (h *UserHandler) UpdateUser(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "User ID is required"})
+	}
+
+	var req UpdateUserRequest
+	if err := c.Bind(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request body"})
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+			// Update fields if provided
+			if req.Name != "" {
+				h.users[i].Name = req.Name
+			}
+			if req.Email != "" {
+				h.users[i].Email = req.Email
+			}
+			if req.Username != "" {
+				h.users[i].Username = req.Username
+			}
+			h.users[i].UpdatedAt = time.Now().UTC()
+
+{{- if ne .MessageQueue "none"}}
+			// Publish user updated event
+			if h.events != nil {
+				event := events.NewEvent("user.updated", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   h.users[i].Email,
+					"name":    h.users[i].Name,
+				})
+				
+				if err := h.events.Publish(c.Request().Context(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user updated event", "error", err)
+				}
+			}
+{{- end}}
+
+			h.logger.Info("User updated", "user_id", user.ID)
+			
+			response := h.toUserResponse(h.users[i])
+			return c.JSON(http.StatusOK, response)
+		}
+	}
+
+	return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+}
+
+// DeleteUser deletes a user by ID
+func (h *UserHandler) DeleteUser(c echo.Context) error {
+	id := c.Param("id")
+	if id == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "User ID is required"})
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+{{- if ne .MessageQueue "none"}}
+			// Publish user deleted event
+			if h.events != nil {
+				event := events.NewEvent("user.deleted", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   user.Email,
+				})
+				
+				if err := h.events.Publish(c.Request().Context(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user deleted event", "error", err)
+				}
+			}
+{{- end}}
+
+			// Remove user from slice
+			h.users = append(h.users[:i], h.users[i+1:]...)
+			
+			h.logger.Info("User deleted", "user_id", user.ID)
+			return c.NoContent(http.StatusNoContent)
+		}
+	}
+
+	return c.JSON(http.StatusNotFound, map[string]string{"error": "User not found"})
+}
+
+{{- else if eq .Framework "fiber"}}
+// CreateUser creates a new user
+func (h *UserHandler) CreateUser(c *fiber.Ctx) error {
+	var req CreateUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	// Check if user already exists
+	for _, user := range h.users {
+		if user.Email == req.Email || user.Username == req.Username {
+			return c.Status(http.StatusConflict).JSON(fiber.Map{"error": "User already exists"})
+		}
+	}
+
+	// Create new user
+	user := models.User{
+		ID:        uuid.New().String(),
+		Name:      req.Name,
+		Email:     req.Email,
+		Username:  req.Username,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	h.users = append(h.users, user)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if h.events != nil {
+		event := events.NewEvent("user.created", "api", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+		
+		if err := h.events.Publish(context.Background(), "users", event); err != nil {
+			h.logger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	h.logger.Info("User created", "user_id", user.ID, "email", user.Email)
+	
+	response := h.toUserResponse(user)
+	return c.Status(http.StatusCreated).JSON(response)
+}
+
+// GetUser retrieves a user by ID
+func (h *UserHandler) GetUser(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "User ID is required"})
+	}
+
+	for _, user := range h.users {
+		if user.ID == id {
+			response := h.toUserResponse(user)
+			return c.Status(http.StatusOK).JSON(response)
+		}
+	}
+
+	return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+}
+
+// ListUsers retrieves all users with pagination
+func (h *UserHandler) ListUsers(c *fiber.Ctx) error {
+	page, _ := strconv.Atoi(c.Query("page", "1"))
+	size, _ := strconv.Atoi(c.Query("size", "10"))
+
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 10
+	}
+
+	start := (page - 1) * size
+	end := start + size
+
+	var paginatedUsers []models.User
+	if start < len(h.users) {
+		if end > len(h.users) {
+			end = len(h.users)
+		}
+		paginatedUsers = h.users[start:end]
+	} else {
+		paginatedUsers = []models.User{}
+	}
+
+	userResponses := make([]UserResponse, len(paginatedUsers))
+	for i, user := range paginatedUsers {
+		userResponses[i] = h.toUserResponse(user)
+	}
+
+	response := ListUsersResponse{
+		Users: userResponses,
+		Total: len(h.users),
+		Page:  page,
+		Size:  size,
+	}
+
+	return c.Status(http.StatusOK).JSON(response)
+}
+
+// UpdateUser updates an existing user
+func (h *UserHandler) UpdateUser(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "User ID is required"})
+	}
+
+	var req UpdateUserRequest
+	if err := c.BodyParser(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+			// Update fields if provided
+			if req.Name != "" {
+				h.users[i].Name = req.Name
+			}
+			if req.Email != "" {
+				h.users[i].Email = req.Email
+			}
+			if req.Username != "" {
+				h.users[i].Username = req.Username
+			}
+			h.users[i].UpdatedAt = time.Now().UTC()
+
+{{- if ne .MessageQueue "none"}}
+			// Publish user updated event
+			if h.events != nil {
+				event := events.NewEvent("user.updated", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   h.users[i].Email,
+					"name":    h.users[i].Name,
+				})
+				
+				if err := h.events.Publish(context.Background(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user updated event", "error", err)
+				}
+			}
+{{- end}}
+
+			h.logger.Info("User updated", "user_id", user.ID)
+			
+			response := h.toUserResponse(h.users[i])
+			return c.Status(http.StatusOK).JSON(response)
+		}
+	}
+
+	return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+}
+
+// DeleteUser deletes a user by ID
+func (h *UserHandler) DeleteUser(c *fiber.Ctx) error {
+	id := c.Params("id")
+	if id == "" {
+		return c.Status(http.StatusBadRequest).JSON(fiber.Map{"error": "User ID is required"})
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+{{- if ne .MessageQueue "none"}}
+			// Publish user deleted event
+			if h.events != nil {
+				event := events.NewEvent("user.deleted", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   user.Email,
+				})
+				
+				if err := h.events.Publish(context.Background(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user deleted event", "error", err)
+				}
+			}
+{{- end}}
+
+			// Remove user from slice
+			h.users = append(h.users[:i], h.users[i+1:]...)
+			
+			h.logger.Info("User deleted", "user_id", user.ID)
+			return c.SendStatus(http.StatusNoContent)
+		}
+	}
+
+	return c.Status(http.StatusNotFound).JSON(fiber.Map{"error": "User not found"})
+}
+
+{{- else if eq .Framework "chi"}}
+// CreateUser creates a new user
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	var req CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	// Check if user already exists
+	for _, user := range h.users {
+		if user.Email == req.Email || user.Username == req.Username {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": "User already exists"})
+			return
+		}
+	}
+
+	// Create new user
+	user := models.User{
+		ID:        uuid.New().String(),
+		Name:      req.Name,
+		Email:     req.Email,
+		Username:  req.Username,
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	h.users = append(h.users, user)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if h.events != nil {
+		event := events.NewEvent("user.created", "api", map[string]interface{}{
+			"user_id": user.ID,
+			"email":   user.Email,
+			"name":    user.Name,
+		})
+		
+		if err := h.events.Publish(r.Context(), "users", event); err != nil {
+			h.logger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	h.logger.Info("User created", "user_id", user.ID, "email", user.Email)
+	
+	response := h.toUserResponse(user)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetUser retrieves a user by ID
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User ID is required"})
+		return
+	}
+
+	for _, user := range h.users {
+		if user.ID == id {
+			response := h.toUserResponse(user)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
+}
+
+// ListUsers retrieves all users with pagination
+func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+	size, _ := strconv.Atoi(r.URL.Query().Get("size"))
+	if size < 1 || size > 100 {
+		size = 10
+	}
+
+	start := (page - 1) * size
+	end := start + size
+
+	var paginatedUsers []models.User
+	if start < len(h.users) {
+		if end > len(h.users) {
+			end = len(h.users)
+		}
+		paginatedUsers = h.users[start:end]
+	} else {
+		paginatedUsers = []models.User{}
+	}
+
+	userResponses := make([]UserResponse, len(paginatedUsers))
+	for i, user := range paginatedUsers {
+		userResponses[i] = h.toUserResponse(user)
+	}
+
+	response := ListUsersResponse{
+		Users: userResponses,
+		Total: len(h.users),
+		Page:  page,
+		Size:  size,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(response)
+}
+
+// UpdateUser updates an existing user
+func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User ID is required"})
+		return
+	}
+
+	var req UpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid request body", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request body"})
+		return
+	}
+
+	if err := h.validator.Struct(req); err != nil {
+		h.logger.Error("Validation failed", "error", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+			// Update fields if provided
+			if req.Name != "" {
+				h.users[i].Name = req.Name
+			}
+			if req.Email != "" {
+				h.users[i].Email = req.Email
+			}
+			if req.Username != "" {
+				h.users[i].Username = req.Username
+			}
+			h.users[i].UpdatedAt = time.Now().UTC()
+
+{{- if ne .MessageQueue "none"}}
+			// Publish user updated event
+			if h.events != nil {
+				event := events.NewEvent("user.updated", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   h.users[i].Email,
+					"name":    h.users[i].Name,
+				})
+				
+				if err := h.events.Publish(r.Context(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user updated event", "error", err)
+				}
+			}
+{{- end}}
+
+			h.logger.Info("User updated", "user_id", user.ID)
+			
+			response := h.toUserResponse(h.users[i])
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(response)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
+}
+
+// DeleteUser deletes a user by ID
+func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "User ID is required"})
+		return
+	}
+
+	for i, user := range h.users {
+		if user.ID == id {
+{{- if ne .MessageQueue "none"}}
+			// Publish user deleted event
+			if h.events != nil {
+				event := events.NewEvent("user.deleted", "api", map[string]interface{}{
+					"user_id": user.ID,
+					"email":   user.Email,
+				})
+				
+				if err := h.events.Publish(r.Context(), "users", event); err != nil {
+					h.logger.Error("Failed to publish user deleted event", "error", err)
+				}
+			}
+{{- end}}
+
+			// Remove user from slice
+			h.users = append(h.users[:i], h.users[i+1:]...)
+			
+			h.logger.Info("User deleted", "user_id", user.ID)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNotFound)
+	json.NewEncoder(w).Encode(map[string]string{"error": "User not found"})
+}
+{{- end}}
+
+// toUserResponse converts a User model to UserResponse
+func (h *UserHandler) toUserResponse(user models.User) UserResponse {
+	return UserResponse{
+		ID:        user.ID,
+		Name:      user.Name,
+		Email:     user.Email,
+		Username:  user.Username,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
+}

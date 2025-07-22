@@ -1,0 +1,930 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/olekukonko/tablewriter"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
+
+	"{{.ModulePath}}/pkg/models"
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+// CLI holds the CLI application dependencies
+type CLI struct {
+	config *config.Config
+	logger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	db     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	events events.EventBus
+{{- end}}
+	rootCmd *cobra.Command
+}
+
+// Global flags
+var (
+	cfgFile string
+	verbose bool
+	output  string // table, json, yaml
+	quiet   bool
+)
+
+// NewCLI creates a new CLI instance
+func NewCLI() *CLI {
+	cli := &CLI{}
+	cli.setupCommands()
+	return cli
+}
+
+// Initialize sets up the CLI dependencies
+func (c *CLI) Initialize() error {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+	c.config = cfg
+
+	// Initialize logger
+	log, err := logger.New(cfg.Logger)
+	if err != nil {
+		return fmt.Errorf("failed to initialize logger: %w", err)
+	}
+	c.logger = log
+
+	if verbose {
+		c.logger.Info("{{.ProjectName}} CLI started", 
+			"version", c.config.App.Version,
+			"environment", c.config.App.Environment,
+		)
+	}
+
+{{- if ne .DatabaseType "none"}}
+	// Initialize database if needed for commands that require it
+	if c.needsDatabase() {
+		db, err := storage.NewDatabase(cfg.Database, c.logger)
+		if err != nil {
+			return fmt.Errorf("failed to create database: %w", err)
+		}
+
+		ctx := context.Background()
+		if err := db.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect to database: %w", err)
+		}
+
+		c.db = db
+		if verbose {
+			c.logger.Info("Database connected successfully")
+		}
+	}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Initialize event bus if needed
+	if c.needsEvents() {
+		eventBus, err := events.NewEventBus(cfg.MessageQueue, c.logger)
+		if err != nil {
+			return fmt.Errorf("failed to create event bus: %w", err)
+		}
+
+		ctx := context.Background()
+		if err := eventBus.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect to event bus: %w", err)
+		}
+
+		c.events = eventBus
+		if verbose {
+			c.logger.Info("Event bus connected successfully")
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// Shutdown gracefully shuts down the CLI
+func (c *CLI) Shutdown() error {
+	if verbose && c.logger != nil {
+		c.logger.Info("Shutting down CLI...")
+	}
+
+{{- if ne .MessageQueue "none"}}
+	// Close event bus
+	if c.events != nil {
+		if err := c.events.Close(); err != nil {
+			if c.logger != nil {
+				c.logger.Error("Failed to close event bus", "error", err)
+			}
+		}
+	}
+{{- end}}
+
+{{- if ne .DatabaseType "none"}}
+	// Close database
+	if c.db != nil {
+		if err := c.db.Close(); err != nil {
+			if c.logger != nil {
+				c.logger.Error("Failed to close database", "error", err)
+			}
+		}
+	}
+{{- end}}
+
+	return nil
+}
+
+// needsDatabase determines if the current command needs database access
+func (c *CLI) needsDatabase() bool {
+{{- if ne .DatabaseType "none"}}
+	args := os.Args[1:]
+	if len(args) == 0 {
+		return false
+	}
+	
+	// Commands that need database access
+	dbCommands := []string{"users", "notifications"}
+	for _, cmd := range dbCommands {
+		for _, arg := range args {
+			if arg == cmd {
+				return true
+			}
+		}
+	}
+{{- end}}
+	return false
+}
+
+// needsEvents determines if the current command needs event bus access
+func (c *CLI) needsEvents() bool {
+{{- if ne .MessageQueue "none"}}
+	args := os.Args[1:]
+	if len(args) == 0 {
+		return false
+	}
+	
+	// Commands that need event bus access
+	eventCommands := []string{"users", "notifications"}
+	for _, cmd := range eventCommands {
+		for _, arg := range args {
+			if arg == cmd {
+				return true
+			}
+		}
+	}
+{{- end}}
+	return false
+}
+
+// setupCommands configures the cobra commands
+func (c *CLI) setupCommands() {
+	c.rootCmd = &cobra.Command{
+		Use:   "{{.ProjectName}}-cli",
+		Short: "{{.ProjectName}} command line interface",
+		Long:  `{{.ProjectName}} CLI provides command-line access to {{.ProjectName}} functionality.`,
+		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+			if err := c.Initialize(); err != nil {
+				fmt.Fprintf(os.Stderr, "Initialization failed: %v\n", err)
+				os.Exit(1)
+			}
+		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			if err := c.Shutdown(); err != nil {
+				fmt.Fprintf(os.Stderr, "Shutdown failed: %v\n", err)
+			}
+		},
+	}
+
+	// Global flags
+	c.rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.{{.ProjectName}}.yaml)")
+	c.rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	c.rootCmd.PersistentFlags().StringVarP(&output, "output", "o", "table", "output format (table|json|yaml)")
+	c.rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode")
+
+	// Add subcommands
+	c.addUserCommands()
+	c.addNotificationCommands()
+	c.addConfigCommands()
+	c.addCompletionCommand()
+}
+
+// Execute runs the CLI
+func (c *CLI) Execute() error {
+	// Handle graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+		<-sigChan
+		cancel()
+		c.Shutdown()
+		os.Exit(0)
+	}()
+
+	return c.rootCmd.ExecuteContext(ctx)
+}
+
+// Output formatting helpers
+
+func (c *CLI) printOutput(data interface{}) error {
+	if quiet {
+		return nil
+	}
+
+	switch output {
+	case "json":
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(data)
+	case "yaml":
+		encoder := yaml.NewEncoder(os.Stdout)
+		defer encoder.Close()
+		return encoder.Encode(data)
+	case "table":
+		return c.printTable(data)
+	default:
+		return fmt.Errorf("unknown output format: %s", output)
+	}
+}
+
+func (c *CLI) printTable(data interface{}) error {
+	switch v := data.(type) {
+	case []models.User:
+		return c.printUserTable(v)
+	case models.User:
+		return c.printUserTable([]models.User{v})
+	case []models.Notification:
+		return c.printNotificationTable(v)
+	case models.Notification:
+		return c.printNotificationTable([]models.Notification{v})
+	default:
+		// Fallback to JSON for unknown types
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		return encoder.Encode(data)
+	}
+}
+
+func (c *CLI) printUserTable(users []models.User) error {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "Name", "Email", "Created", "Updated"})
+	table.SetBorder(false)
+	table.SetRowSeparator("")
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("")
+	table.SetHeaderLine(false)
+	table.SetTablePadding("\t")
+	table.SetNoWhiteSpace(true)
+
+	for _, user := range users {
+		table.Append([]string{
+			user.ID,
+			user.Name,
+			user.Email,
+			user.CreatedAt.Format("2006-01-02 15:04"),
+			user.UpdatedAt.Format("2006-01-02 15:04"),
+		})
+	}
+
+	table.Render()
+	return nil
+}
+
+func (c *CLI) printNotificationTable(notifications []models.Notification) error {
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "User ID", "Type", "Message", "Status", "Created"})
+	table.SetBorder(false)
+	table.SetRowSeparator("")
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator("")
+	table.SetHeaderLine(false)
+	table.SetTablePadding("\t")
+	table.SetNoWhiteSpace(true)
+
+	for _, notification := range notifications {
+		message := notification.Message
+		if len(message) > 50 {
+			message = message[:47] + "..."
+		}
+		
+		table.Append([]string{
+			notification.ID,
+			notification.UserID,
+			notification.Type,
+			message,
+			notification.Status,
+			notification.CreatedAt.Format("2006-01-02 15:04"),
+		})
+	}
+
+	table.Render()
+	return nil
+}
+
+// User management commands
+
+func (c *CLI) addUserCommands() {
+	userCmd := &cobra.Command{
+		Use:   "users",
+		Short: "Manage users",
+		Long:  "Commands for managing users in {{.ProjectName}}",
+	}
+
+	// List users
+	listUsersCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List users",
+		RunE:  c.listUsers,
+	}
+	listUsersCmd.Flags().StringP("filter", "f", "", "filter users by name or email")
+	listUsersCmd.Flags().IntP("limit", "l", 10, "limit number of results")
+
+	// Create user
+	createUserCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a new user",
+		RunE:  c.createUser,
+	}
+	createUserCmd.Flags().StringP("name", "n", "", "user name (required)")
+	createUserCmd.Flags().StringP("email", "e", "", "user email (required)")
+	createUserCmd.MarkFlagRequired("name")
+	createUserCmd.MarkFlagRequired("email")
+
+	// Get user
+	getUserCmd := &cobra.Command{
+		Use:   "get [ID]",
+		Short: "Get user by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE:  c.getUser,
+	}
+
+	// Update user
+	updateUserCmd := &cobra.Command{
+		Use:   "update [ID]",
+		Short: "Update user",
+		Args:  cobra.ExactArgs(1),
+		RunE:  c.updateUser,
+	}
+	updateUserCmd.Flags().StringP("name", "n", "", "user name")
+	updateUserCmd.Flags().StringP("email", "e", "", "user email")
+
+	// Delete user
+	deleteUserCmd := &cobra.Command{
+		Use:   "delete [ID]",
+		Short: "Delete user",
+		Args:  cobra.ExactArgs(1),
+		RunE:  c.deleteUser,
+	}
+	deleteUserCmd.Flags().BoolP("force", "f", false, "force deletion without confirmation")
+
+	userCmd.AddCommand(listUsersCmd, createUserCmd, getUserCmd, updateUserCmd, deleteUserCmd)
+	c.rootCmd.AddCommand(userCmd)
+}
+
+func (c *CLI) listUsers(cmd *cobra.Command, args []string) error {
+	filter, _ := cmd.Flags().GetString("filter")
+	limit, _ := cmd.Flags().GetInt("limit")
+
+	if verbose {
+		c.logger.Info("Listing users", "filter", filter, "limit", limit)
+	}
+
+	// In a real implementation, this would query the database
+	users := []models.User{
+		{
+			ID:        "user-1",
+			Name:      "John Doe",
+			Email:     "john@example.com",
+			CreatedAt: time.Now().Add(-24 * time.Hour),
+			UpdatedAt: time.Now().Add(-1 * time.Hour),
+		},
+		{
+			ID:        "user-2",
+			Name:      "Jane Smith",
+			Email:     "jane@example.com",
+			CreatedAt: time.Now().Add(-12 * time.Hour),
+			UpdatedAt: time.Now().Add(-30 * time.Minute),
+		},
+	}
+
+	// Apply filter if provided
+	if filter != "" {
+		var filteredUsers []models.User
+		for _, user := range users {
+			if strings.Contains(strings.ToLower(user.Name), strings.ToLower(filter)) ||
+				strings.Contains(strings.ToLower(user.Email), strings.ToLower(filter)) {
+				filteredUsers = append(filteredUsers, user)
+			}
+		}
+		users = filteredUsers
+	}
+
+	// Apply limit
+	if limit > 0 && len(users) > limit {
+		users = users[:limit]
+	}
+
+	return c.printOutput(users)
+}
+
+func (c *CLI) createUser(cmd *cobra.Command, args []string) error {
+	name, _ := cmd.Flags().GetString("name")
+	email, _ := cmd.Flags().GetString("email")
+
+	if verbose {
+		c.logger.Info("Creating user", "name", name, "email", email)
+	}
+
+	user := models.User{
+		ID:        uuid.New().String(),
+		Name:      name,
+		Email:     email,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	// In a real implementation, this would save to database
+	if verbose {
+		c.logger.Info("User created successfully", "id", user.ID)
+	}
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user created event
+	if c.events != nil {
+		event := events.NewEvent("user.created", "cli", map[string]interface{}{
+			"user_id": user.ID,
+			"name":    user.Name,
+			"email":   user.Email,
+		})
+		
+		if err := c.events.Publish(cmd.Context(), "user.events", event); err != nil {
+			c.logger.Error("Failed to publish user created event", "error", err)
+		}
+	}
+{{- end}}
+
+	if !quiet {
+		fmt.Printf("User created successfully with ID: %s\n", user.ID)
+	}
+
+	return c.printOutput(user)
+}
+
+func (c *CLI) getUser(cmd *cobra.Command, args []string) error {
+	id := args[0]
+
+	if verbose {
+		c.logger.Info("Getting user", "id", id)
+	}
+
+	// In a real implementation, this would query the database
+	user := models.User{
+		ID:        id,
+		Name:      "John Doe",
+		Email:     "john@example.com",
+		CreatedAt: time.Now().Add(-24 * time.Hour),
+		UpdatedAt: time.Now().Add(-1 * time.Hour),
+	}
+
+	return c.printOutput(user)
+}
+
+func (c *CLI) updateUser(cmd *cobra.Command, args []string) error {
+	id := args[0]
+	name, _ := cmd.Flags().GetString("name")
+	email, _ := cmd.Flags().GetString("email")
+
+	if name == "" && email == "" {
+		return fmt.Errorf("at least one field (name or email) must be provided")
+	}
+
+	if verbose {
+		c.logger.Info("Updating user", "id", id, "name", name, "email", email)
+	}
+
+	// In a real implementation, this would update the database
+	user := models.User{
+		ID:        id,
+		Name:      name,
+		Email:     email,
+		UpdatedAt: time.Now(),
+	}
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user updated event
+	if c.events != nil {
+		event := events.NewEvent("user.updated", "cli", map[string]interface{}{
+			"user_id": user.ID,
+			"name":    user.Name,
+			"email":   user.Email,
+		})
+		
+		if err := c.events.Publish(cmd.Context(), "user.events", event); err != nil {
+			c.logger.Error("Failed to publish user updated event", "error", err)
+		}
+	}
+{{- end}}
+
+	if !quiet {
+		fmt.Printf("User %s updated successfully\n", id)
+	}
+
+	return c.printOutput(user)
+}
+
+func (c *CLI) deleteUser(cmd *cobra.Command, args []string) error {
+	id := args[0]
+	force, _ := cmd.Flags().GetBool("force")
+
+	if !force && !quiet {
+		fmt.Printf("Are you sure you want to delete user %s? (y/N): ", id)
+		var response string
+		fmt.Scanln(&response)
+		if strings.ToLower(response) != "y" && strings.ToLower(response) != "yes" {
+			fmt.Println("Deletion cancelled")
+			return nil
+		}
+	}
+
+	if verbose {
+		c.logger.Info("Deleting user", "id", id)
+	}
+
+	// In a real implementation, this would delete from database
+
+{{- if ne .MessageQueue "none"}}
+	// Publish user deleted event
+	if c.events != nil {
+		event := events.NewEvent("user.deleted", "cli", map[string]interface{}{
+			"user_id": id,
+		})
+		
+		if err := c.events.Publish(cmd.Context(), "user.events", event); err != nil {
+			c.logger.Error("Failed to publish user deleted event", "error", err)
+		}
+	}
+{{- end}}
+
+	if !quiet {
+		fmt.Printf("User %s deleted successfully\n", id)
+	}
+
+	return nil
+}
+
+// Notification management commands
+
+func (c *CLI) addNotificationCommands() {
+	notificationCmd := &cobra.Command{
+		Use:   "notifications",
+		Short: "Manage notifications",
+		Long:  "Commands for managing notifications in {{.ProjectName}}",
+	}
+
+	// List notifications
+	listNotificationsCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List notifications",
+		RunE:  c.listNotifications,
+	}
+	listNotificationsCmd.Flags().StringP("user-id", "u", "", "filter by user ID")
+	listNotificationsCmd.Flags().StringP("status", "s", "", "filter by status")
+	listNotificationsCmd.Flags().IntP("limit", "l", 10, "limit number of results")
+
+	// Send notification
+	sendNotificationCmd := &cobra.Command{
+		Use:   "send",
+		Short: "Send a notification",
+		RunE:  c.sendNotification,
+	}
+	sendNotificationCmd.Flags().StringP("user-id", "u", "", "user ID (required)")
+	sendNotificationCmd.Flags().StringP("type", "t", "email", "notification type")
+	sendNotificationCmd.Flags().StringP("message", "m", "", "notification message (required)")
+	sendNotificationCmd.MarkFlagRequired("user-id")
+	sendNotificationCmd.MarkFlagRequired("message")
+
+	// Get notification
+	getNotificationCmd := &cobra.Command{
+		Use:   "get [ID]",
+		Short: "Get notification by ID",
+		Args:  cobra.ExactArgs(1),
+		RunE:  c.getNotification,
+	}
+
+	// Update notification status
+	updateNotificationCmd := &cobra.Command{
+		Use:   "update [ID]",
+		Short: "Update notification status",
+		Args:  cobra.ExactArgs(1),
+		RunE:  c.updateNotification,
+	}
+	updateNotificationCmd.Flags().StringP("status", "s", "", "notification status (required)")
+	updateNotificationCmd.MarkFlagRequired("status")
+
+	notificationCmd.AddCommand(listNotificationsCmd, sendNotificationCmd, getNotificationCmd, updateNotificationCmd)
+	c.rootCmd.AddCommand(notificationCmd)
+}
+
+func (c *CLI) listNotifications(cmd *cobra.Command, args []string) error {
+	userID, _ := cmd.Flags().GetString("user-id")
+	status, _ := cmd.Flags().GetString("status")
+	limit, _ := cmd.Flags().GetInt("limit")
+
+	if verbose {
+		c.logger.Info("Listing notifications", "user_id", userID, "status", status, "limit", limit)
+	}
+
+	// In a real implementation, this would query the database
+	notifications := []models.Notification{
+		{
+			ID:        "notif-1",
+			UserID:    "user-1",
+			Type:      "email",
+			Message:   "Welcome to {{.ProjectName}}!",
+			Status:    "sent",
+			CreatedAt: time.Now().Add(-2 * time.Hour),
+			UpdatedAt: time.Now().Add(-2 * time.Hour),
+		},
+		{
+			ID:        "notif-2",
+			UserID:    "user-2",
+			Type:      "sms",
+			Message:   "Your account has been verified.",
+			Status:    "pending",
+			CreatedAt: time.Now().Add(-1 * time.Hour),
+			UpdatedAt: time.Now().Add(-1 * time.Hour),
+		},
+	}
+
+	// Apply filters
+	var filteredNotifications []models.Notification
+	for _, notification := range notifications {
+		if userID != "" && notification.UserID != userID {
+			continue
+		}
+		if status != "" && notification.Status != status {
+			continue
+		}
+		filteredNotifications = append(filteredNotifications, notification)
+	}
+
+	// Apply limit
+	if limit > 0 && len(filteredNotifications) > limit {
+		filteredNotifications = filteredNotifications[:limit]
+	}
+
+	return c.printOutput(filteredNotifications)
+}
+
+func (c *CLI) sendNotification(cmd *cobra.Command, args []string) error {
+	userID, _ := cmd.Flags().GetString("user-id")
+	notificationType, _ := cmd.Flags().GetString("type")
+	message, _ := cmd.Flags().GetString("message")
+
+	if verbose {
+		c.logger.Info("Sending notification", "user_id", userID, "type", notificationType, "message", message)
+	}
+
+	notification := models.Notification{
+		ID:        uuid.New().String(),
+		UserID:    userID,
+		Type:      notificationType,
+		Message:   message,
+		Status:    "pending",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+{{- if ne .MessageQueue "none"}}
+	// Publish notification created event
+	if c.events != nil {
+		event := events.NewEvent("notification.created", "cli", map[string]interface{}{
+			"notification_id": notification.ID,
+			"user_id":         notification.UserID,
+			"type":            notification.Type,
+			"message":         notification.Message,
+		})
+		
+		if err := c.events.Publish(cmd.Context(), "notification.events", event); err != nil {
+			c.logger.Error("Failed to publish notification created event", "error", err)
+		}
+	}
+{{- end}}
+
+	if !quiet {
+		fmt.Printf("Notification sent successfully with ID: %s\n", notification.ID)
+	}
+
+	return c.printOutput(notification)
+}
+
+func (c *CLI) getNotification(cmd *cobra.Command, args []string) error {
+	id := args[0]
+
+	if verbose {
+		c.logger.Info("Getting notification", "id", id)
+	}
+
+	// In a real implementation, this would query the database
+	notification := models.Notification{
+		ID:        id,
+		UserID:    "user-1",
+		Type:      "email",
+		Message:   "Welcome to {{.ProjectName}}!",
+		Status:    "sent",
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+		UpdatedAt: time.Now().Add(-2 * time.Hour),
+	}
+
+	return c.printOutput(notification)
+}
+
+func (c *CLI) updateNotification(cmd *cobra.Command, args []string) error {
+	id := args[0]
+	status, _ := cmd.Flags().GetString("status")
+
+	if verbose {
+		c.logger.Info("Updating notification", "id", id, "status", status)
+	}
+
+	// In a real implementation, this would update the database
+	notification := models.Notification{
+		ID:        id,
+		Status:    status,
+		UpdatedAt: time.Now(),
+	}
+
+{{- if ne .MessageQueue "none"}}
+	// Publish notification updated event
+	if c.events != nil {
+		event := events.NewEvent("notification.updated", "cli", map[string]interface{}{
+			"notification_id": notification.ID,
+			"status":          notification.Status,
+		})
+		
+		if err := c.events.Publish(cmd.Context(), "notification.events", event); err != nil {
+			c.logger.Error("Failed to publish notification updated event", "error", err)
+		}
+	}
+{{- end}}
+
+	if !quiet {
+		fmt.Printf("Notification %s updated successfully\n", id)
+	}
+
+	return c.printOutput(notification)
+}
+
+// Configuration commands
+
+func (c *CLI) addConfigCommands() {
+	configCmd := &cobra.Command{
+		Use:   "config",
+		Short: "Configuration management",
+		Long:  "Commands for managing {{.ProjectName}} configuration",
+	}
+
+	// Show config
+	showConfigCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show current configuration",
+		RunE:  c.showConfig,
+	}
+
+	// Validate config
+	validateConfigCmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate configuration",
+		RunE:  c.validateConfig,
+	}
+
+	configCmd.AddCommand(showConfigCmd, validateConfigCmd)
+	c.rootCmd.AddCommand(configCmd)
+}
+
+func (c *CLI) showConfig(cmd *cobra.Command, args []string) error {
+	if c.config == nil {
+		return fmt.Errorf("configuration not loaded")
+	}
+
+	return c.printOutput(c.config)
+}
+
+func (c *CLI) validateConfig(cmd *cobra.Command, args []string) error {
+	if c.config == nil {
+		return fmt.Errorf("configuration not loaded")
+	}
+
+	// In a real implementation, this would validate the configuration
+	if !quiet {
+		fmt.Println("Configuration is valid")
+	}
+
+	return nil
+}
+
+// Completion command
+
+func (c *CLI) addCompletionCommand() {
+	completionCmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate completion script",
+		Long: `To load completions:
+
+Bash:
+  $ source <({{.ProjectName}}-cli completion bash)
+
+  # To load completions for each session, execute once:
+  # Linux:
+  $ {{.ProjectName}}-cli completion bash > /etc/bash_completion.d/{{.ProjectName}}-cli
+  # macOS:
+  $ {{.ProjectName}}-cli completion bash > /usr/local/etc/bash_completion.d/{{.ProjectName}}-cli
+
+Zsh:
+  # If shell completion is not already enabled in your environment,
+  # you will need to enable it.  You can execute the following once:
+  $ echo "autoload -U compinit; compinit" >> ~/.zshrc
+
+  # To load completions for each session, execute once:
+  $ {{.ProjectName}}-cli completion zsh > "${fpath[1]}/_{{.ProjectName}}-cli"
+
+  # You will need to start a new shell for this setup to take effect.
+
+fish:
+  $ {{.ProjectName}}-cli completion fish | source
+
+  # To load completions for each session, execute once:
+  $ {{.ProjectName}}-cli completion fish > ~/.config/fish/completions/{{.ProjectName}}-cli.fish
+
+PowerShell:
+  PS> {{.ProjectName}}-cli completion powershell | Out-String | Invoke-Expression
+
+  # To load completions for every new session, run:
+  PS> {{.ProjectName}}-cli completion powershell > {{.ProjectName}}-cli.ps1
+  # and source this file from your PowerShell profile.
+`,
+		DisableFlagsInUseLine: true,
+		ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+		Args:                  cobra.ExactValidArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			switch args[0] {
+			case "bash":
+				cmd.Root().GenBashCompletion(os.Stdout)
+			case "zsh":
+				cmd.Root().GenZshCompletion(os.Stdout)
+			case "fish":
+				cmd.Root().GenFishCompletion(os.Stdout, true)
+			case "powershell":
+				cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+			}
+		},
+	}
+
+	c.rootCmd.AddCommand(completionCmd)
+}
+
+func main() {
+	// Initialize viper for configuration
+	if cfgFile != "" {
+		viper.SetConfigFile(cfgFile)
+	} else {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error finding home directory: %v\n", err)
+			os.Exit(1)
+		}
+
+		viper.AddConfigPath(home)
+		viper.AddConfigPath(".")
+		viper.SetConfigName(".{{.ProjectName}}")
+		viper.SetConfigType("yaml")
+	}
+
+	viper.AutomaticEnv()
+
+	cli := NewCLI()
+	if err := cli.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}

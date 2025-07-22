@@ -1,0 +1,254 @@
+package main
+
+import (
+	"time"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-contrib/cors"
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+{{- else if eq .Framework "chi"}}
+	"net/http"
+	"github.com/go-chi/cors"
+	"github.com/go-chi/middleware"
+{{- end}}
+	"github.com/google/uuid"
+{{- if eq .Framework "gin" or eq .Framework "chi"}}
+	"golang.org/x/time/rate"
+{{- end}}
+)
+
+{{- if eq .Framework "gin"}}
+// Gin middleware implementations
+
+func (app *Application) loggingMiddleware() gin.HandlerFunc {
+	return gin.LoggerWithConfig(gin.LoggerConfig{
+		Formatter: func(param gin.LogFormatterParams) string {
+			app.logger.Info("HTTP Request",
+				"method", param.Method,
+				"path", param.Path,
+				"status", param.StatusCode,
+				"latency", param.Latency,
+				"ip", param.ClientIP,
+				"user_agent", param.Request.UserAgent(),
+				"request_id", param.Request.Header.Get("X-Request-ID"),
+			)
+			return ""
+		},
+	})
+}
+
+func (app *Application) recoveryMiddleware() gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+		app.logger.Error("Panic recovered",
+			"error", recovered,
+			"path", c.Request.URL.Path,
+			"method", c.Request.Method,
+			"request_id", c.Request.Header.Get("X-Request-ID"),
+		)
+		c.AbortWithStatusJSON(500, Response{
+			Success: false,
+			Error:   "Internal server error",
+		})
+	})
+}
+
+func (app *Application) corsMiddleware() gin.HandlerFunc {
+	config := cors.DefaultConfig()
+	config.AllowOrigins = app.config.Server.AllowedOrigins
+	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
+	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"}
+	config.AllowCredentials = true
+	return cors.New(config)
+}
+
+func (app *Application) requestIDMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := c.GetHeader("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+		c.Header("X-Request-ID", requestID)
+		c.Set("request_id", requestID)
+		c.Next()
+	}
+}
+
+func (app *Application) rateLimitMiddleware() gin.HandlerFunc {
+	limiter := rate.NewLimiter(rate.Limit(app.config.Server.RateLimit), app.config.Server.RateBurst)
+	
+	return func(c *gin.Context) {
+		if !limiter.Allow() {
+			c.AbortWithStatusJSON(429, Response{
+				Success: false,
+				Error:   "Rate limit exceeded",
+			})
+			return
+		}
+		c.Next()
+	}
+}
+
+{{- else if eq .Framework "echo"}}
+// Echo middleware implementations
+
+func (app *Application) loggingMiddleware() echo.MiddlewareFunc {
+	return middleware.LoggerWithConfig(middleware.LoggerConfig{
+		Format: `{"time":"${time_rfc3339}","method":"${method}","uri":"${uri}","status":${status},"latency":"${latency_human}","bytes_in":${bytes_in},"bytes_out":${bytes_out},"error":"${error}"}` + "\n",
+		CustomTimeFormat: "2006-01-02T15:04:05.000Z",
+	})
+}
+
+func (app *Application) recoveryMiddleware() echo.MiddlewareFunc {
+	return middleware.RecoverWithConfig(middleware.RecoverConfig{
+		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
+			app.logger.Error("Panic recovered",
+				"error", err,
+				"path", c.Request().URL.Path,
+				"method", c.Request().Method,
+				"request_id", c.Request().Header.Get("X-Request-ID"),
+				"stack", string(stack),
+			)
+			return nil
+		},
+	})
+}
+
+func (app *Application) corsMiddleware() echo.MiddlewareFunc {
+	return middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins:     app.config.Server.AllowedOrigins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"},
+		AllowCredentials: true,
+	})
+}
+
+func (app *Application) requestIDMiddleware() echo.MiddlewareFunc {
+	return middleware.RequestIDWithConfig(middleware.RequestIDConfig{
+		Generator: func() string {
+			return uuid.New().String()
+		},
+	})
+}
+
+func (app *Application) rateLimitMiddleware() echo.MiddlewareFunc {
+	return middleware.RateLimiterWithConfig(middleware.RateLimiterConfig{
+		Store: middleware.NewRateLimiterMemoryStore(rate.Limit(app.config.Server.RateLimit)),
+	})
+}
+
+{{- else if eq .Framework "fiber"}}
+// Fiber middleware implementations
+
+func (app *Application) loggingMiddleware() fiber.Handler {
+	return logger.New(logger.Config{
+		Format: "[${time}] ${status} - ${method} ${path} - ${latency}\n",
+		TimeFormat: "2006-01-02T15:04:05.000Z",
+		Output: &logWriter{logger: app.logger},
+	})
+}
+
+func (app *Application) recoveryMiddleware() fiber.Handler {
+	return recover.New(recover.Config{
+		EnableStackTrace: true,
+		StackTraceHandler: func(c *fiber.Ctx, e interface{}) {
+			app.logger.Error("Panic recovered",
+				"error", e,
+				"path", c.Path(),
+				"method", c.Method(),
+				"request_id", c.Get("X-Request-ID"),
+			)
+		},
+	})
+}
+
+func (app *Application) corsMiddleware() fiber.Handler {
+	return cors.New(cors.Config{
+		AllowOrigins:     strings.Join(app.config.Server.AllowedOrigins, ","),
+		AllowMethods:     "GET,POST,PUT,DELETE,OPTIONS",
+		AllowHeaders:     "Origin,Content-Type,Accept,Authorization,X-Request-ID",
+		AllowCredentials: true,
+	})
+}
+
+func (app *Application) requestIDMiddleware() fiber.Handler {
+	return requestid.New(requestid.Config{
+		Generator: func() string {
+			return uuid.New().String()
+		},
+		ContextKey: "request_id",
+	})
+}
+
+type logWriter struct {
+	logger logger.Logger
+}
+
+func (lw *logWriter) Write(p []byte) (n int, err error) {
+	lw.logger.Info(string(p))
+	return len(p), nil
+}
+
+{{- else if eq .Framework "chi"}}
+// Chi middleware implementations
+
+func (app *Application) loggingMiddleware() func(http.Handler) http.Handler {
+	return middleware.RequestLogger(&middleware.DefaultLogFormatter{
+		Logger:  &chiLogger{logger: app.logger},
+		NoColor: app.config.App.Environment == "production",
+	})
+}
+
+func (app *Application) recoveryMiddleware() func(http.Handler) http.Handler {
+	return middleware.Recoverer
+}
+
+func (app *Application) corsMiddleware() func(http.Handler) http.Handler {
+	return cors.Handler(cors.Options{
+		AllowedOrigins:   app.config.Server.AllowedOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Request-ID"},
+		AllowCredentials: true,
+	})
+}
+
+func (app *Application) requestIDMiddleware() func(http.Handler) http.Handler {
+	return middleware.RequestID
+}
+
+func (app *Application) rateLimitMiddleware() func(http.Handler) http.Handler {
+	limiter := rate.NewLimiter(rate.Limit(app.config.Server.RateLimit), app.config.Server.RateBurst)
+	
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !limiter.Allow() {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusTooManyRequests)
+				json.NewEncoder(w).Encode(Response{
+					Success: false,
+					Error:   "Rate limit exceeded",
+				})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+type chiLogger struct {
+	logger logger.Logger
+}
+
+func (cl *chiLogger) Print(v ...interface{}) {
+	cl.logger.Info(fmt.Sprint(v...))
+}
+
+{{- end}}

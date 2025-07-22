@@ -1,0 +1,223 @@
+package services
+
+import "{{.ModulePath}}/pkg/models"
+
+// CreateUserRequest represents a request to create a new user
+type CreateUserRequest struct {
+	Name     string `json:"name" validate:"required,min=1,max=100"`
+	Email    string `json:"email" validate:"required,email,max=255"`
+	Password string `json:"password" validate:"required,min=8,max=128"`
+}
+
+// UpdateUserRequest represents a request to update an existing user
+type UpdateUserRequest struct {
+	Name  string `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	Email string `json:"email,omitempty" validate:"omitempty,email,max=255"`
+}
+
+// ChangePasswordRequest represents a request to change a user's password
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
+	NewPassword     string `json:"new_password" validate:"required,min=8,max=128"`
+}
+
+// ListUsersRequest represents a request to list users with pagination
+type ListUsersRequest struct {
+	Page     int    `json:"page" form:"page" validate:"min=1"`
+	PerPage  int    `json:"per_page" form:"per_page" validate:"min=1,max=100"`
+	Search   string `json:"search,omitempty" form:"search" validate:"omitempty,max=255"`
+	Status   string `json:"status,omitempty" form:"status" validate:"omitempty,oneof=active inactive pending_verification deleted"`
+	SortBy   string `json:"sort_by,omitempty" form:"sort_by" validate:"omitempty,oneof=name email created_at updated_at"`
+	SortDir  string `json:"sort_dir,omitempty" form:"sort_dir" validate:"omitempty,oneof=asc desc"`
+}
+
+// ListUsersResponse represents the response for listing users
+type ListUsersResponse struct {
+	Users      []*models.User     `json:"users"`
+	Pagination PaginationResponse `json:"pagination"`
+}
+
+// PaginationResponse represents pagination metadata
+type PaginationResponse struct {
+	Page       int   `json:"page"`
+	PerPage    int   `json:"per_page"`
+	Total      int64 `json:"total"`
+	TotalPages int64 `json:"total_pages"`
+}
+
+// VerifyUserRequest represents a request to verify a user's email
+type VerifyUserRequest struct {
+	VerificationToken string `json:"verification_token" validate:"required"`
+}
+
+// UserStatsResponse represents user statistics
+type UserStatsResponse struct {
+	TotalUsers           int64 `json:"total_users"`
+	ActiveUsers          int64 `json:"active_users"`
+	InactiveUsers        int64 `json:"inactive_users"`
+	PendingVerification  int64 `json:"pending_verification"`
+	DeletedUsers         int64 `json:"deleted_users"`
+	NewUsersToday        int64 `json:"new_users_today"`
+	NewUsersThisWeek     int64 `json:"new_users_this_week"`
+	NewUsersThisMonth    int64 `json:"new_users_this_month"`
+}
+
+// UserProfileResponse represents a user profile response (public view)
+type UserProfileResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Email     string `json:"email,omitempty"` // Only included for the user themselves
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+}
+
+// UserSearchRequest represents a request to search users
+type UserSearchRequest struct {
+	Query   string `json:"query" form:"query" validate:"required,min=1,max=255"`
+	Page    int    `json:"page" form:"page" validate:"min=1"`
+	PerPage int    `json:"per_page" form:"per_page" validate:"min=1,max=100"`
+	Fields  string `json:"fields,omitempty" form:"fields"` // Comma-separated fields to search
+}
+
+// UserSearchResponse represents the response for user search
+type UserSearchResponse struct {
+	Users      []*models.User     `json:"users"`
+	Query      string             `json:"query"`
+	Pagination PaginationResponse `json:"pagination"`
+}
+
+// BulkUserActionRequest represents a request to perform bulk actions on users
+type BulkUserActionRequest struct {
+	UserIDs []string `json:"user_ids" validate:"required,min=1,max=100"`
+	Action  string   `json:"action" validate:"required,oneof=activate deactivate delete verify"`
+}
+
+// BulkUserActionResponse represents the response for bulk user actions
+type BulkUserActionResponse struct {
+	SuccessCount int      `json:"success_count"`
+	FailedCount  int      `json:"failed_count"`
+	FailedIDs    []string `json:"failed_ids,omitempty"`
+	Message      string   `json:"message"`
+}
+
+// UserActivityRequest represents a request to get user activity
+type UserActivityRequest struct {
+	UserID    string `json:"user_id" validate:"required"`
+	StartDate string `json:"start_date,omitempty" validate:"omitempty,datetime=2006-01-02"`
+	EndDate   string `json:"end_date,omitempty" validate:"omitempty,datetime=2006-01-02"`
+	Page      int    `json:"page" form:"page" validate:"min=1"`
+	PerPage   int    `json:"per_page" form:"per_page" validate:"min=1,max=100"`
+}
+
+// UserActivityEvent represents a single user activity event
+type UserActivityEvent struct {
+	ID          string                 `json:"id"`
+	UserID      string                 `json:"user_id"`
+	EventType   string                 `json:"event_type"`
+	Description string                 `json:"description"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	IPAddress   string                 `json:"ip_address,omitempty"`
+	UserAgent   string                 `json:"user_agent,omitempty"`
+	CreatedAt   string                 `json:"created_at"`
+}
+
+// UserActivityResponse represents the response for user activity
+type UserActivityResponse struct {
+	Events     []*UserActivityEvent `json:"events"`
+	Pagination PaginationResponse   `json:"pagination"`
+}
+
+// UserPreferencesRequest represents a request to update user preferences
+type UserPreferencesRequest struct {
+	Timezone             string            `json:"timezone,omitempty"`
+	Language             string            `json:"language,omitempty"`
+	EmailNotifications   bool              `json:"email_notifications"`
+	PushNotifications    bool              `json:"push_notifications"`
+	TwoFactorEnabled     bool              `json:"two_factor_enabled"`
+	CustomPreferences    map[string]string `json:"custom_preferences,omitempty"`
+}
+
+// UserPreferencesResponse represents user preferences
+type UserPreferencesResponse struct {
+	UserID               string            `json:"user_id"`
+	Timezone             string            `json:"timezone"`
+	Language             string            `json:"language"`
+	EmailNotifications   bool              `json:"email_notifications"`
+	PushNotifications    bool              `json:"push_notifications"`
+	TwoFactorEnabled     bool              `json:"two_factor_enabled"`
+	CustomPreferences    map[string]string `json:"custom_preferences"`
+	UpdatedAt            string            `json:"updated_at"`
+}
+
+// ResetPasswordRequest represents a request to reset a user's password
+type ResetPasswordRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// ResetPasswordResponse represents the response for password reset request
+type ResetPasswordResponse struct {
+	Message string `json:"message"`
+}
+
+// ConfirmPasswordResetRequest represents a request to confirm password reset
+type ConfirmPasswordResetRequest struct {
+	ResetToken  string `json:"reset_token" validate:"required"`
+	NewPassword string `json:"new_password" validate:"required,min=8,max=128"`
+}
+
+// UserExportRequest represents a request to export user data
+type UserExportRequest struct {
+	UserID string `json:"user_id" validate:"required"`
+	Format string `json:"format" validate:"required,oneof=json xml csv"`
+}
+
+// UserExportResponse represents the response for user data export
+type UserExportResponse struct {
+	ExportID   string `json:"export_id"`
+	Status     string `json:"status"`
+	DownloadURL string `json:"download_url,omitempty"`
+	CreatedAt  string `json:"created_at"`
+	ExpiresAt  string `json:"expires_at"`
+}
+
+// ValidateEmailRequest represents a request to validate an email address
+type ValidateEmailRequest struct {
+	Email string `json:"email" validate:"required,email"`
+}
+
+// ValidateEmailResponse represents the response for email validation
+type ValidateEmailResponse struct {
+	Valid     bool   `json:"valid"`
+	Available bool   `json:"available"`
+	Message   string `json:"message,omitempty"`
+}
+
+// DefaultPagination provides default values for pagination
+func DefaultPagination() ListUsersRequest {
+	return ListUsersRequest{
+		Page:    1,
+		PerPage: 10,
+		SortBy:  "created_at",
+		SortDir: "desc",
+	}
+}
+
+// NormalizePagination ensures pagination parameters are within valid ranges
+func (r *ListUsersRequest) NormalizePagination() {
+	if r.Page < 1 {
+		r.Page = 1
+	}
+	if r.PerPage < 1 {
+		r.PerPage = 10
+	}
+	if r.PerPage > 100 {
+		r.PerPage = 100
+	}
+	if r.SortBy == "" {
+		r.SortBy = "created_at"
+	}
+	if r.SortDir == "" {
+		r.SortDir = "desc"
+	}
+}

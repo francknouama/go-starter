@@ -1,0 +1,433 @@
+package storage
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+{{- if eq .DatabaseType "postgres"}}
+	_ "github.com/lib/pq"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+{{- else if eq .DatabaseType "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+{{- else if eq .DatabaseType "mongodb"}}
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+{{- else if eq .DatabaseType "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+{{- end}}
+
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+)
+
+// Database represents the database interface
+type Database interface {
+	Connect(ctx context.Context) error
+	Close() error
+	Health(ctx context.Context) error
+{{- if ne .DatabaseType "mongodb"}}
+	GetDB() *sql.DB
+{{- else}}
+	GetCollection(name string) *mongo.Collection
+{{- end}}
+	Migrate(ctx context.Context) error
+}
+
+{{- if eq .DatabaseType "postgres"}}
+// PostgresDB implements the Database interface for PostgreSQL
+type PostgresDB struct {
+	config *config.DatabaseConfig
+	db     *sql.DB
+	pool   *pgxpool.Pool
+	logger logger.Logger
+}
+
+// NewPostgresDB creates a new PostgreSQL database instance
+func NewPostgresDB(cfg *config.DatabaseConfig, log logger.Logger) *PostgresDB {
+	return &PostgresDB{
+		config: cfg,
+		logger: log,
+	}
+}
+
+// Connect establishes a connection to PostgreSQL
+func (p *PostgresDB) Connect(ctx context.Context) error {
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		p.config.Host,
+		p.config.Port,
+		p.config.User,
+		p.config.Password,
+		p.config.Name,
+		p.config.SSLMode,
+	)
+
+	// Standard database/sql connection
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open postgres connection: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(p.config.MaxOpenConns)
+	db.SetMaxIdleConns(p.config.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(p.config.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to ping postgres database: %w", err)
+	}
+
+	p.db = db
+
+	// Also create a pgx pool for advanced features
+	poolConfig, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return fmt.Errorf("failed to parse pgx config: %w", err)
+	}
+
+	poolConfig.MaxConns = int32(p.config.MaxOpenConns)
+	poolConfig.MinConns = int32(p.config.MaxIdleConns / 4)
+	poolConfig.MaxConnLifetime = time.Duration(p.config.ConnMaxLifetime) * time.Second
+
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create pgx pool: %w", err)
+	}
+
+	p.pool = pool
+
+	p.logger.Info("Successfully connected to PostgreSQL database")
+	return nil
+}
+
+// Close closes the PostgreSQL connection
+func (p *PostgresDB) Close() error {
+	if p.pool != nil {
+		p.pool.Close()
+	}
+	if p.db != nil {
+		if err := p.db.Close(); err != nil {
+			return fmt.Errorf("failed to close postgres connection: %w", err)
+		}
+	}
+	p.logger.Info("PostgreSQL connection closed")
+	return nil
+}
+
+// Health checks the PostgreSQL connection health
+func (p *PostgresDB) Health(ctx context.Context) error {
+	if p.db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	
+	if err := p.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("postgres health check failed: %w", err)
+	}
+	
+	return nil
+}
+
+// GetDB returns the standard sql.DB instance
+func (p *PostgresDB) GetDB() *sql.DB {
+	return p.db
+}
+
+// GetPool returns the pgx connection pool
+func (p *PostgresDB) GetPool() *pgxpool.Pool {
+	return p.pool
+}
+
+// Migrate runs database migrations
+func (p *PostgresDB) Migrate(ctx context.Context) error {
+	// Implementation depends on your migration strategy
+	// This is a placeholder for migration logic
+	p.logger.Info("Running PostgreSQL migrations...")
+	return nil
+}
+
+{{- else if eq .DatabaseType "mysql"}}
+// MySQLDB implements the Database interface for MySQL
+type MySQLDB struct {
+	config *config.DatabaseConfig
+	db     *sql.DB
+	logger logger.Logger
+}
+
+// NewMySQLDB creates a new MySQL database instance
+func NewMySQLDB(cfg *config.DatabaseConfig, log logger.Logger) *MySQLDB {
+	return &MySQLDB{
+		config: cfg,
+		logger: log,
+	}
+}
+
+// Connect establishes a connection to MySQL
+func (m *MySQLDB) Connect(ctx context.Context) error {
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		m.config.User,
+		m.config.Password,
+		m.config.Host,
+		m.config.Port,
+		m.config.Name,
+	)
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open mysql connection: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(m.config.MaxOpenConns)
+	db.SetMaxIdleConns(m.config.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(m.config.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to ping mysql database: %w", err)
+	}
+
+	m.db = db
+	m.logger.Info("Successfully connected to MySQL database")
+	return nil
+}
+
+// Close closes the MySQL connection
+func (m *MySQLDB) Close() error {
+	if m.db != nil {
+		if err := m.db.Close(); err != nil {
+			return fmt.Errorf("failed to close mysql connection: %w", err)
+		}
+	}
+	m.logger.Info("MySQL connection closed")
+	return nil
+}
+
+// Health checks the MySQL connection health
+func (m *MySQLDB) Health(ctx context.Context) error {
+	if m.db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	
+	if err := m.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("mysql health check failed: %w", err)
+	}
+	
+	return nil
+}
+
+// GetDB returns the standard sql.DB instance
+func (m *MySQLDB) GetDB() *sql.DB {
+	return m.db
+}
+
+// Migrate runs database migrations
+func (m *MySQLDB) Migrate(ctx context.Context) error {
+	// Implementation depends on your migration strategy
+	// This is a placeholder for migration logic
+	m.logger.Info("Running MySQL migrations...")
+	return nil
+}
+
+{{- else if eq .DatabaseType "mongodb"}}
+// MongoDB implements the Database interface for MongoDB
+type MongoDB struct {
+	config   *config.DatabaseConfig
+	client   *mongo.Client
+	database *mongo.Database
+	logger   logger.Logger
+}
+
+// NewMongoDB creates a new MongoDB database instance
+func NewMongoDB(cfg *config.DatabaseConfig, log logger.Logger) *MongoDB {
+	return &MongoDB{
+		config: cfg,
+		logger: log,
+	}
+}
+
+// Connect establishes a connection to MongoDB
+func (m *MongoDB) Connect(ctx context.Context) error {
+	uri := fmt.Sprintf("mongodb://%s:%s@%s:%d/%s",
+		m.config.User,
+		m.config.Password,
+		m.config.Host,
+		m.config.Port,
+		m.config.Name,
+	)
+
+	clientOptions := options.Client().ApplyURI(uri)
+	clientOptions.SetMaxPoolSize(uint64(m.config.MaxOpenConns))
+	clientOptions.SetMinPoolSize(uint64(m.config.MaxIdleConns))
+	clientOptions.SetMaxConnIdleTime(time.Duration(m.config.ConnMaxLifetime) * time.Second)
+
+	client, err := mongo.Connect(ctx, clientOptions)
+	if err != nil {
+		return fmt.Errorf("failed to connect to mongodb: %w", err)
+	}
+
+	// Test the connection
+	if err := client.Ping(ctx, nil); err != nil {
+		return fmt.Errorf("failed to ping mongodb: %w", err)
+	}
+
+	m.client = client
+	m.database = client.Database(m.config.Name)
+	
+	m.logger.Info("Successfully connected to MongoDB database")
+	return nil
+}
+
+// Close closes the MongoDB connection
+func (m *MongoDB) Close() error {
+	if m.client != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		
+		if err := m.client.Disconnect(ctx); err != nil {
+			return fmt.Errorf("failed to close mongodb connection: %w", err)
+		}
+	}
+	m.logger.Info("MongoDB connection closed")
+	return nil
+}
+
+// Health checks the MongoDB connection health
+func (m *MongoDB) Health(ctx context.Context) error {
+	if m.client == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	
+	if err := m.client.Ping(ctx, nil); err != nil {
+		return fmt.Errorf("mongodb health check failed: %w", err)
+	}
+	
+	return nil
+}
+
+// GetCollection returns a MongoDB collection
+func (m *MongoDB) GetCollection(name string) *mongo.Collection {
+	return m.database.Collection(name)
+}
+
+// Migrate runs database migrations
+func (m *MongoDB) Migrate(ctx context.Context) error {
+	// Implementation depends on your migration strategy
+	// This is a placeholder for migration logic
+	m.logger.Info("Running MongoDB migrations...")
+	return nil
+}
+
+{{- else if eq .DatabaseType "sqlite"}}
+// SQLiteDB implements the Database interface for SQLite
+type SQLiteDB struct {
+	config *config.DatabaseConfig
+	db     *sql.DB
+	logger logger.Logger
+}
+
+// NewSQLiteDB creates a new SQLite database instance
+func NewSQLiteDB(cfg *config.DatabaseConfig, log logger.Logger) *SQLiteDB {
+	return &SQLiteDB{
+		config: cfg,
+		logger: log,
+	}
+}
+
+// Connect establishes a connection to SQLite
+func (s *SQLiteDB) Connect(ctx context.Context) error {
+	// For SQLite, the "host" field contains the file path
+	dsn := s.config.Host
+	if dsn == "" {
+		dsn = "./{{.ProjectName}}.db"
+	}
+
+	db, err := sql.Open("sqlite3", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open sqlite connection: %w", err)
+	}
+
+	// Configure connection pool (SQLite specific settings)
+	db.SetMaxOpenConns(1) // SQLite only supports one writer
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(time.Duration(s.config.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to ping sqlite database: %w", err)
+	}
+
+	// Enable foreign keys
+	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON"); err != nil {
+		db.Close()
+		return fmt.Errorf("failed to enable foreign keys: %w", err)
+	}
+
+	s.db = db
+	s.logger.Info("Successfully connected to SQLite database")
+	return nil
+}
+
+// Close closes the SQLite connection
+func (s *SQLiteDB) Close() error {
+	if s.db != nil {
+		if err := s.db.Close(); err != nil {
+			return fmt.Errorf("failed to close sqlite connection: %w", err)
+		}
+	}
+	s.logger.Info("SQLite connection closed")
+	return nil
+}
+
+// Health checks the SQLite connection health
+func (s *SQLiteDB) Health(ctx context.Context) error {
+	if s.db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	
+	if err := s.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("sqlite health check failed: %w", err)
+	}
+	
+	return nil
+}
+
+// GetDB returns the standard sql.DB instance
+func (s *SQLiteDB) GetDB() *sql.DB {
+	return s.db
+}
+
+// Migrate runs database migrations
+func (s *SQLiteDB) Migrate(ctx context.Context) error {
+	// Implementation depends on your migration strategy
+	// This is a placeholder for migration logic
+	s.logger.Info("Running SQLite migrations...")
+	return nil
+}
+{{- end}}
+
+// NewDatabase creates a new database instance based on the configuration
+func NewDatabase(cfg *config.DatabaseConfig, log logger.Logger) (Database, error) {
+	switch cfg.Type {
+{{- if eq .DatabaseType "postgres"}}
+	case "postgres", "postgresql":
+		return NewPostgresDB(cfg, log), nil
+{{- else if eq .DatabaseType "mysql"}}
+	case "mysql":
+		return NewMySQLDB(cfg, log), nil
+{{- else if eq .DatabaseType "mongodb"}}
+	case "mongodb", "mongo":
+		return NewMongoDB(cfg, log), nil
+{{- else if eq .DatabaseType "sqlite"}}
+	case "sqlite", "sqlite3":
+		return NewSQLiteDB(cfg, log), nil
+{{- end}}
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", cfg.Type)
+	}
+}

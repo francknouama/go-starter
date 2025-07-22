@@ -1,0 +1,372 @@
+package cmd
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/spf13/cobra"
+	"github.com/olekukonko/tablewriter"
+	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
+
+	"{{.ModulePath}}/pkg/models"
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+var (
+	// Notification command flags
+	notificationUserID    string
+	notificationMessage   string
+	notificationType      string
+	notificationChannel   string
+	notificationID        string
+	notificationStatus    string
+)
+
+// notificationsCmd represents the notifications command
+var notificationsCmd = &cobra.Command{
+	Use:   "notifications",
+	Short: "Manage notifications in the {{.ProjectName}} workspace",
+	Long: `The notifications command provides subcommands for managing notifications in the {{.ProjectName}} workspace.
+
+You can send, list, and manage notification status using this command.
+
+Examples:
+  {{.ProjectName}}-cli notifications list
+  {{.ProjectName}}-cli notifications send --user-id "user-123" --message "Welcome!" --type "welcome"
+  {{.ProjectName}}-cli notifications get --id "notif-456"
+  {{.ProjectName}}-cli notifications update --id "notif-456" --status "read"`,
+}
+
+// notificationsListCmd represents the notifications list command
+var notificationsListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all notifications",
+	Long:  "List all notifications in the {{.ProjectName}} workspace with optional filtering.",
+	RunE:  runNotificationsList,
+}
+
+// notificationsSendCmd represents the notifications send command
+var notificationsSendCmd = &cobra.Command{
+	Use:   "send",
+	Short: "Send a notification",
+	Long:  "Send a new notification to a user in the {{.ProjectName}} workspace.",
+	RunE:  runNotificationsSend,
+}
+
+// notificationsGetCmd represents the notifications get command
+var notificationsGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get a notification by ID",
+	Long:  "Get detailed information about a specific notification by its ID.",
+	RunE:  runNotificationsGet,
+}
+
+// notificationsUpdateCmd represents the notifications update command
+var notificationsUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update a notification status",
+	Long:  "Update the status of an existing notification in the {{.ProjectName}} workspace.",
+	RunE:  runNotificationsUpdate,
+}
+
+func init() {
+	rootCmd.AddCommand(notificationsCmd)
+
+	// Add subcommands
+	notificationsCmd.AddCommand(notificationsListCmd)
+	notificationsCmd.AddCommand(notificationsSendCmd)
+	notificationsCmd.AddCommand(notificationsGetCmd)
+	notificationsCmd.AddCommand(notificationsUpdateCmd)
+
+	// List command flags
+	notificationsListCmd.Flags().StringVar(&notificationUserID, "user-id", "", "Filter by user ID")
+	notificationsListCmd.Flags().StringVar(&notificationStatus, "status", "", "Filter by status (pending, sent, delivered, read, failed)")
+	notificationsListCmd.Flags().IntVar(&limit, "limit", 10, "Maximum number of notifications to return")
+	notificationsListCmd.Flags().IntVar(&offset, "offset", 0, "Number of notifications to skip")
+
+	// Send command flags
+	notificationsSendCmd.Flags().StringVar(&notificationUserID, "user-id", "", "Target user ID")
+	notificationsSendCmd.Flags().StringVar(&notificationMessage, "message", "", "Notification message")
+	notificationsSendCmd.Flags().StringVar(&notificationType, "type", "info", "Notification type (info, warning, error, success)")
+	notificationsSendCmd.Flags().StringVar(&notificationChannel, "channel", "email", "Notification channel (email, sms, push, in-app)")
+	notificationsSendCmd.MarkFlagRequired("user-id")
+	notificationsSendCmd.MarkFlagRequired("message")
+
+	// Get command flags
+	notificationsGetCmd.Flags().StringVar(&notificationID, "id", "", "Notification ID")
+	notificationsGetCmd.MarkFlagRequired("id")
+
+	// Update command flags
+	notificationsUpdateCmd.Flags().StringVar(&notificationID, "id", "", "Notification ID")
+	notificationsUpdateCmd.Flags().StringVar(&notificationStatus, "status", "", "New status (pending, sent, delivered, read, failed)")
+	notificationsUpdateCmd.MarkFlagRequired("id")
+	notificationsUpdateCmd.MarkFlagRequired("status")
+}
+
+// In-memory notification storage for demo purposes
+var notifications []models.Notification
+
+// runNotificationsList executes the notifications list command
+func runNotificationsList(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Listing notifications", 
+		"limit", limit, 
+		"offset", offset, 
+		"user_id", notificationUserID,
+		"status", notificationStatus)
+
+	// Filter notifications
+	var filteredNotifications []models.Notification
+	for _, notification := range notifications {
+		// Filter by user ID if specified
+		if notificationUserID != "" && notification.UserID != notificationUserID {
+			continue
+		}
+		// Filter by status if specified
+		if notificationStatus != "" && notification.Status != notificationStatus {
+			continue
+		}
+		filteredNotifications = append(filteredNotifications, notification)
+	}
+
+	// Apply pagination
+	start := offset
+	end := offset + limit
+
+	var paginatedNotifications []models.Notification
+	if start < len(filteredNotifications) {
+		if end > len(filteredNotifications) {
+			end = len(filteredNotifications)
+		}
+		paginatedNotifications = filteredNotifications[start:end]
+	} else {
+		paginatedNotifications = []models.Notification{}
+	}
+
+	return outputNotifications(paginatedNotifications, fmt.Sprintf("Notifications (%d-%d of %d)", start+1, end, len(filteredNotifications)))
+}
+
+// runNotificationsSend executes the notifications send command
+func runNotificationsSend(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Sending notification", 
+		"user_id", notificationUserID, 
+		"message", notificationMessage, 
+		"type", notificationType,
+		"channel", notificationChannel)
+
+	// Validate notification type
+	validTypes := map[string]bool{
+		"info": true, "warning": true, "error": true, "success": true,
+	}
+	if !validTypes[notificationType] {
+		return fmt.Errorf("invalid notification type: %s (valid types: info, warning, error, success)", notificationType)
+	}
+
+	// Validate notification channel
+	validChannels := map[string]bool{
+		"email": true, "sms": true, "push": true, "in-app": true,
+	}
+	if !validChannels[notificationChannel] {
+		return fmt.Errorf("invalid notification channel: %s (valid channels: email, sms, push, in-app)", notificationChannel)
+	}
+
+	// Create new notification
+	notification := models.Notification{
+		ID:        uuid.New().String(),
+		UserID:    notificationUserID,
+		Type:      notificationType,
+		Channel:   notificationChannel,
+		Subject:   fmt.Sprintf("%s notification", notificationType),
+		Message:   notificationMessage,
+		Status:    "pending",
+		CreatedAt: time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}
+
+	notifications = append(notifications, notification)
+
+{{- if ne .MessageQueue "none"}}
+	// Publish notification created event
+	if appEvents != nil {
+		event := events.NewEvent("notification.created", "cli", map[string]interface{}{
+			"notification_id": notification.ID,
+			"user_id":         notification.UserID,
+			"type":            notification.Type,
+			"channel":         notification.Channel,
+			"message":         notification.Message,
+		})
+		
+		if err := appEvents.Publish(cmd.Context(), "notifications", event); err != nil {
+			appLogger.Error("Failed to publish notification created event", "error", err)
+		}
+	}
+{{- end}}
+
+	// Simulate sending the notification
+	time.Sleep(100 * time.Millisecond) // Simulate processing time
+	
+	// Update status to sent
+	for i := range notifications {
+		if notifications[i].ID == notification.ID {
+			notifications[i].Status = "sent"
+			notifications[i].SentAt = &[]time.Time{time.Now().UTC()}[0]
+			notifications[i].UpdatedAt = time.Now().UTC()
+			break
+		}
+	}
+
+	appLogger.Info("Notification sent successfully", "notification_id", notification.ID)
+	
+	if !quiet {
+		fmt.Printf("Notification sent successfully with ID: %s\n", notification.ID)
+	}
+
+	return outputNotifications([]models.Notification{notification}, "Sent Notification")
+}
+
+// runNotificationsGet executes the notifications get command
+func runNotificationsGet(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Getting notification", "notification_id", notificationID)
+
+	for _, notification := range notifications {
+		if notification.ID == notificationID {
+			return outputNotifications([]models.Notification{notification}, "Notification Details")
+		}
+	}
+
+	return fmt.Errorf("notification with ID '%s' not found", notificationID)
+}
+
+// runNotificationsUpdate executes the notifications update command
+func runNotificationsUpdate(cmd *cobra.Command, args []string) error {
+	appLogger.Info("Updating notification", "notification_id", notificationID, "status", notificationStatus)
+
+	// Validate status
+	validStatuses := map[string]bool{
+		"pending": true, "sent": true, "delivered": true, "read": true, "failed": true,
+	}
+	if !validStatuses[notificationStatus] {
+		return fmt.Errorf("invalid notification status: %s (valid statuses: pending, sent, delivered, read, failed)", notificationStatus)
+	}
+
+	for i, notification := range notifications {
+		if notification.ID == notificationID {
+			oldStatus := notifications[i].Status
+			notifications[i].Status = notificationStatus
+			notifications[i].UpdatedAt = time.Now().UTC()
+
+			// Set timestamps based on status
+			now := time.Now().UTC()
+			switch notificationStatus {
+			case "sent":
+				notifications[i].SentAt = &now
+			case "delivered":
+				notifications[i].DeliveredAt = &now
+			case "read":
+				notifications[i].ReadAt = &now
+			}
+
+{{- if ne .MessageQueue "none"}}
+			// Publish notification updated event
+			if appEvents != nil {
+				event := events.NewEvent("notification.updated", "cli", map[string]interface{}{
+					"notification_id": notification.ID,
+					"user_id":         notification.UserID,
+					"old_status":      oldStatus,
+					"new_status":      notificationStatus,
+				})
+				
+				if err := appEvents.Publish(cmd.Context(), "notifications", event); err != nil {
+					appLogger.Error("Failed to publish notification updated event", "error", err)
+				}
+			}
+{{- end}}
+
+			appLogger.Info("Notification updated successfully", "notification_id", notification.ID, "new_status", notificationStatus)
+			
+			if !quiet {
+				fmt.Printf("Notification status updated successfully: %s -> %s\n", oldStatus, notificationStatus)
+			}
+
+			return outputNotifications([]models.Notification{notifications[i]}, "Updated Notification")
+		}
+	}
+
+	return fmt.Errorf("notification with ID '%s' not found", notificationID)
+}
+
+// outputNotifications formats and outputs notifications based on the specified output format
+func outputNotifications(notificationList []models.Notification, title string) error {
+	switch output {
+	case "json":
+		return outputNotificationsJSON(notificationList)
+	case "yaml":
+		return outputNotificationsYAML(notificationList)
+	case "table":
+		fallthrough
+	default:
+		return outputNotificationsTable(notificationList, title)
+	}
+}
+
+// outputNotificationsTable outputs notifications in table format
+func outputNotificationsTable(notificationList []models.Notification, title string) error {
+	if len(notificationList) == 0 {
+		fmt.Println("No notifications found.")
+		return nil
+	}
+
+	fmt.Printf("\n%s:\n\n", title)
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]string{"ID", "User ID", "Type", "Channel", "Status", "Message", "Created", "Sent"})
+	table.SetBorder(false)
+	table.SetHeaderLine(false)
+	table.SetRowLine(false)
+	table.SetCenterSeparator("")
+	table.SetColumnSeparator(" ")
+	table.SetRowSeparator("")
+	table.SetHeaderAlignment(tablewriter.ALIGN_LEFT)
+	table.SetAlignment(tablewriter.ALIGN_LEFT)
+
+	for _, notification := range notificationList {
+		sentAt := "N/A"
+		if notification.SentAt != nil {
+			sentAt = notification.SentAt.Format("2006-01-02 15:04")
+		}
+
+		row := []string{
+			truncateString(notification.ID, 8),
+			truncateString(notification.UserID, 8),
+			notification.Type,
+			notification.Channel,
+			notification.Status,
+			truncateString(notification.Message, 30),
+			notification.CreatedAt.Format("2006-01-02 15:04"),
+			sentAt,
+		}
+		table.Append(row)
+	}
+
+	table.Render()
+	fmt.Println()
+	return nil
+}
+
+// outputNotificationsJSON outputs notifications in JSON format
+func outputNotificationsJSON(notificationList []models.Notification) error {
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(notificationList)
+}
+
+// outputNotificationsYAML outputs notifications in YAML format
+func outputNotificationsYAML(notificationList []models.Notification) error {
+	encoder := yaml.NewEncoder(os.Stdout)
+	defer encoder.Close()
+	return encoder.Encode(notificationList)
+}

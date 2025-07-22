@@ -1,0 +1,290 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+
+	"{{.ModulePath}}/pkg/shared/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+{{- if ne .DatabaseType "none"}}
+	"{{.ModulePath}}/pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	"{{.ModulePath}}/pkg/events"
+{{- end}}
+)
+
+var (
+	cfgFile string
+	verbose bool
+	quiet   bool
+	output  string
+	
+	// Global application context
+	appConfig *config.Config
+	appLogger logger.Logger
+{{- if ne .DatabaseType "none"}}
+	appDB     storage.Database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	appEvents events.EventBus
+{{- end}}
+)
+
+// rootCmd represents the base command when called without any subcommands
+var rootCmd = &cobra.Command{
+	Use:   "{{.ProjectName}}-cli",
+	Short: "{{.ProjectName}} CLI tool for workspace management",
+	Long: `{{.ProjectName}} CLI is a command-line interface for managing and interacting 
+with the {{.ProjectName}} workspace services and resources.
+
+This tool provides commands for:
+- Managing users and accounts
+- Sending notifications
+- Monitoring system health
+- Performing administrative tasks
+
+Examples:
+  {{.ProjectName}}-cli users list
+  {{.ProjectName}}-cli users create --name "John Doe" --email "john@example.com"
+  {{.ProjectName}}-cli notifications send --user-id 123 --message "Hello World"
+  {{.ProjectName}}-cli health check`,
+	PersistentPreRunE: initializeApp,
+	PersistentPostRun: cleanupApp,
+}
+
+// Execute adds all child commands to the root command and sets flags appropriately.
+func Execute() error {
+	return rootCmd.Execute()
+}
+
+func init() {
+	cobra.OnInitialize(initConfig)
+
+	// Global flags
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.{{.ProjectName}}.yaml)")
+	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet output (minimal logging)")
+	rootCmd.PersistentFlags().StringVarP(&output, "output", "o", "table", "output format (table, json, yaml)")
+
+	// Bind flags to viper
+	viper.BindPFlag("verbose", rootCmd.PersistentFlags().Lookup("verbose"))
+	viper.BindPFlag("quiet", rootCmd.PersistentFlags().Lookup("quiet"))
+	viper.BindPFlag("output", rootCmd.PersistentFlags().Lookup("output"))
+
+	// Add subcommands
+	rootCmd.AddCommand(versionCmd)
+	rootCmd.AddCommand(completionCmd)
+}
+
+// initConfig reads in config file and ENV variables
+func initConfig() {
+	if cfgFile != "" {
+		viper.SetConfigFile(cfgFile)
+	} else {
+		// Find home directory
+		home, err := os.UserHomeDir()
+		cobra.CheckErr(err)
+
+		// Search config in home directory with name ".{{.ProjectName}}" (without extension)
+		viper.AddConfigPath(home)
+		viper.AddConfigPath(".")
+		viper.AddConfigPath("/etc/{{.ProjectName}}")
+		viper.SetConfigType("yaml")
+		viper.SetConfigName(".{{.ProjectName}}")
+	}
+
+	// Environment variables
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	viper.SetEnvPrefix("{{upper .ProjectName}}")
+
+	// Read config file
+	if err := viper.ReadInConfig(); err == nil && verbose {
+		fmt.Fprintln(os.Stderr, "Using config file:", viper.ConfigFileUsed())
+	}
+}
+
+// initializeApp initializes the application dependencies
+func initializeApp(cmd *cobra.Command, args []string) error {
+	// Load configuration
+	cfg, err := config.LoadCLIConfig()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+	appConfig = cfg
+
+	// Set log level based on flags
+	logLevel := cfg.Logger.Level
+	if quiet {
+		logLevel = "error"
+	} else if verbose {
+		logLevel = "debug"
+	}
+
+	// Initialize logger
+	appLogger = logger.New(logger.Config{
+		Level:  logLevel,
+		Format: cfg.Logger.Format,
+		Output: cfg.Logger.Output,
+	})
+
+{{- if ne .DatabaseType "none"}}
+	// Initialize database if needed for this command
+	if needsDatabase(cmd) {
+		appLogger.Debug("Initializing database connection...")
+		db, err := storage.NewDatabase(&cfg.Database, appLogger)
+		if err != nil {
+			return fmt.Errorf("failed to create database instance: %w", err)
+		}
+
+		ctx := context.Background()
+		if err := db.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect to database: %w", err)
+		}
+
+		appDB = db
+		appLogger.Debug("Database initialized successfully")
+	}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Initialize event bus if needed for this command
+	if needsEvents(cmd) {
+		appLogger.Debug("Initializing event bus...")
+		eventBus, err := events.NewEventBus(&cfg.MessageQueue, appLogger)
+		if err != nil {
+			return fmt.Errorf("failed to create event bus: %w", err)
+		}
+
+		ctx := context.Background()
+		if err := eventBus.Connect(ctx); err != nil {
+			return fmt.Errorf("failed to connect to event bus: %w", err)
+		}
+
+		appEvents = eventBus
+		appLogger.Debug("Event bus initialized successfully")
+	}
+{{- end}}
+
+	return nil
+}
+
+// cleanupApp cleans up application resources
+func cleanupApp(cmd *cobra.Command, args []string) {
+{{- if ne .DatabaseType "none"}}
+	if appDB != nil {
+		if err := appDB.Close(); err != nil {
+			appLogger.Error("Failed to close database connection", "error", err)
+		}
+	}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	if appEvents != nil {
+		if err := appEvents.Close(); err != nil {
+			appLogger.Error("Failed to close event bus connection", "error", err)
+		}
+	}
+{{- end}}
+}
+
+{{- if ne .DatabaseType "none"}}
+// needsDatabase determines if the command requires database access
+func needsDatabase(cmd *cobra.Command) bool {
+	commandsNeedingDB := []string{
+		"users",
+		"notifications",
+	}
+	
+	for _, cmdName := range commandsNeedingDB {
+		if cmd.Name() == cmdName || cmd.Parent() != nil && cmd.Parent().Name() == cmdName {
+			return true
+		}
+	}
+	return false
+}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+// needsEvents determines if the command requires event bus access
+func needsEvents(cmd *cobra.Command) bool {
+	commandsNeedingEvents := []string{
+		"notifications",
+	}
+	
+	for _, cmdName := range commandsNeedingEvents {
+		if cmd.Name() == cmdName || cmd.Parent() != nil && cmd.Parent().Name() == cmdName {
+			return true
+		}
+	}
+	return false
+}
+{{- end}}
+
+// versionCmd represents the version command
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Print the version number",
+	Long:  "Print the version number of {{.ProjectName}} CLI",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Printf("{{.ProjectName}} CLI v1.0.0\n")
+		fmt.Printf("Go version: %s\n", "{{.GoVersion}}")
+		fmt.Printf("Build date: %s\n", "development")
+	},
+}
+
+// completionCmd represents the completion command
+var completionCmd = &cobra.Command{
+	Use:   "completion [bash|zsh|fish|powershell]",
+	Short: "Generate completion script",
+	Long: `To load completions:
+
+Bash:
+  $ source <({{.ProjectName}}-cli completion bash)
+  # To load completions for each session, execute once:
+  # Linux:
+  $ {{.ProjectName}}-cli completion bash > /etc/bash_completion.d/{{.ProjectName}}-cli
+  # macOS:
+  $ {{.ProjectName}}-cli completion bash > /usr/local/etc/bash_completion.d/{{.ProjectName}}-cli
+
+Zsh:
+  # If shell completion is not already enabled in your environment,
+  # you will need to enable it.  You can execute the following once:
+  $ echo "autoload -U compinit; compinit" >> ~/.zshrc
+  # To load completions for each session, execute once:
+  $ {{.ProjectName}}-cli completion zsh > "${fpath[1]}/_{{.ProjectName}}-cli"
+  # You will need to start a new shell for this setup to take effect.
+
+fish:
+  $ {{.ProjectName}}-cli completion fish | source
+  # To load completions for each session, execute once:
+  $ {{.ProjectName}}-cli completion fish > ~/.config/fish/completions/{{.ProjectName}}-cli.fish
+
+PowerShell:
+  PS> {{.ProjectName}}-cli completion powershell | Out-String | Invoke-Expression
+  # To load completions for every new session, run:
+  PS> {{.ProjectName}}-cli completion powershell > {{.ProjectName}}-cli.ps1
+  # and source this file from your PowerShell profile.
+`,
+	DisableFlagsInUseLine: true,
+	ValidArgs:             []string{"bash", "zsh", "fish", "powershell"},
+	Args:                  cobra.ExactValidArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		switch args[0] {
+		case "bash":
+			cmd.Root().GenBashCompletion(os.Stdout)
+		case "zsh":
+			cmd.Root().GenZshCompletion(os.Stdout)
+		case "fish":
+			cmd.Root().GenFishCompletion(os.Stdout, true)
+		case "powershell":
+			cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+		}
+	},
+}

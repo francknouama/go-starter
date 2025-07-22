@@ -1,0 +1,283 @@
+package services
+
+import "{{.ModulePath}}/pkg/models"
+
+// CreateNotificationRequest represents a request to create a new notification
+type CreateNotificationRequest struct {
+	UserID   string                 `json:"user_id" validate:"required"`
+	Type     string                 `json:"type" validate:"required,oneof=email sms push in_app"`
+	Message  string                 `json:"message" validate:"required,min=1,max=1000"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// UpdateNotificationRequest represents a request to update an existing notification
+type UpdateNotificationRequest struct {
+	Message  string                 `json:"message,omitempty" validate:"omitempty,min=1,max=1000"`
+	Status   string                 `json:"status,omitempty" validate:"omitempty,oneof=pending processing sent failed delivered read deleted"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ListNotificationsRequest represents a request to list notifications with pagination
+type ListNotificationsRequest struct {
+	Page     int    `json:"page" form:"page" validate:"min=1"`
+	PerPage  int    `json:"per_page" form:"per_page" validate:"min=1,max=100"`
+	UserID   string `json:"user_id,omitempty" form:"user_id"`
+	Type     string `json:"type,omitempty" form:"type" validate:"omitempty,oneof=email sms push in_app"`
+	Status   string `json:"status,omitempty" form:"status" validate:"omitempty,oneof=pending processing sent failed delivered read deleted"`
+	SortBy   string `json:"sort_by,omitempty" form:"sort_by" validate:"omitempty,oneof=created_at updated_at type status"`
+	SortDir  string `json:"sort_dir,omitempty" form:"sort_dir" validate:"omitempty,oneof=asc desc"`
+}
+
+// ListNotificationsResponse represents the response for listing notifications
+type ListNotificationsResponse struct {
+	Notifications []*models.Notification `json:"notifications"`
+	Pagination    PaginationResponse     `json:"pagination"`
+}
+
+// PaginationResponse represents pagination metadata
+type PaginationResponse struct {
+	Page       int   `json:"page"`
+	PerPage    int   `json:"per_page"`
+	Total      int64 `json:"total"`
+	TotalPages int64 `json:"total_pages"`
+}
+
+// NotificationTemplate represents a notification template
+type NotificationTemplate struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Type        string                 `json:"type"`
+	Subject     string                 `json:"subject,omitempty"`
+	Body        string                 `json:"body"`
+	Variables   []string               `json:"variables"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt   string                 `json:"created_at"`
+	UpdatedAt   string                 `json:"updated_at"`
+}
+
+// CreateTemplateRequest represents a request to create a notification template
+type CreateTemplateRequest struct {
+	Name      string                 `json:"name" validate:"required,min=1,max=100"`
+	Type      string                 `json:"type" validate:"required,oneof=email sms push in_app"`
+	Subject   string                 `json:"subject,omitempty" validate:"omitempty,max=200"`
+	Body      string                 `json:"body" validate:"required,min=1,max=5000"`
+	Variables []string               `json:"variables,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// UpdateTemplateRequest represents a request to update a notification template
+type UpdateTemplateRequest struct {
+	Name      string                 `json:"name,omitempty" validate:"omitempty,min=1,max=100"`
+	Subject   string                 `json:"subject,omitempty" validate:"omitempty,max=200"`
+	Body      string                 `json:"body,omitempty" validate:"omitempty,min=1,max=5000"`
+	Variables []string               `json:"variables,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ListTemplatesRequest represents a request to list notification templates
+type ListTemplatesRequest struct {
+	Page    int    `json:"page" form:"page" validate:"min=1"`
+	PerPage int    `json:"per_page" form:"per_page" validate:"min=1,max=100"`
+	Type    string `json:"type,omitempty" form:"type" validate:"omitempty,oneof=email sms push in_app"`
+	Search  string `json:"search,omitempty" form:"search" validate:"omitempty,max=255"`
+}
+
+// ListTemplatesResponse represents the response for listing templates
+type ListTemplatesResponse struct {
+	Templates  []*NotificationTemplate `json:"templates"`
+	Pagination PaginationResponse      `json:"pagination"`
+}
+
+// PreviewTemplateRequest represents a request to preview a template
+type PreviewTemplateRequest struct {
+	Variables map[string]interface{} `json:"variables"`
+}
+
+// PreviewTemplateResponse represents the response for template preview
+type PreviewTemplateResponse struct {
+	Subject     string `json:"subject,omitempty"`
+	Body        string `json:"body"`
+	PreviewHTML string `json:"preview_html,omitempty"`
+}
+
+// BulkNotificationRequest represents a request to send bulk notifications
+type BulkNotificationRequest struct {
+	Recipients []BulkRecipient        `json:"recipients" validate:"required,min=1,max=1000"`
+	Type       string                 `json:"type" validate:"required,oneof=email sms push in_app"`
+	Message    string                 `json:"message" validate:"required,min=1,max=1000"`
+	TemplateID string                 `json:"template_id,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// BulkRecipient represents a recipient for bulk notifications
+type BulkRecipient struct {
+	UserID    string                 `json:"user_id" validate:"required"`
+	Variables map[string]interface{} `json:"variables,omitempty"`
+}
+
+// BulkNotificationResponse represents the response for bulk notifications
+type BulkNotificationResponse struct {
+	BatchID          string   `json:"batch_id"`
+	SuccessCount     int      `json:"success_count"`
+	FailedCount      int      `json:"failed_count"`
+	FailedRecipients []string `json:"failed_recipients,omitempty"`
+	Message          string   `json:"message"`
+}
+
+// NotificationStatsRequest represents a request for notification statistics
+type NotificationStatsRequest struct {
+	StartDate string `json:"start_date,omitempty" form:"start_date" validate:"omitempty,datetime=2006-01-02"`
+	EndDate   string `json:"end_date,omitempty" form:"end_date" validate:"omitempty,datetime=2006-01-02"`
+	Type      string `json:"type,omitempty" form:"type" validate:"omitempty,oneof=email sms push in_app"`
+	UserID    string `json:"user_id,omitempty" form:"user_id"`
+}
+
+// NotificationStatsResponse represents notification statistics
+type NotificationStatsResponse struct {
+	TotalNotifications    int64                     `json:"total_notifications"`
+	SentNotifications     int64                     `json:"sent_notifications"`
+	FailedNotifications   int64                     `json:"failed_notifications"`
+	PendingNotifications  int64                     `json:"pending_notifications"`
+	DeliveryRate          float64                   `json:"delivery_rate"`
+	FailureRate           float64                   `json:"failure_rate"`
+	ByType                map[string]int64          `json:"by_type"`
+	ByStatus              map[string]int64          `json:"by_status"`
+	DailyStats            []DailyNotificationStats  `json:"daily_stats,omitempty"`
+	HourlyStats           []HourlyNotificationStats `json:"hourly_stats,omitempty"`
+}
+
+// DailyNotificationStats represents daily notification statistics
+type DailyNotificationStats struct {
+	Date         string `json:"date"`
+	TotalSent    int64  `json:"total_sent"`
+	TotalFailed  int64  `json:"total_failed"`
+	DeliveryRate float64 `json:"delivery_rate"`
+}
+
+// HourlyNotificationStats represents hourly notification statistics
+type HourlyNotificationStats struct {
+	Hour         int     `json:"hour"`
+	TotalSent    int64   `json:"total_sent"`
+	TotalFailed  int64   `json:"total_failed"`
+	DeliveryRate float64 `json:"delivery_rate"`
+}
+
+// DeliveryStatsResponse represents delivery performance statistics
+type DeliveryStatsResponse struct {
+	AverageDeliveryTime   float64            `json:"average_delivery_time_seconds"`
+	MedianDeliveryTime    float64            `json:"median_delivery_time_seconds"`
+	FastestDeliveryTime   float64            `json:"fastest_delivery_time_seconds"`
+	SlowestDeliveryTime   float64            `json:"slowest_delivery_time_seconds"`
+	DeliveryTimeByType    map[string]float64 `json:"delivery_time_by_type"`
+	ThroughputPerMinute   float64            `json:"throughput_per_minute"`
+	ThroughputPerHour     float64            `json:"throughput_per_hour"`
+}
+
+// PerformanceStatsResponse represents system performance statistics
+type PerformanceStatsResponse struct {
+	QueueSize             int64   `json:"queue_size"`
+	ProcessingRate        float64 `json:"processing_rate_per_second"`
+	ErrorRate             float64 `json:"error_rate_percentage"`
+	RetryRate             float64 `json:"retry_rate_percentage"`
+	AverageResponseTime   float64 `json:"average_response_time_ms"`
+	SystemLoad            float64 `json:"system_load_percentage"`
+	MemoryUsage           int64   `json:"memory_usage_bytes"`
+	ActiveConnections     int     `json:"active_connections"`
+}
+
+// NotificationChannel represents a delivery channel configuration
+type NotificationChannel struct {
+	ID          string                 `json:"id"`
+	Type        string                 `json:"type"`
+	Name        string                 `json:"name"`
+	Enabled     bool                   `json:"enabled"`
+	Priority    int                    `json:"priority"`
+	Config      map[string]interface{} `json:"config"`
+	RateLimit   int                    `json:"rate_limit"`
+	RetryPolicy RetryPolicy            `json:"retry_policy"`
+	CreatedAt   string                 `json:"created_at"`
+	UpdatedAt   string                 `json:"updated_at"`
+}
+
+// RetryPolicy defines retry behavior for failed notifications
+type RetryPolicy struct {
+	MaxRetries   int     `json:"max_retries"`
+	InitialDelay int     `json:"initial_delay_seconds"`
+	MaxDelay     int     `json:"max_delay_seconds"`
+	Multiplier   float64 `json:"multiplier"`
+	Jitter       bool    `json:"jitter"`
+}
+
+// NotificationPreferences represents user notification preferences
+type NotificationPreferences struct {
+	UserID              string            `json:"user_id"`
+	EmailEnabled        bool              `json:"email_enabled"`
+	SMSEnabled          bool              `json:"sms_enabled"`
+	PushEnabled         bool              `json:"push_enabled"`
+	InAppEnabled        bool              `json:"in_app_enabled"`
+	Timezone            string            `json:"timezone"`
+	QuietHoursStart     string            `json:"quiet_hours_start"`
+	QuietHoursEnd       string            `json:"quiet_hours_end"`
+	CategoryPreferences map[string]bool   `json:"category_preferences"`
+	CustomSettings      map[string]string `json:"custom_settings"`
+	UpdatedAt           string            `json:"updated_at"`
+}
+
+// UpdatePreferencesRequest represents a request to update notification preferences
+type UpdatePreferencesRequest struct {
+	EmailEnabled        *bool             `json:"email_enabled,omitempty"`
+	SMSEnabled          *bool             `json:"sms_enabled,omitempty"`
+	PushEnabled         *bool             `json:"push_enabled,omitempty"`
+	InAppEnabled        *bool             `json:"in_app_enabled,omitempty"`
+	Timezone            string            `json:"timezone,omitempty"`
+	QuietHoursStart     string            `json:"quiet_hours_start,omitempty"`
+	QuietHoursEnd       string            `json:"quiet_hours_end,omitempty"`
+	CategoryPreferences map[string]bool   `json:"category_preferences,omitempty"`
+	CustomSettings      map[string]string `json:"custom_settings,omitempty"`
+}
+
+// NotificationQueue represents a notification queue status
+type NotificationQueue struct {
+	Name           string  `json:"name"`
+	Size           int64   `json:"size"`
+	ProcessingRate float64 `json:"processing_rate"`
+	LastProcessed  string  `json:"last_processed"`
+	Status         string  `json:"status"`
+}
+
+// QueueStatusResponse represents the status of all notification queues
+type QueueStatusResponse struct {
+	Queues      []*NotificationQueue `json:"queues"`
+	TotalQueued int64                `json:"total_queued"`
+	Healthy     bool                 `json:"healthy"`
+	UpdatedAt   string               `json:"updated_at"`
+}
+
+// DefaultPagination provides default values for pagination
+func DefaultNotificationPagination() ListNotificationsRequest {
+	return ListNotificationsRequest{
+		Page:    1,
+		PerPage: 10,
+		SortBy:  "created_at",
+		SortDir: "desc",
+	}
+}
+
+// NormalizePagination ensures pagination parameters are within valid ranges
+func (r *ListNotificationsRequest) NormalizePagination() {
+	if r.Page < 1 {
+		r.Page = 1
+	}
+	if r.PerPage < 1 {
+		r.PerPage = 10
+	}
+	if r.PerPage > 100 {
+		r.PerPage = 100
+	}
+	if r.SortBy == "" {
+		r.SortBy = "created_at"
+	}
+	if r.SortDir == "" {
+		r.SortDir = "desc"
+	}
+}

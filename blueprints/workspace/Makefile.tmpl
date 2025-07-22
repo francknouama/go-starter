@@ -1,0 +1,393 @@
+# {{.ProjectName}} Workspace Makefile
+# Multi-module build orchestration for Go workspace
+
+.PHONY: help setup clean build test lint fmt deps docker k8s
+
+# Default target
+help: ## Show this help message
+	@echo "{{.ProjectName}} Workspace - Available commands:"
+	@echo ""
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+# Variables
+GO_VERSION := {{.GoVersion}}
+PROJECT_NAME := {{.ProjectName}}
+MODULE_PATH := {{.ModulePath}}
+
+# Module paths
+{{- if .EnableWebAPI}}
+API_MODULE := cmd/api
+{{- end}}
+{{- if .EnableCLI}}
+CLI_MODULE := cmd/cli
+{{- end}}
+{{- if .EnableWorker}}
+WORKER_MODULE := cmd/worker
+{{- end}}
+{{- if .EnableMicroservices}}
+USER_SERVICE_MODULE := services/user-service
+NOTIFICATION_SERVICE_MODULE := services/notification-service
+{{- end}}
+SHARED_MODULE := pkg/shared
+MODELS_MODULE := pkg/models
+{{- if ne .DatabaseType "none"}}
+STORAGE_MODULE := pkg/storage
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+EVENTS_MODULE := pkg/events
+{{- end}}
+{{- if .EnableTesting}}
+INTEGRATION_TESTS_MODULE := tests/integration
+{{- end}}
+
+# All modules
+MODULES := $(SHARED_MODULE) $(MODELS_MODULE)
+{{- if ne .DatabaseType "none"}}
+MODULES += $(STORAGE_MODULE)
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+MODULES += $(EVENTS_MODULE)
+{{- end}}
+{{- if .EnableWebAPI}}
+MODULES += $(API_MODULE)
+{{- end}}
+{{- if .EnableCLI}}
+MODULES += $(CLI_MODULE)
+{{- end}}
+{{- if .EnableWorker}}
+MODULES += $(WORKER_MODULE)
+{{- end}}
+{{- if .EnableMicroservices}}
+MODULES += $(USER_SERVICE_MODULE) $(NOTIFICATION_SERVICE_MODULE)
+{{- end}}
+{{- if .EnableTesting}}
+MODULES += $(INTEGRATION_TESTS_MODULE)
+{{- end}}
+
+# Service modules (for Docker builds)
+SERVICE_MODULES :=
+{{- if .EnableWebAPI}}
+SERVICE_MODULES += $(API_MODULE)
+{{- end}}
+{{- if .EnableWorker}}
+SERVICE_MODULES += $(WORKER_MODULE)
+{{- end}}
+{{- if .EnableMicroservices}}
+SERVICE_MODULES += $(USER_SERVICE_MODULE) $(NOTIFICATION_SERVICE_MODULE)
+{{- end}}
+
+# Setup and initialization
+setup: ## Set up development environment
+	@echo "Setting up {{.ProjectName}} workspace..."
+	@go version | grep -q "go$(GO_VERSION)" || (echo "Go $(GO_VERSION) required" && exit 1)
+	@go work sync
+	@$(MAKE) deps-download
+	@$(MAKE) tools-install
+{{- if .EnableDocker}}
+	@$(MAKE) docker-build-dev
+{{- end}}
+	@echo "✅ Setup complete!"
+
+# Dependency management
+deps-download: ## Download dependencies for all modules
+	@echo "📦 Downloading dependencies..."
+	@for module in $(MODULES); do \
+		echo "  → $$module"; \
+		cd $$module && go mod download && cd - > /dev/null; \
+	done
+
+deps-tidy: ## Tidy dependencies for all modules
+	@echo "🧹 Tidying dependencies..."
+	@for module in $(MODULES); do \
+		echo "  → $$module"; \
+		cd $$module && go mod tidy && cd - > /dev/null; \
+	done
+
+deps-update: ## Update dependencies for all modules
+	@echo "⬆️ Updating dependencies..."
+	@for module in $(MODULES); do \
+		echo "  → $$module"; \
+		cd $$module && go get -u ./... && go mod tidy && cd - > /dev/null; \
+	done
+
+deps-vendor: ## Vendor dependencies for all modules
+	@echo "📦 Vendoring dependencies..."
+	@for module in $(MODULES); do \
+		echo "  → $$module"; \
+		cd $$module && go mod vendor && cd - > /dev/null; \
+	done
+
+# Build targets
+build-all: ## Build all modules
+	@echo "🔨 Building all modules..."
+	@for module in $(MODULES); do \
+		echo "  → Building $$module"; \
+		cd $$module && go build ./... && cd - > /dev/null; \
+	done
+	@echo "✅ All modules built successfully!"
+
+{{- if .EnableWebAPI}}
+build-api: ## Build API server
+	@echo "🔨 Building API server..."
+	@cd $(API_MODULE) && go build -o ../../bin/api ./main.go
+	@echo "✅ API server built: bin/api"
+
+run-api: build-api ## Run API server
+	@echo "🚀 Starting API server..."
+	@./bin/api
+{{- end}}
+
+{{- if .EnableCLI}}
+build-cli: ## Build CLI tool
+	@echo "🔨 Building CLI tool..."
+	@cd $(CLI_MODULE) && go build -o ../../bin/cli ./main.go
+	@echo "✅ CLI tool built: bin/cli"
+
+run-cli: build-cli ## Run CLI tool
+	@echo "🚀 Running CLI tool..."
+	@./bin/cli $(ARGS)
+{{- end}}
+
+{{- if .EnableWorker}}
+build-worker: ## Build worker
+	@echo "🔨 Building worker..."
+	@cd $(WORKER_MODULE) && go build -o ../../bin/worker ./main.go
+	@echo "✅ Worker built: bin/worker"
+
+run-worker: build-worker ## Run worker
+	@echo "🚀 Starting worker..."
+	@./bin/worker
+{{- end}}
+
+{{- if .EnableMicroservices}}
+build-services: ## Build all microservices
+	@echo "🔨 Building microservices..."
+	@cd $(USER_SERVICE_MODULE) && go build -o ../../bin/user-service ./main.go
+	@cd $(NOTIFICATION_SERVICE_MODULE) && go build -o ../../bin/notification-service ./main.go
+	@echo "✅ All microservices built!"
+
+run-services: build-services ## Run all microservices
+	@echo "🚀 Starting microservices..."
+	@./bin/user-service &
+	@./bin/notification-service &
+	@echo "✅ All microservices started!"
+{{- end}}
+
+# Testing
+test-all: ## Run all tests
+	@echo "🧪 Running all tests..."
+	@for module in $(MODULES); do \
+		echo "  → Testing $$module"; \
+		cd $$module && go test ./... && cd - > /dev/null; \
+	done
+	@echo "✅ All tests passed!"
+
+test-unit: ## Run unit tests only
+	@echo "🧪 Running unit tests..."
+	@for module in $(MODULES); do \
+		echo "  → Unit testing $$module"; \
+		cd $$module && go test -short ./... && cd - > /dev/null; \
+	done
+
+{{- if .EnableTesting}}
+test-integration: ## Run integration tests
+	@echo "🧪 Running integration tests..."
+	@cd $(INTEGRATION_TESTS_MODULE) && go test ./...
+{{- end}}
+
+test-coverage: ## Generate test coverage report
+	@echo "📊 Generating coverage report..."
+	@mkdir -p coverage
+	@for module in $(MODULES); do \
+		echo "  → Coverage for $$module"; \
+		cd $$module && go test -coverprofile=../coverage/$$(basename $$module).out ./... && cd - > /dev/null; \
+	done
+	@go tool cover -html=coverage/*.out -o coverage/coverage.html
+	@echo "✅ Coverage report generated: coverage/coverage.html"
+
+test-race: ## Run tests with race detection
+	@echo "🏃 Running tests with race detection..."
+	@for module in $(MODULES); do \
+		echo "  → Race testing $$module"; \
+		cd $$module && go test -race ./... && cd - > /dev/null; \
+	done
+
+# Code quality
+lint-all: ## Lint all modules
+	@echo "🔍 Linting all modules..."
+	@for module in $(MODULES); do \
+		echo "  → Linting $$module"; \
+		cd $$module && golangci-lint run && cd - > /dev/null; \
+	done
+	@echo "✅ All modules linted successfully!"
+
+fmt-all: ## Format all code
+	@echo "✨ Formatting all code..."
+	@for module in $(MODULES); do \
+		echo "  → Formatting $$module"; \
+		cd $$module && go fmt ./... && cd - > /dev/null; \
+	done
+	@echo "✅ All code formatted!"
+
+vet-all: ## Vet all modules
+	@echo "🔍 Vetting all modules..."
+	@for module in $(MODULES); do \
+		echo "  → Vetting $$module"; \
+		cd $$module && go vet ./... && cd - > /dev/null; \
+	done
+
+# Tools
+tools-install: ## Install development tools
+	@echo "🛠️ Installing development tools..."
+	@cd tools && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@cd tools && go install golang.org/x/tools/cmd/goimports@latest
+	@cd tools && go install github.com/swaggo/swag/cmd/swag@latest
+{{- if .EnableDocumentation}}
+	@cd tools && go install golang.org/x/tools/cmd/godoc@latest
+{{- end}}
+	@echo "✅ Development tools installed!"
+
+# Documentation
+{{- if .EnableDocumentation}}
+docs-generate: ## Generate documentation
+	@echo "📚 Generating documentation..."
+	@go generate ./...
+	@echo "✅ Documentation generated!"
+
+docs-serve: ## Serve documentation locally
+	@echo "📚 Serving documentation at http://localhost:6060"
+	@godoc -http=:6060
+{{- end}}
+
+# Clean up
+clean-all: ## Clean all build artifacts
+	@echo "🧹 Cleaning all build artifacts..."
+	@rm -rf bin/
+	@rm -rf coverage/
+	@for module in $(MODULES); do \
+		cd $$module && go clean && cd - > /dev/null; \
+	done
+{{- if .EnableDocker}}
+	@$(MAKE) docker-clean
+{{- end}}
+	@echo "✅ All artifacts cleaned!"
+
+# Docker support
+{{- if .EnableDocker}}
+docker-build: ## Build Docker images for all services
+	@echo "🐳 Building Docker images..."
+	@for service in $(SERVICE_MODULES); do \
+		echo "  → Building $$service"; \
+		docker build -t $(PROJECT_NAME)-$$(basename $$service):latest -f $$service/Dockerfile .; \
+	done
+	@echo "✅ All Docker images built!"
+
+docker-build-dev: ## Build development Docker images
+	@echo "🐳 Building development Docker images..."
+	@docker-compose -f docker-compose.dev.yml build
+
+docker-up: ## Start Docker development environment
+	@echo "🐳 Starting Docker development environment..."
+	@docker-compose -f docker-compose.dev.yml up -d
+	@echo "✅ Development environment started!"
+
+docker-down: ## Stop Docker development environment
+	@echo "🐳 Stopping Docker development environment..."
+	@docker-compose -f docker-compose.dev.yml down
+
+docker-logs: ## View Docker logs
+	@docker-compose -f docker-compose.dev.yml logs -f
+
+docker-clean: ## Clean Docker images and containers
+	@echo "🧹 Cleaning Docker artifacts..."
+	@docker-compose down --remove-orphans
+	@docker system prune -f
+{{- end}}
+
+# Kubernetes support
+{{- if .EnableKubernetes}}
+k8s-deploy: ## Deploy to Kubernetes
+	@echo "☸️ Deploying to Kubernetes..."
+	@kubectl apply -f deployments/k8s/
+	@echo "✅ Deployed to Kubernetes!"
+
+k8s-delete: ## Delete from Kubernetes
+	@echo "☸️ Deleting from Kubernetes..."
+	@kubectl delete -f deployments/k8s/
+	@echo "✅ Deleted from Kubernetes!"
+
+k8s-status: ## Check Kubernetes deployment status
+	@echo "☸️ Checking Kubernetes status..."
+	@kubectl get pods -n $(PROJECT_NAME)
+	@kubectl get services -n $(PROJECT_NAME)
+
+k8s-logs: ## View Kubernetes logs
+	@kubectl logs -f deployment/$(PROJECT_NAME)-api -n $(PROJECT_NAME)
+{{- end}}
+
+# Development workflows
+dev-setup: setup ## Complete development setup
+	@echo "🚀 Development environment ready!"
+{{- if .EnableDocker}}
+	@$(MAKE) docker-up
+{{- end}}
+	@echo ""
+	@echo "Next steps:"
+{{- if .EnableWebAPI}}
+	@echo "  • Start API: make run-api"
+{{- end}}
+{{- if .EnableCLI}}
+	@echo "  • Use CLI: make run-cli ARGS='--help'"
+{{- end}}
+{{- if .EnableWorker}}
+	@echo "  • Start worker: make run-worker"
+{{- end}}
+	@echo "  • Run tests: make test-all"
+	@echo "  • View logs: make docker-logs"
+
+dev-clean: clean-all ## Clean development environment
+{{- if .EnableDocker}}
+	@$(MAKE) docker-down
+{{- end}}
+	@echo "✅ Development environment cleaned!"
+
+# Release management
+pre-commit: fmt-all lint-all test-all ## Run pre-commit checks
+	@echo "✅ Pre-commit checks passed!"
+
+ci: deps-download build-all test-all lint-all ## Run CI pipeline
+	@echo "✅ CI pipeline completed successfully!"
+
+# Info and debugging
+info: ## Show workspace information
+	@echo "{{.ProjectName}} Workspace Information:"
+	@echo "  Go Version: $(GO_VERSION)"
+	@echo "  Module Path: $(MODULE_PATH)"
+	@echo "  Modules: $(words $(MODULES)) total"
+	@echo ""
+	@echo "Modules:"
+	@for module in $(MODULES); do \
+		echo "  • $$module"; \
+	done
+{{- if .EnableDocker}}
+	@echo ""
+	@echo "Service Modules (Docker):"
+	@for service in $(SERVICE_MODULES); do \
+		echo "  • $$service"; \
+	done
+{{- end}}
+
+workspace-sync: ## Sync Go workspace
+	@echo "🔄 Syncing Go workspace..."
+	@go work sync
+	@echo "✅ Workspace synced!"
+
+workspace-check: ## Check workspace status
+	@echo "🔍 Checking workspace status..."
+	@go work use -r .
+	@go work sync
+	@echo "✅ Workspace check complete!"
+
+# Default development workflow
+dev: dev-setup ## Start full development environment
+	@echo "🎉 {{.ProjectName}} development environment is ready!"

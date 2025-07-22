@@ -1,0 +1,300 @@
+version: '3.8'
+
+# Development override for docker-compose.yml
+# Usage: docker-compose -f docker-compose.yml -f docker-compose.dev.yml up
+
+services:
+  # Development API with hot reload
+  api:
+    build:
+      context: .
+      dockerfile: cmd/api/Dockerfile.dev
+      target: development
+    volumes:
+      - .:/app
+      - /app/vendor
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - {{upper .ProjectName}}_LOGGER_LEVEL=debug
+      - {{upper .ProjectName}}_LOGGER_FORMAT=console
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    command: ["air", "-c", ".air.toml"]
+    ports:
+      - "8080:8080"
+      - "2345:2345"  # Delve debugger port
+    depends_on:
+{{- if ne .DatabaseType "none"}}
+      - {{.DatabaseType}}
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+      - {{.MessageQueue}}
+{{- end}}
+
+  # Development User Service with hot reload
+  user-service:
+    build:
+      context: .
+      dockerfile: cmd/user-service/Dockerfile.dev
+      target: development
+    volumes:
+      - .:/app
+      - /app/vendor
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - {{upper .ProjectName}}_LOGGER_LEVEL=debug
+      - {{upper .ProjectName}}_LOGGER_FORMAT=console
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    command: ["air", "-c", ".air.user-service.toml"]
+    ports:
+      - "8081:8081"
+      - "2346:2345"  # Delve debugger port
+    depends_on:
+{{- if ne .DatabaseType "none"}}
+      - {{.DatabaseType}}
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+      - {{.MessageQueue}}
+{{- end}}
+
+  # Development Notification Service with hot reload
+  notification-service:
+    build:
+      context: .
+      dockerfile: cmd/notification-service/Dockerfile.dev
+      target: development
+    volumes:
+      - .:/app
+      - /app/vendor
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - {{upper .ProjectName}}_LOGGER_LEVEL=debug
+      - {{upper .ProjectName}}_LOGGER_FORMAT=console
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    command: ["air", "-c", ".air.notification-service.toml"]
+    ports:
+      - "8082:8082"
+      - "2347:2345"  # Delve debugger port
+    depends_on:
+{{- if ne .DatabaseType "none"}}
+      - {{.DatabaseType}}
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+      - {{.MessageQueue}}
+{{- end}}
+
+  # Development Worker with hot reload
+  worker:
+    build:
+      context: .
+      dockerfile: cmd/worker/Dockerfile.dev
+      target: development
+    volumes:
+      - .:/app
+      - /app/vendor
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - {{upper .ProjectName}}_LOGGER_LEVEL=debug
+      - {{upper .ProjectName}}_LOGGER_FORMAT=console
+      - {{upper .ProjectName}}_WORKER_COUNT=2  # Reduced for development
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    command: ["air", "-c", ".air.worker.toml"]
+    ports:
+      - "8083:8083"  # Health check port
+      - "2348:2345"  # Delve debugger port
+    depends_on:
+{{- if ne .DatabaseType "none"}}
+      - {{.DatabaseType}}
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+      - {{.MessageQueue}}
+{{- end}}
+
+{{- if eq .DatabaseType "postgres"}}
+  # PostgreSQL with development settings
+  postgres:
+    environment:
+      - POSTGRES_LOG_STATEMENT=all
+      - POSTGRES_LOG_MIN_MESSAGES=debug1
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      - ./scripts/sql/dev-seed.sql:/docker-entrypoint-initdb.d/99-dev-seed.sql:ro
+    ports:
+      - "5432:5432"
+
+{{- else if eq .DatabaseType "mysql"}}
+  # MySQL with development settings
+  mysql:
+    environment:
+      - MYSQL_LOG_CONSOLE=true
+    volumes:
+      - mysql_dev_data:/var/lib/mysql
+      - ./scripts/sql/dev-seed.sql:/docker-entrypoint-initdb.d/99-dev-seed.sql:ro
+    ports:
+      - "3306:3306"
+
+{{- else if eq .DatabaseType "mongodb"}}
+  # MongoDB with development settings
+  mongodb:
+    volumes:
+      - mongodb_dev_data:/data/db
+      - ./scripts/mongo/dev-seed.js:/docker-entrypoint-initdb.d/99-dev-seed.js:ro
+    ports:
+      - "27017:27017"
+{{- end}}
+
+{{- if eq .MessageQueue "redis"}}
+  # Redis with development settings
+  redis:
+    volumes:
+      - redis_dev_data:/data
+    ports:
+      - "6379:6379"
+
+{{- else if eq .MessageQueue "nats"}}
+  # NATS with development settings
+  nats:
+    command: ["-js", "-m", "8222", "-D"]  # Enable debug logging
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+
+{{- else if eq .MessageQueue "rabbitmq"}}
+  # RabbitMQ with development settings
+  rabbitmq:
+    volumes:
+      - rabbitmq_dev_data:/var/lib/rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+
+{{- else if eq .MessageQueue "kafka"}}
+  # Kafka with development settings
+  kafka:
+    environment:
+      KAFKA_LOG4J_LOGGERS: "kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO"
+    volumes:
+      - kafka_dev_data:/var/lib/kafka/data
+    ports:
+      - "9092:9092"
+{{- end}}
+
+  # Mailhog for email testing
+  mailhog:
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"  # SMTP server
+      - "8025:8025"  # Web UI
+    networks:
+      - {{.ProjectName}}-network
+    restart: unless-stopped
+
+  # pgAdmin for PostgreSQL management (if using PostgreSQL)
+{{- if eq .DatabaseType "postgres"}}
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@{{.ProjectName}}.local
+      - PGADMIN_DEFAULT_PASSWORD=admin
+      - PGADMIN_CONFIG_SERVER_MODE=False
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
+    networks:
+      - {{.ProjectName}}-network
+    restart: unless-stopped
+{{- end}}
+
+  # phpMyAdmin for MySQL management (if using MySQL)
+{{- if eq .DatabaseType "mysql"}}
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    environment:
+      - PMA_HOST=mysql
+      - PMA_USER={{.ProjectName}}
+      - PMA_PASSWORD=password
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
+    networks:
+      - {{.ProjectName}}-network
+    restart: unless-stopped
+{{- end}}
+
+  # Mongo Express for MongoDB management (if using MongoDB)
+{{- if eq .DatabaseType "mongodb"}}
+  mongo-express:
+    image: mongo-express:latest
+    environment:
+      - ME_CONFIG_MONGODB_ADMINUSERNAME={{.ProjectName}}
+      - ME_CONFIG_MONGODB_ADMINPASSWORD=password
+      - ME_CONFIG_MONGODB_URL=mongodb://{{.ProjectName}}:password@mongodb:27017/
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mongodb
+    networks:
+      - {{.ProjectName}}-network
+    restart: unless-stopped
+{{- end}}
+
+  # Redis Commander for Redis management (if using Redis)
+{{- if eq .MessageQueue "redis"}}
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    environment:
+      - REDIS_HOSTS=local:redis:6379
+    ports:
+      - "8082:8081"
+    depends_on:
+      - redis
+    networks:
+      - {{.ProjectName}}-network
+    restart: unless-stopped
+{{- end}}
+
+  # Development tools container
+  dev-tools:
+    image: golang:{{.GoVersion}}-alpine
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go_mod_cache:/go/pkg/mod
+    environment:
+      - CGO_ENABLED=0
+      - GOOS=linux
+      - GO111MODULE=on
+    networks:
+      - {{.ProjectName}}-network
+    command: ["tail", "-f", "/dev/null"]  # Keep container running
+    profiles:
+      - tools  # Only start with --profile tools
+
+volumes:
+  go_mod_cache:  # Shared Go module cache
+{{- if eq .DatabaseType "postgres"}}
+  postgres_dev_data:
+  pgadmin_data:
+{{- else if eq .DatabaseType "mysql"}}
+  mysql_dev_data:
+{{- else if eq .DatabaseType "mongodb"}}
+  mongodb_dev_data:
+{{- end}}
+{{- if eq .MessageQueue "redis"}}
+  redis_dev_data:
+{{- else if eq .MessageQueue "rabbitmq"}}
+  rabbitmq_dev_data:
+{{- else if eq .MessageQueue "kafka"}}
+  kafka_dev_data:
+{{- end}}

@@ -1,0 +1,464 @@
+# {{.ProjectName}} Workspace
+
+{{.ProjectName}} is a Go multi-module workspace demonstrating modern monorepo patterns with shared libraries, microservices, and build orchestration.
+
+## 🏗️ Architecture Overview
+
+This workspace follows a modular architecture with clear separation of concerns:
+
+```
+{{.ProjectName}}/
+├── go.work                     # Go workspace configuration
+├── Makefile                    # Build orchestration
+├── workspace.yaml              # Workspace metadata
+├── 
+├── cmd/                        # Application executables
+{{- if .EnableWebAPI}}
+│   ├── api/                    # Web API service
+{{- end}}
+{{- if .EnableCLI}}
+│   ├── cli/                    # CLI tool
+{{- end}}
+{{- if .EnableWorker}}
+│   └── worker/                 # Background worker
+{{- end}}
+├── 
+├── services/                   # Microservices
+{{- if .EnableMicroservices}}
+│   ├── user-service/           # User management service
+│   └── notification-service/   # Notification service
+{{- end}}
+├── 
+├── pkg/                        # Shared packages
+│   ├── shared/                 # Common utilities and configuration
+│   ├── models/                 # Data models
+{{- if ne .DatabaseType "none"}}
+│   ├── storage/                # Database abstractions
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+│   └── events/                 # Event publishing/subscribing
+{{- end}}
+├── 
+{{- if .EnableDocker}}
+├── docker-compose.yml          # Local development environment
+{{- end}}
+{{- if .EnableKubernetes}}
+├── deployments/                # Kubernetes manifests
+{{- end}}
+{{- if .EnableTesting}}
+├── tests/                      # Integration tests
+{{- end}}
+{{- if .EnableDocumentation}}
+└── docs/                       # Documentation
+{{- end}}
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}}+
+{{- if .EnableDocker}}
+- Docker & Docker Compose
+{{- end}}
+{{- if .EnableKubernetes}}
+- kubectl (for Kubernetes deployment)
+{{- end}}
+{{- if ne .DatabaseType "none"}}
+- {{.DatabaseType | title}} database
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+- {{.MessageQueue | title}} message queue
+{{- end}}
+
+### Development Setup
+
+1. **Clone and setup the workspace:**
+   ```bash
+   cd {{.ProjectName}}
+   go work sync
+   make setup
+   ```
+
+2. **Build all modules:**
+   ```bash
+   make build-all
+   ```
+
+3. **Run tests:**
+   ```bash
+   make test-all
+   ```
+
+{{- if .EnableDocker}}
+
+4. **Start development environment:**
+   ```bash
+   docker-compose -f docker-compose.dev.yml up -d
+   ```
+{{- end}}
+
+{{- if .EnableWebAPI}}
+
+5. **Start the API server:**
+   ```bash
+   make run-api
+   # or
+   cd cmd/api && go run main.go
+   ```
+{{- end}}
+
+{{- if .EnableCLI}}
+
+6. **Use the CLI tool:**
+   ```bash
+   make run-cli -- --help
+   # or
+   cd cmd/cli && go run main.go --help
+   ```
+{{- end}}
+
+## 📦 Modules
+
+### Core Applications
+
+{{- if .EnableWebAPI}}
+#### Web API (`cmd/api`)
+- **Purpose**: RESTful API service
+- **Framework**: {{.Framework | title}}
+- **Features**: User management, health checks, middleware
+- **Port**: 8080
+{{- end}}
+
+{{- if .EnableCLI}}
+#### CLI Tool (`cmd/cli`)
+- **Purpose**: Command-line interface for workspace operations
+- **Framework**: Cobra
+- **Commands**: User management, notifications, system operations
+{{- end}}
+
+{{- if .EnableWorker}}
+#### Background Worker (`cmd/worker`)
+- **Purpose**: Async job processing
+- **Features**: User processing, notification sending
+- **Queue**: {{.MessageQueue | title}}
+{{- end}}
+
+### Microservices
+
+{{- if .EnableMicroservices}}
+#### User Service (`services/user-service`)
+- **Purpose**: User management microservice
+- **Protocol**: gRPC + HTTP
+- **Database**: {{.DatabaseType | title}}
+
+#### Notification Service (`services/notification-service`)
+- **Purpose**: Notification handling and delivery
+- **Protocol**: gRPC + HTTP
+- **Queue**: {{.MessageQueue | title}}
+{{- end}}
+
+### Shared Packages
+
+#### Shared (`pkg/shared`)
+- Common configuration, errors, logging, utilities
+- Used by all other modules
+
+#### Models (`pkg/models`)
+- Data structures and business models
+- Shared across all services
+
+{{- if ne .DatabaseType "none"}}
+#### Storage (`pkg/storage`)
+- Database abstractions and implementations
+- Support for {{.DatabaseType | title}}
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+#### Events (`pkg/events`)
+- Event publishing and subscribing
+- {{.MessageQueue | title}} integration
+{{- end}}
+
+## 🛠️ Development
+
+### Available Make Commands
+
+```bash
+# Build commands
+make build-all              # Build all modules
+make build-api              # Build API server
+make build-cli              # Build CLI tool
+make build-worker           # Build worker
+make build-services         # Build all microservices
+
+# Test commands
+make test-all               # Run all tests
+make test-unit              # Run unit tests
+make test-integration       # Run integration tests
+make test-coverage          # Generate coverage report
+
+# Development commands
+make run-api                # Start API server
+make run-worker             # Start worker
+make run-services           # Start all microservices
+
+# Maintenance commands
+make clean-all              # Clean all build artifacts
+make deps-update            # Update all dependencies
+make lint-all               # Lint all modules
+make fmt-all                # Format all code
+
+# Docker commands
+make docker-build           # Build all Docker images
+make docker-up              # Start development environment
+make docker-down            # Stop development environment
+
+# Kubernetes commands
+make k8s-deploy             # Deploy to Kubernetes
+make k8s-delete             # Delete from Kubernetes
+```
+
+### Module Development
+
+Each module in the workspace is independently buildable and testable:
+
+```bash
+# Work on a specific module
+cd cmd/api
+go mod tidy
+go build
+go test ./...
+
+# Use shared packages
+go mod edit -replace {{.ModulePath}}/pkg/shared=../../pkg/shared
+```
+
+### Adding New Modules
+
+1. Create module directory
+2. Initialize module: `go mod init {{.ModulePath}}/new-module`
+3. Add to `go.work` file
+4. Update Makefile targets
+5. Add Docker configuration if needed
+
+## 🔧 Configuration
+
+### Environment Variables
+
+{{- if .EnableWebAPI}}
+#### API Server
+- `API_PORT`: Server port (default: 8080)
+- `API_ENV`: Environment (dev/staging/prod)
+{{- end}}
+
+{{- if ne .DatabaseType "none"}}
+#### Database
+- `DB_HOST`: Database host
+- `DB_PORT`: Database port
+- `DB_NAME`: Database name
+- `DB_USER`: Database user
+- `DB_PASSWORD`: Database password
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+#### Message Queue
+- `{{.MessageQueue | upper}}_URL`: Message queue connection URL
+{{- end}}
+
+#### Logging
+- `LOG_LEVEL`: Logging level (debug/info/warn/error)
+- `LOG_FORMAT`: Log format (json/text)
+
+### Configuration Files
+
+{{- if .EnableWebAPI}}
+- `cmd/api/config/`: API server configuration
+{{- end}}
+{{- if .EnableMicroservices}}
+- `services/*/config/`: Service-specific configurations
+{{- end}}
+- `pkg/shared/config/`: Shared configuration utilities
+
+## 🧪 Testing
+
+### Test Structure
+
+```
+tests/
+├── integration/            # Cross-module integration tests
+├── helpers/               # Test utilities and helpers
+└── fixtures/              # Test data and fixtures
+```
+
+### Running Tests
+
+```bash
+# All tests
+make test-all
+
+# Specific test types
+make test-unit              # Unit tests only
+make test-integration       # Integration tests only
+
+# With coverage
+make test-coverage
+```
+
+### Test Requirements
+
+{{- if ne .DatabaseType "none"}}
+- Integration tests use Testcontainers for database testing
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+- Message queue tests use embedded/mock implementations
+{{- end}}
+- All modules must maintain >80% test coverage
+
+{{- if .EnableDocker}}
+
+## 🐳 Docker Support
+
+### Development Environment
+
+```bash
+# Start all services
+docker-compose -f docker-compose.dev.yml up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop environment
+docker-compose down
+```
+
+### Production Deployment
+
+```bash
+# Build production images
+make docker-build
+
+# Deploy with Docker Compose
+docker-compose up -d
+```
+{{- end}}
+
+{{- if .EnableKubernetes}}
+
+## ☸️ Kubernetes Deployment
+
+### Prerequisites
+
+- Kubernetes cluster
+- kubectl configured
+{{- if ne .DatabaseType "none"}}
+- Database deployed in cluster or accessible externally
+{{- end}}
+
+### Deploy to Kubernetes
+
+```bash
+# Deploy all services
+make k8s-deploy
+
+# Check deployment status
+kubectl get pods -n {{.ProjectName}}
+
+# View logs
+kubectl logs -f deployment/{{.ProjectName}}-api -n {{.ProjectName}}
+
+# Clean up
+make k8s-delete
+```
+
+### Kubernetes Resources
+
+- **Namespace**: `{{.ProjectName}}`
+- **ConfigMap**: Application configuration
+- **Secrets**: Sensitive configuration
+- **Deployments**: Service deployments
+- **Services**: Service discovery
+{{- end}}
+
+## 📊 Observability
+
+{{- if .EnableObservability}}
+### Metrics
+
+- **Prometheus**: Metrics collection
+- **Custom metrics**: Business and application metrics
+- **Health checks**: Service health monitoring
+
+### Tracing
+
+- **OpenTelemetry**: Distributed tracing
+- **Jaeger**: Trace visualization
+- **Correlation IDs**: Request tracking
+
+### Logging
+
+- **Structured logging**: JSON format with {{.LoggerType}}
+- **Centralized logs**: All services log to stdout
+- **Log levels**: Configurable per service
+{{- end}}
+
+## 🔒 Security
+
+- **Input validation**: All API inputs validated
+- **CORS**: Configurable cross-origin policies
+- **Rate limiting**: API endpoints protected
+- **Security headers**: OWASP recommended headers
+{{- if ne .DatabaseType "none"}}
+- **Database**: Parameterized queries, connection pooling
+{{- end}}
+
+## 🚀 Deployment
+
+### Staging
+
+```bash
+# Build for staging
+make build-all
+
+# Deploy to staging
+make deploy-staging
+```
+
+### Production
+
+```bash
+# Build for production
+make build-production
+
+# Deploy to production
+make deploy-production
+```
+
+## 📚 Documentation
+
+{{- if .EnableDocumentation}}
+- [Architecture](./docs/architecture.md) - System architecture and design
+- [Modules](./docs/modules.md) - Detailed module documentation
+- [Development](./docs/development.md) - Development guide and best practices
+- [Deployment](./docs/deployment.md) - Deployment instructions
+{{- if .EnableWebAPI}}
+- [API](./docs/api.md) - API documentation
+{{- end}}
+{{- end}}
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make changes with tests
+4. Run `make test-all lint-all`
+5. Submit a pull request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+---
+
+**Generated with go-starter workspace blueprint**  
+Framework: {{.Framework}} | Database: {{.DatabaseType}} | Queue: {{.MessageQueue}} | Logger: {{.LoggerType}}

@@ -1,0 +1,363 @@
+#!/bin/bash
+
+# {{.ProjectName}} - Lint All Modules Script
+# Runs linting for all modules in the workspace
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Configuration
+WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERBOSE=${VERBOSE:-false}
+
+# Function to print colored output
+print_status() {
+    echo -e "${GREEN}[LINT]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+# Function to show usage
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Run linting for all modules in the {{.ProjectName}} workspace
+
+OPTIONS:
+    -f, --fix            Automatically fix issues where possible
+    -v, --verbose        Enable verbose output
+    -c, --config FILE    Custom golangci-lint config file
+    -h, --help           Show this help message
+
+EXAMPLES:
+    # Lint all modules
+    $0
+
+    # Lint with auto-fix
+    $0 --fix
+
+    # Verbose linting
+    $0 --verbose
+
+EOF
+}
+
+# Parse command line arguments
+FIX=false
+CONFIG_FILE=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -f|--fix)
+            FIX=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -c|--config)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            print_error "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# Verbose output
+if [[ "$VERBOSE" == true ]]; then
+    set -x
+fi
+
+print_info "{{.ProjectName}} Workspace Linting"
+print_info "Workspace: $WORKSPACE_ROOT"
+
+# Change to workspace root
+cd "$WORKSPACE_ROOT"
+
+# Modules to lint (in dependency order)
+MODULES=(
+    "pkg/shared"
+    "pkg/models"
+{{- if ne .DatabaseType "none"}}
+    "pkg/storage"
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+    "pkg/events"
+{{- end}}
+{{- if .EnableWebAPI}}
+    "cmd/api"
+{{- end}}
+{{- if .EnableCLI}}
+    "cmd/cli"
+{{- end}}
+{{- if .EnableWorker}}
+    "cmd/worker"
+{{- end}}
+{{- if .EnableMicroservices}}
+    "services/user-service"
+    "services/notification-service"
+{{- end}}
+{{- if .EnableTesting}}
+    "tests/integration"
+{{- end}}
+)
+
+# Check if golangci-lint is available
+if ! command -v golangci-lint &> /dev/null; then
+    print_error "golangci-lint is not installed"
+    print_info "Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+    exit 1
+fi
+
+print_status "golangci-lint version: $(golangci-lint version)"
+
+# Function to lint a module
+lint_module() {
+    local module=$1
+    local module_name=$(basename "$module")
+    
+    print_status "Linting module: $module_name"
+    
+    if [[ ! -d "$module" ]]; then
+        print_warning "Module $module does not exist, skipping"
+        return 0
+    fi
+    
+    cd "$module"
+    
+    # Build golangci-lint command
+    local lint_cmd=("golangci-lint" "run")
+    
+    # Add config file if specified
+    if [[ -n "$CONFIG_FILE" ]]; then
+        lint_cmd+=("-c" "$CONFIG_FILE")
+    fi
+    
+    # Add fix flag if requested
+    if [[ "$FIX" == true ]]; then
+        lint_cmd+=("--fix")
+    fi
+    
+    # Add verbose flag if requested
+    if [[ "$VERBOSE" == true ]]; then
+        lint_cmd+=("-v")
+    fi
+    
+    # Run linting
+    if "${lint_cmd[@]}"; then
+        print_status "✅ $module_name linting passed"
+    else
+        print_error "❌ $module_name linting failed"
+        cd - > /dev/null
+        return 1
+    fi
+    
+    cd - > /dev/null
+    return 0
+}
+
+# Function to run gofmt check
+check_formatting() {
+    print_status "Checking code formatting..."
+    
+    local unformatted_files=()
+    
+    for module in "${MODULES[@]}"; do
+        if [[ -d "$module" ]]; then
+            cd "$module"
+            
+            # Find unformatted Go files
+            while IFS= read -r -d '' file; do
+                if ! gofmt -l "$file" | grep -q .; then
+                    continue
+                fi
+                unformatted_files+=("$module/$file")
+            done < <(find . -name "*.go" -not -path "./vendor/*" -print0)
+            
+            cd - > /dev/null
+        fi
+    done
+    
+    if [[ ${#unformatted_files[@]} -eq 0 ]]; then
+        print_status "✅ All files are properly formatted"
+    else
+        print_error "❌ The following files are not properly formatted:"
+        for file in "${unformatted_files[@]}"; do
+            echo "  • $file"
+        done
+        
+        if [[ "$FIX" == true ]]; then
+            print_status "Auto-fixing formatting issues..."
+            for file in "${unformatted_files[@]}"; do
+                gofmt -w "$file"
+            done
+            print_status "✅ Formatting issues fixed"
+        else
+            print_info "Run with --fix to automatically format files"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to run goimports check
+check_imports() {
+    print_status "Checking import formatting..."
+    
+    if ! command -v goimports &> /dev/null; then
+        print_warning "goimports not found, skipping import check"
+        print_info "Install with: go install golang.org/x/tools/cmd/goimports@latest"
+        return 0
+    fi
+    
+    local unorganized_files=()
+    
+    for module in "${MODULES[@]}"; do
+        if [[ -d "$module" ]]; then
+            cd "$module"
+            
+            # Find files with unorganized imports
+            while IFS= read -r -d '' file; do
+                if ! goimports -l "$file" | grep -q .; then
+                    continue
+                fi
+                unorganized_files+=("$module/$file")
+            done < <(find . -name "*.go" -not -path "./vendor/*" -print0)
+            
+            cd - > /dev/null
+        fi
+    done
+    
+    if [[ ${#unorganized_files[@]} -eq 0 ]]; then
+        print_status "✅ All imports are properly organized"
+    else
+        print_error "❌ The following files have unorganized imports:"
+        for file in "${unorganized_files[@]}"; do
+            echo "  • $file"
+        done
+        
+        if [[ "$FIX" == true ]]; then
+            print_status "Auto-fixing import issues..."
+            for file in "${unorganized_files[@]}"; do
+                goimports -w "$file"
+            done
+            print_status "✅ Import issues fixed"
+        else
+            print_info "Run with --fix to automatically organize imports"
+            return 1
+        fi
+    fi
+    
+    return 0
+}
+
+# Function to run go vet
+run_go_vet() {
+    print_status "Running go vet..."
+    
+    failed_modules=()
+    
+    for module in "${MODULES[@]}"; do
+        if [[ -d "$module" ]]; then
+            print_status "  → Vetting $module"
+            cd "$module"
+            
+            if go vet ./...; then
+                print_status "✅ $(basename "$module") vet passed"
+            else
+                print_error "❌ $(basename "$module") vet failed"
+                failed_modules+=("$module")
+            fi
+            
+            cd - > /dev/null
+        fi
+    done
+    
+    if [[ ${#failed_modules[@]} -eq 0 ]]; then
+        print_status "✅ All modules passed go vet"
+        return 0
+    else
+        print_error "❌ go vet failed for modules:"
+        for module in "${failed_modules[@]}"; do
+            echo "  • $module"
+        done
+        return 1
+    fi
+}
+
+# Main execution
+failed_modules=()
+
+# Run formatting check
+if ! check_formatting; then
+    failed_modules+=("formatting")
+fi
+
+# Run import organization check
+if ! check_imports; then
+    failed_modules+=("imports")
+fi
+
+# Run go vet
+if ! run_go_vet; then
+    failed_modules+=("go vet")
+fi
+
+# Run golangci-lint for each module
+for module in "${MODULES[@]}"; do
+    if ! lint_module "$module"; then
+        failed_modules+=("$module")
+    fi
+done
+
+# Report results
+echo ""
+if [[ ${#failed_modules[@]} -eq 0 ]]; then
+    print_status "🎉 All linting checks passed!"
+    
+    echo ""
+    print_info "Linting summary:"
+    echo "  • Modules checked: ${#MODULES[@]}"
+    echo "  • Issues found: 0"
+    echo "  • All code follows style guidelines"
+    
+    exit 0
+else
+    print_error "❌ Linting failed for:"
+    for module in "${failed_modules[@]}"; do
+        echo "  • $module"
+    done
+    
+    echo ""
+    print_info "To fix issues automatically, run:"
+    echo "  $0 --fix"
+    
+    exit 1
+fi

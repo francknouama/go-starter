@@ -1,0 +1,415 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  GO_VERSION: {{.GoVersion}}
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Validate release readiness
+  validate-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Determine version
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ inputs.version }}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        
+        # Check if this is a prerelease
+        if [[ $VERSION == *"alpha"* ]] || [[ $VERSION == *"beta"* ]] || [[ $VERSION == *"rc"* ]]; then
+          echo "is_prerelease=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_prerelease=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Validate workspace
+      run: |
+        go work sync
+        go build ./...
+        go test ./...
+
+  # Build release binaries
+  build-binaries:
+    runs-on: ubuntu-latest
+    needs: validate-release
+    strategy:
+      matrix:
+        include:
+{{- if .EnableWebAPI}}
+          - binary: api
+            path: cmd/api
+            description: "HTTP API Server"
+{{- end}}
+{{- if .EnableCLI}}
+          - binary: cli
+            path: cmd/cli
+            description: "Command Line Interface"
+{{- end}}
+{{- if .EnableWorker}}
+          - binary: worker
+            path: cmd/worker
+            description: "Background Worker"
+{{- end}}
+{{- if .EnableMicroservices}}
+          - binary: user-service
+            path: services/user-service
+            description: "User Management Service"
+          - binary: notification-service
+            path: services/notification-service
+            description: "Notification Service"
+{{- end}}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Sync workspace
+      run: go work sync
+    
+    - name: Build ${{ matrix.binary }} for multiple platforms
+      run: |
+        cd ${{ matrix.path }}
+        
+        # Build for different platforms
+        platforms=(
+          "linux/amd64"
+          "linux/arm64"
+          "darwin/amd64"
+          "darwin/arm64"
+          "windows/amd64"
+        )
+        
+        for platform in "${platforms[@]}"; do
+          GOOS=${platform%/*}
+          GOARCH=${platform#*/}
+          output_name="${{ matrix.binary }}-${GOOS}-${GOARCH}"
+          
+          if [ "$GOOS" = "windows" ]; then
+            output_name="${output_name}.exe"
+          fi
+          
+          echo "Building $output_name..."
+          env GOOS=$GOOS GOARCH=$GOARCH CGO_ENABLED=0 go build \
+            -ldflags="-w -s -X main.version=${{ needs.validate-release.outputs.version }}" \
+            -o "../../dist/$output_name" .
+        done
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ${{ matrix.binary }}-binaries
+        path: dist/${{ matrix.binary }}-*
+
+{{- if .EnableDocker}}
+  # Build and push Docker images
+  build-images:
+    runs-on: ubuntu-latest
+    needs: validate-release
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+{{- if .EnableWebAPI}}
+          - service: api
+            path: cmd/api
+            port: 8080
+{{- end}}
+{{- if .EnableWorker}}
+          - service: worker
+            path: cmd/worker
+{{- end}}
+{{- if .EnableMicroservices}}
+          - service: user-service
+            path: services/user-service
+            port: 8081
+          - service: notification-service
+            path: services/notification-service
+            port: 8082
+{{- end}}
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=semver,pattern={{major}}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ${{ matrix.path }}/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        platforms: linux/amd64,linux/arm64
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          VERSION=${{ needs.validate-release.outputs.version }}
+{{- end}}
+
+  # Create GitHub release
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [validate-release, build-binaries{{- if .EnableDocker}}, build-images{{- end}}]
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: artifacts/
+    
+    - name: Prepare release assets
+      run: |
+        mkdir -p release-assets
+        
+        # Organize binaries
+{{- if .EnableWebAPI}}
+        cp artifacts/api-binaries/* release-assets/ 2>/dev/null || true
+{{- end}}
+{{- if .EnableCLI}}
+        cp artifacts/cli-binaries/* release-assets/ 2>/dev/null || true
+{{- end}}
+{{- if .EnableWorker}}
+        cp artifacts/worker-binaries/* release-assets/ 2>/dev/null || true
+{{- end}}
+{{- if .EnableMicroservices}}
+        cp artifacts/user-service-binaries/* release-assets/ 2>/dev/null || true
+        cp artifacts/notification-service-binaries/* release-assets/ 2>/dev/null || true
+{{- end}}
+        
+        # Create checksums
+        cd release-assets
+        for file in *; do
+          [ -f "$file" ] && sha256sum "$file" >> checksums.txt
+        done
+        cd ..
+    
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        cat > release_notes.md << 'EOF'
+        ## {{.ProjectName}} ${{ needs.validate-release.outputs.version }}
+        
+        ### What's New
+        
+        This release includes the following components:
+        
+{{- if .EnableWebAPI}}
+        - **API Server**: HTTP API server with {{.Framework}} framework
+{{- end}}
+{{- if .EnableCLI}}
+        - **CLI Tool**: Command-line interface for {{.ProjectName}}
+{{- end}}
+{{- if .EnableWorker}}
+        - **Background Worker**: Asynchronous task processing
+{{- end}}
+{{- if .EnableMicroservices}}
+        - **User Service**: User management microservice
+        - **Notification Service**: Notification handling microservice
+{{- end}}
+        
+        ### Architecture
+        
+        - **Go Version**: {{.GoVersion}}
+        - **Framework**: {{.Framework}}
+        - **Logger**: {{.LoggerType}}
+{{- if ne .DatabaseType "none"}}
+        - **Database**: {{.DatabaseType}}
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+        - **Message Queue**: {{.MessageQueue}}
+{{- end}}
+        
+        ### Installation
+        
+        Download the appropriate binary for your platform from the assets below.
+        
+{{- if .EnableCLI}}
+        #### CLI Installation
+        
+        ```bash
+        # Linux/macOS
+        curl -L https://github.com/${{ github.repository }}/releases/download/${{ needs.validate-release.outputs.version }}/cli-$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m) -o {{.ProjectName}}
+        chmod +x {{.ProjectName}}
+        sudo mv {{.ProjectName}} /usr/local/bin/
+        
+        # Or using Go
+        go install github.com/${{ github.repository }}/cmd/cli@${{ needs.validate-release.outputs.version }}
+        ```
+{{- end}}
+        
+{{- if .EnableDocker}}
+        #### Docker Images
+        
+        Docker images are available at:
+        
+{{- if .EnableWebAPI}}
+        ```bash
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api:${{ needs.validate-release.outputs.version }}
+        ```
+{{- end}}
+{{- if .EnableWorker}}
+        ```bash
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/worker:${{ needs.validate-release.outputs.version }}
+        ```
+{{- end}}
+{{- if .EnableMicroservices}}
+        ```bash
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:${{ needs.validate-release.outputs.version }}
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/notification-service:${{ needs.validate-release.outputs.version }}
+        ```
+{{- end}}
+{{- end}}
+        
+        ### Verification
+        
+        All binaries can be verified using the provided checksums:
+        
+        ```bash
+        sha256sum -c checksums.txt
+        ```
+        
+        ### Full Changelog
+        
+        **Full Changelog**: https://github.com/${{ github.repository }}/compare/v0.1.0...${{ needs.validate-release.outputs.version }}
+        EOF
+        
+        echo "release_notes_file=release_notes.md" >> $GITHUB_OUTPUT
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ needs.validate-release.outputs.version }}
+        name: {{.ProjectName}} ${{ needs.validate-release.outputs.version }}
+        body_path: ${{ steps.release_notes.outputs.release_notes_file }}
+        prerelease: ${{ needs.validate-release.outputs.is_prerelease == 'true' }}
+        files: |
+          release-assets/*
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+{{- if .EnableKubernetes}}
+  # Deploy to staging/production
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [create-release, build-images]
+    if: needs.validate-release.outputs.is_prerelease == 'false'
+    environment: 
+      name: production
+      url: https://{{.ProjectName}}.example.com
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'latest'
+    
+    - name: Configure kubectl
+      run: |
+        echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > kubeconfig
+        export KUBECONFIG=kubeconfig
+    
+    - name: Update deployment manifests
+      run: |
+        # Update image tags in Kubernetes manifests
+        sed -i "s|:latest|:${{ needs.validate-release.outputs.version }}|g" deployments/k8s/*.yaml
+    
+    - name: Deploy to Kubernetes
+      run: |
+        export KUBECONFIG=kubeconfig
+        kubectl apply -f deployments/k8s/
+        
+        # Wait for deployments to be ready
+        kubectl rollout status deployment/{{.ProjectName}}-api -n {{.ProjectName}}
+        kubectl rollout status deployment/{{.ProjectName}}-worker -n {{.ProjectName}}
+    
+    - name: Run smoke tests
+      run: |
+        # Add smoke tests for production deployment
+        echo "Running smoke tests..."
+        # kubectl port-forward service/{{.ProjectName}}-api 8080:80 &
+        # curl -f http://localhost:8080/health || exit 1
+{{- end}}
+
+  # Notify about release
+  notify:
+    runs-on: ubuntu-latest
+    needs: [create-release{{- if .EnableKubernetes}}, deploy{{- end}}]
+    if: always()
+    steps:
+    - name: Notify Slack
+      if: env.SLACK_WEBHOOK_URL != ''
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#releases'
+        text: |
+          {{.ProjectName}} ${{ needs.validate-release.outputs.version }} has been released!
+          
+          Release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.validate-release.outputs.version }}
+{{- if .EnableDocker}}
+          Docker Images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+{{- end}}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    
+    - name: Create deployment announcement
+      run: |
+        echo "::notice title=Release Created::{{.ProjectName}} ${{ needs.validate-release.outputs.version }} has been successfully released!"

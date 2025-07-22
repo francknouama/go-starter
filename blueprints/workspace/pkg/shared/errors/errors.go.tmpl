@@ -1,0 +1,301 @@
+// Package errors provides common error types and utilities for the {{.ProjectName}} workspace.
+package errors
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+)
+
+// AppError represents an application error with additional context
+type AppError struct {
+	Code     string                 `json:"code"`
+	Message  string                 `json:"message"`
+	Details  map[string]interface{} `json:"details,omitempty"`
+	HTTPCode int                    `json:"-"`
+	Cause    error                  `json:"-"`
+}
+
+// Error implements the error interface
+func (e *AppError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %v", e.Message, e.Cause)
+	}
+	return e.Message
+}
+
+// Unwrap implements the error unwrapping interface
+func (e *AppError) Unwrap() error {
+	return e.Cause
+}
+
+// MarshalJSON implements custom JSON marshaling
+func (e *AppError) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Code    string                 `json:"code"`
+		Message string                 `json:"message"`
+		Details map[string]interface{} `json:"details,omitempty"`
+	}{
+		Code:    e.Code,
+		Message: e.Message,
+		Details: e.Details,
+	})
+}
+
+// ErrorResponse represents a standardized error response
+type ErrorResponse struct {
+	Error   *AppError `json:"error"`
+	TraceID string    `json:"trace_id,omitempty"`
+}
+
+// Common error codes
+const (
+	// Client errors (4xx)
+	ErrCodeBadRequest     = "BAD_REQUEST"
+	ErrCodeUnauthorized   = "UNAUTHORIZED"
+	ErrCodeForbidden      = "FORBIDDEN"
+	ErrCodeNotFound       = "NOT_FOUND"
+	ErrCodeConflict       = "CONFLICT"
+	ErrCodeValidation     = "VALIDATION_ERROR"
+	ErrCodeRateLimit      = "RATE_LIMIT_EXCEEDED"
+
+	// Server errors (5xx)
+	ErrCodeInternal       = "INTERNAL_ERROR"
+	ErrCodeServiceUnavail = "SERVICE_UNAVAILABLE"
+	ErrCodeTimeout        = "TIMEOUT"
+	ErrCodeDatabase       = "DATABASE_ERROR"
+	ErrCodeExternal       = "EXTERNAL_SERVICE_ERROR"
+)
+
+// Predefined errors
+var (
+	ErrInternalServer = &AppError{
+		Code:     ErrCodeInternal,
+		Message:  "Internal server error",
+		HTTPCode: http.StatusInternalServerError,
+	}
+
+	ErrNotFound = &AppError{
+		Code:     ErrCodeNotFound,
+		Message:  "Resource not found",
+		HTTPCode: http.StatusNotFound,
+	}
+
+	ErrUnauthorized = &AppError{
+		Code:     ErrCodeUnauthorized,
+		Message:  "Unauthorized access",
+		HTTPCode: http.StatusUnauthorized,
+	}
+
+	ErrForbidden = &AppError{
+		Code:     ErrCodeForbidden,
+		Message:  "Access forbidden",
+		HTTPCode: http.StatusForbidden,
+	}
+
+	ErrBadRequest = &AppError{
+		Code:     ErrCodeBadRequest,
+		Message:  "Bad request",
+		HTTPCode: http.StatusBadRequest,
+	}
+
+	ErrConflict = &AppError{
+		Code:     ErrCodeConflict,
+		Message:  "Resource conflict",
+		HTTPCode: http.StatusConflict,
+	}
+
+	ErrServiceUnavailable = &AppError{
+		Code:     ErrCodeServiceUnavail,
+		Message:  "Service temporarily unavailable",
+		HTTPCode: http.StatusServiceUnavailable,
+	}
+
+	ErrTimeout = &AppError{
+		Code:     ErrCodeTimeout,
+		Message:  "Request timeout",
+		HTTPCode: http.StatusRequestTimeout,
+	}
+)
+
+// New creates a new AppError
+func New(code, message string) *AppError {
+	return &AppError{
+		Code:     code,
+		Message:  message,
+		HTTPCode: http.StatusInternalServerError,
+	}
+}
+
+// NewWithHTTPCode creates a new AppError with HTTP status code
+func NewWithHTTPCode(code, message string, httpCode int) *AppError {
+	return &AppError{
+		Code:     code,
+		Message:  message,
+		HTTPCode: httpCode,
+	}
+}
+
+// NewValidationError creates a validation error with details
+func NewValidationError(message string, details map[string]interface{}) *AppError {
+	return &AppError{
+		Code:     ErrCodeValidation,
+		Message:  message,
+		Details:  details,
+		HTTPCode: http.StatusBadRequest,
+	}
+}
+
+// NewDatabaseError creates a database error
+func NewDatabaseError(message string, cause error) *AppError {
+	return &AppError{
+		Code:     ErrCodeDatabase,
+		Message:  message,
+		HTTPCode: http.StatusInternalServerError,
+		Cause:    cause,
+	}
+}
+
+// NewExternalServiceError creates an external service error
+func NewExternalServiceError(service, message string, cause error) *AppError {
+	return &AppError{
+		Code:    ErrCodeExternal,
+		Message: fmt.Sprintf("External service error (%s): %s", service, message),
+		Details: map[string]interface{}{
+			"service": service,
+		},
+		HTTPCode: http.StatusBadGateway,
+		Cause:    cause,
+	}
+}
+
+// Wrap wraps an existing error with additional context
+func Wrap(err error, code, message string) *AppError {
+	if appErr, ok := err.(*AppError); ok {
+		// If it's already an AppError, create a new one with additional context
+		return &AppError{
+			Code:     code,
+			Message:  message,
+			HTTPCode: appErr.HTTPCode,
+			Cause:    appErr,
+		}
+	}
+
+	return &AppError{
+		Code:     code,
+		Message:  message,
+		HTTPCode: http.StatusInternalServerError,
+		Cause:    err,
+	}
+}
+
+// WrapWithHTTPCode wraps an error with HTTP status code
+func WrapWithHTTPCode(err error, code, message string, httpCode int) *AppError {
+	return &AppError{
+		Code:     code,
+		Message:  message,
+		HTTPCode: httpCode,
+		Cause:    err,
+	}
+}
+
+// WithDetails adds details to an AppError
+func (e *AppError) WithDetails(details map[string]interface{}) *AppError {
+	newErr := *e // Create a copy
+	newErr.Details = details
+	return &newErr
+}
+
+// WithDetail adds a single detail to an AppError
+func (e *AppError) WithDetail(key string, value interface{}) *AppError {
+	newErr := *e // Create a copy
+	if newErr.Details == nil {
+		newErr.Details = make(map[string]interface{})
+	}
+	newErr.Details[key] = value
+	return &newErr
+}
+
+// IsAppError checks if an error is an AppError
+func IsAppError(err error) bool {
+	_, ok := err.(*AppError)
+	return ok
+}
+
+// GetAppError extracts an AppError from an error, or creates one if it's not an AppError
+func GetAppError(err error) *AppError {
+	if appErr, ok := err.(*AppError); ok {
+		return appErr
+	}
+
+	// Create a generic internal error
+	return &AppError{
+		Code:     ErrCodeInternal,
+		Message:  "Internal server error",
+		HTTPCode: http.StatusInternalServerError,
+		Cause:    err,
+	}
+}
+
+// GetHTTPStatusCode returns the HTTP status code for an error
+func GetHTTPStatusCode(err error) int {
+	if appErr, ok := err.(*AppError); ok {
+		return appErr.HTTPCode
+	}
+	return http.StatusInternalServerError
+}
+
+// IsClientError returns true if the error is a client error (4xx)
+func IsClientError(err error) bool {
+	httpCode := GetHTTPStatusCode(err)
+	return httpCode >= 400 && httpCode < 500
+}
+
+// IsServerError returns true if the error is a server error (5xx)
+func IsServerError(err error) bool {
+	httpCode := GetHTTPStatusCode(err)
+	return httpCode >= 500
+}
+
+// NewErrorResponse creates a new error response
+func NewErrorResponse(err error, traceID string) *ErrorResponse {
+	return &ErrorResponse{
+		Error:   GetAppError(err),
+		TraceID: traceID,
+	}
+}
+
+// ValidationError represents a field validation error
+type ValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+	Value   string `json:"value,omitempty"`
+}
+
+// ValidationErrors represents multiple validation errors
+type ValidationErrors []ValidationError
+
+// Error implements the error interface for ValidationErrors
+func (ve ValidationErrors) Error() string {
+	if len(ve) == 0 {
+		return "validation failed"
+	}
+	if len(ve) == 1 {
+		return fmt.Sprintf("validation failed: %s", ve[0].Message)
+	}
+	return fmt.Sprintf("validation failed with %d errors", len(ve))
+}
+
+// NewValidationErrors creates a new validation errors collection
+func NewValidationErrors(errors ...ValidationError) *AppError {
+	details := map[string]interface{}{
+		"validation_errors": errors,
+	}
+
+	return &AppError{
+		Code:     ErrCodeValidation,
+		Message:  ValidationErrors(errors).Error(),
+		Details:  details,
+		HTTPCode: http.StatusBadRequest,
+	}
+}

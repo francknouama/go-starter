@@ -1,0 +1,186 @@
+package config
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/spf13/viper"
+	"{{.ModulePath}}/pkg/shared/config"
+)
+
+// Config holds the complete application configuration
+type Config struct {
+	Server       ServerConfig                `mapstructure:"server"`
+	Logger       config.LoggerConfig         `mapstructure:"logger"`
+{{- if ne .DatabaseType "none"}}
+	Database     config.DatabaseConfig       `mapstructure:"database"`
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	MessageQueue config.MessageQueueConfig   `mapstructure:"message_queue"`
+{{- end}}
+{{- if .EnableObservability}}
+	Observability config.ObservabilityConfig `mapstructure:"observability"`
+{{- end}}
+	CORS         CORSConfig                  `mapstructure:"cors"`
+	RateLimit    RateLimitConfig             `mapstructure:"rate_limit"`
+}
+
+// ServerConfig holds HTTP server configuration
+type ServerConfig struct {
+	Port         int    `mapstructure:"port" validate:"required,min=1,max=65535"`
+	Host         string `mapstructure:"host"`
+	Environment  string `mapstructure:"environment" validate:"required,oneof=development staging production"`
+	ReadTimeout  int    `mapstructure:"read_timeout" validate:"min=1"`
+	WriteTimeout int    `mapstructure:"write_timeout" validate:"min=1"`
+	IdleTimeout  int    `mapstructure:"idle_timeout" validate:"min=1"`
+	TLS          struct {
+		Enabled  bool   `mapstructure:"enabled"`
+		CertFile string `mapstructure:"cert_file"`
+		KeyFile  string `mapstructure:"key_file"`
+	} `mapstructure:"tls"`
+}
+
+// CORSConfig holds CORS configuration
+type CORSConfig struct {
+	Enabled          bool     `mapstructure:"enabled"`
+	AllowedOrigins   []string `mapstructure:"allowed_origins"`
+	AllowedMethods   []string `mapstructure:"allowed_methods"`
+	AllowedHeaders   []string `mapstructure:"allowed_headers"`
+	ExposedHeaders   []string `mapstructure:"exposed_headers"`
+	AllowCredentials bool     `mapstructure:"allow_credentials"`
+	MaxAge           int      `mapstructure:"max_age"`
+}
+
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	Enabled    bool `mapstructure:"enabled"`
+	RPS        int  `mapstructure:"rps" validate:"min=1"`        // Requests per second
+	Burst      int  `mapstructure:"burst" validate:"min=1"`      // Burst capacity
+	WindowSize int  `mapstructure:"window_size" validate:"min=1"` // Window size in seconds
+}
+
+// Load loads configuration from environment variables and config files
+func Load() (*Config, error) {
+	v := viper.New()
+
+	// Set defaults
+	setDefaults(v)
+
+	// Read from environment
+	v.AutomaticEnv()
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.SetEnvPrefix("{{upper .ProjectName}}")
+
+	// Read from config file if present
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath(".")
+	v.AddConfigPath("./config")
+	v.AddConfigPath("/etc/{{.ProjectName}}")
+
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+		// Config file not found is okay, we'll use defaults and env vars
+	}
+
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Validate configuration
+	if err := config.Validate(&cfg); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults(v *viper.Viper) {
+	// Server defaults
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.host", "0.0.0.0")
+	v.SetDefault("server.environment", "development")
+	v.SetDefault("server.read_timeout", 30)
+	v.SetDefault("server.write_timeout", 30)
+	v.SetDefault("server.idle_timeout", 120)
+	v.SetDefault("server.tls.enabled", false)
+
+	// Logger defaults
+	v.SetDefault("logger.level", "info")
+	v.SetDefault("logger.format", "json")
+	v.SetDefault("logger.output", "stdout")
+
+{{- if ne .DatabaseType "none"}}
+	// Database defaults
+	v.SetDefault("database.type", "{{.DatabaseType}}")
+	v.SetDefault("database.host", "localhost")
+	{{- if eq .DatabaseType "postgres"}}
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	v.SetDefault("database.sslmode", "disable")
+	{{- else if eq .DatabaseType "mysql"}}
+	v.SetDefault("database.port", 3306)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	{{- else if eq .DatabaseType "mongodb"}}
+	v.SetDefault("database.port", 27017)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	{{- else if eq .DatabaseType "sqlite"}}
+	v.SetDefault("database.host", "./{{.ProjectName}}.db")
+	{{- end}}
+	v.SetDefault("database.max_open_conns", 25)
+	v.SetDefault("database.max_idle_conns", 5)
+	v.SetDefault("database.conn_max_lifetime", 300)
+{{- end}}
+
+{{- if ne .MessageQueue "none"}}
+	// Message queue defaults
+	v.SetDefault("message_queue.type", "{{.MessageQueue}}")
+	v.SetDefault("message_queue.host", "localhost")
+	{{- if eq .MessageQueue "redis"}}
+	v.SetDefault("message_queue.port", 6379)
+	{{- else if eq .MessageQueue "nats"}}
+	v.SetDefault("message_queue.port", 4222)
+	{{- else if eq .MessageQueue "kafka"}}
+	v.SetDefault("message_queue.port", 9092)
+	{{- else if eq .MessageQueue "rabbitmq"}}
+	v.SetDefault("message_queue.port", 5672)
+	v.SetDefault("message_queue.user", "guest")
+	v.SetDefault("message_queue.password", "guest")
+	{{- end}}
+	v.SetDefault("message_queue.max_connections", 10)
+	v.SetDefault("message_queue.min_connections", 2)
+	v.SetDefault("message_queue.idle_timeout", 300)
+{{- end}}
+
+	// CORS defaults
+	v.SetDefault("cors.enabled", true)
+	v.SetDefault("cors.allowed_origins", []string{"*"})
+	v.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
+	v.SetDefault("cors.allowed_headers", []string{"*"})
+	v.SetDefault("cors.allow_credentials", false)
+	v.SetDefault("cors.max_age", 86400)
+
+	// Rate limit defaults
+	v.SetDefault("rate_limit.enabled", true)
+	v.SetDefault("rate_limit.rps", 100)
+	v.SetDefault("rate_limit.burst", 200)
+	v.SetDefault("rate_limit.window_size", 60)
+
+{{- if .EnableObservability}}
+	// Observability defaults
+	v.SetDefault("observability.metrics.enabled", true)
+	v.SetDefault("observability.metrics.port", 9090)
+	v.SetDefault("observability.metrics.path", "/metrics")
+	v.SetDefault("observability.tracing.enabled", true)
+	v.SetDefault("observability.tracing.endpoint", "http://localhost:14268/api/traces")
+	v.SetDefault("observability.health.enabled", true)
+	v.SetDefault("observability.health.path", "/health")
+{{- end}}
+}

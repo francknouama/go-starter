@@ -1,0 +1,338 @@
+package middleware
+
+import (
+	"net/http"
+	"strings"
+	"time"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/logger"
+	"github.com/gofiber/fiber/v2/middleware/recover"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+{{- else if eq .Framework "chi"}}
+	"context"
+	"fmt"
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+{{- end}}
+	"github.com/google/uuid"
+
+	"{{.ModulePath}}/cmd/api/config"
+	"{{.ModulePath}}/pkg/shared/logger"
+)
+
+{{- if eq .Framework "gin"}}
+// LoggerMiddleware creates a Gin logger middleware using the provided logger
+func LoggerMiddleware(log logger.Logger) gin.HandlerFunc {
+	return gin.LoggerWithFormatter(func(param gin.LogFormatterParams) string {
+		log.Info("HTTP Request",
+			"method", param.Method,
+			"path", param.Path,
+			"status", param.StatusCode,
+			"latency", param.Latency,
+			"client_ip", param.ClientIP,
+			"user_agent", param.Request.UserAgent(),
+		)
+		return ""
+	})
+}
+
+// RecoveryMiddleware creates a Gin recovery middleware using the provided logger
+func RecoveryMiddleware(log logger.Logger) gin.HandlerFunc {
+	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
+		log.Error("Panic recovered",
+			"error", recovered,
+			"method", c.Request.Method,
+			"path", c.Request.URL.Path,
+		)
+		c.AbortWithStatus(http.StatusInternalServerError)
+	})
+}
+
+// CORSMiddleware creates a CORS middleware
+func CORSMiddleware(cfg config.CORSConfig) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if !cfg.Enabled {
+			c.Next()
+			return
+		}
+
+		origin := c.Request.Header.Get("Origin")
+		if len(cfg.AllowedOrigins) > 0 && cfg.AllowedOrigins[0] != "*" {
+			allowed := false
+			for _, allowedOrigin := range cfg.AllowedOrigins {
+				if allowedOrigin == origin {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+		}
+
+		if len(cfg.AllowedOrigins) > 0 && cfg.AllowedOrigins[0] == "*" {
+			c.Header("Access-Control-Allow-Origin", "*")
+		} else {
+			c.Header("Access-Control-Allow-Origin", origin)
+		}
+
+		if len(cfg.AllowedMethods) > 0 {
+			c.Header("Access-Control-Allow-Methods", strings.Join(cfg.AllowedMethods, ", "))
+		}
+
+		if len(cfg.AllowedHeaders) > 0 {
+			c.Header("Access-Control-Allow-Headers", strings.Join(cfg.AllowedHeaders, ", "))
+		}
+
+		if len(cfg.ExposedHeaders) > 0 {
+			c.Header("Access-Control-Expose-Headers", strings.Join(cfg.ExposedHeaders, ", "))
+		}
+
+		if cfg.AllowCredentials {
+			c.Header("Access-Control-Allow-Credentials", "true")
+		}
+
+		if cfg.MaxAge > 0 {
+			c.Header("Access-Control-Max-Age", fmt.Sprintf("%d", cfg.MaxAge))
+		}
+
+		if c.Request.Method == "OPTIONS" {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+
+		c.Next()
+	}
+}
+
+// RequestIDMiddleware adds a unique request ID to each request
+func RequestIDMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		requestID := c.GetHeader("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+		c.Header("X-Request-ID", requestID)
+		c.Set("request_id", requestID)
+		c.Next()
+	}
+}
+
+{{- else if eq .Framework "echo"}}
+// SetupMiddleware configures all middleware for Echo
+func SetupMiddleware(e *echo.Echo, cfg *config.Config, log logger.Logger) {
+	// Request ID
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			requestID := c.Request().Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.New().String()
+			}
+			c.Response().Header().Set("X-Request-ID", requestID)
+			c.Set("request_id", requestID)
+			return next(c)
+		}
+	})
+
+	// Logger
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			
+			log.Info("HTTP Request",
+				"method", c.Request().Method,
+				"path", c.Request().URL.Path,
+				"status", c.Response().Status,
+				"latency", time.Since(start),
+				"remote_ip", c.RealIP(),
+				"user_agent", c.Request().UserAgent(),
+				"request_id", c.Get("request_id"),
+			)
+			
+			return err
+		}
+	})
+
+	// Recovery
+	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Error("Panic recovered",
+						"error", r,
+						"method", c.Request().Method,
+						"path", c.Request().URL.Path,
+						"request_id", c.Get("request_id"),
+					)
+					c.Error(echo.NewHTTPError(http.StatusInternalServerError, "Internal server error"))
+				}
+			}()
+			return next(c)
+		}
+	})
+
+	// CORS
+	if cfg.CORS.Enabled {
+		e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+			AllowOrigins:     cfg.CORS.AllowedOrigins,
+			AllowMethods:     cfg.CORS.AllowedMethods,
+			AllowHeaders:     cfg.CORS.AllowedHeaders,
+			ExposeHeaders:    cfg.CORS.ExposedHeaders,
+			AllowCredentials: cfg.CORS.AllowCredentials,
+			MaxAge:           cfg.CORS.MaxAge,
+		}))
+	}
+
+	// Rate limiting
+	if cfg.RateLimit.Enabled {
+		e.Use(middleware.RateLimiter(middleware.NewRateLimiterMemoryStore(cfg.RateLimit.RPS)))
+	}
+}
+
+{{- else if eq .Framework "fiber"}}
+// SetupMiddleware configures all middleware for Fiber
+func SetupMiddleware(app *fiber.App, cfg *config.Config, log logger.Logger) {
+	// Request ID
+	app.Use(func(c *fiber.Ctx) error {
+		requestID := c.Get("X-Request-ID")
+		if requestID == "" {
+			requestID = uuid.New().String()
+		}
+		c.Set("X-Request-ID", requestID)
+		c.Locals("request_id", requestID)
+		return c.Next()
+	})
+
+	// Recovery
+	app.Use(recover.New(recover.Config{
+		EnableStackTrace: true,
+		StackTraceHandler: func(c *fiber.Ctx, e interface{}) {
+			log.Error("Panic recovered",
+				"error", e,
+				"method", c.Method(),
+				"path", c.Path(),
+				"request_id", c.Locals("request_id"),
+			)
+		},
+	}))
+
+	// Logger
+	app.Use(logger.New(logger.Config{
+		Format: "[${time}] ${status} - ${latency} ${method} ${path}\n",
+		Output: &loggerWriter{logger: log},
+	}))
+
+	// CORS
+	if cfg.CORS.Enabled {
+		app.Use(cors.New(cors.Config{
+			AllowOrigins:     strings.Join(cfg.CORS.AllowedOrigins, ","),
+			AllowMethods:     strings.Join(cfg.CORS.AllowedMethods, ","),
+			AllowHeaders:     strings.Join(cfg.CORS.AllowedHeaders, ","),
+			ExposeHeaders:    strings.Join(cfg.CORS.ExposedHeaders, ","),
+			AllowCredentials: cfg.CORS.AllowCredentials,
+			MaxAge:           cfg.CORS.MaxAge,
+		}))
+	}
+
+	// Rate limiting
+	if cfg.RateLimit.Enabled {
+		app.Use(limiter.New(limiter.Config{
+			Max:        cfg.RateLimit.RPS,
+			Expiration: time.Duration(cfg.RateLimit.WindowSize) * time.Second,
+		}))
+	}
+}
+
+// loggerWriter implements io.Writer to integrate Fiber logger with our logger
+type loggerWriter struct {
+	logger logger.Logger
+}
+
+func (lw *loggerWriter) Write(p []byte) (n int, err error) {
+	lw.logger.Info(strings.TrimSpace(string(p)))
+	return len(p), nil
+}
+
+{{- else if eq .Framework "chi"}}
+// SetupMiddleware configures all middleware for Chi
+func SetupMiddleware(r chi.Router, cfg *config.Config, log logger.Logger) {
+	// Request ID
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requestID := r.Header.Get("X-Request-ID")
+			if requestID == "" {
+				requestID = uuid.New().String()
+			}
+			w.Header().Set("X-Request-ID", requestID)
+			ctx := context.WithValue(r.Context(), "request_id", requestID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	})
+
+	// Logger
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			next.ServeHTTP(ww, r)
+			
+			log.Info("HTTP Request",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.Status(),
+				"bytes", ww.BytesWritten(),
+				"latency", time.Since(start),
+				"remote_addr", r.RemoteAddr,
+				"user_agent", r.UserAgent(),
+				"request_id", r.Context().Value("request_id"),
+			)
+		})
+	})
+
+	// Recovery
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					log.Error("Panic recovered",
+						"error", rvr,
+						"method", r.Method,
+						"path", r.URL.Path,
+						"request_id", r.Context().Value("request_id"),
+					)
+					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				}
+			}()
+			next.ServeHTTP(w, r)
+		})
+	})
+
+	// CORS
+	if cfg.CORS.Enabled {
+		r.Use(cors.Handler(cors.Options{
+			AllowedOrigins:   cfg.CORS.AllowedOrigins,
+			AllowedMethods:   cfg.CORS.AllowedMethods,
+			AllowedHeaders:   cfg.CORS.AllowedHeaders,
+			ExposedHeaders:   cfg.CORS.ExposedHeaders,
+			AllowCredentials: cfg.CORS.AllowCredentials,
+			MaxAge:           cfg.CORS.MaxAge,
+		}))
+	}
+
+	// Rate limiting (simple implementation)
+	if cfg.RateLimit.Enabled {
+		r.Use(middleware.Throttle(cfg.RateLimit.RPS))
+	}
+}
+{{- end}}

@@ -1,0 +1,207 @@
+package jobs
+
+import (
+	"context"
+	"time"
+)
+
+// Job represents a background job to be processed
+type Job struct {
+	ID        string                 `json:"id"`
+	Type      string                 `json:"type"`
+	Data      map[string]interface{} `json:"data"`
+	CreatedAt time.Time              `json:"created_at"`
+	Attempts  int                    `json:"attempts"`
+	MaxRetries int                   `json:"max_retries"`
+	Status    JobStatus              `json:"status"`
+	Error     string                 `json:"error,omitempty"`
+	StartedAt *time.Time             `json:"started_at,omitempty"`
+	CompletedAt *time.Time           `json:"completed_at,omitempty"`
+	Priority  JobPriority            `json:"priority"`
+}
+
+// JobStatus represents the status of a job
+type JobStatus string
+
+const (
+	JobStatusPending   JobStatus = "pending"
+	JobStatusRunning   JobStatus = "running"
+	JobStatusCompleted JobStatus = "completed"
+	JobStatusFailed    JobStatus = "failed"
+	JobStatusRetrying  JobStatus = "retrying"
+	JobStatusCancelled JobStatus = "cancelled"
+)
+
+// JobPriority represents the priority level of a job
+type JobPriority int
+
+const (
+	PriorityLow JobPriority = iota
+	PriorityNormal
+	PriorityHigh
+	PriorityCritical
+)
+
+// Handler defines the interface for job handlers
+type Handler func(ctx context.Context, job Job) error
+
+// JobResult represents the result of a job execution
+type JobResult struct {
+	JobID     string        `json:"job_id"`
+	JobType   string        `json:"job_type"`
+	Status    JobStatus     `json:"status"`
+	StartTime time.Time     `json:"start_time"`
+	EndTime   time.Time     `json:"end_time"`
+	Duration  time.Duration `json:"duration"`
+	Error     string        `json:"error,omitempty"`
+	Output    interface{}   `json:"output,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// JobStats represents statistics about job processing
+type JobStats struct {
+	TotalJobs      int64         `json:"total_jobs"`
+	PendingJobs    int64         `json:"pending_jobs"`
+	RunningJobs    int64         `json:"running_jobs"`
+	CompletedJobs  int64         `json:"completed_jobs"`
+	FailedJobs     int64         `json:"failed_jobs"`
+	AverageRuntime time.Duration `json:"average_runtime"`
+	LastProcessed  time.Time     `json:"last_processed"`
+}
+
+// JobQueue defines the interface for a job queue
+type JobQueue interface {
+	Enqueue(job Job) error
+	Dequeue() (*Job, error)
+	Size() int
+	Clear() error
+}
+
+// JobStore defines the interface for job persistence
+type JobStore interface {
+	Save(job Job) error
+	Get(id string) (*Job, error)
+	Update(job Job) error
+	Delete(id string) error
+	List(status JobStatus, limit int) ([]Job, error)
+	GetStats() (JobStats, error)
+}
+
+// RetryPolicy defines retry behavior for failed jobs
+type RetryPolicy struct {
+	MaxRetries  int           `json:"max_retries"`
+	InitialDelay time.Duration `json:"initial_delay"`
+	MaxDelay    time.Duration `json:"max_delay"`
+	Multiplier  float64       `json:"multiplier"`
+	Jitter      bool          `json:"jitter"`
+}
+
+// DefaultRetryPolicy returns a sensible default retry policy
+func DefaultRetryPolicy() RetryPolicy {
+	return RetryPolicy{
+		MaxRetries:   3,
+		InitialDelay: 30 * time.Second,
+		MaxDelay:     5 * time.Minute,
+		Multiplier:   2.0,
+		Jitter:       true,
+	}
+}
+
+// NewJob creates a new job with default values
+func NewJob(jobType string, data map[string]interface{}) Job {
+	return Job{
+		ID:         generateJobID(),
+		Type:       jobType,
+		Data:       data,
+		CreatedAt:  time.Now(),
+		Attempts:   0,
+		MaxRetries: 3,
+		Status:     JobStatusPending,
+		Priority:   PriorityNormal,
+	}
+}
+
+// generateJobID generates a unique job ID
+func generateJobID() string {
+	return time.Now().Format("20060102-150405") + "-" + randomString(8)
+}
+
+// randomString generates a random string of specified length
+func randomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+	}
+	return string(b)
+}
+
+// IsRetryable determines if a job can be retried
+func (j Job) IsRetryable() bool {
+	return j.Attempts < j.MaxRetries && j.Status == JobStatusFailed
+}
+
+// ShouldRetry checks if the job should be retried based on attempts and policy
+func (j Job) ShouldRetry(policy RetryPolicy) bool {
+	return j.Attempts < policy.MaxRetries
+}
+
+// GetNextRetryDelay calculates the delay for the next retry attempt
+func (j Job) GetNextRetryDelay(policy RetryPolicy) time.Duration {
+	if j.Attempts == 0 {
+		return policy.InitialDelay
+	}
+	
+	delay := policy.InitialDelay
+	for i := 1; i < j.Attempts; i++ {
+		delay = time.Duration(float64(delay) * policy.Multiplier)
+		if delay > policy.MaxDelay {
+			delay = policy.MaxDelay
+			break
+		}
+	}
+	
+	// Add jitter if enabled
+	if policy.Jitter {
+		jitter := time.Duration(float64(delay) * 0.1) // 10% jitter
+		delay += time.Duration((time.Now().UnixNano() % int64(jitter*2)) - int64(jitter))
+	}
+	
+	return delay
+}
+
+// MarkAsStarted marks the job as started
+func (j *Job) MarkAsStarted() {
+	now := time.Now()
+	j.Status = JobStatusRunning
+	j.StartedAt = &now
+}
+
+// MarkAsCompleted marks the job as completed
+func (j *Job) MarkAsCompleted() {
+	now := time.Now()
+	j.Status = JobStatusCompleted
+	j.CompletedAt = &now
+}
+
+// MarkAsFailed marks the job as failed with an error message
+func (j *Job) MarkAsFailed(err error) {
+	now := time.Now()
+	j.Status = JobStatusFailed
+	j.Error = err.Error()
+	j.CompletedAt = &now
+}
+
+// GetDuration returns the duration of job execution
+func (j Job) GetDuration() time.Duration {
+	if j.StartedAt == nil {
+		return 0
+	}
+	
+	end := time.Now()
+	if j.CompletedAt != nil {
+		end = *j.CompletedAt
+	}
+	
+	return end.Sub(*j.StartedAt)
+}

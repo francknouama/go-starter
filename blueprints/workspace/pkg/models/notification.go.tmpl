@@ -1,0 +1,332 @@
+// Package models defines shared data models for the {{.ProjectName}} workspace.
+package models
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// NotificationType represents the type of notification
+type NotificationType string
+
+const (
+	NotificationTypeEmail NotificationType = "email"
+	NotificationTypeSMS   NotificationType = "sms"
+	NotificationTypePush  NotificationType = "push"
+	NotificationTypeInApp NotificationType = "in_app"
+)
+
+// NotificationStatus represents the status of a notification
+type NotificationStatus string
+
+const (
+	NotificationStatusPending    NotificationStatus = "pending"
+	NotificationStatusSent       NotificationStatus = "sent"
+	NotificationStatusDelivered  NotificationStatus = "delivered"
+	NotificationStatusFailed     NotificationStatus = "failed"
+	NotificationStatusCancelled  NotificationStatus = "cancelled"
+)
+
+// NotificationPriority represents the priority level of a notification
+type NotificationPriority string
+
+const (
+	NotificationPriorityLow    NotificationPriority = "low"
+	NotificationPriorityNormal NotificationPriority = "normal"
+	NotificationPriorityHigh   NotificationPriority = "high"
+	NotificationPriorityUrgent NotificationPriority = "urgent"
+)
+
+// Notification represents a notification entity in the system
+type Notification struct {
+	ID          uuid.UUID            `json:"id" db:"id" validate:"required"`
+	UserID      uuid.UUID            `json:"user_id" db:"user_id" validate:"required"`
+	Type        NotificationType     `json:"type" db:"type" validate:"required"`
+	Status      NotificationStatus   `json:"status" db:"status" validate:"required"`
+	Priority    NotificationPriority `json:"priority" db:"priority" validate:"required"`
+	Subject     string               `json:"subject" db:"subject" validate:"required,max=255"`
+	Body        string               `json:"body" db:"body" validate:"required"`
+	Metadata    json.RawMessage      `json:"metadata,omitempty" db:"metadata"`
+	ScheduledAt *time.Time           `json:"scheduled_at,omitempty" db:"scheduled_at"`
+	SentAt      *time.Time           `json:"sent_at,omitempty" db:"sent_at"`
+	DeliveredAt *time.Time           `json:"delivered_at,omitempty" db:"delivered_at"`
+	FailedAt    *time.Time           `json:"failed_at,omitempty" db:"failed_at"`
+	ErrorMsg    *string              `json:"error_message,omitempty" db:"error_message"`
+	Attempts    int                  `json:"attempts" db:"attempts"`
+	MaxAttempts int                  `json:"max_attempts" db:"max_attempts"`
+	CreatedAt   time.Time            `json:"created_at" db:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at" db:"updated_at"`
+}
+
+// NewNotification creates a new Notification instance
+func NewNotification(userID uuid.UUID, notificationType NotificationType, subject, body string) *Notification {
+	now := time.Now()
+	return &Notification{
+		ID:          uuid.New(),
+		UserID:      userID,
+		Type:        notificationType,
+		Status:      NotificationStatusPending,
+		Priority:    NotificationPriorityNormal,
+		Subject:     subject,
+		Body:        body,
+		Attempts:    0,
+		MaxAttempts: 3,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+}
+
+// SetMetadata sets the metadata for the notification
+func (n *Notification) SetMetadata(metadata interface{}) error {
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	n.Metadata = data
+	n.Touch()
+	return nil
+}
+
+// GetMetadata gets the metadata for the notification
+func (n *Notification) GetMetadata(target interface{}) error {
+	if n.Metadata == nil {
+		return nil
+	}
+	return json.Unmarshal(n.Metadata, target)
+}
+
+// MarkAsSent marks the notification as sent
+func (n *Notification) MarkAsSent() {
+	now := time.Now()
+	n.Status = NotificationStatusSent
+	n.SentAt = &now
+	n.Touch()
+}
+
+// MarkAsDelivered marks the notification as delivered
+func (n *Notification) MarkAsDelivered() {
+	now := time.Now()
+	n.Status = NotificationStatusDelivered
+	n.DeliveredAt = &now
+	n.Touch()
+}
+
+// MarkAsFailed marks the notification as failed
+func (n *Notification) MarkAsFailed(errorMsg string) {
+	now := time.Now()
+	n.Status = NotificationStatusFailed
+	n.FailedAt = &now
+	n.ErrorMsg = &errorMsg
+	n.Attempts++
+	n.Touch()
+}
+
+// MarkAsCancelled marks the notification as cancelled
+func (n *Notification) MarkAsCancelled() {
+	n.Status = NotificationStatusCancelled
+	n.Touch()
+}
+
+// ShouldRetry returns true if the notification should be retried
+func (n *Notification) ShouldRetry() bool {
+	return n.Status == NotificationStatusFailed && n.Attempts < n.MaxAttempts
+}
+
+// IsScheduled returns true if the notification is scheduled for future delivery
+func (n *Notification) IsScheduled() bool {
+	return n.ScheduledAt != nil && n.ScheduledAt.After(time.Now())
+}
+
+// IsReadyToSend returns true if the notification is ready to be sent
+func (n *Notification) IsReadyToSend() bool {
+	if n.Status != NotificationStatusPending {
+		return false
+	}
+	if n.ScheduledAt != nil {
+		return n.ScheduledAt.Before(time.Now()) || n.ScheduledAt.Equal(time.Now())
+	}
+	return true
+}
+
+// Touch updates the UpdatedAt timestamp
+func (n *Notification) Touch() {
+	n.UpdatedAt = time.Now()
+}
+
+// NotificationCreateRequest represents a request to create a new notification
+type NotificationCreateRequest struct {
+	UserID      uuid.UUID            `json:"user_id" validate:"required"`
+	Type        NotificationType     `json:"type" validate:"required"`
+	Priority    NotificationPriority `json:"priority,omitempty"`
+	Subject     string               `json:"subject" validate:"required,max=255"`
+	Body        string               `json:"body" validate:"required"`
+	Metadata    interface{}          `json:"metadata,omitempty"`
+	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
+	MaxAttempts *int                 `json:"max_attempts,omitempty"`
+}
+
+// ToNotification converts the create request to a Notification model
+func (r *NotificationCreateRequest) ToNotification() (*Notification, error) {
+	notification := NewNotification(r.UserID, r.Type, r.Subject, r.Body)
+
+	if r.Priority != "" {
+		notification.Priority = r.Priority
+	}
+
+	if r.ScheduledAt != nil {
+		notification.ScheduledAt = r.ScheduledAt
+	}
+
+	if r.MaxAttempts != nil {
+		notification.MaxAttempts = *r.MaxAttempts
+	}
+
+	if r.Metadata != nil {
+		if err := notification.SetMetadata(r.Metadata); err != nil {
+			return nil, err
+		}
+	}
+
+	return notification, nil
+}
+
+// NotificationResponse represents a notification in API responses
+type NotificationResponse struct {
+	ID          uuid.UUID            `json:"id"`
+	UserID      uuid.UUID            `json:"user_id"`
+	Type        NotificationType     `json:"type"`
+	Status      NotificationStatus   `json:"status"`
+	Priority    NotificationPriority `json:"priority"`
+	Subject     string               `json:"subject"`
+	Body        string               `json:"body"`
+	Metadata    interface{}          `json:"metadata,omitempty"`
+	ScheduledAt *time.Time           `json:"scheduled_at,omitempty"`
+	SentAt      *time.Time           `json:"sent_at,omitempty"`
+	DeliveredAt *time.Time           `json:"delivered_at,omitempty"`
+	FailedAt    *time.Time           `json:"failed_at,omitempty"`
+	ErrorMsg    *string              `json:"error_message,omitempty"`
+	Attempts    int                  `json:"attempts"`
+	MaxAttempts int                  `json:"max_attempts"`
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
+}
+
+// FromNotification creates a NotificationResponse from a Notification model
+func FromNotification(notification *Notification) *NotificationResponse {
+	response := &NotificationResponse{
+		ID:          notification.ID,
+		UserID:      notification.UserID,
+		Type:        notification.Type,
+		Status:      notification.Status,
+		Priority:    notification.Priority,
+		Subject:     notification.Subject,
+		Body:        notification.Body,
+		ScheduledAt: notification.ScheduledAt,
+		SentAt:      notification.SentAt,
+		DeliveredAt: notification.DeliveredAt,
+		FailedAt:    notification.FailedAt,
+		ErrorMsg:    notification.ErrorMsg,
+		Attempts:    notification.Attempts,
+		MaxAttempts: notification.MaxAttempts,
+		CreatedAt:   notification.CreatedAt,
+		UpdatedAt:   notification.UpdatedAt,
+	}
+
+	// Parse metadata if available
+	if notification.Metadata != nil {
+		var metadata interface{}
+		if err := json.Unmarshal(notification.Metadata, &metadata); err == nil {
+			response.Metadata = metadata
+		}
+	}
+
+	return response
+}
+
+// NotificationListResponse represents a paginated list of notifications
+type NotificationListResponse struct {
+	Notifications []*NotificationResponse `json:"notifications"`
+	Total         int64                   `json:"total"`
+	Page          int                     `json:"page"`
+	PageSize      int                     `json:"page_size"`
+	TotalPages    int                     `json:"total_pages"`
+}
+
+// NewNotificationListResponse creates a new paginated notification list response
+func NewNotificationListResponse(notifications []*Notification, total int64, page, pageSize int) *NotificationListResponse {
+	notificationResponses := make([]*NotificationResponse, len(notifications))
+	for i, notification := range notifications {
+		notificationResponses[i] = FromNotification(notification)
+	}
+
+	totalPages := int((total + int64(pageSize) - 1) / int64(pageSize))
+
+	return &NotificationListResponse{
+		Notifications: notificationResponses,
+		Total:         total,
+		Page:          page,
+		PageSize:      pageSize,
+		TotalPages:    totalPages,
+	}
+}
+
+// NotificationFilter represents filtering options for notification queries
+type NotificationFilter struct {
+	UserID         *uuid.UUID           `json:"user_id,omitempty"`
+	Type           *NotificationType    `json:"type,omitempty"`
+	Status         *NotificationStatus  `json:"status,omitempty"`
+	Priority       *NotificationPriority `json:"priority,omitempty"`
+	CreatedAfter   *time.Time           `json:"created_after,omitempty"`
+	CreatedBefore  *time.Time           `json:"created_before,omitempty"`
+	ScheduledAfter *time.Time           `json:"scheduled_after,omitempty"`
+	ScheduledBefore *time.Time          `json:"scheduled_before,omitempty"`
+}
+
+// NotificationSort represents sorting options for notification queries
+type NotificationSort struct {
+	Field     string `json:"field" validate:"oneof=created_at updated_at scheduled_at priority"`
+	Direction string `json:"direction" validate:"oneof=asc desc"`
+}
+
+// DefaultNotificationSort returns the default sort configuration
+func DefaultNotificationSort() NotificationSort {
+	return NotificationSort{
+		Field:     "created_at",
+		Direction: "desc",
+	}
+}
+
+// NotificationRepository defines the interface for notification data persistence
+type NotificationRepository interface {
+	Create(notification *Notification) error
+	GetByID(id uuid.UUID) (*Notification, error)
+	Update(notification *Notification) error
+	Delete(id uuid.UUID) error
+	List(filter *NotificationFilter, sort *NotificationSort, offset, limit int) ([]*Notification, error)
+	Count(filter *NotificationFilter) (int64, error)
+	GetPendingNotifications(limit int) ([]*Notification, error)
+	GetScheduledNotifications(before time.Time, limit int) ([]*Notification, error)
+	GetFailedNotifications(limit int) ([]*Notification, error)
+}
+
+// NotificationService defines the interface for notification business logic
+type NotificationService interface {
+	CreateNotification(req *NotificationCreateRequest) (*NotificationResponse, error)
+	GetNotification(id uuid.UUID) (*NotificationResponse, error)
+	UpdateNotificationStatus(id uuid.UUID, status NotificationStatus, errorMsg *string) error
+	DeleteNotification(id uuid.UUID) error
+	ListNotifications(filter *NotificationFilter, sort *NotificationSort, page, pageSize int) (*NotificationListResponse, error)
+	SendPendingNotifications() error
+	ProcessFailedNotifications() error
+	CancelScheduledNotification(id uuid.UUID) error
+}
+
+// NotificationPublisher defines the interface for publishing notification events
+type NotificationPublisher interface {
+	PublishNotificationCreated(notification *Notification) error
+	PublishNotificationSent(notification *Notification) error
+	PublishNotificationFailed(notification *Notification) error
+	PublishNotificationDelivered(notification *Notification) error
+}
