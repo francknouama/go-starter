@@ -2,7 +2,6 @@ package lambda_proxy_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -10,10 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -369,7 +365,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyWithLocalStackIntegrati
 		Started:          true,
 	})
 	if err != nil {
-		s.T().Skip("Failed to start LocalStack container: %v", err)
+		s.T().Skipf("Failed to start LocalStack container: %v", err)
 	}
 	defer localstackContainer.Terminate(ctx)
 	

@@ -12,8 +12,7 @@ import (
 
 	"github.com/cucumber/godog"
 	"github.com/cucumber/godog/colors"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	messages "github.com/cucumber/messages/go/v21"
 	"gopkg.in/yaml.v3"
 )
 
@@ -343,8 +342,8 @@ func (tc *TestContext) iRunTheGeneratorForEachFramework(table *godog.Table) erro
 		tc.parameters["name"] = fmt.Sprintf("test-lambda-%s", framework)
 		
 		if err := tc.iRunTheGeneratorWith(&godog.Table{
-			Rows: []*godog.TableRow{
-				{Cells: []*godog.TableCell{{Value: "framework"}, {Value: framework}}},
+			Rows: []*messages.PickleTableRow{
+				{Cells: []*messages.PickleTableCell{{Value: "framework"}, {Value: framework}}},
 			},
 		}); err != nil {
 			return err

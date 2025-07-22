@@ -1,17 +1,13 @@
 package workspace_test
 
 import (
-	"context"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"gopkg.in/yaml.v3"
@@ -603,9 +599,6 @@ func (s *WorkspaceIntegrationTestSuite) testBuildTargets(projectPath string) {
 	for _, target := range targets {
 		cmd := exec.Command("make", target)
 		cmd.Dir = projectPath
-		
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
 		
 		output, err := cmd.CombinedOutput()
 		s.Require().NoError(err, "Make target %s should succeed: %s", target, string(output))

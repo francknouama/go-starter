@@ -12,8 +12,6 @@ import (
 
 	"github.com/cucumber/godog"
 	"github.com/cucumber/godog/colors"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // TestContext holds the test execution context for event-driven blueprint testing
@@ -418,9 +416,7 @@ func (tc *TestContext) theQueryBusShouldHandleQueryExecution() error {
 	return nil
 }
 
-func (tc *TestContext) commandsAndQueriesShouldBeProperlySepar
-
-ated() error {
+func (tc *TestContext) commandsAndQueriesShouldBeProperlySeparated() error {
 	// Verify command and query separation
 	commandPath := filepath.Join(tc.projectDir, "internal/cqrs/command.go")
 	queryPath := filepath.Join(tc.projectDir, "internal/cqrs/query.go")
