@@ -68,33 +68,24 @@ variables:
 
 # Features Configuration
 features:
-  authentication:
-    enabled: "{{ne .AuthType \"none\"}}"
-    type: "{{.AuthType}}"
-    jwt:
-      issuer: "{{.JWTIssuer}}"
-    cognito:
-      userPool: "{{.CognitoUserPool}}"
-  
-  cors:
-    enabled: true
-    origins: "{{.CorsOrigins}}"
-  
-  logging:
-    type: "{{.LoggerType}}"
-    level: "info"
-    structured: true
-    
-  observability:
-    tracing: true
-    metrics: true
-    cloudwatch: true
-    xray: true
-    
-  deployment:
-    sam: true
-    terraform: true
-    environments: ["dev", "staging", "prod"]
+  - name: "authentication"
+    description: "Authentication support with JWT and Cognito"
+    enabled_when: "{{ne .AuthType \"none\"}}"
+  - name: "cors"
+    description: "Cross-Origin Resource Sharing support"
+    enabled_when: "true"
+  - name: "structured_logging"
+    description: "Structured logging with configurable levels"
+    enabled_when: "true"
+  - name: "observability"
+    description: "Tracing, metrics, CloudWatch, and X-Ray integration"
+    enabled_when: "true"
+  - name: "sam_deployment"
+    description: "AWS SAM deployment templates"
+    enabled_when: "true"
+  - name: "terraform_deployment"
+    description: "Terraform deployment configuration"
+    enabled_when: "true"
 
 # File Definitions
 files:
@@ -270,36 +261,26 @@ files:
 
 # Dependencies by Framework
 dependencies:
-  common:
-    - github.com/aws/aws-lambda-go
-    - github.com/aws/aws-sdk-go-v2
-    - github.com/aws/aws-xray-sdk-go
-  
-  gin:
-    - github.com/gin-gonic/gin
-    - github.com/awslabs/aws-lambda-go-api-proxy/gin
-  
-  echo:
-    - github.com/labstack/echo/v4
-    - github.com/awslabs/aws-lambda-go-api-proxy/echo
-  
-  fiber:
-    - github.com/gofiber/fiber/v2
-    - github.com/awslabs/aws-lambda-go-api-proxy/fiber
-  
-  chi:
-    - github.com/go-chi/chi/v5
-    - github.com/awslabs/aws-lambda-go-api-proxy/chi
-  
-  auth_jwt:
-    condition: "{{eq .AuthType \"jwt\"}}"
-    dependencies:
-      - github.com/golang-jwt/jwt/v5
-  
-  auth_cognito:
-    condition: "{{eq .AuthType \"cognito\"}}"
-    dependencies:
-      - github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider
+  - module: "github.com/aws/aws-lambda-go"
+    version: "v1.41.0"
+  - module: "github.com/aws/aws-sdk-go-v2"
+    version: "v1.18.1"
+  - module: "github.com/aws/aws-xray-sdk-go"
+    version: "v1.8.2"
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+  - module: "github.com/awslabs/aws-lambda-go-api-proxy"
+    version: "v0.16.0"
+  - module: "github.com/labstack/echo/v4"
+    version: "v4.11.2"
+  - module: "github.com/gofiber/fiber/v2"
+    version: "v2.51.0"
+  - module: "github.com/go-chi/chi/v5"
+    version: "v5.0.10"
+  - module: "github.com/golang-jwt/jwt/v5"
+    version: "v5.0.0"
+  - module: "github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
+    version: "v1.18.0"
 
 # Quality Requirements
 quality:
