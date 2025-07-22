@@ -2,10 +2,12 @@ package survey
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/francknouama/go-starter/internal/prompts/interfaces"
+	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/francknouama/go-starter/internal/utils"
 	"github.com/francknouama/go-starter/pkg/types"
 )
@@ -14,12 +16,14 @@ import (
 // SurveyPrompter implements the Prompter interface using AlecAivazis/survey
 type SurveyPrompter struct {
 	surveyAdapter interfaces.SurveyAdapter
+	registry      *templates.Registry
 }
 
 // NewPrompter creates a new SurveyPrompter
 func NewPrompter() interfaces.Prompter {
 	return &SurveyPrompter{
 		surveyAdapter: &interfaces.RealSurveyAdapter{},
+		registry:      templates.NewRegistry(),
 	}
 }
 
@@ -27,6 +31,7 @@ func NewPrompter() interfaces.Prompter {
 func NewWithAdapter(adapter interfaces.SurveyAdapter) interfaces.Prompter {
 	return &SurveyPrompter{
 		surveyAdapter: adapter,
+		registry:      templates.NewRegistry(),
 	}
 }
 
@@ -75,7 +80,7 @@ func (p *SurveyPrompter) GetProjectConfig(initial types.ProjectConfig, advanced 
 
 	// Project type
 	if config.Type == "" {
-		if err := p.promptProjectType(&config); err != nil {
+		if err := p.promptProjectType(&config, advanced); err != nil {
 			return config, err
 		}
 	}
@@ -139,16 +144,31 @@ func (p *SurveyPrompter) promptModulePath(config *types.ProjectConfig) error {
 	return nil
 }
 
-func (p *SurveyPrompter) promptProjectType(config *types.ProjectConfig) error {
-	projectType, err := p.promptProjectTypeSurvey()
+func (p *SurveyPrompter) promptProjectType(config *types.ProjectConfig, advanced bool) error {
+	projectType, blueprintID, err := p.promptProjectTypeSurvey(advanced)
 	if err != nil {
 		return err
 	}
 	config.Type = projectType
 	
-	// If CLI type selected, prompt for complexity level
-	if projectType == "cli" {
+	// Store the specific blueprint ID if different from type
+	if blueprintID != projectType {
+		if config.Variables == nil {
+			config.Variables = make(map[string]string)
+		}
+		config.Variables["blueprint_id"] = blueprintID
+	}
+	
+	// If CLI type selected, prompt for complexity level (unless already handled)
+	if projectType == "cli" && blueprintID == "cli" {
 		if err := p.promptCLIComplexity(config); err != nil {
+			return err
+		}
+	}
+	
+	// If web-api type selected, prompt for architecture (unless already handled)
+	if projectType == "web-api" && blueprintID == "web-api" {
+		if err := p.promptWebAPIArchitecture(config, advanced); err != nil {
 			return err
 		}
 	}
@@ -463,34 +483,406 @@ func (p *SurveyPrompter) promptModulePathSurvey(projectName string) (string, err
 	return result, err
 }
 
-func (p *SurveyPrompter) promptProjectTypeSurvey() (string, error) {
-	options := []string{
-		"Web API - REST API or web service",
-		"CLI Application - Command-line tool",
-		"Library - Reusable Go package",
-		"AWS Lambda - Serverless function",
+func (p *SurveyPrompter) promptProjectTypeSurvey(advanced bool) (string, string, error) {
+	// Get all available blueprints from registry
+	allBlueprints := p.registry.List()
+	if len(allBlueprints) == 0 {
+		return "", "", fmt.Errorf("no blueprints available in registry")
+	}
+
+	// Categorize blueprints for display
+	categories := p.categorizeBlueprints(allBlueprints, advanced)
+	
+	// Build options list
+	var options []string
+	var blueprintMap = make(map[string]BlueprintSelection)
+	
+	for _, category := range categories {
+		for _, item := range category.Items {
+			displayName := item.DisplayName
+			if category.ShowCategory && len(categories) > 1 {
+				displayName = fmt.Sprintf("%-12s │ %s", category.Name, item.DisplayName)
+			}
+			options = append(options, displayName)
+			blueprintMap[displayName] = item
+		}
+		
+		// Add separator between categories (except for last)
+		if category.ShowSeparator {
+			separator := strings.Repeat("─", 50)
+			options = append(options, separator)
+			blueprintMap[separator] = BlueprintSelection{} // dummy entry
+		}
+	}
+
+	// Determine help text based on mode
+	helpText := "Choose the type of Go project you want to create"
+	if !advanced {
+		helpText += "\n💡 Use --advanced to see all available blueprints including advanced architectures"
 	}
 
 	prompt := &survey.Select{
 		Message: "What type of project?",
 		Options: options,
-		Help:    "Choose the type of Go project you want to create",
+		Help:    helpText,
+		Filter:  func(filter string, value string, index int) bool {
+			// Hide separators from filtering
+			if strings.Contains(value, "─") {
+				return false
+			}
+			return strings.Contains(strings.ToLower(value), strings.ToLower(filter))
+		},
 	}
 
 	var selection string
 	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
-		return "", err
+		return "", "", err
 	}
 
-	// Map display names to internal types
-	typeMap := map[string]string{
-		"Web API - REST API or web service":   "web-api",
-		"CLI Application - Command-line tool": "cli",
-		"Library - Reusable Go package":       "library",
-		"AWS Lambda - Serverless function":    "lambda",
+	// Handle separator selection (should not happen with proper filtering)
+	if strings.Contains(selection, "─") {
+		return "", "", fmt.Errorf("invalid selection")
 	}
 
-	return typeMap[selection], nil
+	selected := blueprintMap[selection]
+	return selected.Type, selected.BlueprintID, nil
+}
+
+// BlueprintSelection represents a selectable blueprint option
+type BlueprintSelection struct {
+	Type        string // The base type (web-api, cli, etc.)
+	BlueprintID string // The specific blueprint ID (web-api-clean, cli-simple, etc.)
+	DisplayName string // User-friendly display name
+}
+
+// BlueprintCategory represents a category of blueprints
+type BlueprintCategory struct {
+	Name          string
+	Items         []BlueprintSelection
+	ShowCategory  bool
+	ShowSeparator bool
+}
+
+// categorizeBlueprints organizes blueprints into categories based on disclosure mode
+func (p *SurveyPrompter) categorizeBlueprints(blueprints []types.Template, advanced bool) []BlueprintCategory {
+	if advanced {
+		return p.getAdvancedBlueprintCategories(blueprints)
+	}
+	return p.getBasicBlueprintCategories(blueprints)
+}
+
+// getBasicBlueprintCategories returns essential blueprints for basic mode
+func (p *SurveyPrompter) getBasicBlueprintCategories(blueprints []types.Template) []BlueprintCategory {
+	// Create a map for quick lookup
+	blueprintMap := make(map[string]types.Template)
+	for _, bp := range blueprints {
+		blueprintMap[bp.ID] = bp
+	}
+
+	// Define the 6 essential project types for basic mode
+	essentialItems := []BlueprintSelection{
+		{Type: "web-api", BlueprintID: "web-api-standard", DisplayName: "🌐 Web API - REST API or web service"},
+		{Type: "cli", BlueprintID: "cli", DisplayName: "⚡ CLI Application - Command-line tool"},
+		{Type: "library", BlueprintID: "library-standard", DisplayName: "📦 Library - Reusable Go package"},
+		{Type: "lambda", BlueprintID: "lambda-standard", DisplayName: "☁️  AWS Lambda - Serverless function"},
+		{Type: "monolith", BlueprintID: "monolith", DisplayName: "🏢 Monolith - Traditional web application"},
+		{Type: "microservice", BlueprintID: "microservice-standard", DisplayName: "🔗 Microservice - Distributed service"},
+	}
+
+	// Filter out items that don't exist in the registry
+	var availableItems []BlueprintSelection
+	for _, item := range essentialItems {
+		if _, exists := blueprintMap[item.BlueprintID]; exists {
+			availableItems = append(availableItems, item)
+		}
+	}
+
+	return []BlueprintCategory{
+		{
+			Name:          "Essential",
+			Items:         availableItems,
+			ShowCategory:  false,
+			ShowSeparator: false,
+		},
+	}
+}
+
+// getAdvancedBlueprintCategories returns all blueprints organized by category
+func (p *SurveyPrompter) getAdvancedBlueprintCategories(blueprints []types.Template) []BlueprintCategory {
+	// Organize blueprints by type
+	typeGroups := make(map[string][]types.Template)
+	for _, bp := range blueprints {
+		typeGroups[bp.Type] = append(typeGroups[bp.Type], bp)
+	}
+
+	// Sort blueprints within each group by architecture/complexity
+	for _, group := range typeGroups {
+		sort.Slice(group, func(i, j int) bool {
+			// Standard architecture first, then alphabetical
+			if group[i].Architecture == "standard" && group[j].Architecture != "standard" {
+				return true
+			}
+			if group[i].Architecture != "standard" && group[j].Architecture == "standard" {
+				return false
+			}
+			return group[i].Architecture < group[j].Architecture
+		})
+	}
+
+	var categories []BlueprintCategory
+
+	// Web APIs category
+	if webAPIs, exists := typeGroups["web-api"]; exists {
+		var items []BlueprintSelection
+		for _, bp := range webAPIs {
+			archName := strings.Title(strings.ReplaceAll(bp.Architecture, "-", " "))
+			if bp.Architecture == "standard" {
+				archName = "Standard"
+			}
+			items = append(items, BlueprintSelection{
+				Type:        "web-api",
+				BlueprintID: bp.ID,
+				DisplayName: fmt.Sprintf("🌐 %s - %s", archName, getArchitectureDescription(bp.Architecture)),
+			})
+		}
+		categories = append(categories, BlueprintCategory{
+			Name:          "Web APIs",
+			Items:         items,
+			ShowCategory:  true,
+			ShowSeparator: true,
+		})
+	}
+
+	// CLI Tools category
+	if cliTools, exists := typeGroups["cli"]; exists {
+		var items []BlueprintSelection
+		for _, bp := range cliTools {
+			complexity := strings.Title(bp.Architecture)
+			if bp.Architecture == "simple" {
+				complexity = "Simple"
+			}
+			items = append(items, BlueprintSelection{
+				Type:        "cli",
+				BlueprintID: bp.ID,
+				DisplayName: fmt.Sprintf("⚡ %s CLI - %s", complexity, getComplexityDescription(bp.Architecture)),
+			})
+		}
+		categories = append(categories, BlueprintCategory{
+			Name:          "CLI Tools",
+			Items:         items,
+			ShowCategory:  true,
+			ShowSeparator: true,
+		})
+	}
+
+	// Serverless category
+	var serverlessItems []BlueprintSelection
+	if lambdas, exists := typeGroups["lambda"]; exists {
+		for _, bp := range lambdas {
+			serverlessItems = append(serverlessItems, BlueprintSelection{
+				Type:        "lambda",
+				BlueprintID: bp.ID,
+				DisplayName: "☁️  AWS Lambda - Event-driven serverless",
+			})
+		}
+	}
+	if lambdaProxy, exists := typeGroups["lambda-proxy"]; exists {
+		for _, bp := range lambdaProxy {
+			serverlessItems = append(serverlessItems, BlueprintSelection{
+				Type:        "lambda-proxy",
+				BlueprintID: bp.ID,
+				DisplayName: "🔗 Lambda API Proxy - API Gateway integration",
+			})
+		}
+	}
+	if len(serverlessItems) > 0 {
+		categories = append(categories, BlueprintCategory{
+			Name:          "Serverless",
+			Items:         serverlessItems,
+			ShowCategory:  true,
+			ShowSeparator: true,
+		})
+	}
+
+	// Architecture Patterns category
+	var architectureItems []BlueprintSelection
+	if eventDriven, exists := typeGroups["event-driven"]; exists {
+		for _, bp := range eventDriven {
+			architectureItems = append(architectureItems, BlueprintSelection{
+				Type:        "event-driven",
+				BlueprintID: bp.ID,
+				DisplayName: "📡 Event-Driven - CQRS & Event Sourcing",
+			})
+		}
+	}
+	if microservices, exists := typeGroups["microservice"]; exists {
+		for _, bp := range microservices {
+			architectureItems = append(architectureItems, BlueprintSelection{
+				Type:        "microservice",
+				BlueprintID: bp.ID,
+				DisplayName: "🔗 Microservice - Distributed service patterns",
+			})
+		}
+	}
+	if monoliths, exists := typeGroups["monolith"]; exists {
+		for _, bp := range monoliths {
+			architectureItems = append(architectureItems, BlueprintSelection{
+				Type:        "monolith",
+				BlueprintID: bp.ID,
+				DisplayName: "🏢 Monolith - Traditional web application",
+			})
+		}
+	}
+	if len(architectureItems) > 0 {
+		categories = append(categories, BlueprintCategory{
+			Name:          "Architecture",
+			Items:         architectureItems,
+			ShowCategory:  true,
+			ShowSeparator: true,
+		})
+	}
+
+	// Infrastructure category
+	var infraItems []BlueprintSelection
+	if grpcGateway, exists := typeGroups["grpc-gateway"]; exists {
+		for _, bp := range grpcGateway {
+			infraItems = append(infraItems, BlueprintSelection{
+				Type:        "grpc-gateway",
+				BlueprintID: bp.ID,
+				DisplayName: "⚙️  gRPC Gateway - gRPC with REST gateway",
+			})
+		}
+	}
+	if workspaces, exists := typeGroups["workspace"]; exists {
+		for _, bp := range workspaces {
+			infraItems = append(infraItems, BlueprintSelection{
+				Type:        "workspace",
+				BlueprintID: bp.ID,
+				DisplayName: "📁 Go Workspace - Multi-module projects",
+			})
+		}
+	}
+	if len(infraItems) > 0 {
+		categories = append(categories, BlueprintCategory{
+			Name:          "Infrastructure",
+			Items:         infraItems,
+			ShowCategory:  true,
+			ShowSeparator: true,
+		})
+	}
+
+	// Packages category
+	if libraries, exists := typeGroups["library"]; exists {
+		var items []BlueprintSelection
+		for _, bp := range libraries {
+			items = append(items, BlueprintSelection{
+				Type:        "library",
+				BlueprintID: bp.ID,
+				DisplayName: "📦 Library - Reusable Go package",
+			})
+		}
+		categories = append(categories, BlueprintCategory{
+			Name:          "Packages",
+			Items:         items,
+			ShowCategory:  true,
+			ShowSeparator: false, // Last category
+		})
+	}
+
+	return categories
+}
+
+// Helper functions for descriptions
+func getArchitectureDescription(arch string) string {
+	switch arch {
+	case "standard":
+		return "Simple layered structure"
+	case "clean":
+		return "Uncle Bob's Clean Architecture"
+	case "ddd":
+		return "Domain-Driven Design"
+	case "hexagonal":
+		return "Ports & Adapters pattern"
+	default:
+		return "Advanced architecture pattern"
+	}
+}
+
+func getComplexityDescription(complexity string) string {
+	switch complexity {
+	case "simple":
+		return "Quick scripts & utilities"
+	case "standard":
+		return "Production-ready CLI tools"
+	default:
+		return "Command-line application"
+	}
+}
+
+// promptWebAPIArchitecture prompts the user to choose web API architecture when needed
+func (p *SurveyPrompter) promptWebAPIArchitecture(config *types.ProjectConfig, advanced bool) error {
+	// Get all web-api blueprints from registry
+	webAPIBlueprints := p.registry.GetByType("web-api")
+	if len(webAPIBlueprints) <= 1 {
+		// Only one web-api blueprint, no need to prompt
+		return nil
+	}
+
+	// Sort architectures: standard first, then alphabetical
+	sort.Slice(webAPIBlueprints, func(i, j int) bool {
+		if webAPIBlueprints[i].Architecture == "standard" && webAPIBlueprints[j].Architecture != "standard" {
+			return true
+		}
+		if webAPIBlueprints[i].Architecture != "standard" && webAPIBlueprints[j].Architecture == "standard" {
+			return false
+		}
+		return webAPIBlueprints[i].Architecture < webAPIBlueprints[j].Architecture
+	})
+
+	// Build architecture options
+	var options []string
+	var archMap = make(map[string]string)
+
+	for _, bp := range webAPIBlueprints {
+		archName := strings.Title(strings.ReplaceAll(bp.Architecture, "-", " "))
+		if bp.Architecture == "standard" {
+			archName = "Standard"
+		}
+		
+		displayName := fmt.Sprintf("%s - %s", archName, getArchitectureDescription(bp.Architecture))
+		options = append(options, displayName)
+		archMap[displayName] = bp.ID
+	}
+
+	helpText := `Web API Architecture Guide:
+
+• Standard: Simple layered structure, great for most APIs
+• Clean Architecture: Separation of concerns, highly testable  
+• Domain-Driven Design: Business logic focused, complex domains
+• Hexagonal: Ports & adapters, maximum testability
+
+💡 Tip: Start with Standard, upgrade when complexity grows`
+
+	prompt := &survey.Select{
+		Message: "Which Web API architecture?",
+		Options: options,
+		Help:    helpText,
+		Default: options[0], // Standard is first
+	}
+
+	var selection string
+	if err := p.surveyAdapter.AskOne(prompt, &selection); err != nil {
+		return err
+	}
+
+	// Update config with selected blueprint ID
+	blueprintID := archMap[selection]
+	if config.Variables == nil {
+		config.Variables = make(map[string]string)
+	}
+	config.Variables["blueprint_id"] = blueprintID
+
+	return nil
 }
 
 func (p *SurveyPrompter) promptFrameworkSurvey(projectType string) (string, error) {
