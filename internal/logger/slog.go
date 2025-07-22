@@ -116,6 +116,12 @@ func (s *SlogLogger) SetOutput(w io.Writer) {
 	// This is a simplified implementation
 }
 
+// DisableColor disables color output (no-op for slog)
+func (s *SlogLogger) DisableColor() {
+	// slog doesn't have built-in color support to disable
+	// This is a no-op for compatibility with the Logger interface
+}
+
 // Sync flushes any buffered log entries (no-op for slog)
 func (s *SlogLogger) Sync() error {
 	// slog doesn't require explicit syncing

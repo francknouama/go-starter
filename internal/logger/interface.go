@@ -26,6 +26,7 @@ type Logger interface {
 	// Configuration
 	SetLevel(level Level)
 	SetOutput(w io.Writer)
+	DisableColor()
 
 	// Cleanup
 	Sync() error
