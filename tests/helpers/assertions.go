@@ -156,7 +156,9 @@ func AssertDirectoryExists(t *testing.T, dirPath string) {
 	t.Helper()
 	info, err := os.Stat(dirPath)
 	assert.NoError(t, err, "Directory %s should exist", dirPath)
-	assert.True(t, info.IsDir(), "Path %s should be a directory", dirPath)
+	if err == nil && info != nil {
+		assert.True(t, info.IsDir(), "Path %s should be a directory", dirPath)
+	}
 }
 
 // AssertCLIHelpOutput validates CLI help output
