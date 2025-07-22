@@ -1,0 +1,459 @@
+package cqrs
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// CommandHandler defines the interface for handling commands
+type CommandHandler interface {
+	Handle(ctx *CommandContext) (*CommandResult, error)
+	CanHandle(cmd Command) bool
+}
+
+// CommandHandlerFunc is a function adapter for CommandHandler
+type CommandHandlerFunc func(ctx *CommandContext) (*CommandResult, error)
+
+// Handle implements the CommandHandler interface
+func (f CommandHandlerFunc) Handle(ctx *CommandContext) (*CommandResult, error) {
+	return f(ctx)
+}
+
+// CanHandle implements a default CanHandle method
+func (f CommandHandlerFunc) CanHandle(cmd Command) bool {
+	return true // Default implementation always returns true
+}
+
+// CommandBus handles command dispatching and execution
+type CommandBus interface {
+	// Dispatch executes a command and returns the result
+	Dispatch(ctx context.Context, cmd Command) (*CommandResult, error)
+	
+	// RegisterHandler registers a command handler for a specific command type
+	RegisterHandler(commandType string, handler CommandHandler) error
+	
+	// UnregisterHandler removes a command handler
+	UnregisterHandler(commandType string) error
+	
+	// GetRegisteredHandlers returns all registered command types
+	GetRegisteredHandlers() []string
+	
+	// AddMiddleware adds middleware to the command bus
+	AddMiddleware(middleware CommandMiddleware)
+	
+	// AddInterceptor adds an interceptor to the command bus
+	AddInterceptor(interceptor CommandInterceptor)
+	
+	// SetValidator sets the command validator
+	SetValidator(validator CommandValidator)
+	
+	// SetMetrics sets the metrics collector
+	SetMetrics(metrics CommandMetrics)
+	
+	// SetAudit sets the audit logger
+	SetAudit(audit CommandAudit)
+}
+
+// DefaultCommandBus is the default implementation of CommandBus
+type DefaultCommandBus struct {
+	handlers     map[string]CommandHandler
+	middlewares  []CommandMiddleware
+	interceptors []CommandInterceptor
+	validator    CommandValidator
+	metrics      CommandMetrics
+	audit        CommandAudit
+	mutex        sync.RWMutex
+}
+
+// NewCommandBus creates a new command bus
+func NewCommandBus() *DefaultCommandBus {
+	return &DefaultCommandBus{
+		handlers:     make(map[string]CommandHandler),
+		middlewares:  make([]CommandMiddleware, 0),
+		interceptors: make([]CommandInterceptor, 0),
+	}
+}
+
+// Dispatch executes a command and returns the result
+func (bus *DefaultCommandBus) Dispatch(ctx context.Context, cmd Command) (*CommandResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Create command context
+	cmdCtx := NewCommandContext(ctx, cmd)
+	cmdCtx.WithRequestID(uuid.New().String())
+
+	// Validate command
+	if err := bus.validateCommand(cmdCtx); err != nil {
+		result := NewCommandResult(cmd.CommandID(), cmd.AggregateID(), false)
+		result.AddError(err)
+		
+		if bus.audit != nil {
+			bus.audit.LogCommandFailure(cmdCtx, err)
+		}
+		
+		return result, err
+	}
+
+	// Execute with middleware chain
+	handler := bus.buildHandler(cmd.CommandType())
+	if handler == nil {
+		err := ErrCommandNotFound.WithDetails(fmt.Sprintf("command type: %s", cmd.CommandType()))
+		result := NewCommandResult(cmd.CommandID(), cmd.AggregateID(), false)
+		result.AddError(err)
+		
+		if bus.audit != nil {
+			bus.audit.LogCommandFailure(cmdCtx, err)
+		}
+		
+		return result, err
+	}
+
+	// Execute with interceptors and middleware
+	result, err := bus.executeWithInterceptors(cmdCtx, handler)
+	
+	// Record metrics
+	if bus.metrics != nil {
+		success := err == nil && result.Success
+		bus.metrics.RecordCommandExecution(cmd.CommandType(), result.Duration, success)
+		bus.metrics.IncrementCommandCount(cmd.CommandType())
+		
+		if err != nil {
+			errorType := "unknown"
+			if cmdErr, ok := err.(*CommandError); ok {
+				errorType = cmdErr.Code
+			}
+			bus.metrics.RecordCommandError(cmd.CommandType(), errorType)
+		}
+	}
+
+	// Audit logging
+	if bus.audit != nil {
+		if err != nil {
+			bus.audit.LogCommandFailure(cmdCtx, err)
+		} else {
+			bus.audit.LogCommandExecution(cmdCtx, result)
+		}
+	}
+
+	return result, err
+}
+
+// RegisterHandler registers a command handler for a specific command type
+func (bus *DefaultCommandBus) RegisterHandler(commandType string, handler CommandHandler) error {
+	if commandType == "" {
+		return ErrInvalidCommandType
+	}
+	
+	if handler == nil {
+		return fmt.Errorf("command handler cannot be nil")
+	}
+
+	bus.mutex.Lock()
+	defer bus.mutex.Unlock()
+
+	if _, exists := bus.handlers[commandType]; exists {
+		return fmt.Errorf("handler already registered for command type: %s", commandType)
+	}
+
+	bus.handlers[commandType] = handler
+	return nil
+}
+
+// UnregisterHandler removes a command handler
+func (bus *DefaultCommandBus) UnregisterHandler(commandType string) error {
+	bus.mutex.Lock()
+	defer bus.mutex.Unlock()
+
+	if _, exists := bus.handlers[commandType]; !exists {
+		return fmt.Errorf("no handler registered for command type: %s", commandType)
+	}
+
+	delete(bus.handlers, commandType)
+	return nil
+}
+
+// GetRegisteredHandlers returns all registered command types
+func (bus *DefaultCommandBus) GetRegisteredHandlers() []string {
+	bus.mutex.RLock()
+	defer bus.mutex.RUnlock()
+
+	handlers := make([]string, 0, len(bus.handlers))
+	for commandType := range bus.handlers {
+		handlers = append(handlers, commandType)
+	}
+
+	return handlers
+}
+
+// AddMiddleware adds middleware to the command bus
+func (bus *DefaultCommandBus) AddMiddleware(middleware CommandMiddleware) {
+	if middleware != nil {
+		bus.middlewares = append(bus.middlewares, middleware)
+	}
+}
+
+// AddInterceptor adds an interceptor to the command bus
+func (bus *DefaultCommandBus) AddInterceptor(interceptor CommandInterceptor) {
+	if interceptor != nil {
+		bus.interceptors = append(bus.interceptors, interceptor)
+	}
+}
+
+// SetValidator sets the command validator
+func (bus *DefaultCommandBus) SetValidator(validator CommandValidator) {
+	bus.validator = validator
+}
+
+// SetMetrics sets the metrics collector
+func (bus *DefaultCommandBus) SetMetrics(metrics CommandMetrics) {
+	bus.metrics = metrics
+}
+
+// SetAudit sets the audit logger
+func (bus *DefaultCommandBus) SetAudit(audit CommandAudit) {
+	bus.audit = audit
+}
+
+// buildHandler creates the final handler with middleware chain
+func (bus *DefaultCommandBus) buildHandler(commandType string) CommandHandler {
+	bus.mutex.RLock()
+	handler, exists := bus.handlers[commandType]
+	bus.mutex.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	// Wrap handler with middleware chain (in reverse order)
+	finalHandler := func(ctx *CommandContext) (*CommandResult, error) {
+		start := time.Now()
+		result, err := handler.Handle(ctx)
+		
+		if result != nil {
+			result.SetDuration(time.Since(start))
+		}
+		
+		return result, err
+	}
+
+	// Apply middleware in reverse order (last added executes first)
+	for i := len(bus.middlewares) - 1; i >= 0; i-- {
+		middleware := bus.middlewares[i]
+		currentHandler := finalHandler
+		
+		finalHandler = func(ctx *CommandContext) (*CommandResult, error) {
+			return middleware.Execute(ctx, currentHandler)
+		}
+	}
+
+	return CommandHandlerFunc(finalHandler)
+}
+
+// validateCommand validates the command using the configured validator
+func (bus *DefaultCommandBus) validateCommand(ctx *CommandContext) error {
+	// Basic validation
+	if err := ctx.Command.Validate(); err != nil {
+		return ErrCommandValidation.WithDetails(err.Error())
+	}
+
+	// Custom validator
+	if bus.validator != nil {
+		if err := bus.validator.Validate(ctx.Command); err != nil {
+			return ErrCommandValidation.WithDetails(err.Error())
+		}
+		
+		if err := bus.validator.ValidateContext(ctx); err != nil {
+			return ErrCommandValidation.WithDetails(err.Error())
+		}
+	}
+
+	return nil
+}
+
+// executeWithInterceptors executes the command with interceptor hooks
+func (bus *DefaultCommandBus) executeWithInterceptors(ctx *CommandContext, handler CommandHandler) (*CommandResult, error) {
+	// Before execute interceptors
+	for _, interceptor := range bus.interceptors {
+		if err := interceptor.BeforeExecute(ctx); err != nil {
+			return NewCommandResult(ctx.Command.CommandID(), ctx.Command.AggregateID(), false), err
+		}
+	}
+
+	// Execute the command
+	result, err := handler.Handle(ctx)
+
+	// Handle errors with interceptors
+	if err != nil {
+		for _, interceptor := range bus.interceptors {
+			if interceptorErr := interceptor.OnError(ctx, err); interceptorErr != nil {
+				// If interceptor error handling fails, return original error
+				break
+			}
+		}
+	}
+
+	// After execute interceptors
+	if result != nil {
+		for _, interceptor := range bus.interceptors {
+			if interceptorErr := interceptor.AfterExecute(ctx, result); interceptorErr != nil {
+				// Log interceptor errors but don't fail the command
+				continue
+			}
+		}
+	}
+
+	return result, err
+}
+
+// CommandBusBuilder provides a fluent interface for building a command bus
+type CommandBusBuilder struct {
+	bus *DefaultCommandBus
+}
+
+// NewCommandBusBuilder creates a new command bus builder
+func NewCommandBusBuilder() *CommandBusBuilder {
+	return &CommandBusBuilder{
+		bus: NewCommandBus(),
+	}
+}
+
+// WithHandler adds a command handler
+func (b *CommandBusBuilder) WithHandler(commandType string, handler CommandHandler) *CommandBusBuilder {
+	b.bus.RegisterHandler(commandType, handler)
+	return b
+}
+
+// WithMiddleware adds middleware
+func (b *CommandBusBuilder) WithMiddleware(middleware CommandMiddleware) *CommandBusBuilder {
+	b.bus.AddMiddleware(middleware)
+	return b
+}
+
+// WithInterceptor adds an interceptor
+func (b *CommandBusBuilder) WithInterceptor(interceptor CommandInterceptor) *CommandBusBuilder {
+	b.bus.AddInterceptor(interceptor)
+	return b
+}
+
+// WithValidator sets the validator
+func (b *CommandBusBuilder) WithValidator(validator CommandValidator) *CommandBusBuilder {
+	b.bus.SetValidator(validator)
+	return b
+}
+
+// WithMetrics sets the metrics collector
+func (b *CommandBusBuilder) WithMetrics(metrics CommandMetrics) *CommandBusBuilder {
+	b.bus.SetMetrics(metrics)
+	return b
+}
+
+// WithAudit sets the audit logger
+func (b *CommandBusBuilder) WithAudit(audit CommandAudit) *CommandBusBuilder {
+	b.bus.SetAudit(audit)
+	return b
+}
+
+// Build creates the command bus
+func (b *CommandBusBuilder) Build() CommandBus {
+	return b.bus
+}
+
+// Common middleware implementations
+
+// LoggingMiddleware logs command execution
+func LoggingMiddleware(logger interface{}) CommandMiddleware {
+	return CommandMiddlewareFunc(func(ctx *CommandContext, next func(*CommandContext) (*CommandResult, error)) (*CommandResult, error) {
+		start := time.Now()
+		
+		// Log command start (implementation depends on logger type)
+		// This would need to be implemented based on the logger interface
+		
+		result, err := next(ctx)
+		
+		duration := time.Since(start)
+		
+		// Log command completion with duration and result
+		// Implementation depends on logger interface
+		_ = duration // Use duration for logging
+		
+		return result, err
+	})
+}
+
+// TimeoutMiddleware adds timeout to command execution
+func TimeoutMiddleware(timeout time.Duration) CommandMiddleware {
+	return CommandMiddlewareFunc(func(ctx *CommandContext, next func(*CommandContext) (*CommandResult, error)) (*CommandResult, error) {
+		timeoutCtx, cancel := context.WithTimeout(ctx.Context, timeout)
+		defer cancel()
+		
+		ctx.Context = timeoutCtx
+		
+		// Execute with timeout
+		resultChan := make(chan *CommandResult, 1)
+		errorChan := make(chan error, 1)
+		
+		go func() {
+			result, err := next(ctx)
+			if err != nil {
+				errorChan <- err
+			} else {
+				resultChan <- result
+			}
+		}()
+		
+		select {
+		case result := <-resultChan:
+			return result, nil
+		case err := <-errorChan:
+			return nil, err
+		case <-timeoutCtx.Done():
+			return NewCommandResult(ctx.Command.CommandID(), ctx.Command.AggregateID(), false), 
+				   ErrCommandTimeout.WithDetails(fmt.Sprintf("timeout after %v", timeout))
+		}
+	})
+}
+
+// RetryMiddleware adds retry capability to command execution
+func RetryMiddleware(maxRetries int, backoff time.Duration) CommandMiddleware {
+	return CommandMiddlewareFunc(func(ctx *CommandContext, next func(*CommandContext) (*CommandResult, error)) (*CommandResult, error) {
+		var lastErr error
+		
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				// Apply backoff
+				select {
+				case <-ctx.Context.Done():
+					return nil, ctx.Context.Err()
+				case <-time.After(time.Duration(attempt) * backoff):
+					// Continue with retry
+				}
+			}
+			
+			result, err := next(ctx)
+			if err == nil {
+				return result, nil
+			}
+			
+			// Check if error is retryable
+			if cmdErr, ok := err.(*CommandError); ok {
+				switch cmdErr.Code {
+				case "COMMAND_TIMEOUT", "CONCURRENCY_CONFLICT":
+					lastErr = err
+					continue // Retry these errors
+				default:
+					return result, err // Don't retry other errors
+				}
+			}
+			
+			lastErr = err
+		}
+		
+		return nil, fmt.Errorf("command failed after %d retries: %w", maxRetries, lastErr)
+	})
+}

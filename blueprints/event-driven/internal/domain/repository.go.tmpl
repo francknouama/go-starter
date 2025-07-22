@@ -1,0 +1,338 @@
+package domain
+
+import (
+	"context"
+	"errors"
+	"fmt"
+)
+
+var (
+	// ErrAggregateNotFound is returned when an aggregate is not found
+	ErrAggregateNotFound = errors.New("aggregate not found")
+	
+	// ErrConcurrencyConflict is returned when there's a version mismatch
+	ErrConcurrencyConflict = errors.New("concurrency conflict")
+	
+	// ErrInvalidAggregateID is returned when an aggregate ID is invalid
+	ErrInvalidAggregateID = errors.New("invalid aggregate ID")
+	
+	// ErrSnapshotNotFound is returned when a snapshot is not found
+	ErrSnapshotNotFound = errors.New("snapshot not found")
+)
+
+// AggregateRepository defines the interface for aggregate persistence operations
+type AggregateRepository interface {
+	// Save persists an aggregate with its uncommitted events
+	Save(ctx context.Context, aggregate Aggregate) error
+	
+	// Load retrieves an aggregate by ID and rebuilds its state from events
+	Load(ctx context.Context, aggregateID string) (Aggregate, error)
+	
+	// LoadFromSnapshot loads an aggregate from a snapshot and subsequent events
+	LoadFromSnapshot(ctx context.Context, aggregateID string) (Aggregate, error)
+	
+	// Exists checks if an aggregate exists
+	Exists(ctx context.Context, aggregateID string) (bool, error)
+	
+	// GetVersion returns the current version of an aggregate
+	GetVersion(ctx context.Context, aggregateID string) (int, error)
+}
+
+// GenericRepository provides a generic implementation of AggregateRepository
+type GenericRepository struct {
+	eventStore      EventStore
+	snapshotStore   SnapshotStore
+	eventBus        EventBus
+	aggregateFactory AggregateFactory
+	snapshotFrequency int // Take snapshot every N events
+}
+
+// NewGenericRepository creates a new generic repository
+func NewGenericRepository(
+	eventStore EventStore,
+	snapshotStore SnapshotStore,
+	eventBus EventBus,
+	aggregateFactory AggregateFactory,
+) *GenericRepository {
+	return &GenericRepository{
+		eventStore:       eventStore,
+		snapshotStore:    snapshotStore,
+		eventBus:         eventBus,
+		aggregateFactory: aggregateFactory,
+		snapshotFrequency: 10, // Default to snapshot every 10 events
+	}
+}
+
+// SetSnapshotFrequency sets how often snapshots should be taken
+func (r *GenericRepository) SetSnapshotFrequency(frequency int) {
+	r.snapshotFrequency = frequency
+}
+
+// Save persists an aggregate with its uncommitted events
+func (r *GenericRepository) Save(ctx context.Context, aggregate Aggregate) error {
+	if aggregate.ID() == "" {
+		return ErrInvalidAggregateID
+	}
+
+	uncommittedEvents := aggregate.UncommittedEvents()
+	if len(uncommittedEvents) == 0 {
+		return nil // Nothing to save
+	}
+
+	// Calculate expected version (current version - number of uncommitted events)
+	expectedVersion := aggregate.Version() - len(uncommittedEvents)
+
+	// Save events to event store
+	if err := r.eventStore.SaveEvents(aggregate.ID(), uncommittedEvents, expectedVersion); err != nil {
+		return fmt.Errorf("failed to save events: %w", err)
+	}
+
+	// Publish events to event bus
+	if r.eventBus != nil {
+		if err := r.eventBus.Publish(uncommittedEvents...); err != nil {
+			// Log the error but don't fail the save operation
+			// In production, you might want to use a message queue with retry logic
+			fmt.Printf("failed to publish events: %v\n", err)
+		}
+	}
+
+	// Take snapshot if needed
+	if r.shouldTakeSnapshot(aggregate.Version()) {
+		if err := r.takeSnapshot(ctx, aggregate); err != nil {
+			// Log the error but don't fail the save operation
+			fmt.Printf("failed to take snapshot: %v\n", err)
+		}
+	}
+
+	// Mark events as committed
+	aggregate.MarkEventsAsCommitted()
+
+	return nil
+}
+
+// Load retrieves an aggregate by ID and rebuilds its state from events
+func (r *GenericRepository) Load(ctx context.Context, aggregateID string) (Aggregate, error) {
+	if aggregateID == "" {
+		return nil, ErrInvalidAggregateID
+	}
+
+	// Try loading from snapshot first
+	snapshot, err := r.snapshotStore.GetSnapshot(aggregateID, r.aggregateFactory.Create(aggregateID).AggregateType())
+	if err != nil && !errors.Is(err, ErrSnapshotNotFound) {
+		return nil, fmt.Errorf("failed to load snapshot: %w", err)
+	}
+
+	var aggregate Aggregate
+	var fromVersion int
+
+	if snapshot != nil {
+		// Load from snapshot
+		aggregate, err = r.aggregateFactory.CreateFromSnapshot(snapshot)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create aggregate from snapshot: %w", err)
+		}
+		fromVersion = snapshot.Version
+	} else {
+		// Create new aggregate
+		aggregate = r.aggregateFactory.Create(aggregateID)
+		fromVersion = 0
+	}
+
+	// Load events after snapshot
+	events, err := r.eventStore.GetEventsAfterVersion(aggregateID, fromVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load events: %w", err)
+	}
+
+	if len(events) == 0 && snapshot == nil {
+		return nil, ErrAggregateNotFound
+	}
+
+	// Apply events to rebuild state
+	aggregate.LoadFromHistory(events)
+
+	return aggregate, nil
+}
+
+// LoadFromSnapshot loads an aggregate from a snapshot and subsequent events
+func (r *GenericRepository) LoadFromSnapshot(ctx context.Context, aggregateID string) (Aggregate, error) {
+	if aggregateID == "" {
+		return nil, ErrInvalidAggregateID
+	}
+
+	// Load snapshot
+	snapshot, err := r.snapshotStore.GetSnapshot(aggregateID, r.aggregateFactory.Create(aggregateID).AggregateType())
+	if err != nil {
+		if errors.Is(err, ErrSnapshotNotFound) {
+			// Fall back to loading from events
+			return r.Load(ctx, aggregateID)
+		}
+		return nil, fmt.Errorf("failed to load snapshot: %w", err)
+	}
+
+	// Create aggregate from snapshot
+	aggregate, err := r.aggregateFactory.CreateFromSnapshot(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create aggregate from snapshot: %w", err)
+	}
+
+	// Load events after snapshot
+	events, err := r.eventStore.GetEventsAfterVersion(aggregateID, snapshot.Version)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load events after snapshot: %w", err)
+	}
+
+	// Apply events to bring aggregate up to date
+	if len(events) > 0 {
+		aggregate.LoadFromHistory(events)
+	}
+
+	return aggregate, nil
+}
+
+// Exists checks if an aggregate exists
+func (r *GenericRepository) Exists(ctx context.Context, aggregateID string) (bool, error) {
+	if aggregateID == "" {
+		return false, ErrInvalidAggregateID
+	}
+
+	events, err := r.eventStore.GetEvents(aggregateID)
+	if err != nil {
+		return false, fmt.Errorf("failed to check if aggregate exists: %w", err)
+	}
+
+	return len(events) > 0, nil
+}
+
+// GetVersion returns the current version of an aggregate
+func (r *GenericRepository) GetVersion(ctx context.Context, aggregateID string) (int, error) {
+	if aggregateID == "" {
+		return 0, ErrInvalidAggregateID
+	}
+
+	events, err := r.eventStore.GetEvents(aggregateID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get aggregate version: %w", err)
+	}
+
+	if len(events) == 0 {
+		return 0, ErrAggregateNotFound
+	}
+
+	// Return the version of the last event
+	return events[len(events)-1].Version(), nil
+}
+
+// shouldTakeSnapshot determines if a snapshot should be taken
+func (r *GenericRepository) shouldTakeSnapshot(version int) bool {
+	return r.snapshotFrequency > 0 && version%r.snapshotFrequency == 0
+}
+
+// takeSnapshot creates and saves a snapshot of the aggregate
+func (r *GenericRepository) takeSnapshot(ctx context.Context, aggregate Aggregate) error {
+	snapshot, err := aggregate.CreateSnapshot()
+	if err != nil {
+		return fmt.Errorf("failed to create snapshot: %w", err)
+	}
+
+	if err := r.snapshotStore.SaveSnapshot(snapshot); err != nil {
+		return fmt.Errorf("failed to save snapshot: %w", err)
+	}
+
+	return nil
+}
+
+// SnapshotStore defines the interface for snapshot persistence
+type SnapshotStore interface {
+	SaveSnapshot(snapshot *Snapshot) error
+	GetSnapshot(aggregateID, aggregateType string) (*Snapshot, error)
+	DeleteSnapshot(aggregateID, aggregateType string) error
+	GetLatestSnapshots(limit int) ([]*Snapshot, error)
+	DeleteOldSnapshots(aggregateID, aggregateType string, keepCount int) error
+}
+
+// ReadModelRepository defines the interface for read model persistence
+type ReadModelRepository interface {
+	Save(ctx context.Context, model interface{}) error
+	FindByID(ctx context.Context, id string, model interface{}) error
+	FindAll(ctx context.Context, models interface{}) error
+	FindByCriteria(ctx context.Context, criteria map[string]interface{}, models interface{}) error
+	Delete(ctx context.Context, id string) error
+	DeleteAll(ctx context.Context) error
+}
+
+// TransactionalRepository defines the interface for transactional operations
+type TransactionalRepository interface {
+	BeginTransaction(ctx context.Context) (context.Context, error)
+	CommitTransaction(ctx context.Context) error
+	RollbackTransaction(ctx context.Context) error
+	SaveInTransaction(ctx context.Context, aggregate Aggregate) error
+}
+
+// CachingRepository wraps a repository with caching capabilities
+type CachingRepository struct {
+	repository AggregateRepository
+	cache      Cache
+	ttl        int // Time to live in seconds
+}
+
+// Cache defines the interface for caching aggregates
+type Cache interface {
+	Get(key string) (Aggregate, bool)
+	Set(key string, aggregate Aggregate, ttl int)
+	Delete(key string)
+	Clear()
+}
+
+// NewCachingRepository creates a new caching repository
+func NewCachingRepository(repository AggregateRepository, cache Cache, ttl int) *CachingRepository {
+	return &CachingRepository{
+		repository: repository,
+		cache:      cache,
+		ttl:        ttl,
+	}
+}
+
+// Save saves an aggregate and updates the cache
+func (r *CachingRepository) Save(ctx context.Context, aggregate Aggregate) error {
+	if err := r.repository.Save(ctx, aggregate); err != nil {
+		return err
+	}
+
+	// Update cache after successful save
+	r.cache.Set(aggregate.ID(), aggregate, r.ttl)
+	return nil
+}
+
+// Load loads an aggregate from cache or repository
+func (r *CachingRepository) Load(ctx context.Context, aggregateID string) (Aggregate, error) {
+	// Try cache first
+	if aggregate, found := r.cache.Get(aggregateID); found {
+		return aggregate, nil
+	}
+
+	// Load from repository
+	aggregate, err := r.repository.Load(ctx, aggregateID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Cache the loaded aggregate
+	r.cache.Set(aggregateID, aggregate, r.ttl)
+	return aggregate, nil
+}
+
+// LoadFromSnapshot loads an aggregate from snapshot
+func (r *CachingRepository) LoadFromSnapshot(ctx context.Context, aggregateID string) (Aggregate, error) {
+	return r.repository.LoadFromSnapshot(ctx, aggregateID)
+}
+
+// Exists checks if an aggregate exists
+func (r *CachingRepository) Exists(ctx context.Context, aggregateID string) (bool, error) {
+	return r.repository.Exists(ctx, aggregateID)
+}
+
+// GetVersion returns the current version of an aggregate
+func (r *CachingRepository) GetVersion(ctx context.Context, aggregateID string) (int, error) {
+	return r.repository.GetVersion(ctx, aggregateID)
+}

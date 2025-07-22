@@ -1,0 +1,535 @@
+package projections
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+)
+
+// Projection represents a projection that builds read models from events
+type Projection interface {
+	// GetName returns the unique name of the projection
+	GetName() string
+	
+	// GetVersion returns the current version of the projection
+	GetVersion() int
+	
+	// CanHandle determines if this projection can handle the given event
+	CanHandle(event domain.Event) bool
+	
+	// Handle processes an event and updates the read model
+	Handle(ctx context.Context, event domain.Event) error
+	
+	// GetPosition returns the last processed event position
+	GetPosition() int64
+	
+	// SetPosition sets the last processed event position
+	SetPosition(position int64)
+	
+	// Reset resets the projection to its initial state
+	Reset(ctx context.Context) error
+	
+	// GetMetadata returns projection metadata
+	GetMetadata() map[string]interface{}
+}
+
+// BaseProjection provides a base implementation for projections
+type BaseProjection struct {
+	name     string
+	version  int
+	position int64
+	metadata map[string]interface{}
+	mutex    sync.RWMutex
+}
+
+// NewBaseProjection creates a new base projection
+func NewBaseProjection(name string, version int) *BaseProjection {
+	return &BaseProjection{
+		name:     name,
+		version:  version,
+		position: 0,
+		metadata: make(map[string]interface{}),
+	}
+}
+
+// GetName returns the unique name of the projection
+func (p *BaseProjection) GetName() string {
+	return p.name
+}
+
+// GetVersion returns the current version of the projection
+func (p *BaseProjection) GetVersion() int {
+	return p.version
+}
+
+// GetPosition returns the last processed event position
+func (p *BaseProjection) GetPosition() int64 {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	return p.position
+}
+
+// SetPosition sets the last processed event position
+func (p *BaseProjection) SetPosition(position int64) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.position = position
+}
+
+// GetMetadata returns projection metadata
+func (p *BaseProjection) GetMetadata() map[string]interface{} {
+	p.mutex.RLock()
+	defer p.mutex.RUnlock()
+	
+	// Create a copy to avoid race conditions
+	metadata := make(map[string]interface{})
+	for k, v := range p.metadata {
+		metadata[k] = v
+	}
+	return metadata
+}
+
+// SetMetadata sets metadata for the projection
+func (p *BaseProjection) SetMetadata(key string, value interface{}) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.metadata[key] = value
+}
+
+// ProjectionManager manages multiple projections
+type ProjectionManager interface {
+	// RegisterProjection registers a projection
+	RegisterProjection(projection Projection) error
+	
+	// UnregisterProjection unregisters a projection
+	UnregisterProjection(name string) error
+	
+	// GetProjection returns a projection by name
+	GetProjection(name string) (Projection, error)
+	
+	// GetProjections returns all registered projections
+	GetProjections() []Projection
+	
+	// ProcessEvent processes an event through all applicable projections
+	ProcessEvent(ctx context.Context, event domain.Event) error
+	
+	// ProcessEvents processes multiple events
+	ProcessEvents(ctx context.Context, events []domain.Event) error
+	
+	// ResetProjection resets a specific projection
+	ResetProjection(ctx context.Context, name string) error
+	
+	// ResetAllProjections resets all projections
+	ResetAllProjections(ctx context.Context) error
+	
+	// GetProjectionStatus returns the status of all projections
+	GetProjectionStatus() map[string]ProjectionStatus
+}
+
+// ProjectionStatus represents the status of a projection
+type ProjectionStatus struct {
+	Name            string                 `json:"name"`
+	Version         int                    `json:"version"`
+	Position        int64                  `json:"position"`
+	LastUpdated     time.Time              `json:"last_updated"`
+	EventsProcessed int64                  `json:"events_processed"`
+	ErrorCount      int64                  `json:"error_count"`
+	LastError       string                 `json:"last_error,omitempty"`
+	IsRunning       bool                   `json:"is_running"`
+	Metadata        map[string]interface{} `json:"metadata"`
+}
+
+// DefaultProjectionManager is the default implementation of ProjectionManager
+type DefaultProjectionManager struct {
+	projections map[string]Projection
+	status      map[string]*ProjectionStatus
+	mutex       sync.RWMutex
+}
+
+// NewProjectionManager creates a new projection manager
+func NewProjectionManager() *DefaultProjectionManager {
+	return &DefaultProjectionManager{
+		projections: make(map[string]Projection),
+		status:      make(map[string]*ProjectionStatus),
+	}
+}
+
+// RegisterProjection registers a projection
+func (pm *DefaultProjectionManager) RegisterProjection(projection Projection) error {
+	if projection == nil {
+		return fmt.Errorf("projection cannot be nil")
+	}
+	
+	name := projection.GetName()
+	if name == "" {
+		return fmt.Errorf("projection name cannot be empty")
+	}
+	
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+	
+	if _, exists := pm.projections[name]; exists {
+		return fmt.Errorf("projection already registered: %s", name)
+	}
+	
+	pm.projections[name] = projection
+	pm.status[name] = &ProjectionStatus{
+		Name:            name,
+		Version:         projection.GetVersion(),
+		Position:        projection.GetPosition(),
+		LastUpdated:     time.Now().UTC(),
+		EventsProcessed: 0,
+		ErrorCount:      0,
+		IsRunning:       false,
+		Metadata:        projection.GetMetadata(),
+	}
+	
+	return nil
+}
+
+// UnregisterProjection unregisters a projection
+func (pm *DefaultProjectionManager) UnregisterProjection(name string) error {
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+	
+	if _, exists := pm.projections[name]; !exists {
+		return fmt.Errorf("projection not found: %s", name)
+	}
+	
+	delete(pm.projections, name)
+	delete(pm.status, name)
+	
+	return nil
+}
+
+// GetProjection returns a projection by name
+func (pm *DefaultProjectionManager) GetProjection(name string) (Projection, error) {
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
+	
+	projection, exists := pm.projections[name]
+	if !exists {
+		return nil, fmt.Errorf("projection not found: %s", name)
+	}
+	
+	return projection, nil
+}
+
+// GetProjections returns all registered projections
+func (pm *DefaultProjectionManager) GetProjections() []Projection {
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
+	
+	projections := make([]Projection, 0, len(pm.projections))
+	for _, projection := range pm.projections {
+		projections = append(projections, projection)
+	}
+	
+	return projections
+}
+
+// ProcessEvent processes an event through all applicable projections
+func (pm *DefaultProjectionManager) ProcessEvent(ctx context.Context, event domain.Event) error {
+	if event == nil {
+		return fmt.Errorf("event cannot be nil")
+	}
+	
+	pm.mutex.RLock()
+	projections := make([]Projection, 0, len(pm.projections))
+	for _, projection := range pm.projections {
+		if projection.CanHandle(event) {
+			projections = append(projections, projection)
+		}
+	}
+	pm.mutex.RUnlock()
+	
+	// Process event through applicable projections
+	for _, projection := range projections {
+		if err := pm.processEventWithProjection(ctx, event, projection); err != nil {
+			return fmt.Errorf("failed to process event %s with projection %s: %w", 
+				event.EventType(), projection.GetName(), err)
+		}
+	}
+	
+	return nil
+}
+
+// ProcessEvents processes multiple events
+func (pm *DefaultProjectionManager) ProcessEvents(ctx context.Context, events []domain.Event) error {
+	for _, event := range events {
+		if err := pm.ProcessEvent(ctx, event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// processEventWithProjection processes a single event with a specific projection
+func (pm *DefaultProjectionManager) processEventWithProjection(ctx context.Context, event domain.Event, projection Projection) error {
+	name := projection.GetName()
+	
+	// Update status - mark as running
+	pm.updateProjectionStatus(name, func(status *ProjectionStatus) {
+		status.IsRunning = true
+	})
+	
+	start := time.Now()
+	err := projection.Handle(ctx, event)
+	duration := time.Since(start)
+	
+	// Update status based on result
+	pm.updateProjectionStatus(name, func(status *ProjectionStatus) {
+		status.IsRunning = false
+		status.LastUpdated = time.Now().UTC()
+		
+		if err != nil {
+			status.ErrorCount++
+			status.LastError = err.Error()
+		} else {
+			status.EventsProcessed++
+			status.Position = event.Version()
+			status.LastError = ""
+			
+			// Update position in projection
+			projection.SetPosition(int64(event.Version()))
+		}
+		
+		// Update metadata with performance info
+		if status.Metadata == nil {
+			status.Metadata = make(map[string]interface{})
+		}
+		status.Metadata["last_processing_duration"] = duration.String()
+	})
+	
+	return err
+}
+
+// ResetProjection resets a specific projection
+func (pm *DefaultProjectionManager) ResetProjection(ctx context.Context, name string) error {
+	projection, err := pm.GetProjection(name)
+	if err != nil {
+		return err
+	}
+	
+	err = projection.Reset(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to reset projection %s: %w", name, err)
+	}
+	
+	// Reset status
+	pm.updateProjectionStatus(name, func(status *ProjectionStatus) {
+		status.Position = 0
+		status.EventsProcessed = 0
+		status.ErrorCount = 0
+		status.LastError = ""
+		status.LastUpdated = time.Now().UTC()
+	})
+	
+	return nil
+}
+
+// ResetAllProjections resets all projections
+func (pm *DefaultProjectionManager) ResetAllProjections(ctx context.Context) error {
+	projections := pm.GetProjections()
+	
+	for _, projection := range projections {
+		if err := pm.ResetProjection(ctx, projection.GetName()); err != nil {
+			return err
+		}
+	}
+	
+	return nil
+}
+
+// GetProjectionStatus returns the status of all projections
+func (pm *DefaultProjectionManager) GetProjectionStatus() map[string]ProjectionStatus {
+	pm.mutex.RLock()
+	defer pm.mutex.RUnlock()
+	
+	status := make(map[string]ProjectionStatus)
+	for name, projStatus := range pm.status {
+		// Create a copy to avoid race conditions
+		status[name] = *projStatus
+	}
+	
+	return status
+}
+
+// updateProjectionStatus safely updates projection status
+func (pm *DefaultProjectionManager) updateProjectionStatus(name string, updateFunc func(*ProjectionStatus)) {
+	pm.mutex.Lock()
+	defer pm.mutex.Unlock()
+	
+	if status, exists := pm.status[name]; exists {
+		updateFunc(status)
+	}
+}
+
+// ProjectionBuilder provides a fluent interface for building projections
+type ProjectionBuilder struct {
+	manager *DefaultProjectionManager
+}
+
+// NewProjectionBuilder creates a new projection builder
+func NewProjectionBuilder() *ProjectionBuilder {
+	return &ProjectionBuilder{
+		manager: NewProjectionManager(),
+	}
+}
+
+// WithProjection adds a projection
+func (pb *ProjectionBuilder) WithProjection(projection Projection) *ProjectionBuilder {
+	pb.manager.RegisterProjection(projection)
+	return pb
+}
+
+// Build creates the projection manager
+func (pb *ProjectionBuilder) Build() ProjectionManager {
+	return pb.manager
+}
+
+// ProjectionWorker runs projections continuously
+type ProjectionWorker struct {
+	manager    ProjectionManager
+	eventStore domain.EventStore
+	interval   time.Duration
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+}
+
+// NewProjectionWorker creates a new projection worker
+func NewProjectionWorker(manager ProjectionManager, eventStore domain.EventStore, interval time.Duration) *ProjectionWorker {
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	return &ProjectionWorker{
+		manager:    manager,
+		eventStore: eventStore,
+		interval:   interval,
+		ctx:        ctx,
+		cancel:     cancel,
+	}
+}
+
+// Start starts the projection worker
+func (pw *ProjectionWorker) Start() {
+	pw.wg.Add(1)
+	go pw.run()
+}
+
+// Stop stops the projection worker
+func (pw *ProjectionWorker) Stop() {
+	pw.cancel()
+	pw.wg.Wait()
+}
+
+// run is the main worker loop
+func (pw *ProjectionWorker) run() {
+	defer pw.wg.Done()
+	
+	ticker := time.NewTicker(pw.interval)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-pw.ctx.Done():
+			return
+		case <-ticker.C:
+			pw.processNewEvents()
+		}
+	}
+}
+
+// processNewEvents processes new events for all projections
+func (pw *ProjectionWorker) processNewEvents() {
+	projections := pw.manager.GetProjections()
+	
+	for _, projection := range projections {
+		if err := pw.processNewEventsForProjection(projection); err != nil {
+			// Log error (implementation would depend on logger)
+			continue
+		}
+	}
+}
+
+// processNewEventsForProjection processes new events for a specific projection
+func (pw *ProjectionWorker) processNewEventsForProjection(projection Projection) error {
+	lastPosition := projection.GetPosition()
+	
+	// Get new events since last position
+	events, err := pw.eventStore.GetEventsFromPosition(pw.ctx, lastPosition)
+	if err != nil {
+		return fmt.Errorf("failed to get events from position %d: %w", lastPosition, err)
+	}
+	
+	// Process applicable events
+	for _, event := range events {
+		if projection.CanHandle(event) {
+			if err := projection.Handle(pw.ctx, event); err != nil {
+				return fmt.Errorf("failed to handle event %s: %w", event.EventID(), err)
+			}
+			
+			// Update position
+			projection.SetPosition(int64(event.Version()))
+		}
+	}
+	
+	return nil
+}
+
+// ProjectionMetrics provides metrics for projections
+type ProjectionMetrics interface {
+	RecordEventProcessed(projectionName string, eventType string, duration time.Duration)
+	RecordProjectionError(projectionName string, errorType string)
+	RecordProjectionLag(projectionName string, lag time.Duration)
+	IncrementProjectionCount(projectionName string)
+}
+
+// ProjectionHealthChecker checks the health of projections
+type ProjectionHealthChecker struct {
+	manager ProjectionManager
+}
+
+// NewProjectionHealthChecker creates a new projection health checker
+func NewProjectionHealthChecker(manager ProjectionManager) *ProjectionHealthChecker {
+	return &ProjectionHealthChecker{
+		manager: manager,
+	}
+}
+
+// CheckHealth checks the health of all projections
+func (phc *ProjectionHealthChecker) CheckHealth() map[string]bool {
+	status := phc.manager.GetProjectionStatus()
+	health := make(map[string]bool)
+	
+	for name, projStatus := range status {
+		// Consider projection healthy if:
+		// 1. No recent errors
+		// 2. Last updated within reasonable time
+		// 3. Not stuck (position advancing)
+		
+		isHealthy := true
+		
+		// Check for recent errors
+		if projStatus.ErrorCount > 0 {
+			// Allow some errors but check if they're recent
+			timeSinceUpdate := time.Since(projStatus.LastUpdated)
+			if timeSinceUpdate < 5*time.Minute && projStatus.LastError != "" {
+				isHealthy = false
+			}
+		}
+		
+		// Check if projection is advancing
+		timeSinceUpdate := time.Since(projStatus.LastUpdated)
+		if timeSinceUpdate > 10*time.Minute {
+			isHealthy = false
+		}
+		
+		health[name] = isHealthy
+	}
+	
+	return health
+}

@@ -1,0 +1,544 @@
+package cqrs_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/cqrs"
+)
+
+// Mock implementations for testing
+type MockCommandHandler struct {
+	mock.Mock
+}
+
+func (m *MockCommandHandler) Handle(ctx *cqrs.CommandContext) (*cqrs.CommandResult, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*cqrs.CommandResult), args.Error(1)
+}
+
+func (m *MockCommandHandler) CanHandle(cmd cqrs.Command) bool {
+	args := m.Called(cmd)
+	return args.Bool(0)
+}
+
+type MockCommandValidator struct {
+	mock.Mock
+}
+
+func (m *MockCommandValidator) Validate(cmd cqrs.Command) error {
+	args := m.Called(cmd)
+	return args.Error(0)
+}
+
+func (m *MockCommandValidator) ValidateContext(ctx *cqrs.CommandContext) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+type MockCommandMiddleware struct {
+	mock.Mock
+}
+
+func (m *MockCommandMiddleware) Execute(ctx *cqrs.CommandContext, next func(*cqrs.CommandContext) (*cqrs.CommandResult, error)) (*cqrs.CommandResult, error) {
+	args := m.Called(ctx, next)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*cqrs.CommandResult), args.Error(1)
+}
+
+type MockCommandInterceptor struct {
+	mock.Mock
+}
+
+func (m *MockCommandInterceptor) BeforeExecute(ctx *cqrs.CommandContext) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
+
+func (m *MockCommandInterceptor) AfterExecute(ctx *cqrs.CommandContext, result *cqrs.CommandResult) error {
+	args := m.Called(ctx, result)
+	return args.Error(0)
+}
+
+func (m *MockCommandInterceptor) OnError(ctx *cqrs.CommandContext, err error) error {
+	args := m.Called(ctx, err)
+	return args.Error(0)
+}
+
+type MockCommandMetrics struct {
+	mock.Mock
+}
+
+func (m *MockCommandMetrics) RecordCommandExecution(commandType string, duration time.Duration, success bool) {
+	m.Called(commandType, duration, success)
+}
+
+func (m *MockCommandMetrics) RecordCommandError(commandType string, errorType string) {
+	m.Called(commandType, errorType)
+}
+
+func (m *MockCommandMetrics) IncrementCommandCount(commandType string) {
+	m.Called(commandType)
+}
+
+type MockCommandAudit struct {
+	mock.Mock
+}
+
+func (m *MockCommandAudit) LogCommandExecution(ctx *cqrs.CommandContext, result *cqrs.CommandResult) {
+	m.Called(ctx, result)
+}
+
+func (m *MockCommandAudit) LogCommandFailure(ctx *cqrs.CommandContext, err error) {
+	m.Called(ctx, err)
+}
+
+func TestDefaultCommandBus_Creation(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	
+	assert.NotNil(t, bus)
+	assert.Empty(t, bus.GetRegisteredHandlers())
+}
+
+func TestDefaultCommandBus_RegisterHandler(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	
+	t.Run("successful registration", func(t *testing.T) {
+		err := bus.RegisterHandler("TestCommand", handler)
+		assert.NoError(t, err)
+		
+		handlers := bus.GetRegisteredHandlers()
+		assert.Contains(t, handlers, "TestCommand")
+	})
+	
+	t.Run("empty command type", func(t *testing.T) {
+		err := bus.RegisterHandler("", handler)
+		assert.Error(t, err)
+		assert.True(t, cqrs.IsCommandError(err))
+	})
+	
+	t.Run("nil handler", func(t *testing.T) {
+		err := bus.RegisterHandler("NilHandler", nil)
+		assert.Error(t, err)
+	})
+	
+	t.Run("duplicate registration", func(t *testing.T) {
+		err := bus.RegisterHandler("TestCommand", handler)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "already registered")
+	})
+}
+
+func TestDefaultCommandBus_UnregisterHandler(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	
+	// Register first
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	t.Run("successful unregistration", func(t *testing.T) {
+		err := bus.UnregisterHandler("TestCommand")
+		assert.NoError(t, err)
+		
+		handlers := bus.GetRegisteredHandlers()
+		assert.NotContains(t, handlers, "TestCommand")
+	})
+	
+	t.Run("unregister non-existent handler", func(t *testing.T) {
+		err := bus.UnregisterHandler("NonExistent")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "no handler registered")
+	})
+}
+
+func TestDefaultCommandBus_Dispatch_Success(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(expectedResult, nil)
+	
+	// Register handler
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+	assert.Equal(t, cmd.CommandID(), result.CommandID)
+	assert.Equal(t, cmd.AggregateID(), result.AggregateID)
+	
+	handler.AssertExpectations(t)
+}
+
+func TestDefaultCommandBus_Dispatch_HandlerNotFound(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	cmd := createTestCommand(t)
+	
+	// Dispatch command without registering handler
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.Error(t, err)
+	assert.True(t, cqrs.IsCommandError(err))
+	assert.Equal(t, "COMMAND_NOT_FOUND", cqrs.GetCommandErrorCode(err))
+	assert.NotNil(t, result)
+	assert.False(t, result.Success)
+}
+
+func TestDefaultCommandBus_Dispatch_ValidationError(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	validator := &MockCommandValidator{}
+	handler := &MockCommandHandler{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	validationError := cqrs.ErrCommandValidation.WithDetails("test validation error")
+	validator.On("Validate", cmd).Return(validationError)
+	validator.On("ValidateContext", mock.AnythingOfType("*cqrs.CommandContext")).Return(nil)
+	
+	// Set validator and register handler
+	bus.SetValidator(validator)
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.Error(t, err)
+	assert.True(t, cqrs.IsCommandError(err))
+	assert.Equal(t, "COMMAND_VALIDATION", cqrs.GetCommandErrorCode(err))
+	assert.NotNil(t, result)
+	assert.False(t, result.Success)
+	
+	validator.AssertExpectations(t)
+	// Handler should not be called
+	handler.AssertNotCalled(t, "Handle")
+}
+
+func TestDefaultCommandBus_Dispatch_HandlerError(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	handlerError := errors.New("handler execution error")
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(nil, handlerError)
+	
+	// Register handler
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.Error(t, err)
+	assert.Equal(t, handlerError, err)
+	assert.Nil(t, result)
+	
+	handler.AssertExpectations(t)
+}
+
+func TestDefaultCommandBus_Middleware(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	middleware := &MockCommandMiddleware{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	middleware.On("Execute", mock.AnythingOfType("*cqrs.CommandContext"), mock.AnythingOfType("func(*cqrs.CommandContext) (*cqrs.CommandResult, error)")).
+		Return(expectedResult, nil)
+	
+	// Add middleware and register handler
+	bus.AddMiddleware(middleware)
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+	
+	middleware.AssertExpectations(t)
+	// Handler should not be called directly (middleware intercepts)
+	handler.AssertNotCalled(t, "Handle")
+}
+
+func TestDefaultCommandBus_Interceptors(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	interceptor := &MockCommandInterceptor{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	interceptor.On("BeforeExecute", mock.AnythingOfType("*cqrs.CommandContext")).Return(nil)
+	interceptor.On("AfterExecute", mock.AnythingOfType("*cqrs.CommandContext"), expectedResult).Return(nil)
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(expectedResult, nil)
+	
+	// Add interceptor and register handler
+	bus.AddInterceptor(interceptor)
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+	
+	interceptor.AssertExpectations(t)
+	handler.AssertExpectations(t)
+}
+
+func TestDefaultCommandBus_Interceptors_BeforeExecuteError(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	interceptor := &MockCommandInterceptor{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	beforeError := errors.New("before execute error")
+	interceptor.On("BeforeExecute", mock.AnythingOfType("*cqrs.CommandContext")).Return(beforeError)
+	
+	// Add interceptor and register handler
+	bus.AddInterceptor(interceptor)
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.Error(t, err)
+	assert.Equal(t, beforeError, err)
+	assert.NotNil(t, result)
+	assert.False(t, result.Success)
+	
+	interceptor.AssertExpectations(t)
+	// Handler should not be called
+	handler.AssertNotCalled(t, "Handle")
+}
+
+func TestDefaultCommandBus_Metrics(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	metrics := &MockCommandMetrics{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(expectedResult, nil)
+	metrics.On("RecordCommandExecution", "TestCommand", mock.AnythingOfType("time.Duration"), true)
+	metrics.On("IncrementCommandCount", "TestCommand")
+	
+	// Set metrics and register handler
+	bus.SetMetrics(metrics)
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+	
+	handler.AssertExpectations(t)
+	metrics.AssertExpectations(t)
+}
+
+func TestDefaultCommandBus_Audit(t *testing.T) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	audit := &MockCommandAudit{}
+	cmd := createTestCommand(t)
+	
+	// Setup expectations
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(expectedResult, nil)
+	audit.On("LogCommandExecution", mock.AnythingOfType("*cqrs.CommandContext"), expectedResult)
+	
+	// Set audit and register handler
+	bus.SetAudit(audit)
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(t, err)
+	
+	// Dispatch command
+	result, err := bus.Dispatch(context.Background(), cmd)
+	
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+	
+	handler.AssertExpectations(t)
+	audit.AssertExpectations(t)
+}
+
+func TestCommandBusBuilder(t *testing.T) {
+	handler := &MockCommandHandler{}
+	middleware := &MockCommandMiddleware{}
+	interceptor := &MockCommandInterceptor{}
+	validator := &MockCommandValidator{}
+	metrics := &MockCommandMetrics{}
+	audit := &MockCommandAudit{}
+	
+	bus := cqrs.NewCommandBusBuilder().
+		WithHandler("TestCommand", handler).
+		WithMiddleware(middleware).
+		WithInterceptor(interceptor).
+		WithValidator(validator).
+		WithMetrics(metrics).
+		WithAudit(audit).
+		Build()
+	
+	assert.NotNil(t, bus)
+	
+	// Verify handler is registered
+	handlers := bus.GetRegisteredHandlers()
+	assert.Contains(t, handlers, "TestCommand")
+}
+
+func TestLoggingMiddleware(t *testing.T) {
+	// Test that logging middleware can be created
+	// Note: This is a basic test since the logger interface is generic
+	middleware := cqrs.LoggingMiddleware("mock-logger")
+	assert.NotNil(t, middleware)
+}
+
+func TestTimeoutMiddleware(t *testing.T) {
+	timeout := 100 * time.Millisecond
+	middleware := cqrs.TimeoutMiddleware(timeout)
+	
+	// Create a slow handler that will timeout
+	slowHandler := func(ctx *cqrs.CommandContext) (*cqrs.CommandResult, error) {
+		time.Sleep(200 * time.Millisecond)
+		return cqrs.NewCommandResult(ctx.Command.CommandID(), ctx.Command.AggregateID(), true), nil
+	}
+	
+	cmd := createTestCommand(t)
+	cmdCtx := cqrs.NewCommandContext(context.Background(), cmd)
+	
+	// Execute with timeout
+	result, err := middleware.Execute(cmdCtx, slowHandler)
+	
+	assert.Error(t, err)
+	assert.True(t, cqrs.IsCommandError(err))
+	assert.Equal(t, "COMMAND_TIMEOUT", cqrs.GetCommandErrorCode(err))
+	assert.NotNil(t, result)
+	assert.False(t, result.Success)
+}
+
+func TestRetryMiddleware(t *testing.T) {
+	maxRetries := 2
+	backoff := 10 * time.Millisecond
+	middleware := cqrs.RetryMiddleware(maxRetries, backoff)
+	
+	callCount := 0
+	retryableHandler := func(ctx *cqrs.CommandContext) (*cqrs.CommandResult, error) {
+		callCount++
+		if callCount < 3 {
+			return nil, cqrs.ErrCommandTimeout.WithDetails("simulated timeout")
+		}
+		return cqrs.NewCommandResult(ctx.Command.CommandID(), ctx.Command.AggregateID(), true), nil
+	}
+	
+	cmd := createTestCommand(t)
+	cmdCtx := cqrs.NewCommandContext(context.Background(), cmd)
+	
+	// Execute with retry
+	result, err := middleware.Execute(cmdCtx, retryableHandler)
+	
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	assert.True(t, result.Success)
+	assert.Equal(t, 3, callCount) // Initial + 2 retries
+}
+
+func TestRetryMiddleware_NonRetryableError(t *testing.T) {
+	maxRetries := 2
+	backoff := 10 * time.Millisecond
+	middleware := cqrs.RetryMiddleware(maxRetries, backoff)
+	
+	callCount := 0
+	nonRetryableHandler := func(ctx *cqrs.CommandContext) (*cqrs.CommandResult, error) {
+		callCount++
+		return nil, cqrs.ErrCommandValidation.WithDetails("validation error")
+	}
+	
+	cmd := createTestCommand(t)
+	cmdCtx := cqrs.NewCommandContext(context.Background(), cmd)
+	
+	// Execute with retry
+	result, err := middleware.Execute(cmdCtx, nonRetryableHandler)
+	
+	assert.Error(t, err)
+	assert.True(t, cqrs.IsCommandError(err))
+	assert.Equal(t, "COMMAND_VALIDATION", cqrs.GetCommandErrorCode(err))
+	assert.Nil(t, result)
+	assert.Equal(t, 1, callCount) // Should not retry validation errors
+}
+
+// Benchmark tests
+func BenchmarkCommandBus_Dispatch(b *testing.B) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	cmd := createTestCommand(&testing.T{})
+	
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(expectedResult, nil)
+	
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(b, err)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := bus.Dispatch(context.Background(), cmd)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkCommandBus_Dispatch_WithMiddleware(b *testing.B) {
+	bus := cqrs.NewCommandBus()
+	handler := &MockCommandHandler{}
+	cmd := createTestCommand(&testing.T{})
+	
+	// Add timeout middleware
+	bus.AddMiddleware(cqrs.TimeoutMiddleware(5 * time.Second))
+	
+	expectedResult := cqrs.NewCommandResult(cmd.CommandID(), cmd.AggregateID(), true)
+	handler.On("Handle", mock.AnythingOfType("*cqrs.CommandContext")).Return(expectedResult, nil)
+	
+	err := bus.RegisterHandler("TestCommand", handler)
+	require.NoError(b, err)
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := bus.Dispatch(context.Background(), cmd)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}

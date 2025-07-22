@@ -1,0 +1,495 @@
+package cqrs
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Query represents a query in the CQRS pattern
+type Query interface {
+	// QueryID returns the unique identifier of the query
+	QueryID() string
+	
+	// QueryType returns the type name of the query
+	QueryType() string
+	
+	// Timestamp returns when the query was created
+	Timestamp() time.Time
+	
+	// Metadata returns additional query metadata
+	Metadata() map[string]interface{}
+	
+	// Validate validates the query parameters
+	Validate() error
+}
+
+// BaseQuery provides a base implementation of the Query interface
+type BaseQuery struct {
+	QueryIDValue   string                 `json:"query_id"`
+	QueryTypeValue string                 `json:"query_type"`
+	TimestampValue time.Time              `json:"timestamp"`
+	MetadataValue  map[string]interface{} `json:"metadata"`
+}
+
+// NewBaseQuery creates a new base query
+func NewBaseQuery(queryType string) *BaseQuery {
+	return &BaseQuery{
+		QueryIDValue:   uuid.New().String(),
+		QueryTypeValue: queryType,
+		TimestampValue: time.Now().UTC(),
+		MetadataValue:  make(map[string]interface{}),
+	}
+}
+
+// QueryID returns the unique identifier of the query
+func (q *BaseQuery) QueryID() string {
+	return q.QueryIDValue
+}
+
+// QueryType returns the type name of the query
+func (q *BaseQuery) QueryType() string {
+	return q.QueryTypeValue
+}
+
+// Timestamp returns when the query was created
+func (q *BaseQuery) Timestamp() time.Time {
+	return q.TimestampValue
+}
+
+// Metadata returns additional query metadata
+func (q *BaseQuery) Metadata() map[string]interface{} {
+	return q.MetadataValue
+}
+
+// SetMetadata sets metadata for the query
+func (q *BaseQuery) SetMetadata(key string, value interface{}) {
+	if q.MetadataValue == nil {
+		q.MetadataValue = make(map[string]interface{})
+	}
+	q.MetadataValue[key] = value
+}
+
+// Validate provides a default validation (can be overridden)
+func (q *BaseQuery) Validate() error {
+	if q.QueryIDValue == "" {
+		return ErrInvalidQueryID
+	}
+	if q.QueryTypeValue == "" {
+		return ErrInvalidQueryType
+	}
+	return nil
+}
+
+// QueryResult represents the result of executing a query
+type QueryResult struct {
+	QueryID    string                 `json:"query_id"`
+	Success    bool                   `json:"success"`
+	Data       interface{}            `json:"data,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	ExecutedAt time.Time              `json:"executed_at"`
+	Duration   time.Duration          `json:"duration"`
+	Count      int                    `json:"count,omitempty"`      // For paginated results
+	Total      int                    `json:"total,omitempty"`      // Total available records
+	Page       int                    `json:"page,omitempty"`       // Current page number
+	PageSize   int                    `json:"page_size,omitempty"`  // Page size
+}
+
+// NewQueryResult creates a new query result
+func NewQueryResult(queryID string, success bool) *QueryResult {
+	return &QueryResult{
+		QueryID:    queryID,
+		Success:    success,
+		ExecutedAt: time.Now().UTC(),
+		Metadata:   make(map[string]interface{}),
+	}
+}
+
+// SetData sets the result data
+func (r *QueryResult) SetData(data interface{}) {
+	r.Data = data
+}
+
+// AddError adds an error to the query result
+func (r *QueryResult) AddError(err error) {
+	r.Success = false
+	r.Error = err.Error()
+}
+
+// SetDuration sets the execution duration
+func (r *QueryResult) SetDuration(duration time.Duration) {
+	r.Duration = duration
+}
+
+// SetPagination sets pagination information
+func (r *QueryResult) SetPagination(count, total, page, pageSize int) {
+	r.Count = count
+	r.Total = total
+	r.Page = page
+	r.PageSize = pageSize
+}
+
+// QueryContext provides execution context for queries
+type QueryContext struct {
+	Context     context.Context
+	Query       Query
+	UserID      string
+	SessionID   string
+	RequestID   string
+	TraceID     string
+	Timestamp   time.Time
+	Metadata    map[string]interface{}
+}
+
+// NewQueryContext creates a new query context
+func NewQueryContext(ctx context.Context, query Query) *QueryContext {
+	return &QueryContext{
+		Context:   ctx,
+		Query:     query,
+		Timestamp: time.Now().UTC(),
+		Metadata:  make(map[string]interface{}),
+	}
+}
+
+// WithUserID sets the user ID in the context
+func (qc *QueryContext) WithUserID(userID string) *QueryContext {
+	qc.UserID = userID
+	return qc
+}
+
+// WithSessionID sets the session ID in the context
+func (qc *QueryContext) WithSessionID(sessionID string) *QueryContext {
+	qc.SessionID = sessionID
+	return qc
+}
+
+// WithRequestID sets the request ID in the context
+func (qc *QueryContext) WithRequestID(requestID string) *QueryContext {
+	qc.RequestID = requestID
+	return qc
+}
+
+// WithTraceID sets the trace ID in the context
+func (qc *QueryContext) WithTraceID(traceID string) *QueryContext {
+	qc.TraceID = traceID
+	return qc
+}
+
+// WithMetadata sets metadata in the context
+func (qc *QueryContext) WithMetadata(key string, value interface{}) *QueryContext {
+	if qc.Metadata == nil {
+		qc.Metadata = make(map[string]interface{})
+	}
+	qc.Metadata[key] = value
+	return qc
+}
+
+// Pagination represents pagination parameters
+type Pagination struct {
+	Page     int `json:"page"`
+	PageSize int `json:"page_size"`
+	Offset   int `json:"offset"`
+	Limit    int `json:"limit"`
+}
+
+// NewPagination creates pagination parameters
+func NewPagination(page, pageSize int) *Pagination {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100 // Max page size
+	}
+	
+	offset := (page - 1) * pageSize
+	
+	return &Pagination{
+		Page:     page,
+		PageSize: pageSize,
+		Offset:   offset,
+		Limit:    pageSize,
+	}
+}
+
+// SortOrder represents sort direction
+type SortOrder string
+
+const (
+	SortAsc  SortOrder = "asc"
+	SortDesc SortOrder = "desc"
+)
+
+// SortField represents a field to sort by
+type SortField struct {
+	Field string    `json:"field"`
+	Order SortOrder `json:"order"`
+}
+
+// Sorting represents sorting parameters
+type Sorting struct {
+	Fields []SortField `json:"fields"`
+}
+
+// NewSorting creates sorting parameters
+func NewSorting(fields ...SortField) *Sorting {
+	return &Sorting{
+		Fields: fields,
+	}
+}
+
+// AddField adds a sort field
+func (s *Sorting) AddField(field string, order SortOrder) *Sorting {
+	s.Fields = append(s.Fields, SortField{
+		Field: field,
+		Order: order,
+	})
+	return s
+}
+
+// Filter represents a query filter
+type Filter struct {
+	Field    string      `json:"field"`
+	Operator string      `json:"operator"` // eq, ne, gt, gte, lt, lte, in, nin, like, regex
+	Value    interface{} `json:"value"`
+	Values   []interface{} `json:"values,omitempty"` // For 'in' and 'nin' operators
+}
+
+// Filtering represents filtering parameters
+type Filtering struct {
+	Filters []Filter `json:"filters"`
+	Logic   string   `json:"logic"` // "and" or "or"
+}
+
+// NewFiltering creates filtering parameters
+func NewFiltering(logic string) *Filtering {
+	if logic != "and" && logic != "or" {
+		logic = "and"
+	}
+	return &Filtering{
+		Filters: make([]Filter, 0),
+		Logic:   logic,
+	}
+}
+
+// AddFilter adds a filter
+func (f *Filtering) AddFilter(field, operator string, value interface{}) *Filtering {
+	f.Filters = append(f.Filters, Filter{
+		Field:    field,
+		Operator: operator,
+		Value:    value,
+	})
+	return f
+}
+
+// AddInFilter adds an "in" filter
+func (f *Filtering) AddInFilter(field string, values ...interface{}) *Filtering {
+	f.Filters = append(f.Filters, Filter{
+		Field:    field,
+		Operator: "in",
+		Values:   values,
+	})
+	return f
+}
+
+// QueryValidator defines the interface for query validation
+type QueryValidator interface {
+	Validate(query Query) error
+	ValidateContext(ctx *QueryContext) error
+}
+
+// QueryMiddleware defines middleware for query processing
+type QueryMiddleware interface {
+	Execute(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error)
+}
+
+// QueryMiddlewareFunc is a function adapter for QueryMiddleware
+type QueryMiddlewareFunc func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error)
+
+// Execute implements the QueryMiddleware interface
+func (f QueryMiddlewareFunc) Execute(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+	return f(ctx, next)
+}
+
+// QueryInterceptor provides hooks for query processing
+type QueryInterceptor interface {
+	BeforeExecute(ctx *QueryContext) error
+	AfterExecute(ctx *QueryContext, result *QueryResult) error
+	OnError(ctx *QueryContext, err error) error
+}
+
+// QueryMetrics provides metrics collection for queries
+type QueryMetrics interface {
+	RecordQueryExecution(queryType string, duration time.Duration, success bool)
+	RecordQueryError(queryType string, errorType string)
+	IncrementQueryCount(queryType string)
+	RecordQueryResultSize(queryType string, resultSize int)
+}
+
+// QueryAudit provides audit logging for queries
+type QueryAudit interface {
+	LogQueryExecution(ctx *QueryContext, result *QueryResult)
+	LogQueryFailure(ctx *QueryContext, err error)
+}
+
+// Error definitions for query processing
+var (
+	ErrInvalidQueryID     = NewQueryError("INVALID_QUERY_ID", "query ID cannot be empty")
+	ErrInvalidQueryType   = NewQueryError("INVALID_QUERY_TYPE", "query type cannot be empty")
+	ErrQueryValidation    = NewQueryError("QUERY_VALIDATION", "query validation failed")
+	ErrQueryExecution     = NewQueryError("QUERY_EXECUTION", "query execution failed")
+	ErrQueryTimeout       = NewQueryError("QUERY_TIMEOUT", "query execution timed out")
+	ErrQueryNotFound      = NewQueryError("QUERY_NOT_FOUND", "query handler not found")
+	ErrResourceNotFound   = NewQueryError("RESOURCE_NOT_FOUND", "requested resource not found")
+	ErrUnauthorizedQuery  = NewQueryError("UNAUTHORIZED_QUERY", "unauthorized to execute query")
+	ErrInvalidPagination  = NewQueryError("INVALID_PAGINATION", "invalid pagination parameters")
+	ErrInvalidSorting     = NewQueryError("INVALID_SORTING", "invalid sorting parameters")
+	ErrInvalidFiltering   = NewQueryError("INVALID_FILTERING", "invalid filtering parameters")
+)
+
+// QueryError represents a query-specific error
+type QueryError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// Error implements the error interface
+func (e *QueryError) Error() string {
+	if e.Details != "" {
+		return fmt.Sprintf("[%s] %s: %s", e.Code, e.Message, e.Details)
+	}
+	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+// NewQueryError creates a new query error
+func NewQueryError(code, message string) *QueryError {
+	return &QueryError{
+		Code:    code,
+		Message: message,
+	}
+}
+
+// WithDetails adds details to the query error
+func (e *QueryError) WithDetails(details string) *QueryError {
+	e.Details = details
+	return e
+}
+
+// IsQueryError checks if an error is a query error
+func IsQueryError(err error) bool {
+	_, ok := err.(*QueryError)
+	return ok
+}
+
+// GetQueryErrorCode extracts the error code from a query error
+func GetQueryErrorCode(err error) string {
+	if qryErr, ok := err.(*QueryError); ok {
+		return qryErr.Code
+	}
+	return ""
+}
+
+// ReadModel represents a read model for queries
+type ReadModel interface {
+	// GetID returns the unique identifier of the read model
+	GetID() string
+	
+	// GetType returns the type of the read model
+	GetType() string
+	
+	// GetVersion returns the version of the read model
+	GetVersion() int
+	
+	// GetLastUpdated returns when the read model was last updated
+	GetLastUpdated() time.Time
+	
+	// Validate validates the read model
+	Validate() error
+}
+
+// BaseReadModel provides a base implementation for read models
+type BaseReadModel struct {
+	ID          string    `json:"id"`
+	Type        string    `json:"type"`
+	Version     int       `json:"version"`
+	LastUpdated time.Time `json:"last_updated"`
+}
+
+// NewBaseReadModel creates a new base read model
+func NewBaseReadModel(id, modelType string) *BaseReadModel {
+	return &BaseReadModel{
+		ID:          id,
+		Type:        modelType,
+		Version:     1,
+		LastUpdated: time.Now().UTC(),
+	}
+}
+
+// GetID returns the unique identifier of the read model
+func (rm *BaseReadModel) GetID() string {
+	return rm.ID
+}
+
+// GetType returns the type of the read model
+func (rm *BaseReadModel) GetType() string {
+	return rm.Type
+}
+
+// GetVersion returns the version of the read model
+func (rm *BaseReadModel) GetVersion() int {
+	return rm.Version
+}
+
+// GetLastUpdated returns when the read model was last updated
+func (rm *BaseReadModel) GetLastUpdated() time.Time {
+	return rm.LastUpdated
+}
+
+// UpdateVersion increments the version and updates timestamp
+func (rm *BaseReadModel) UpdateVersion() {
+	rm.Version++
+	rm.LastUpdated = time.Now().UTC()
+}
+
+// Validate validates the base read model
+func (rm *BaseReadModel) Validate() error {
+	if rm.ID == "" {
+		return fmt.Errorf("read model ID cannot be empty")
+	}
+	if rm.Type == "" {
+		return fmt.Errorf("read model type cannot be empty")
+	}
+	if rm.Version < 1 {
+		return fmt.Errorf("read model version must be positive")
+	}
+	return nil
+}
+
+// ReadModelStore defines the interface for read model storage
+type ReadModelStore interface {
+	// Save saves a read model
+	Save(ctx context.Context, model ReadModel) error
+	
+	// FindByID finds a read model by ID
+	FindByID(ctx context.Context, id string) (ReadModel, error)
+	
+	// FindByType finds all read models of a specific type
+	FindByType(ctx context.Context, modelType string, pagination *Pagination) ([]ReadModel, error)
+	
+	// Query executes a complex query on read models
+	Query(ctx context.Context, query interface{}) ([]ReadModel, error)
+	
+	// Delete deletes a read model
+	Delete(ctx context.Context, id string) error
+	
+	// DeleteByType deletes all read models of a specific type
+	DeleteByType(ctx context.Context, modelType string) error
+	
+	// Count returns the total count of read models
+	Count(ctx context.Context, modelType string, filtering *Filtering) (int, error)
+}

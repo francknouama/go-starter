@@ -1,0 +1,535 @@
+package cqrs
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// QueryHandler defines the interface for handling queries
+type QueryHandler interface {
+	Handle(ctx *QueryContext) (*QueryResult, error)
+	CanHandle(query Query) bool
+}
+
+// QueryHandlerFunc is a function adapter for QueryHandler
+type QueryHandlerFunc func(ctx *QueryContext) (*QueryResult, error)
+
+// Handle implements the QueryHandler interface
+func (f QueryHandlerFunc) Handle(ctx *QueryContext) (*QueryResult, error) {
+	return f(ctx)
+}
+
+// CanHandle implements a default CanHandle method
+func (f QueryHandlerFunc) CanHandle(query Query) bool {
+	return true // Default implementation always returns true
+}
+
+// QueryBus handles query dispatching and execution
+type QueryBus interface {
+	// Execute executes a query and returns the result
+	Execute(ctx context.Context, query Query) (*QueryResult, error)
+	
+	// RegisterHandler registers a query handler for a specific query type
+	RegisterHandler(queryType string, handler QueryHandler) error
+	
+	// UnregisterHandler removes a query handler
+	UnregisterHandler(queryType string) error
+	
+	// GetRegisteredHandlers returns all registered query types
+	GetRegisteredHandlers() []string
+	
+	// AddMiddleware adds middleware to the query bus
+	AddMiddleware(middleware QueryMiddleware)
+	
+	// AddInterceptor adds an interceptor to the query bus
+	AddInterceptor(interceptor QueryInterceptor)
+	
+	// SetValidator sets the query validator
+	SetValidator(validator QueryValidator)
+	
+	// SetMetrics sets the metrics collector
+	SetMetrics(metrics QueryMetrics)
+	
+	// SetAudit sets the audit logger
+	SetAudit(audit QueryAudit)
+}
+
+// DefaultQueryBus is the default implementation of QueryBus
+type DefaultQueryBus struct {
+	handlers     map[string]QueryHandler
+	middlewares  []QueryMiddleware
+	interceptors []QueryInterceptor
+	validator    QueryValidator
+	metrics      QueryMetrics
+	audit        QueryAudit
+	mutex        sync.RWMutex
+}
+
+// NewQueryBus creates a new query bus
+func NewQueryBus() *DefaultQueryBus {
+	return &DefaultQueryBus{
+		handlers:     make(map[string]QueryHandler),
+		middlewares:  make([]QueryMiddleware, 0),
+		interceptors: make([]QueryInterceptor, 0),
+	}
+}
+
+// Execute executes a query and returns the result
+func (bus *DefaultQueryBus) Execute(ctx context.Context, query Query) (*QueryResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Create query context
+	queryCtx := NewQueryContext(ctx, query)
+	queryCtx.WithRequestID(uuid.New().String())
+
+	// Validate query
+	if err := bus.validateQuery(queryCtx); err != nil {
+		result := NewQueryResult(query.QueryID(), false)
+		result.AddError(err)
+		
+		if bus.audit != nil {
+			bus.audit.LogQueryFailure(queryCtx, err)
+		}
+		
+		return result, err
+	}
+
+	// Execute with middleware chain
+	handler := bus.buildHandler(query.QueryType())
+	if handler == nil {
+		err := ErrQueryNotFound.WithDetails(fmt.Sprintf("query type: %s", query.QueryType()))
+		result := NewQueryResult(query.QueryID(), false)
+		result.AddError(err)
+		
+		if bus.audit != nil {
+			bus.audit.LogQueryFailure(queryCtx, err)
+		}
+		
+		return result, err
+	}
+
+	// Execute with interceptors and middleware
+	result, err := bus.executeWithInterceptors(queryCtx, handler)
+	
+	// Record metrics
+	if bus.metrics != nil {
+		success := err == nil && result.Success
+		bus.metrics.RecordQueryExecution(query.QueryType(), result.Duration, success)
+		bus.metrics.IncrementQueryCount(query.QueryType())
+		
+		if result != nil && result.Count > 0 {
+			bus.metrics.RecordQueryResultSize(query.QueryType(), result.Count)
+		}
+		
+		if err != nil {
+			errorType := "unknown"
+			if qryErr, ok := err.(*QueryError); ok {
+				errorType = qryErr.Code
+			}
+			bus.metrics.RecordQueryError(query.QueryType(), errorType)
+		}
+	}
+
+	// Audit logging
+	if bus.audit != nil {
+		if err != nil {
+			bus.audit.LogQueryFailure(queryCtx, err)
+		} else {
+			bus.audit.LogQueryExecution(queryCtx, result)
+		}
+	}
+
+	return result, err
+}
+
+// RegisterHandler registers a query handler for a specific query type
+func (bus *DefaultQueryBus) RegisterHandler(queryType string, handler QueryHandler) error {
+	if queryType == "" {
+		return ErrInvalidQueryType
+	}
+	
+	if handler == nil {
+		return fmt.Errorf("query handler cannot be nil")
+	}
+
+	bus.mutex.Lock()
+	defer bus.mutex.Unlock()
+
+	if _, exists := bus.handlers[queryType]; exists {
+		return fmt.Errorf("handler already registered for query type: %s", queryType)
+	}
+
+	bus.handlers[queryType] = handler
+	return nil
+}
+
+// UnregisterHandler removes a query handler
+func (bus *DefaultQueryBus) UnregisterHandler(queryType string) error {
+	bus.mutex.Lock()
+	defer bus.mutex.Unlock()
+
+	if _, exists := bus.handlers[queryType]; !exists {
+		return fmt.Errorf("no handler registered for query type: %s", queryType)
+	}
+
+	delete(bus.handlers, queryType)
+	return nil
+}
+
+// GetRegisteredHandlers returns all registered query types
+func (bus *DefaultQueryBus) GetRegisteredHandlers() []string {
+	bus.mutex.RLock()
+	defer bus.mutex.RUnlock()
+
+	handlers := make([]string, 0, len(bus.handlers))
+	for queryType := range bus.handlers {
+		handlers = append(handlers, queryType)
+	}
+
+	return handlers
+}
+
+// AddMiddleware adds middleware to the query bus
+func (bus *DefaultQueryBus) AddMiddleware(middleware QueryMiddleware) {
+	if middleware != nil {
+		bus.middlewares = append(bus.middlewares, middleware)
+	}
+}
+
+// AddInterceptor adds an interceptor to the query bus
+func (bus *DefaultQueryBus) AddInterceptor(interceptor QueryInterceptor) {
+	if interceptor != nil {
+		bus.interceptors = append(bus.interceptors, interceptor)
+	}
+}
+
+// SetValidator sets the query validator
+func (bus *DefaultQueryBus) SetValidator(validator QueryValidator) {
+	bus.validator = validator
+}
+
+// SetMetrics sets the metrics collector
+func (bus *DefaultQueryBus) SetMetrics(metrics QueryMetrics) {
+	bus.metrics = metrics
+}
+
+// SetAudit sets the audit logger
+func (bus *DefaultQueryBus) SetAudit(audit QueryAudit) {
+	bus.audit = audit
+}
+
+// buildHandler creates the final handler with middleware chain
+func (bus *DefaultQueryBus) buildHandler(queryType string) QueryHandler {
+	bus.mutex.RLock()
+	handler, exists := bus.handlers[queryType]
+	bus.mutex.RUnlock()
+
+	if !exists {
+		return nil
+	}
+
+	// Wrap handler with middleware chain (in reverse order)
+	finalHandler := func(ctx *QueryContext) (*QueryResult, error) {
+		start := time.Now()
+		result, err := handler.Handle(ctx)
+		
+		if result != nil {
+			result.SetDuration(time.Since(start))
+		}
+		
+		return result, err
+	}
+
+	// Apply middleware in reverse order (last added executes first)
+	for i := len(bus.middlewares) - 1; i >= 0; i-- {
+		middleware := bus.middlewares[i]
+		currentHandler := finalHandler
+		
+		finalHandler = func(ctx *QueryContext) (*QueryResult, error) {
+			return middleware.Execute(ctx, currentHandler)
+		}
+	}
+
+	return QueryHandlerFunc(finalHandler)
+}
+
+// validateQuery validates the query using the configured validator
+func (bus *DefaultQueryBus) validateQuery(ctx *QueryContext) error {
+	// Basic validation
+	if err := ctx.Query.Validate(); err != nil {
+		return ErrQueryValidation.WithDetails(err.Error())
+	}
+
+	// Custom validator
+	if bus.validator != nil {
+		if err := bus.validator.Validate(ctx.Query); err != nil {
+			return ErrQueryValidation.WithDetails(err.Error())
+		}
+		
+		if err := bus.validator.ValidateContext(ctx); err != nil {
+			return ErrQueryValidation.WithDetails(err.Error())
+		}
+	}
+
+	return nil
+}
+
+// executeWithInterceptors executes the query with interceptor hooks
+func (bus *DefaultQueryBus) executeWithInterceptors(ctx *QueryContext, handler QueryHandler) (*QueryResult, error) {
+	// Before execute interceptors
+	for _, interceptor := range bus.interceptors {
+		if err := interceptor.BeforeExecute(ctx); err != nil {
+			return NewQueryResult(ctx.Query.QueryID(), false), err
+		}
+	}
+
+	// Execute the query
+	result, err := handler.Handle(ctx)
+
+	// Handle errors with interceptors
+	if err != nil {
+		for _, interceptor := range bus.interceptors {
+			if interceptorErr := interceptor.OnError(ctx, err); interceptorErr != nil {
+				// If interceptor error handling fails, return original error
+				break
+			}
+		}
+	}
+
+	// After execute interceptors
+	if result != nil {
+		for _, interceptor := range bus.interceptors {
+			if interceptorErr := interceptor.AfterExecute(ctx, result); interceptorErr != nil {
+				// Log interceptor errors but don't fail the query
+				continue
+			}
+		}
+	}
+
+	return result, err
+}
+
+// QueryBusBuilder provides a fluent interface for building a query bus
+type QueryBusBuilder struct {
+	bus *DefaultQueryBus
+}
+
+// NewQueryBusBuilder creates a new query bus builder
+func NewQueryBusBuilder() *QueryBusBuilder {
+	return &QueryBusBuilder{
+		bus: NewQueryBus(),
+	}
+}
+
+// WithHandler adds a query handler
+func (b *QueryBusBuilder) WithHandler(queryType string, handler QueryHandler) *QueryBusBuilder {
+	b.bus.RegisterHandler(queryType, handler)
+	return b
+}
+
+// WithMiddleware adds middleware
+func (b *QueryBusBuilder) WithMiddleware(middleware QueryMiddleware) *QueryBusBuilder {
+	b.bus.AddMiddleware(middleware)
+	return b
+}
+
+// WithInterceptor adds an interceptor
+func (b *QueryBusBuilder) WithInterceptor(interceptor QueryInterceptor) *QueryBusBuilder {
+	b.bus.AddInterceptor(interceptor)
+	return b
+}
+
+// WithValidator sets the validator
+func (b *QueryBusBuilder) WithValidator(validator QueryValidator) *QueryBusBuilder {
+	b.bus.SetValidator(validator)
+	return b
+}
+
+// WithMetrics sets the metrics collector
+func (b *QueryBusBuilder) WithMetrics(metrics QueryMetrics) *QueryBusBuilder {
+	b.bus.SetMetrics(metrics)
+	return b
+}
+
+// WithAudit sets the audit logger
+func (b *QueryBusBuilder) WithAudit(audit QueryAudit) *QueryBusBuilder {
+	b.bus.SetAudit(audit)
+	return b
+}
+
+// Build creates the query bus
+func (b *QueryBusBuilder) Build() QueryBus {
+	return b.bus
+}
+
+// Common middleware implementations
+
+// QueryLoggingMiddleware logs query execution
+func QueryLoggingMiddleware(logger interface{}) QueryMiddleware {
+	return QueryMiddlewareFunc(func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+		start := time.Now()
+		
+		// Log query start (implementation depends on logger type)
+		// This would need to be implemented based on the logger interface
+		
+		result, err := next(ctx)
+		
+		duration := time.Since(start)
+		
+		// Log query completion with duration and result
+		// Implementation depends on logger interface
+		_ = duration // Use duration for logging
+		
+		return result, err
+	})
+}
+
+// QueryTimeoutMiddleware adds timeout to query execution
+func QueryTimeoutMiddleware(timeout time.Duration) QueryMiddleware {
+	return QueryMiddlewareFunc(func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+		timeoutCtx, cancel := context.WithTimeout(ctx.Context, timeout)
+		defer cancel()
+		
+		ctx.Context = timeoutCtx
+		
+		// Execute with timeout
+		resultChan := make(chan *QueryResult, 1)
+		errorChan := make(chan error, 1)
+		
+		go func() {
+			result, err := next(ctx)
+			if err != nil {
+				errorChan <- err
+			} else {
+				resultChan <- result
+			}
+		}()
+		
+		select {
+		case result := <-resultChan:
+			return result, nil
+		case err := <-errorChan:
+			return nil, err
+		case <-timeoutCtx.Done():
+			return NewQueryResult(ctx.Query.QueryID(), false), 
+				   ErrQueryTimeout.WithDetails(fmt.Sprintf("timeout after %v", timeout))
+		}
+	})
+}
+
+// QueryCachingMiddleware adds caching to query execution
+func QueryCachingMiddleware(cache QueryCache, ttl time.Duration) QueryMiddleware {
+	return QueryMiddlewareFunc(func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+		// Create cache key based on query type and parameters
+		cacheKey := generateCacheKey(ctx.Query)
+		
+		// Try to get from cache
+		if cached, found := cache.Get(cacheKey); found {
+			if result, ok := cached.(*QueryResult); ok {
+				result.SetMetadata("cached", true)
+				return result, nil
+			}
+		}
+		
+		// Execute query
+		result, err := next(ctx)
+		if err != nil {
+			return result, err
+		}
+		
+		// Cache successful results
+		if result != nil && result.Success {
+			cache.Set(cacheKey, result, ttl)
+		}
+		
+		return result, err
+	})
+}
+
+// QueryCache defines the interface for query result caching
+type QueryCache interface {
+	Get(key string) (interface{}, bool)
+	Set(key string, value interface{}, ttl time.Duration)
+	Delete(key string)
+	Clear()
+}
+
+// generateCacheKey generates a cache key for a query
+func generateCacheKey(query Query) string {
+	// Simple implementation - in practice, you'd want to include
+	// query parameters in the cache key generation
+	return fmt.Sprintf("query:%s:%s", query.QueryType(), query.QueryID())
+}
+
+// QueryPaginationMiddleware validates and normalizes pagination
+func QueryPaginationMiddleware() QueryMiddleware {
+	return QueryMiddlewareFunc(func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+		// Extract pagination from query metadata if present
+		if paginationData, exists := ctx.Query.Metadata()["pagination"]; exists {
+			if pagination, ok := paginationData.(*Pagination); ok {
+				// Validate pagination parameters
+				if pagination.Page < 1 {
+					return NewQueryResult(ctx.Query.QueryID(), false), 
+						   ErrInvalidPagination.WithDetails("page must be >= 1")
+				}
+				if pagination.PageSize < 1 || pagination.PageSize > 100 {
+					return NewQueryResult(ctx.Query.QueryID(), false), 
+						   ErrInvalidPagination.WithDetails("page size must be between 1 and 100")
+				}
+			}
+		}
+		
+		return next(ctx)
+	})
+}
+
+// QueryAuthorizationMiddleware validates query authorization
+func QueryAuthorizationMiddleware(authz QueryAuthorizer) QueryMiddleware {
+	return QueryMiddlewareFunc(func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+		// Check if user is authorized to execute this query
+		if err := authz.Authorize(ctx); err != nil {
+			return NewQueryResult(ctx.Query.QueryID(), false), 
+				   ErrUnauthorizedQuery.WithDetails(err.Error())
+		}
+		
+		return next(ctx)
+	})
+}
+
+// QueryAuthorizer defines the interface for query authorization
+type QueryAuthorizer interface {
+	Authorize(ctx *QueryContext) error
+}
+
+// QueryResultTransformMiddleware transforms query results
+func QueryResultTransformMiddleware(transformer QueryResultTransformer) QueryMiddleware {
+	return QueryMiddlewareFunc(func(ctx *QueryContext, next func(*QueryContext) (*QueryResult, error)) (*QueryResult, error) {
+		result, err := next(ctx)
+		if err != nil {
+			return result, err
+		}
+		
+		// Transform the result
+		if result != nil && result.Success {
+			transformedResult, transformErr := transformer.Transform(ctx, result)
+			if transformErr != nil {
+				result.AddError(transformErr)
+				return result, transformErr
+			}
+			return transformedResult, nil
+		}
+		
+		return result, err
+	})
+}
+
+// QueryResultTransformer defines the interface for transforming query results
+type QueryResultTransformer interface {
+	Transform(ctx *QueryContext, result *QueryResult) (*QueryResult, error)
+}

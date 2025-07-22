@@ -1,0 +1,342 @@
+package domain
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Event represents a domain event in the event sourcing system
+type Event interface {
+	// EventID returns the unique identifier of the event
+	EventID() string
+	
+	// EventType returns the type name of the event
+	EventType() string
+	
+	// AggregateID returns the ID of the aggregate that generated this event
+	AggregateID() string
+	
+	// AggregateType returns the type of the aggregate
+	AggregateType() string
+	
+	// Version returns the version of the aggregate when this event was created
+	Version() int
+	
+	// Timestamp returns when the event occurred
+	Timestamp() time.Time
+	
+	// Data returns the event payload
+	Data() map[string]interface{}
+	
+	// Metadata returns additional event metadata
+	Metadata() map[string]interface{}
+	
+	// ToJSON serializes the event to JSON
+	ToJSON() ([]byte, error)
+	
+	// FromJSON deserializes the event from JSON
+	FromJSON(data []byte) error
+}
+
+// BaseEvent provides a base implementation of the Event interface
+type BaseEvent struct {
+	EventIDValue      string                 `json:"event_id"`
+	EventTypeValue    string                 `json:"event_type"`
+	AggregateIDValue  string                 `json:"aggregate_id"`
+	AggregateTypeValue string                `json:"aggregate_type"`
+	VersionValue      int                    `json:"version"`
+	TimestampValue    time.Time              `json:"timestamp"`
+	DataValue         map[string]interface{} `json:"data"`
+	MetadataValue     map[string]interface{} `json:"metadata"`
+}
+
+// NewBaseEvent creates a new base event
+func NewBaseEvent(eventType, aggregateID, aggregateType string, version int, data map[string]interface{}) *BaseEvent {
+	return &BaseEvent{
+		EventIDValue:       uuid.New().String(),
+		EventTypeValue:     eventType,
+		AggregateIDValue:   aggregateID,
+		AggregateTypeValue: aggregateType,
+		VersionValue:       version,
+		TimestampValue:     time.Now().UTC(),
+		DataValue:          data,
+		MetadataValue:      make(map[string]interface{}),
+	}
+}
+
+// EventID returns the unique identifier of the event
+func (e *BaseEvent) EventID() string {
+	return e.EventIDValue
+}
+
+// EventType returns the type name of the event
+func (e *BaseEvent) EventType() string {
+	return e.EventTypeValue
+}
+
+// AggregateID returns the ID of the aggregate that generated this event
+func (e *BaseEvent) AggregateID() string {
+	return e.AggregateIDValue
+}
+
+// AggregateType returns the type of the aggregate
+func (e *BaseEvent) AggregateType() string {
+	return e.AggregateTypeValue
+}
+
+// Version returns the version of the aggregate when this event was created
+func (e *BaseEvent) Version() int {
+	return e.VersionValue
+}
+
+// Timestamp returns when the event occurred
+func (e *BaseEvent) Timestamp() time.Time {
+	return e.TimestampValue
+}
+
+// Data returns the event payload
+func (e *BaseEvent) Data() map[string]interface{} {
+	return e.DataValue
+}
+
+// Metadata returns additional event metadata
+func (e *BaseEvent) Metadata() map[string]interface{} {
+	return e.MetadataValue
+}
+
+// SetMetadata sets metadata for the event
+func (e *BaseEvent) SetMetadata(key string, value interface{}) {
+	if e.MetadataValue == nil {
+		e.MetadataValue = make(map[string]interface{})
+	}
+	e.MetadataValue[key] = value
+}
+
+// ToJSON serializes the event to JSON
+func (e *BaseEvent) ToJSON() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// FromJSON deserializes the event from JSON
+func (e *BaseEvent) FromJSON(data []byte) error {
+	return json.Unmarshal(data, e)
+}
+
+// String returns a string representation of the event
+func (e *BaseEvent) String() string {
+	return fmt.Sprintf("Event{ID: %s, Type: %s, AggregateID: %s, Version: %d, Timestamp: %s}",
+		e.EventID(), e.EventType(), e.AggregateID(), e.Version(), e.Timestamp().Format(time.RFC3339))
+}
+
+// EventHandler defines the interface for handling domain events
+type EventHandler interface {
+	Handle(event Event) error
+	EventTypes() []string
+}
+
+// EventBus defines the interface for publishing and subscribing to events
+type EventBus interface {
+	Publish(events ...Event) error
+	Subscribe(eventType string, handler EventHandler) error
+	Unsubscribe(eventType string, handler EventHandler) error
+	Start() error
+	Stop() error
+}
+
+// EventStore defines the interface for persisting and retrieving events
+type EventStore interface {
+	SaveEvents(aggregateID string, events []Event, expectedVersion int) error
+	GetEvents(aggregateID string) ([]Event, error)
+	GetEventsAfterVersion(aggregateID string, version int) ([]Event, error)
+	GetAllEvents() ([]Event, error)
+	GetEventsByType(eventType string) ([]Event, error)
+	GetEventsByAggregateType(aggregateType string) ([]Event, error)
+	GetEventsInTimeRange(start, end time.Time) ([]Event, error)
+}
+
+// EventProjector defines the interface for projecting events to read models
+type EventProjector interface {
+	Project(event Event) error
+	ProjectAll(events []Event) error
+	Reset() error
+	GetProjectionName() string
+}
+
+// EventRegistry maintains a registry of event types for deserialization
+type EventRegistry struct {
+	eventTypes map[string]func() Event
+}
+
+// NewEventRegistry creates a new event registry
+func NewEventRegistry() *EventRegistry {
+	return &EventRegistry{
+		eventTypes: make(map[string]func() Event),
+	}
+}
+
+// Register registers an event type with a factory function
+func (r *EventRegistry) Register(eventType string, factory func() Event) {
+	r.eventTypes[eventType] = factory
+}
+
+// Create creates a new event instance by type
+func (r *EventRegistry) Create(eventType string) (Event, error) {
+	factory, exists := r.eventTypes[eventType]
+	if !exists {
+		return nil, fmt.Errorf("unknown event type: %s", eventType)
+	}
+	return factory(), nil
+}
+
+// GetRegisteredTypes returns all registered event types
+func (r *EventRegistry) GetRegisteredTypes() []string {
+	var types []string
+	for eventType := range r.eventTypes {
+		types = append(types, eventType)
+	}
+	return types
+}
+
+// EventVersion represents event schema versioning
+type EventVersion struct {
+	EventType string `json:"event_type"`
+	Version   int    `json:"version"`
+	Schema    string `json:"schema"`
+}
+
+// EventMigrator handles event schema migrations
+type EventMigrator interface {
+	Migrate(event Event, targetVersion int) (Event, error)
+	GetCurrentVersion(eventType string) int
+	RegisterMigration(eventType string, fromVersion, toVersion int, migrator func(Event) Event)
+}
+
+// EventFilter defines criteria for filtering events
+type EventFilter struct {
+	AggregateIDs   []string    `json:"aggregate_ids,omitempty"`
+	AggregateTypes []string    `json:"aggregate_types,omitempty"`
+	EventTypes     []string    `json:"event_types,omitempty"`
+	StartTime      *time.Time  `json:"start_time,omitempty"`
+	EndTime        *time.Time  `json:"end_time,omitempty"`
+	MinVersion     *int        `json:"min_version,omitempty"`
+	MaxVersion     *int        `json:"max_version,omitempty"`
+}
+
+// NewEventFilter creates a new event filter
+func NewEventFilter() *EventFilter {
+	return &EventFilter{}
+}
+
+// WithAggregateIDs adds aggregate IDs to the filter
+func (f *EventFilter) WithAggregateIDs(ids ...string) *EventFilter {
+	f.AggregateIDs = append(f.AggregateIDs, ids...)
+	return f
+}
+
+// WithAggregateTypes adds aggregate types to the filter
+func (f *EventFilter) WithAggregateTypes(types ...string) *EventFilter {
+	f.AggregateTypes = append(f.AggregateTypes, types...)
+	return f
+}
+
+// WithEventTypes adds event types to the filter
+func (f *EventFilter) WithEventTypes(types ...string) *EventFilter {
+	f.EventTypes = append(f.EventTypes, types...)
+	return f
+}
+
+// WithTimeRange sets the time range for the filter
+func (f *EventFilter) WithTimeRange(start, end time.Time) *EventFilter {
+	f.StartTime = &start
+	f.EndTime = &end
+	return f
+}
+
+// WithVersionRange sets the version range for the filter
+func (f *EventFilter) WithVersionRange(min, max int) *EventFilter {
+	f.MinVersion = &min
+	f.MaxVersion = &max
+	return f
+}
+
+// Matches checks if an event matches the filter criteria
+func (f *EventFilter) Matches(event Event) bool {
+	// Check aggregate IDs
+	if len(f.AggregateIDs) > 0 {
+		found := false
+		for _, id := range f.AggregateIDs {
+			if event.AggregateID() == id {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Check aggregate types
+	if len(f.AggregateTypes) > 0 {
+		found := false
+		for _, aggType := range f.AggregateTypes {
+			if event.AggregateType() == aggType {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Check event types
+	if len(f.EventTypes) > 0 {
+		found := false
+		for _, eventType := range f.EventTypes {
+			if event.EventType() == eventType {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// Check time range
+	if f.StartTime != nil && event.Timestamp().Before(*f.StartTime) {
+		return false
+	}
+	if f.EndTime != nil && event.Timestamp().After(*f.EndTime) {
+		return false
+	}
+
+	// Check version range
+	if f.MinVersion != nil && event.Version() < *f.MinVersion {
+		return false
+	}
+	if f.MaxVersion != nil && event.Version() > *f.MaxVersion {
+		return false
+	}
+
+	return true
+}
+
+// EventCorrelation represents event correlation information
+type EventCorrelation struct {
+	CorrelationID string `json:"correlation_id"`
+	CausationID   string `json:"causation_id"`
+	UserID        string `json:"user_id,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+}
+
+// NewEventCorrelation creates a new event correlation
+func NewEventCorrelation(correlationID, causationID string) *EventCorrelation {
+	return &EventCorrelation{
+		CorrelationID: correlationID,
+		CausationID:   causationID,
+	}
+}

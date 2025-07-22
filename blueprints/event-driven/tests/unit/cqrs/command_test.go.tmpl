@@ -1,0 +1,321 @@
+package cqrs_test
+
+import (
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/cqrs"
+)
+
+// Test Commands for testing
+type TestCommand struct {
+	*cqrs.BaseCommand
+	UserID string `json:"user_id"`
+	Name   string `json:"name"`
+}
+
+func NewTestCommand(userID, name string) *TestCommand {
+	return &TestCommand{
+		BaseCommand: cqrs.NewBaseCommand("TestCommand", userID),
+		UserID:      userID,
+		Name:        name,
+	}
+}
+
+func (c *TestCommand) Validate() error {
+	if err := c.BaseCommand.Validate(); err != nil {
+		return err
+	}
+	if c.UserID == "" {
+		return cqrs.ErrInvalidAggregateID.WithDetails("user_id cannot be empty")
+	}
+	if c.Name == "" {
+		return cqrs.ErrCommandValidation.WithDetails("name cannot be empty")
+	}
+	return nil
+}
+
+func TestBaseCommand_Creation(t *testing.T) {
+	tests := []struct {
+		name          string
+		commandType   string
+		aggregateID   string
+		expectError   bool
+	}{
+		{
+			name:        "valid command creation",
+			commandType: "CreateUser",
+			aggregateID: "user-123",
+			expectError: false,
+		},
+		{
+			name:        "empty command type",
+			commandType: "",
+			aggregateID: "user-123",
+			expectError: true,
+		},
+		{
+			name:        "empty aggregate ID",
+			commandType: "CreateUser",
+			aggregateID: "",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := cqrs.NewBaseCommand(tt.commandType, tt.aggregateID)
+			
+			if !tt.expectError {
+				assert.NotEmpty(t, cmd.CommandID())
+				assert.Equal(t, tt.commandType, cmd.CommandType())
+				assert.Equal(t, tt.aggregateID, cmd.AggregateID())
+				assert.WithinDuration(t, time.Now(), cmd.Timestamp(), time.Second)
+				assert.NotNil(t, cmd.Metadata())
+			}
+			
+			err := cmd.Validate()
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestBaseCommand_Metadata(t *testing.T) {
+	cmd := cqrs.NewBaseCommand("TestCommand", "test-id")
+	
+	// Initially empty
+	assert.Empty(t, cmd.Metadata())
+	
+	// Set metadata
+	cmd.SetMetadata("key1", "value1")
+	cmd.SetMetadata("key2", 42)
+	
+	metadata := cmd.Metadata()
+	assert.Equal(t, "value1", metadata["key1"])
+	assert.Equal(t, 42, metadata["key2"])
+}
+
+func TestCommandResult_Creation(t *testing.T) {
+	commandID := "cmd-123"
+	aggregateID := "agg-456"
+	
+	t.Run("successful result", func(t *testing.T) {
+		result := cqrs.NewCommandResult(commandID, aggregateID, true)
+		
+		assert.Equal(t, commandID, result.CommandID)
+		assert.Equal(t, aggregateID, result.AggregateID)
+		assert.True(t, result.Success)
+		assert.Empty(t, result.Error)
+		assert.WithinDuration(t, time.Now(), result.ExecutedAt, time.Second)
+		assert.NotNil(t, result.Metadata)
+	})
+	
+	t.Run("failed result", func(t *testing.T) {
+		result := cqrs.NewCommandResult(commandID, aggregateID, false)
+		
+		assert.Equal(t, commandID, result.CommandID)
+		assert.Equal(t, aggregateID, result.AggregateID)
+		assert.False(t, result.Success)
+	})
+}
+
+func TestCommandResult_ErrorHandling(t *testing.T) {
+	result := cqrs.NewCommandResult("cmd-123", "agg-456", true)
+	
+	// Add error
+	testError := cqrs.ErrCommandValidation.WithDetails("test error")
+	result.AddError(testError)
+	
+	assert.False(t, result.Success)
+	assert.Contains(t, result.Error, "test error")
+}
+
+func TestCommandResult_EventTracking(t *testing.T) {
+	result := cqrs.NewCommandResult("cmd-123", "agg-456", true)
+	
+	// Add events
+	result.AddEventID("event-1")
+	result.AddEventID("event-2")
+	
+	assert.Len(t, result.Events, 2)
+	assert.Contains(t, result.Events, "event-1")
+	assert.Contains(t, result.Events, "event-2")
+}
+
+func TestCommandResult_Duration(t *testing.T) {
+	result := cqrs.NewCommandResult("cmd-123", "agg-456", true)
+	
+	duration := 150 * time.Millisecond
+	result.SetDuration(duration)
+	
+	assert.Equal(t, duration, result.Duration)
+}
+
+func TestCommandContext_Creation(t *testing.T) {
+	cmd := NewTestCommand("user-123", "John Doe")
+	ctx := cqrs.NewCommandContext(nil, cmd)
+	
+	assert.NotNil(t, ctx.Context)
+	assert.Equal(t, cmd, ctx.Command)
+	assert.WithinDuration(t, time.Now(), ctx.Timestamp, time.Second)
+	assert.NotNil(t, ctx.Metadata)
+}
+
+func TestCommandContext_FluentInterface(t *testing.T) {
+	cmd := NewTestCommand("user-123", "John Doe")
+	ctx := cqrs.NewCommandContext(nil, cmd).
+		WithUserID("user-456").
+		WithSessionID("session-789").
+		WithRequestID("request-abc").
+		WithTraceID("trace-xyz").
+		WithMetadata("custom", "value")
+	
+	assert.Equal(t, "user-456", ctx.UserID)
+	assert.Equal(t, "session-789", ctx.SessionID)
+	assert.Equal(t, "request-abc", ctx.RequestID)
+	assert.Equal(t, "trace-xyz", ctx.TraceID)
+	assert.Equal(t, "value", ctx.Metadata["custom"])
+}
+
+func TestCommandError_Creation(t *testing.T) {
+	code := "TEST_ERROR"
+	message := "Test error message"
+	details := "Additional details"
+	
+	err := cqrs.NewCommandError(code, message).WithDetails(details)
+	
+	assert.Equal(t, code, err.Code)
+	assert.Equal(t, message, err.Message)
+	assert.Equal(t, details, err.Details)
+	assert.Contains(t, err.Error(), code)
+	assert.Contains(t, err.Error(), message)
+	assert.Contains(t, err.Error(), details)
+}
+
+func TestCommandError_ErrorInterface(t *testing.T) {
+	err := cqrs.ErrInvalidCommandID
+	
+	assert.True(t, cqrs.IsCommandError(err))
+	assert.Equal(t, "INVALID_COMMAND_ID", cqrs.GetCommandErrorCode(err))
+}
+
+func TestCommandError_StandardErrors(t *testing.T) {
+	standardErrors := []struct {
+		name string
+		err  *cqrs.CommandError
+		code string
+	}{
+		{"invalid command ID", cqrs.ErrInvalidCommandID, "INVALID_COMMAND_ID"},
+		{"invalid command type", cqrs.ErrInvalidCommandType, "INVALID_COMMAND_TYPE"},
+		{"invalid aggregate ID", cqrs.ErrInvalidAggregateID, "INVALID_AGGREGATE_ID"},
+		{"command validation", cqrs.ErrCommandValidation, "COMMAND_VALIDATION"},
+		{"command execution", cqrs.ErrCommandExecution, "COMMAND_EXECUTION"},
+		{"command timeout", cqrs.ErrCommandTimeout, "COMMAND_TIMEOUT"},
+		{"command not found", cqrs.ErrCommandNotFound, "COMMAND_NOT_FOUND"},
+		{"aggregate not found", cqrs.ErrAggregateNotFound, "AGGREGATE_NOT_FOUND"},
+		{"concurrency conflict", cqrs.ErrConcurrencyConflict, "CONCURRENCY_CONFLICT"},
+	}
+	
+	for _, tt := range standardErrors {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.code, tt.err.Code)
+			assert.NotEmpty(t, tt.err.Message)
+			assert.True(t, cqrs.IsCommandError(tt.err))
+			assert.Equal(t, tt.code, cqrs.GetCommandErrorCode(tt.err))
+		})
+	}
+}
+
+func TestTestCommand_Validation(t *testing.T) {
+	tests := []struct {
+		name        string
+		userID      string
+		cmdName     string
+		expectError bool
+		errorCode   string
+	}{
+		{
+			name:        "valid command",
+			userID:      "user-123",
+			cmdName:     "John Doe",
+			expectError: false,
+		},
+		{
+			name:        "empty user ID",
+			userID:      "",
+			cmdName:     "John Doe",
+			expectError: true,
+			errorCode:   "INVALID_AGGREGATE_ID",
+		},
+		{
+			name:        "empty name",
+			userID:      "user-123",
+			cmdName:     "",
+			expectError: true,
+			errorCode:   "COMMAND_VALIDATION",
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := NewTestCommand(tt.userID, tt.cmdName)
+			err := cmd.Validate()
+			
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorCode != "" {
+					assert.True(t, cqrs.IsCommandError(err))
+					assert.Equal(t, tt.errorCode, cqrs.GetCommandErrorCode(err))
+				}
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// Benchmark tests
+func BenchmarkBaseCommand_Creation(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		cmd := cqrs.NewBaseCommand("BenchmarkCommand", "aggregate-123")
+		_ = cmd
+	}
+}
+
+func BenchmarkCommandResult_Creation(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		result := cqrs.NewCommandResult("cmd-123", "agg-456", true)
+		_ = result
+	}
+}
+
+func BenchmarkCommandContext_Creation(b *testing.B) {
+	cmd := cqrs.NewBaseCommand("BenchmarkCommand", "aggregate-123")
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ctx := cqrs.NewCommandContext(nil, cmd)
+		_ = ctx
+	}
+}
+
+// Integration test helpers
+func createTestCommand(t *testing.T) *TestCommand {
+	t.Helper()
+	return NewTestCommand("user-123", "Test User")
+}
+
+func createValidCommandContext(t *testing.T) *cqrs.CommandContext {
+	t.Helper()
+	cmd := createTestCommand(t)
+	return cqrs.NewCommandContext(nil, cmd).
+		WithUserID("user-123").
+		WithRequestID("request-abc")
+}

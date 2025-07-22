@@ -1,0 +1,285 @@
+package cqrs
+
+import (
+	"context"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// Command represents a command in the CQRS pattern
+type Command interface {
+	// CommandID returns the unique identifier of the command
+	CommandID() string
+	
+	// CommandType returns the type name of the command
+	CommandType() string
+	
+	// AggregateID returns the ID of the aggregate this command targets
+	AggregateID() string
+	
+	// Timestamp returns when the command was created
+	Timestamp() time.Time
+	
+	// Metadata returns additional command metadata
+	Metadata() map[string]interface{}
+	
+	// Validate validates the command data
+	Validate() error
+}
+
+// BaseCommand provides a base implementation of the Command interface
+type BaseCommand struct {
+	CommandIDValue   string                 `json:"command_id"`
+	CommandTypeValue string                 `json:"command_type"`
+	AggregateIDValue string                 `json:"aggregate_id"`
+	TimestampValue   time.Time              `json:"timestamp"`
+	MetadataValue    map[string]interface{} `json:"metadata"`
+}
+
+// NewBaseCommand creates a new base command
+func NewBaseCommand(commandType, aggregateID string) *BaseCommand {
+	return &BaseCommand{
+		CommandIDValue:   uuid.New().String(),
+		CommandTypeValue: commandType,
+		AggregateIDValue: aggregateID,
+		TimestampValue:   time.Now().UTC(),
+		MetadataValue:    make(map[string]interface{}),
+	}
+}
+
+// CommandID returns the unique identifier of the command
+func (c *BaseCommand) CommandID() string {
+	return c.CommandIDValue
+}
+
+// CommandType returns the type name of the command
+func (c *BaseCommand) CommandType() string {
+	return c.CommandTypeValue
+}
+
+// AggregateID returns the ID of the aggregate this command targets
+func (c *BaseCommand) AggregateID() string {
+	return c.AggregateIDValue
+}
+
+// Timestamp returns when the command was created
+func (c *BaseCommand) Timestamp() time.Time {
+	return c.TimestampValue
+}
+
+// Metadata returns additional command metadata
+func (c *BaseCommand) Metadata() map[string]interface{} {
+	return c.MetadataValue
+}
+
+// SetMetadata sets metadata for the command
+func (c *BaseCommand) SetMetadata(key string, value interface{}) {
+	if c.MetadataValue == nil {
+		c.MetadataValue = make(map[string]interface{})
+	}
+	c.MetadataValue[key] = value
+}
+
+// Validate provides a default validation (can be overridden)
+func (c *BaseCommand) Validate() error {
+	if c.CommandIDValue == "" {
+		return ErrInvalidCommandID
+	}
+	if c.CommandTypeValue == "" {
+		return ErrInvalidCommandType
+	}
+	if c.AggregateIDValue == "" {
+		return ErrInvalidAggregateID
+	}
+	return nil
+}
+
+// CommandResult represents the result of executing a command
+type CommandResult struct {
+	CommandID    string                 `json:"command_id"`
+	AggregateID  string                 `json:"aggregate_id"`
+	Success      bool                   `json:"success"`
+	Error        string                 `json:"error,omitempty"`
+	Events       []string               `json:"events,omitempty"` // Event IDs generated
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ExecutedAt   time.Time              `json:"executed_at"`
+	Duration     time.Duration          `json:"duration"`
+}
+
+// NewCommandResult creates a new command result
+func NewCommandResult(commandID, aggregateID string, success bool) *CommandResult {
+	return &CommandResult{
+		CommandID:   commandID,
+		AggregateID: aggregateID,
+		Success:     success,
+		ExecutedAt:  time.Now().UTC(),
+		Metadata:    make(map[string]interface{}),
+	}
+}
+
+// AddError adds an error to the command result
+func (r *CommandResult) AddError(err error) {
+	r.Success = false
+	r.Error = err.Error()
+}
+
+// AddEventID adds an event ID to the result
+func (r *CommandResult) AddEventID(eventID string) {
+	r.Events = append(r.Events, eventID)
+}
+
+// SetDuration sets the execution duration
+func (r *CommandResult) SetDuration(duration time.Duration) {
+	r.Duration = duration
+}
+
+// CommandContext provides execution context for commands
+type CommandContext struct {
+	Context     context.Context
+	Command     Command
+	UserID      string
+	SessionID   string
+	RequestID   string
+	TraceID     string
+	Timestamp   time.Time
+	Metadata    map[string]interface{}
+}
+
+// NewCommandContext creates a new command context
+func NewCommandContext(ctx context.Context, cmd Command) *CommandContext {
+	return &CommandContext{
+		Context:   ctx,
+		Command:   cmd,
+		Timestamp: time.Now().UTC(),
+		Metadata:  make(map[string]interface{}),
+	}
+}
+
+// WithUserID sets the user ID in the context
+func (cc *CommandContext) WithUserID(userID string) *CommandContext {
+	cc.UserID = userID
+	return cc
+}
+
+// WithSessionID sets the session ID in the context
+func (cc *CommandContext) WithSessionID(sessionID string) *CommandContext {
+	cc.SessionID = sessionID
+	return cc
+}
+
+// WithRequestID sets the request ID in the context
+func (cc *CommandContext) WithRequestID(requestID string) *CommandContext {
+	cc.RequestID = requestID
+	return cc
+}
+
+// WithTraceID sets the trace ID in the context
+func (cc *CommandContext) WithTraceID(traceID string) *CommandContext {
+	cc.TraceID = traceID
+	return cc
+}
+
+// WithMetadata sets metadata in the context
+func (cc *CommandContext) WithMetadata(key string, value interface{}) *CommandContext {
+	if cc.Metadata == nil {
+		cc.Metadata = make(map[string]interface{})
+	}
+	cc.Metadata[key] = value
+	return cc
+}
+
+// CommandValidator defines the interface for command validation
+type CommandValidator interface {
+	Validate(cmd Command) error
+	ValidateContext(ctx *CommandContext) error
+}
+
+// CommandMiddleware defines middleware for command processing
+type CommandMiddleware interface {
+	Execute(ctx *CommandContext, next func(*CommandContext) (*CommandResult, error)) (*CommandResult, error)
+}
+
+// CommandMiddlewareFunc is a function adapter for CommandMiddleware
+type CommandMiddlewareFunc func(ctx *CommandContext, next func(*CommandContext) (*CommandResult, error)) (*CommandResult, error)
+
+// Execute implements the CommandMiddleware interface
+func (f CommandMiddlewareFunc) Execute(ctx *CommandContext, next func(*CommandContext) (*CommandResult, error)) (*CommandResult, error) {
+	return f(ctx, next)
+}
+
+// CommandInterceptor provides hooks for command processing
+type CommandInterceptor interface {
+	BeforeExecute(ctx *CommandContext) error
+	AfterExecute(ctx *CommandContext, result *CommandResult) error
+	OnError(ctx *CommandContext, err error) error
+}
+
+// CommandMetrics provides metrics collection for commands
+type CommandMetrics interface {
+	RecordCommandExecution(commandType string, duration time.Duration, success bool)
+	RecordCommandError(commandType string, errorType string)
+	IncrementCommandCount(commandType string)
+}
+
+// CommandAudit provides audit logging for commands
+type CommandAudit interface {
+	LogCommandExecution(ctx *CommandContext, result *CommandResult)
+	LogCommandFailure(ctx *CommandContext, err error)
+}
+
+// Error definitions for command processing
+var (
+	ErrInvalidCommandID     = NewCommandError("INVALID_COMMAND_ID", "command ID cannot be empty")
+	ErrInvalidCommandType   = NewCommandError("INVALID_COMMAND_TYPE", "command type cannot be empty")
+	ErrInvalidAggregateID   = NewCommandError("INVALID_AGGREGATE_ID", "aggregate ID cannot be empty")
+	ErrCommandValidation    = NewCommandError("COMMAND_VALIDATION", "command validation failed")
+	ErrCommandExecution     = NewCommandError("COMMAND_EXECUTION", "command execution failed")
+	ErrCommandTimeout       = NewCommandError("COMMAND_TIMEOUT", "command execution timed out")
+	ErrCommandNotFound      = NewCommandError("COMMAND_NOT_FOUND", "command handler not found")
+	ErrAggregateNotFound    = NewCommandError("AGGREGATE_NOT_FOUND", "aggregate not found")
+	ErrConcurrencyConflict  = NewCommandError("CONCURRENCY_CONFLICT", "concurrency conflict detected")
+)
+
+// CommandError represents a command-specific error
+type CommandError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// Error implements the error interface
+func (e *CommandError) Error() string {
+	if e.Details != "" {
+		return fmt.Sprintf("[%s] %s: %s", e.Code, e.Message, e.Details)
+	}
+	return fmt.Sprintf("[%s] %s", e.Code, e.Message)
+}
+
+// NewCommandError creates a new command error
+func NewCommandError(code, message string) *CommandError {
+	return &CommandError{
+		Code:    code,
+		Message: message,
+	}
+}
+
+// WithDetails adds details to the command error
+func (e *CommandError) WithDetails(details string) *CommandError {
+	e.Details = details
+	return e
+}
+
+// IsCommandError checks if an error is a command error
+func IsCommandError(err error) bool {
+	_, ok := err.(*CommandError)
+	return ok
+}
+
+// GetCommandErrorCode extracts the error code from a command error
+func GetCommandErrorCode(err error) string {
+	if cmdErr, ok := err.(*CommandError); ok {
+		return cmdErr.Code
+	}
+	return ""
+}

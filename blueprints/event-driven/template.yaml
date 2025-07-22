@@ -1,0 +1,354 @@
+name: event-driven
+description: "Event-driven architecture with CQRS and Event Sourcing patterns for scalable, auditable applications"
+category: advanced
+architecture: event-driven
+complexity: expert
+quality_score: 8.8
+
+# Supported configurations
+supported_frameworks:
+  - gin
+  - echo
+  - fiber
+  - chi
+
+supported_databases:
+  - postgres    # Primary event store
+  - mongodb     # Document store for read models
+  - mysql       # Alternative event store
+
+supported_message_queues:
+  - redis       # Event publishing
+  - nats        # Event streaming
+  - kafka       # High-throughput events
+  - rabbitmq    # Reliable messaging
+
+# Variables for template generation
+variables:
+  - name: ProjectName
+    description: "Name of the project"
+    type: string
+    required: true
+  - name: ModulePath
+    description: "Go module path (e.g., github.com/user/project)"
+    type: string
+    required: true
+  - name: GoVersion
+    description: "Go version to use"
+    type: string
+    default: "1.21"
+  - name: Framework
+    description: "HTTP framework to use"
+    type: string
+    default: "gin"
+  - name: DatabaseType
+    description: "Primary database for event store"
+    type: string
+    default: "postgres"
+  - name: MessageQueue
+    description: "Message queue for event publishing"
+    type: string
+    default: "nats"
+  - name: LoggerType
+    description: "Logging framework"
+    type: string
+    default: "slog"
+
+# File definitions
+files:
+  # Root files
+  - source: go.mod.tmpl
+    destination: go.mod
+  - source: go.sum.tmpl
+    destination: go.sum
+    condition: "{{.GenerateGoSum}}"
+  - source: main.go.tmpl
+    destination: main.go
+  - source: README.md.tmpl
+    destination: README.md
+  - source: Dockerfile.tmpl
+    destination: Dockerfile
+  - source: .dockerignore.tmpl
+    destination: .dockerignore
+  - source: .gitignore.tmpl
+    destination: .gitignore
+  - source: docker-compose.yml.tmpl
+    destination: docker-compose.yml
+  - source: Makefile.tmpl
+    destination: Makefile
+
+  # Configuration
+  - source: configs/config.yaml.tmpl
+    destination: configs/config.yaml
+  - source: configs/config.go.tmpl
+    destination: internal/config/config.go
+
+  # Domain layer - Core business logic
+  - source: internal/domain/aggregate.go.tmpl
+    destination: internal/domain/aggregate.go
+  - source: internal/domain/event.go.tmpl
+    destination: internal/domain/event.go
+  - source: internal/domain/repository.go.tmpl
+    destination: internal/domain/repository.go
+  - source: internal/domain/user/user.go.tmpl
+    destination: internal/domain/user/user.go
+  - source: internal/domain/user/events.go.tmpl
+    destination: internal/domain/user/events.go
+  - source: internal/domain/user/commands.go.tmpl
+    destination: internal/domain/user/commands.go
+  - source: internal/domain/order/order.go.tmpl
+    destination: internal/domain/order/order.go
+  - source: internal/domain/order/events.go.tmpl
+    destination: internal/domain/order/events.go
+  - source: internal/domain/order/commands.go.tmpl
+    destination: internal/domain/order/commands.go
+
+  # Event Store infrastructure
+  - source: internal/eventstore/store.go.tmpl
+    destination: internal/eventstore/store.go
+  - source: internal/eventstore/postgres/store.go.tmpl
+    destination: internal/eventstore/postgres/store.go
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - source: internal/eventstore/mongodb/store.go.tmpl
+    destination: internal/eventstore/mongodb/store.go
+    condition: "{{eq .DatabaseType \"mongodb\"}}"
+  - source: internal/eventstore/mysql/store.go.tmpl
+    destination: internal/eventstore/mysql/store.go
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+  - source: internal/eventstore/memory/store.go.tmpl
+    destination: internal/eventstore/memory/store.go
+
+  # CQRS Command side
+  - source: internal/cqrs/command.go.tmpl
+    destination: internal/cqrs/command.go
+  - source: internal/cqrs/command_bus.go.tmpl
+    destination: internal/cqrs/command_bus.go
+  - source: internal/cqrs/command_handler.go.tmpl
+    destination: internal/cqrs/command_handler.go
+  - source: internal/commands/user_commands.go.tmpl
+    destination: internal/commands/user_commands.go
+  - source: internal/commands/order_commands.go.tmpl
+    destination: internal/commands/order_commands.go
+
+  # CQRS Query side
+  - source: internal/cqrs/query.go.tmpl
+    destination: internal/cqrs/query.go
+  - source: internal/cqrs/query_bus.go.tmpl
+    destination: internal/cqrs/query_bus.go
+  - source: internal/cqrs/query_handler.go.tmpl
+    destination: internal/cqrs/query_handler.go
+  - source: internal/queries/user_queries.go.tmpl
+    destination: internal/queries/user_queries.go
+  - source: internal/queries/order_queries.go.tmpl
+    destination: internal/queries/order_queries.go
+
+  # Read Models and Projections
+  - source: internal/projections/projector.go.tmpl
+    destination: internal/projections/projector.go
+  - source: internal/projections/user_projection.go.tmpl
+    destination: internal/projections/user_projection.go
+  - source: internal/projections/order_projection.go.tmpl
+    destination: internal/projections/order_projection.go
+  - source: internal/readmodels/user_readmodel.go.tmpl
+    destination: internal/readmodels/user_readmodel.go
+  - source: internal/readmodels/order_readmodel.go.tmpl
+    destination: internal/readmodels/order_readmodel.go
+
+  # Event Bus and Publishing
+  - source: internal/eventbus/bus.go.tmpl
+    destination: internal/eventbus/bus.go
+  - source: internal/eventbus/redis/bus.go.tmpl
+    destination: internal/eventbus/redis/bus.go
+    condition: "{{eq .MessageQueue \"redis\"}}"
+  - source: internal/eventbus/nats/bus.go.tmpl
+    destination: internal/eventbus/nats/bus.go
+    condition: "{{eq .MessageQueue \"nats\"}}"
+  - source: internal/eventbus/kafka/bus.go.tmpl
+    destination: internal/eventbus/kafka/bus.go
+    condition: "{{eq .MessageQueue \"kafka\"}}"
+  - source: internal/eventbus/rabbitmq/bus.go.tmpl
+    destination: internal/eventbus/rabbitmq/bus.go
+    condition: "{{eq .MessageQueue \"rabbitmq\"}}"
+
+  # Snapshots for performance
+  - source: internal/snapshots/snapshot.go.tmpl
+    destination: internal/snapshots/snapshot.go
+  - source: internal/snapshots/store.go.tmpl
+    destination: internal/snapshots/store.go
+
+  # Sagas for complex workflows
+  - source: internal/sagas/saga.go.tmpl
+    destination: internal/sagas/saga.go
+  - source: internal/sagas/order_saga.go.tmpl
+    destination: internal/sagas/order_saga.go
+
+  # HTTP API handlers
+  - source: internal/api/handlers/user_handler.go.tmpl
+    destination: internal/api/handlers/user_handler.go
+  - source: internal/api/handlers/order_handler.go.tmpl
+    destination: internal/api/handlers/order_handler.go
+  - source: internal/api/middleware/middleware.go.tmpl
+    destination: internal/api/middleware/middleware.go
+  - source: internal/api/routes.go.tmpl
+    destination: internal/api/routes.go
+
+  # Application services
+  - source: internal/application/user_service.go.tmpl
+    destination: internal/application/user_service.go
+  - source: internal/application/order_service.go.tmpl
+    destination: internal/application/order_service.go
+
+  # Infrastructure
+  - source: internal/infrastructure/logger.go.tmpl
+    destination: internal/infrastructure/logger.go
+  - source: internal/infrastructure/database.go.tmpl
+    destination: internal/infrastructure/database.go
+  - source: internal/infrastructure/messaging.go.tmpl
+    destination: internal/infrastructure/messaging.go
+
+  # Utilities and helpers
+  - source: pkg/errors/errors.go.tmpl
+    destination: pkg/errors/errors.go
+  - source: pkg/serialization/json.go.tmpl
+    destination: pkg/serialization/json.go
+  - source: pkg/validation/validator.go.tmpl
+    destination: pkg/validation/validator.go
+
+  # Testing utilities
+  - source: test/fixtures/events.go.tmpl
+    destination: test/fixtures/events.go
+  - source: test/helpers/testhelpers.go.tmpl
+    destination: test/helpers/testhelpers.go
+
+  # Database migrations
+  - source: migrations/postgres/001_create_events.sql.tmpl
+    destination: migrations/postgres/001_create_events.sql
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - source: migrations/postgres/002_create_snapshots.sql.tmpl
+    destination: migrations/postgres/002_create_snapshots.sql
+    condition: "{{eq .DatabaseType \"postgres\"}}"
+  - source: migrations/mysql/001_create_events.sql.tmpl
+    destination: migrations/mysql/001_create_events.sql
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+  - source: migrations/mysql/002_create_snapshots.sql.tmpl
+    destination: migrations/mysql/002_create_snapshots.sql
+    condition: "{{eq .DatabaseType \"mysql\"}}"
+
+  # Scripts and tools
+  - source: scripts/setup.sh.tmpl
+    destination: scripts/setup.sh
+  - source: scripts/migrate.sh.tmpl
+    destination: scripts/migrate.sh
+  - source: scripts/seed-events.sh.tmpl
+    destination: scripts/seed-events.sh
+
+  # CI/CD
+  - source: .github/workflows/ci.yml.tmpl
+    destination: .github/workflows/ci.yml
+  - source: .github/workflows/release.yml.tmpl
+    destination: .github/workflows/release.yml
+
+# Dependencies for different configurations
+dependencies:
+  - module: "github.com/google/uuid"
+    version: "v1.4.0"
+  - module: "github.com/pkg/errors"
+    version: "v0.9.1"
+  - module: "github.com/gin-gonic/gin"
+    version: "v1.9.1"
+  - module: "github.com/lib/pq"
+    version: "v1.10.9"
+  - module: "github.com/jackc/pgx/v5"
+    version: "v5.5.0"
+  - module: "go.mongodb.org/mongo-driver"
+    version: "v1.13.1"
+  - module: "github.com/go-sql-driver/mysql"
+    version: "v1.7.1"
+  - module: "github.com/redis/go-redis/v9"
+    version: "v9.3.0"
+  - module: "github.com/nats-io/nats.go"
+    version: "v1.31.0"
+  - module: "github.com/IBM/sarama"
+    version: "v1.42.1"
+  - module: "github.com/rabbitmq/amqp091-go"
+    version: "v1.9.0"
+
+# Development tools
+dev_dependencies:
+  - golang.org/x/tools/cmd/goimports@latest
+  - github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+  - github.com/cosmtrek/air@latest
+
+# Blueprint metadata
+features:
+  - name: "cqrs"
+    description: "CQRS (Command Query Responsibility Segregation)"
+    enabled_when: "true"
+  - name: "event_sourcing"
+    description: "Event Sourcing with complete audit trail"
+    enabled_when: "true"
+  - name: "ddd_patterns"
+    description: "Domain-Driven Design (DDD) patterns"
+    enabled_when: "true"
+  - name: "event_store"
+    description: "Event Store with multiple backend support"
+    enabled_when: "true"
+  - name: "read_model_projections"
+    description: "Read model projections for optimized queries"
+    enabled_when: "true"
+  - name: "saga_pattern"
+    description: "Saga pattern for complex workflows"
+    enabled_when: "true"
+  - name: "snapshot_support"
+    description: "Snapshot support for performance"
+    enabled_when: "true"
+  - name: "event_versioning"
+    description: "Event versioning and schema evolution"
+    enabled_when: "true"
+  - name: "multi_framework_api"
+    description: "Multi-framework HTTP API support"
+    enabled_when: "true"
+  - name: "error_handling"
+    description: "Comprehensive error handling"
+    enabled_when: "true"
+  - name: "docker_containerization"
+    description: "Docker containerization"
+    enabled_when: "true"
+  - name: "cicd_integration"
+    description: "CI/CD pipeline integration"
+    enabled_when: "true"
+
+use_cases:
+  - Financial systems requiring audit trails
+  - E-commerce platforms with complex workflows
+  - Real-time analytics and reporting systems
+  - Systems requiring temporal queries
+  - Microservices with eventual consistency
+  - High-throughput event processing
+  - Compliance and regulatory systems
+  - Distributed transaction management
+
+complexity_indicators:
+  - lines_of_code: 5000+
+  - files_count: 50+
+  - concepts: expert-level
+  - maintenance: high
+  - learning_curve: steep
+
+# Quality assurance
+quality_gates:
+  - compile_check: true
+  - lint_check: true
+  - test_coverage: 80%
+  - integration_tests: true
+  - performance_tests: true
+  - security_scan: true
+
+# Documentation requirements
+documentation:
+  - architecture_diagram: true
+  - api_documentation: true
+  - deployment_guide: true
+  - development_setup: true
+  - pattern_explanation: true
+  - troubleshooting_guide: true

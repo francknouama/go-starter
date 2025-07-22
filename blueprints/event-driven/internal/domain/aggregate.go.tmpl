@@ -1,0 +1,215 @@
+package domain
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+)
+
+// AggregateRoot represents the base aggregate root with event sourcing capabilities
+type AggregateRoot struct {
+	id             string
+	version        int
+	uncommittedEvents []Event
+	appliedEvents     []Event
+}
+
+// NewAggregateRoot creates a new aggregate root instance
+func NewAggregateRoot(id string) *AggregateRoot {
+	return &AggregateRoot{
+		id:                id,
+		version:           0,
+		uncommittedEvents: make([]Event, 0),
+		appliedEvents:     make([]Event, 0),
+	}
+}
+
+// ID returns the aggregate's unique identifier
+func (ar *AggregateRoot) ID() string {
+	return ar.id
+}
+
+// Version returns the current version of the aggregate
+func (ar *AggregateRoot) Version() int {
+	return ar.version
+}
+
+// UncommittedEvents returns all uncommitted events
+func (ar *AggregateRoot) UncommittedEvents() []Event {
+	return ar.uncommittedEvents
+}
+
+// AppliedEvents returns all applied events
+func (ar *AggregateRoot) AppliedEvents() []Event {
+	return ar.appliedEvents
+}
+
+// ApplyEvent applies an event to the aggregate and adds it to uncommitted events
+func (ar *AggregateRoot) ApplyEvent(event Event) {
+	ar.uncommittedEvents = append(ar.uncommittedEvents, event)
+	ar.appliedEvents = append(ar.appliedEvents, event)
+	ar.version++
+}
+
+// LoadFromHistory loads the aggregate state from a series of historical events
+func (ar *AggregateRoot) LoadFromHistory(events []Event, applyFunc func(Event)) {
+	for _, event := range events {
+		applyFunc(event)
+		ar.appliedEvents = append(ar.appliedEvents, event)
+		ar.version++
+	}
+}
+
+// MarkEventsAsCommitted marks all uncommitted events as committed
+func (ar *AggregateRoot) MarkEventsAsCommitted() {
+	ar.uncommittedEvents = make([]Event, 0)
+}
+
+// ClearEvents clears all events (used after successful persistence)
+func (ar *AggregateRoot) ClearEvents() {
+	ar.uncommittedEvents = make([]Event, 0)
+}
+
+// Snapshot represents a point-in-time state of an aggregate
+type Snapshot struct {
+	AggregateID   string                 `json:"aggregate_id"`
+	AggregateType string                 `json:"aggregate_type"`
+	Version       int                    `json:"version"`
+	Timestamp     time.Time              `json:"timestamp"`
+	Data          map[string]interface{} `json:"data"`
+}
+
+// NewSnapshot creates a new snapshot
+func NewSnapshot(aggregateID, aggregateType string, version int, data map[string]interface{}) *Snapshot {
+	return &Snapshot{
+		AggregateID:   aggregateID,
+		AggregateType: aggregateType,
+		Version:       version,
+		Timestamp:     time.Now().UTC(),
+		Data:          data,
+	}
+}
+
+// ToJSON serializes the snapshot to JSON
+func (s *Snapshot) ToJSON() ([]byte, error) {
+	return json.Marshal(s)
+}
+
+// FromJSON deserializes a snapshot from JSON
+func (s *Snapshot) FromJSON(data []byte) error {
+	return json.Unmarshal(data, s)
+}
+
+// AggregateFactory defines the interface for creating aggregates
+type AggregateFactory interface {
+	Create(id string) Aggregate
+	CreateFromSnapshot(snapshot *Snapshot) (Aggregate, error)
+}
+
+// Aggregate represents the main aggregate interface
+type Aggregate interface {
+	ID() string
+	Version() int
+	UncommittedEvents() []Event
+	AppliedEvents() []Event
+	LoadFromHistory(events []Event)
+	MarkEventsAsCommitted()
+	ClearEvents()
+	CreateSnapshot() (*Snapshot, error)
+	LoadFromSnapshot(snapshot *Snapshot) error
+}
+
+// Repository defines the interface for aggregate persistence
+type Repository interface {
+	Save(aggregate Aggregate) error
+	Load(aggregateID string) (Aggregate, error)
+	LoadFromSnapshot(aggregateID string) (Aggregate, *Snapshot, error)
+	SaveSnapshot(snapshot *Snapshot) error
+	GetLatestSnapshot(aggregateID string) (*Snapshot, error)
+	Exists(aggregateID string) (bool, error)
+}
+
+// EventStream represents a stream of events for an aggregate
+type EventStream struct {
+	AggregateID string  `json:"aggregate_id"`
+	Events      []Event `json:"events"`
+	Version     int     `json:"version"`
+}
+
+// NewEventStream creates a new event stream
+func NewEventStream(aggregateID string, events []Event, version int) *EventStream {
+	return &EventStream{
+		AggregateID: aggregateID,
+		Events:      events,
+		Version:     version,
+	}
+}
+
+// Append adds events to the stream
+func (es *EventStream) Append(events ...Event) {
+	es.Events = append(es.Events, events...)
+	es.Version += len(events)
+}
+
+// GetEventsAfterVersion returns events after a specific version
+func (es *EventStream) GetEventsAfterVersion(version int) []Event {
+	var result []Event
+	for _, event := range es.Events {
+		if event.Version() > version {
+			result = append(result, event)
+		}
+	}
+	return result
+}
+
+// AggregateStore defines the interface for aggregate storage operations
+type AggregateStore interface {
+	SaveEvents(aggregateID string, events []Event, expectedVersion int) error
+	GetEvents(aggregateID string) ([]Event, error)
+	GetEventsAfterVersion(aggregateID string, version int) ([]Event, error)
+	GetEventStream(aggregateID string) (*EventStream, error)
+	SaveSnapshot(snapshot *Snapshot) error
+	GetSnapshot(aggregateID, aggregateType string) (*Snapshot, error)
+}
+
+// ConflictError represents a concurrency conflict during aggregate persistence
+type ConflictError struct {
+	AggregateID      string
+	ExpectedVersion  int
+	ActualVersion    int
+}
+
+func (e *ConflictError) Error() string {
+	return fmt.Sprintf("concurrency conflict for aggregate %s: expected version %d, actual version %d",
+		e.AggregateID, e.ExpectedVersion, e.ActualVersion)
+}
+
+// NewConflictError creates a new conflict error
+func NewConflictError(aggregateID string, expectedVersion, actualVersion int) *ConflictError {
+	return &ConflictError{
+		AggregateID:     aggregateID,
+		ExpectedVersion: expectedVersion,
+		ActualVersion:   actualVersion,
+	}
+}
+
+// AggregateNotFoundError represents an error when an aggregate is not found
+type AggregateNotFoundError struct {
+	AggregateID string
+}
+
+func (e *AggregateNotFoundError) Error() string {
+	return fmt.Sprintf("aggregate not found: %s", e.AggregateID)
+}
+
+// NewAggregateNotFoundError creates a new aggregate not found error
+func NewAggregateNotFoundError(aggregateID string) *AggregateNotFoundError {
+	return &AggregateNotFoundError{AggregateID: aggregateID}
+}
+
+// GenerateID generates a new UUID for aggregate identification
+func GenerateID() string {
+	return uuid.New().String()
+}

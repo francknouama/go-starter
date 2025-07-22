@@ -1,0 +1,462 @@
+package user
+
+import (
+	"errors"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/pkg/validation"
+)
+
+// User represents the user aggregate root
+type User struct {
+	*domain.AggregateRoot
+	
+	// State fields
+	email       string
+	name        string
+	status      UserStatus
+	createdAt   time.Time
+	updatedAt   time.Time
+	lastLoginAt *time.Time
+	profile     UserProfile
+}
+
+// UserStatus represents the status of a user
+type UserStatus int
+
+const (
+	UserStatusPending UserStatus = iota
+	UserStatusActive
+	UserStatusSuspended
+	UserStatusDeactivated
+)
+
+// String returns the string representation of UserStatus
+func (s UserStatus) String() string {
+	switch s {
+	case UserStatusPending:
+		return "pending"
+	case UserStatusActive:
+		return "active"
+	case UserStatusSuspended:
+		return "suspended"
+	case UserStatusDeactivated:
+		return "deactivated"
+	default:
+		return "unknown"
+	}
+}
+
+// UserProfile represents user profile information
+type UserProfile struct {
+	FirstName   string `json:"first_name"`
+	LastName    string `json:"last_name"`
+	Avatar      string `json:"avatar,omitempty"`
+	Bio         string `json:"bio,omitempty"`
+	Location    string `json:"location,omitempty"`
+	Website     string `json:"website,omitempty"`
+	DateOfBirth *time.Time `json:"date_of_birth,omitempty"`
+}
+
+// NewUser creates a new user aggregate
+func NewUser(id, email, name string) (*User, error) {
+	if id == "" {
+		id = domain.GenerateID()
+	}
+
+	if err := validation.ValidateEmail(email); err != nil {
+		return nil, fmt.Errorf("invalid email: %w", err)
+	}
+
+	if name == "" {
+		return nil, errors.New("name cannot be empty")
+	}
+
+	user := &User{
+		AggregateRoot: domain.NewAggregateRoot(id),
+	}
+
+	// Apply the user created event
+	event := NewUserCreatedEvent(id, email, name)
+	user.ApplyEvent(event)
+
+	return user, nil
+}
+
+// Email returns the user's email
+func (u *User) Email() string {
+	return u.email
+}
+
+// Name returns the user's name
+func (u *User) Name() string {
+	return u.name
+}
+
+// Status returns the user's status
+func (u *User) Status() UserStatus {
+	return u.status
+}
+
+// CreatedAt returns when the user was created
+func (u *User) CreatedAt() time.Time {
+	return u.createdAt
+}
+
+// UpdatedAt returns when the user was last updated
+func (u *User) UpdatedAt() time.Time {
+	return u.updatedAt
+}
+
+// LastLoginAt returns when the user last logged in
+func (u *User) LastLoginAt() *time.Time {
+	return u.lastLoginAt
+}
+
+// Profile returns the user's profile
+func (u *User) Profile() UserProfile {
+	return u.profile
+}
+
+// IsActive checks if the user is active
+func (u *User) IsActive() bool {
+	return u.status == UserStatusActive
+}
+
+// IsSuspended checks if the user is suspended
+func (u *User) IsSuspended() bool {
+	return u.status == UserStatusSuspended
+}
+
+// ChangeEmail changes the user's email address
+func (u *User) ChangeEmail(newEmail string) error {
+	if err := validation.ValidateEmail(newEmail); err != nil {
+		return fmt.Errorf("invalid email: %w", err)
+	}
+
+	if u.email == newEmail {
+		return nil // No change needed
+	}
+
+	event := NewUserEmailChangedEvent(u.ID(), u.email, newEmail)
+	u.ApplyEvent(event)
+	return nil
+}
+
+// ChangeName changes the user's name
+func (u *User) ChangeName(newName string) error {
+	if newName == "" {
+		return errors.New("name cannot be empty")
+	}
+
+	if u.name == newName {
+		return nil // No change needed
+	}
+
+	event := NewUserNameChangedEvent(u.ID(), u.name, newName)
+	u.ApplyEvent(event)
+	return nil
+}
+
+// UpdateProfile updates the user's profile information
+func (u *User) UpdateProfile(profile UserProfile) error {
+	// Validate profile data
+	if profile.FirstName == "" && profile.LastName == "" {
+		return errors.New("either first name or last name must be provided")
+	}
+
+	if profile.Website != "" {
+		if err := validation.ValidateURL(profile.Website); err != nil {
+			return fmt.Errorf("invalid website URL: %w", err)
+		}
+	}
+
+	event := NewUserProfileUpdatedEvent(u.ID(), u.profile, profile)
+	u.ApplyEvent(event)
+	return nil
+}
+
+// Activate activates the user account
+func (u *User) Activate() error {
+	if u.status == UserStatusActive {
+		return errors.New("user is already active")
+	}
+
+	if u.status == UserStatusDeactivated {
+		return errors.New("cannot activate a deactivated user")
+	}
+
+	event := NewUserActivatedEvent(u.ID(), u.status)
+	u.ApplyEvent(event)
+	return nil
+}
+
+// Suspend suspends the user account
+func (u *User) Suspend(reason string) error {
+	if u.status == UserStatusSuspended {
+		return errors.New("user is already suspended")
+	}
+
+	if u.status == UserStatusDeactivated {
+		return errors.New("cannot suspend a deactivated user")
+	}
+
+	event := NewUserSuspendedEvent(u.ID(), u.status, reason)
+	u.ApplyEvent(event)
+	return nil
+}
+
+// Reactivate reactivates a suspended user
+func (u *User) Reactivate() error {
+	if u.status != UserStatusSuspended {
+		return errors.New("user is not suspended")
+	}
+
+	event := NewUserReactivatedEvent(u.ID())
+	u.ApplyEvent(event)
+	return nil
+}
+
+// Deactivate permanently deactivates the user account
+func (u *User) Deactivate(reason string) error {
+	if u.status == UserStatusDeactivated {
+		return errors.New("user is already deactivated")
+	}
+
+	event := NewUserDeactivatedEvent(u.ID(), u.status, reason)
+	u.ApplyEvent(event)
+	return nil
+}
+
+// RecordLogin records a user login
+func (u *User) RecordLogin() error {
+	if !u.IsActive() {
+		return errors.New("cannot record login for inactive user")
+	}
+
+	event := NewUserLoggedInEvent(u.ID())
+	u.ApplyEvent(event)
+	return nil
+}
+
+// LoadFromHistory rebuilds the user state from historical events
+func (u *User) LoadFromHistory(events []domain.Event) {
+	u.AggregateRoot.LoadFromHistory(events, func(event domain.Event) {
+		u.applyEvent(event)
+	})
+}
+
+// applyEvent applies an event to the user aggregate
+func (u *User) applyEvent(event domain.Event) {
+	switch e := event.(type) {
+	case *UserCreatedEvent:
+		u.applyUserCreatedEvent(e)
+	case *UserEmailChangedEvent:
+		u.applyUserEmailChangedEvent(e)
+	case *UserNameChangedEvent:
+		u.applyUserNameChangedEvent(e)
+	case *UserProfileUpdatedEvent:
+		u.applyUserProfileUpdatedEvent(e)
+	case *UserActivatedEvent:
+		u.applyUserActivatedEvent(e)
+	case *UserSuspendedEvent:
+		u.applyUserSuspendedEvent(e)
+	case *UserReactivatedEvent:
+		u.applyUserReactivatedEvent(e)
+	case *UserDeactivatedEvent:
+		u.applyUserDeactivatedEvent(e)
+	case *UserLoggedInEvent:
+		u.applyUserLoggedInEvent(e)
+	}
+}
+
+// applyUserCreatedEvent applies a UserCreatedEvent
+func (u *User) applyUserCreatedEvent(event *UserCreatedEvent) {
+	u.email = event.Email
+	u.name = event.Name
+	u.status = UserStatusPending
+	u.createdAt = event.Timestamp()
+	u.updatedAt = event.Timestamp()
+	u.profile = UserProfile{}
+}
+
+// applyUserEmailChangedEvent applies a UserEmailChangedEvent
+func (u *User) applyUserEmailChangedEvent(event *UserEmailChangedEvent) {
+	u.email = event.NewEmail
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserNameChangedEvent applies a UserNameChangedEvent
+func (u *User) applyUserNameChangedEvent(event *UserNameChangedEvent) {
+	u.name = event.NewName
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserProfileUpdatedEvent applies a UserProfileUpdatedEvent
+func (u *User) applyUserProfileUpdatedEvent(event *UserProfileUpdatedEvent) {
+	u.profile = event.NewProfile
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserActivatedEvent applies a UserActivatedEvent
+func (u *User) applyUserActivatedEvent(event *UserActivatedEvent) {
+	u.status = UserStatusActive
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserSuspendedEvent applies a UserSuspendedEvent
+func (u *User) applyUserSuspendedEvent(event *UserSuspendedEvent) {
+	u.status = UserStatusSuspended
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserReactivatedEvent applies a UserReactivatedEvent
+func (u *User) applyUserReactivatedEvent(event *UserReactivatedEvent) {
+	u.status = UserStatusActive
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserDeactivatedEvent applies a UserDeactivatedEvent
+func (u *User) applyUserDeactivatedEvent(event *UserDeactivatedEvent) {
+	u.status = UserStatusDeactivated
+	u.updatedAt = event.Timestamp()
+}
+
+// applyUserLoggedInEvent applies a UserLoggedInEvent
+func (u *User) applyUserLoggedInEvent(event *UserLoggedInEvent) {
+	timestamp := event.Timestamp()
+	u.lastLoginAt = &timestamp
+	u.updatedAt = timestamp
+}
+
+// CreateSnapshot creates a snapshot of the user's current state
+func (u *User) CreateSnapshot() (*domain.Snapshot, error) {
+	data := map[string]interface{}{
+		"email":         u.email,
+		"name":          u.name,
+		"status":        int(u.status),
+		"created_at":    u.createdAt,
+		"updated_at":    u.updatedAt,
+		"last_login_at": u.lastLoginAt,
+		"profile":       u.profile,
+	}
+
+	return domain.NewSnapshot(u.ID(), "user", u.Version(), data), nil
+}
+
+// LoadFromSnapshot loads the user state from a snapshot
+func (u *User) LoadFromSnapshot(snapshot *domain.Snapshot) error {
+	data := snapshot.Data
+
+	// Restore email
+	if email, ok := data["email"].(string); ok {
+		u.email = email
+	}
+
+	// Restore name
+	if name, ok := data["name"].(string); ok {
+		u.name = name
+	}
+
+	// Restore status
+	if status, ok := data["status"].(float64); ok {
+		u.status = UserStatus(int(status))
+	}
+
+	// Restore timestamps
+	if createdAt, ok := data["created_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+			u.createdAt = t
+		}
+	}
+
+	if updatedAt, ok := data["updated_at"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, updatedAt); err == nil {
+			u.updatedAt = t
+		}
+	}
+
+	if lastLoginAt, ok := data["last_login_at"].(string); ok && lastLoginAt != "" {
+		if t, err := time.Parse(time.RFC3339, lastLoginAt); err == nil {
+			u.lastLoginAt = &t
+		}
+	}
+
+	// Restore profile
+	if profileData, ok := data["profile"].(map[string]interface{}); ok {
+		profile := UserProfile{}
+		
+		if firstName, ok := profileData["first_name"].(string); ok {
+			profile.FirstName = firstName
+		}
+		if lastName, ok := profileData["last_name"].(string); ok {
+			profile.LastName = lastName
+		}
+		if avatar, ok := profileData["avatar"].(string); ok {
+			profile.Avatar = avatar
+		}
+		if bio, ok := profileData["bio"].(string); ok {
+			profile.Bio = bio
+		}
+		if location, ok := profileData["location"].(string); ok {
+			profile.Location = location
+		}
+		if website, ok := profileData["website"].(string); ok {
+			profile.Website = website
+		}
+		if dobStr, ok := profileData["date_of_birth"].(string); ok && dobStr != "" {
+			if dob, err := time.Parse(time.RFC3339, dobStr); err == nil {
+				profile.DateOfBirth = &dob
+			}
+		}
+		
+		u.profile = profile
+	}
+
+	return nil
+}
+
+// AggregateType returns the aggregate type for the user
+func (u *User) AggregateType() string {
+	return "user"
+}
+
+// String returns a string representation of the user
+func (u *User) String() string {
+	return fmt.Sprintf("User{ID: %s, Email: %s, Name: %s, Status: %s, Version: %d}",
+		u.ID(), u.email, u.name, u.status.String(), u.Version())
+}
+
+// UserFactory implements the AggregateFactory interface for User
+type UserFactory struct{}
+
+// NewUserFactory creates a new user factory
+func NewUserFactory() *UserFactory {
+	return &UserFactory{}
+}
+
+// Create creates a new user aggregate
+func (f *UserFactory) Create(id string) domain.Aggregate {
+	return &User{
+		AggregateRoot: domain.NewAggregateRoot(id),
+	}
+}
+
+// CreateFromSnapshot creates a user aggregate from a snapshot
+func (f *UserFactory) CreateFromSnapshot(snapshot *domain.Snapshot) (domain.Aggregate, error) {
+	user := &User{
+		AggregateRoot: domain.NewAggregateRoot(snapshot.AggregateID),
+	}
+
+	if err := user.LoadFromSnapshot(snapshot); err != nil {
+		return nil, fmt.Errorf("failed to load user from snapshot: %w", err)
+	}
+
+	// Set the version from the snapshot
+	user.AggregateRoot = domain.NewAggregateRoot(snapshot.AggregateID)
+	// Note: In a real implementation, you'd need to set the version properly
+
+	return user, nil
+}

@@ -1,0 +1,563 @@
+package domain
+
+import (
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"time"
+)
+
+// EventVersion represents an event version
+type EventVersion int
+
+const (
+	// EventVersionUnknown represents an unknown event version
+	EventVersionUnknown EventVersion = 0
+	// EventVersion1 represents the first version of events
+	EventVersion1 EventVersion = 1
+	// EventVersion2 represents the second version of events
+	EventVersion2 EventVersion = 2
+)
+
+// VersionedEvent extends the Event interface with versioning capabilities
+type VersionedEvent interface {
+	Event
+	
+	// GetEventVersion returns the version of this event
+	GetEventVersion() EventVersion
+	
+	// IsCompatibleWith checks if this event is compatible with a given version
+	IsCompatibleWith(version EventVersion) bool
+	
+	// MigrateToVersion migrates this event to a specific version
+	MigrateToVersion(version EventVersion) (VersionedEvent, error)
+	
+	// GetSchema returns the JSON schema for this event version
+	GetSchema() map[string]interface{}
+}
+
+// EventMigrator handles event migration between versions
+type EventMigrator interface {
+	// CanMigrate determines if migration is possible between versions
+	CanMigrate(fromVersion, toVersion EventVersion) bool
+	
+	// Migrate performs the migration
+	Migrate(event VersionedEvent, targetVersion EventVersion) (VersionedEvent, error)
+	
+	// GetSupportedVersions returns all supported versions
+	GetSupportedVersions() []EventVersion
+}
+
+// BaseVersionedEvent provides a base implementation for versioned events
+type BaseVersionedEvent struct {
+	BaseEvent
+	eventVersion EventVersion
+	schema       map[string]interface{}
+}
+
+// NewBaseVersionedEvent creates a new base versioned event
+func NewBaseVersionedEvent(
+	eventID, eventType, aggregateID, aggregateType string,
+	version int, timestamp time.Time, data map[string]interface{},
+	eventVersion EventVersion,
+) *BaseVersionedEvent {
+	return &BaseVersionedEvent{
+		BaseEvent:    *NewBaseEvent(eventID, eventType, aggregateID, aggregateType, version, timestamp, data),
+		eventVersion: eventVersion,
+		schema:       make(map[string]interface{}),
+	}
+}
+
+// GetEventVersion returns the version of this event
+func (e *BaseVersionedEvent) GetEventVersion() EventVersion {
+	return e.eventVersion
+}
+
+// IsCompatibleWith checks if this event is compatible with a given version
+func (e *BaseVersionedEvent) IsCompatibleWith(version EventVersion) bool {
+	// Generally, newer versions should be backward compatible
+	return e.eventVersion >= version
+}
+
+// MigrateToVersion migrates this event to a specific version
+func (e *BaseVersionedEvent) MigrateToVersion(version EventVersion) (VersionedEvent, error) {
+	if e.eventVersion == version {
+		return e, nil
+	}
+	
+	// For this base implementation, we don't support automatic migration
+	return nil, fmt.Errorf("migration from version %d to %d not supported", e.eventVersion, version)
+}
+
+// GetSchema returns the JSON schema for this event version
+func (e *BaseVersionedEvent) GetSchema() map[string]interface{} {
+	return e.schema
+}
+
+// SetSchema sets the JSON schema for this event version
+func (e *BaseVersionedEvent) SetSchema(schema map[string]interface{}) {
+	e.schema = schema
+}
+
+// EventMigrationRegistry manages event migrations
+type EventMigrationRegistry struct {
+	migrators map[string]EventMigrator
+}
+
+// NewEventMigrationRegistry creates a new event migration registry
+func NewEventMigrationRegistry() *EventMigrationRegistry {
+	return &EventMigrationRegistry{
+		migrators: make(map[string]EventMigrator),
+	}
+}
+
+// RegisterMigrator registers an event migrator for a specific event type
+func (r *EventMigrationRegistry) RegisterMigrator(eventType string, migrator EventMigrator) {
+	r.migrators[eventType] = migrator
+}
+
+// GetMigrator returns the migrator for a specific event type
+func (r *EventMigrationRegistry) GetMigrator(eventType string) (EventMigrator, bool) {
+	migrator, exists := r.migrators[eventType]
+	return migrator, exists
+}
+
+// MigrateEvent migrates an event to a target version
+func (r *EventMigrationRegistry) MigrateEvent(event VersionedEvent, targetVersion EventVersion) (VersionedEvent, error) {
+	migrator, exists := r.migrators[event.EventType()]
+	if !exists {
+		return nil, fmt.Errorf("no migrator found for event type: %s", event.EventType())
+	}
+	
+	if !migrator.CanMigrate(event.GetEventVersion(), targetVersion) {
+		return nil, fmt.Errorf("migration from version %d to %d not supported for event type %s",
+			event.GetEventVersion(), targetVersion, event.EventType())
+	}
+	
+	return migrator.Migrate(event, targetVersion)
+}
+
+// UserEventMigrator handles migrations for user-related events
+type UserEventMigrator struct {
+	supportedVersions []EventVersion
+}
+
+// NewUserEventMigrator creates a new user event migrator
+func NewUserEventMigrator() *UserEventMigrator {
+	return &UserEventMigrator{
+		supportedVersions: []EventVersion{EventVersion1, EventVersion2},
+	}
+}
+
+// CanMigrate determines if migration is possible between versions
+func (m *UserEventMigrator) CanMigrate(fromVersion, toVersion EventVersion) bool {
+	// Check if both versions are supported
+	fromSupported := false
+	toSupported := false
+	
+	for _, version := range m.supportedVersions {
+		if version == fromVersion {
+			fromSupported = true
+		}
+		if version == toVersion {
+			toSupported = true
+		}
+	}
+	
+	return fromSupported && toSupported
+}
+
+// Migrate performs the migration
+func (m *UserEventMigrator) Migrate(event VersionedEvent, targetVersion EventVersion) (VersionedEvent, error) {
+	if event.GetEventVersion() == targetVersion {
+		return event, nil
+	}
+	
+	switch event.EventType() {
+	case "UserCreated":
+		return m.migrateUserCreated(event, targetVersion)
+	case "UserUpdated":
+		return m.migrateUserUpdated(event, targetVersion)
+	case "UserDeleted":
+		return m.migrateUserDeleted(event, targetVersion)
+	default:
+		return nil, fmt.Errorf("unsupported event type for migration: %s", event.EventType())
+	}
+}
+
+// GetSupportedVersions returns all supported versions
+func (m *UserEventMigrator) GetSupportedVersions() []EventVersion {
+	return m.supportedVersions
+}
+
+// migrateUserCreated migrates UserCreated events
+func (m *UserEventMigrator) migrateUserCreated(event VersionedEvent, targetVersion EventVersion) (VersionedEvent, error) {
+	data := event.Data()
+	
+	switch {
+	case event.GetEventVersion() == EventVersion1 && targetVersion == EventVersion2:
+		// V1 -> V2: Add profile field
+		if _, exists := data["profile"]; !exists {
+			data["profile"] = map[string]interface{}{
+				"firstName": data["name"],
+				"lastName":  "",
+				"avatar":    "",
+			}
+		}
+		
+		// Add status field
+		if _, exists := data["status"]; !exists {
+			data["status"] = "active"
+		}
+		
+	case event.GetEventVersion() == EventVersion2 && targetVersion == EventVersion1:
+		// V2 -> V1: Remove new fields (backward compatibility)
+		delete(data, "profile")
+		delete(data, "status")
+		
+	default:
+		return nil, fmt.Errorf("unsupported migration path from version %d to %d", 
+			event.GetEventVersion(), targetVersion)
+	}
+	
+	// Create new event with migrated data
+	migratedEvent := NewBaseVersionedEvent(
+		event.EventID(),
+		event.EventType(),
+		event.AggregateID(),
+		event.AggregateType(),
+		event.Version(),
+		event.Timestamp(),
+		data,
+		targetVersion,
+	)
+	
+	// Copy metadata
+	for k, v := range event.Metadata() {
+		migratedEvent.SetMetadata(k, v)
+	}
+	
+	// Add migration metadata
+	migratedEvent.SetMetadata("migrated_from_version", int(event.GetEventVersion()))
+	migratedEvent.SetMetadata("migrated_to_version", int(targetVersion))
+	migratedEvent.SetMetadata("migration_timestamp", time.Now().UTC())
+	
+	return migratedEvent, nil
+}
+
+// migrateUserUpdated migrates UserUpdated events
+func (m *UserEventMigrator) migrateUserUpdated(event VersionedEvent, targetVersion EventVersion) (VersionedEvent, error) {
+	data := event.Data()
+	
+	switch {
+	case event.GetEventVersion() == EventVersion1 && targetVersion == EventVersion2:
+		// V1 -> V2: Update profile structure
+		if name, exists := data["name"]; exists {
+			data["profile"] = map[string]interface{}{
+				"firstName": name,
+				"lastName":  "",
+				"avatar":    "",
+			}
+		}
+		
+		// Ensure status field exists
+		if _, exists := data["status"]; !exists {
+			data["status"] = "active"
+		}
+		
+	case event.GetEventVersion() == EventVersion2 && targetVersion == EventVersion1:
+		// V2 -> V1: Flatten profile back to name
+		if profile, exists := data["profile"].(map[string]interface{}); exists {
+			if firstName, exists := profile["firstName"]; exists {
+				data["name"] = firstName
+			}
+			delete(data, "profile")
+		}
+		delete(data, "status")
+		
+	default:
+		return nil, fmt.Errorf("unsupported migration path from version %d to %d", 
+			event.GetEventVersion(), targetVersion)
+	}
+	
+	// Create new event with migrated data
+	migratedEvent := NewBaseVersionedEvent(
+		event.EventID(),
+		event.EventType(),
+		event.AggregateID(),
+		event.AggregateType(),
+		event.Version(),
+		event.Timestamp(),
+		data,
+		targetVersion,
+	)
+	
+	// Copy metadata
+	for k, v := range event.Metadata() {
+		migratedEvent.SetMetadata(k, v)
+	}
+	
+	// Add migration metadata
+	migratedEvent.SetMetadata("migrated_from_version", int(event.GetEventVersion()))
+	migratedEvent.SetMetadata("migrated_to_version", int(targetVersion))
+	migratedEvent.SetMetadata("migration_timestamp", time.Now().UTC())
+	
+	return migratedEvent, nil
+}
+
+// migrateUserDeleted migrates UserDeleted events
+func (m *UserEventMigrator) migrateUserDeleted(event VersionedEvent, targetVersion EventVersion) (VersionedEvent, error) {
+	// UserDeleted events typically don't need complex migration
+	// Just update the version
+	data := event.Data()
+	
+	migratedEvent := NewBaseVersionedEvent(
+		event.EventID(),
+		event.EventType(),
+		event.AggregateID(),
+		event.AggregateType(),
+		event.Version(),
+		event.Timestamp(),
+		data,
+		targetVersion,
+	)
+	
+	// Copy metadata
+	for k, v := range event.Metadata() {
+		migratedEvent.SetMetadata(k, v)
+	}
+	
+	// Add migration metadata
+	migratedEvent.SetMetadata("migrated_from_version", int(event.GetEventVersion()))
+	migratedEvent.SetMetadata("migrated_to_version", int(targetVersion))
+	migratedEvent.SetMetadata("migration_timestamp", time.Now().UTC())
+	
+	return migratedEvent, nil
+}
+
+// EventVersionValidator validates event versions and schemas
+type EventVersionValidator struct {
+	schemas map[string]map[EventVersion]map[string]interface{}
+}
+
+// NewEventVersionValidator creates a new event version validator
+func NewEventVersionValidator() *EventVersionValidator {
+	return &EventVersionValidator{
+		schemas: make(map[string]map[EventVersion]map[string]interface{}),
+	}
+}
+
+// RegisterSchema registers a JSON schema for a specific event type and version
+func (v *EventVersionValidator) RegisterSchema(eventType string, version EventVersion, schema map[string]interface{}) {
+	if _, exists := v.schemas[eventType]; !exists {
+		v.schemas[eventType] = make(map[EventVersion]map[string]interface{})
+	}
+	v.schemas[eventType][version] = schema
+}
+
+// ValidateEvent validates an event against its registered schema
+func (v *EventVersionValidator) ValidateEvent(event VersionedEvent) error {
+	eventSchemas, exists := v.schemas[event.EventType()]
+	if !exists {
+		return fmt.Errorf("no schema registered for event type: %s", event.EventType())
+	}
+	
+	schema, exists := eventSchemas[event.GetEventVersion()]
+	if !exists {
+		return fmt.Errorf("no schema registered for event type %s version %d", 
+			event.EventType(), event.GetEventVersion())
+	}
+	
+	return v.validateAgainstSchema(event.Data(), schema)
+}
+
+// validateAgainstSchema validates data against a JSON schema
+func (v *EventVersionValidator) validateAgainstSchema(data map[string]interface{}, schema map[string]interface{}) error {
+	// Simple validation implementation
+	// In a production system, you might use a proper JSON Schema validator
+	
+	required, exists := schema["required"]
+	if exists {
+		requiredFields, ok := required.([]interface{})
+		if ok {
+			for _, field := range requiredFields {
+				fieldName, ok := field.(string)
+				if ok {
+					if _, exists := data[fieldName]; !exists {
+						return fmt.Errorf("required field missing: %s", fieldName)
+					}
+				}
+			}
+		}
+	}
+	
+	properties, exists := schema["properties"]
+	if exists {
+		props, ok := properties.(map[string]interface{})
+		if ok {
+			for fieldName, fieldSchema := range props {
+				if fieldValue, exists := data[fieldName]; exists {
+					if err := v.validateFieldType(fieldName, fieldValue, fieldSchema); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// validateFieldType validates a field's type against its schema
+func (v *EventVersionValidator) validateFieldType(fieldName string, value interface{}, schema interface{}) error {
+	schemaMap, ok := schema.(map[string]interface{})
+	if !ok {
+		return nil // Skip validation if schema is not a map
+	}
+	
+	expectedType, exists := schemaMap["type"]
+	if !exists {
+		return nil // Skip validation if no type specified
+	}
+	
+	expectedTypeStr, ok := expectedType.(string)
+	if !ok {
+		return nil
+	}
+	
+	actualType := reflect.TypeOf(value).String()
+	
+	// Simple type checking
+	switch expectedTypeStr {
+	case "string":
+		if _, ok := value.(string); !ok {
+			return fmt.Errorf("field %s expected string but got %s", fieldName, actualType)
+		}
+	case "number":
+		if _, ok := value.(float64); !ok {
+			if _, ok := value.(int); !ok {
+				return fmt.Errorf("field %s expected number but got %s", fieldName, actualType)
+			}
+		}
+	case "boolean":
+		if _, ok := value.(bool); !ok {
+			return fmt.Errorf("field %s expected boolean but got %s", fieldName, actualType)
+		}
+	case "object":
+		if _, ok := value.(map[string]interface{}); !ok {
+			return fmt.Errorf("field %s expected object but got %s", fieldName, actualType)
+		}
+	case "array":
+		if _, ok := value.([]interface{}); !ok {
+			return fmt.Errorf("field %s expected array but got %s", fieldName, actualType)
+		}
+	}
+	
+	return nil
+}
+
+// EventVersionRegistry maintains event version information
+type EventVersionRegistry struct {
+	versions   map[string]EventVersion
+	migrations *EventMigrationRegistry
+	validator  *EventVersionValidator
+}
+
+// NewEventVersionRegistry creates a new event version registry
+func NewEventVersionRegistry() *EventVersionRegistry {
+	return &EventVersionRegistry{
+		versions:   make(map[string]EventVersion),
+		migrations: NewEventMigrationRegistry(),
+		validator:  NewEventVersionValidator(),
+	}
+}
+
+// RegisterEventVersion registers the current version for an event type
+func (r *EventVersionRegistry) RegisterEventVersion(eventType string, version EventVersion) {
+	r.versions[eventType] = version
+}
+
+// GetCurrentVersion returns the current version for an event type
+func (r *EventVersionRegistry) GetCurrentVersion(eventType string) (EventVersion, bool) {
+	version, exists := r.versions[eventType]
+	return version, exists
+}
+
+// GetMigrationRegistry returns the migration registry
+func (r *EventVersionRegistry) GetMigrationRegistry() *EventMigrationRegistry {
+	return r.migrations
+}
+
+// GetValidator returns the event version validator
+func (r *EventVersionRegistry) GetValidator() *EventVersionValidator {
+	return r.validator
+}
+
+// MigrateToCurrentVersion migrates an event to the current version
+func (r *EventVersionRegistry) MigrateToCurrentVersion(event VersionedEvent) (VersionedEvent, error) {
+	currentVersion, exists := r.GetCurrentVersion(event.EventType())
+	if !exists {
+		return nil, fmt.Errorf("no current version registered for event type: %s", event.EventType())
+	}
+	
+	if event.GetEventVersion() == currentVersion {
+		return event, nil
+	}
+	
+	return r.migrations.MigrateEvent(event, currentVersion)
+}
+
+// Default registry instance
+var defaultEventVersionRegistry = NewEventVersionRegistry()
+
+// GetDefaultEventVersionRegistry returns the default event version registry
+func GetDefaultEventVersionRegistry() *EventVersionRegistry {
+	return defaultEventVersionRegistry
+}
+
+// Initialize default event versions and migrations
+func init() {
+	// Register current versions
+	defaultEventVersionRegistry.RegisterEventVersion("UserCreated", EventVersion2)
+	defaultEventVersionRegistry.RegisterEventVersion("UserUpdated", EventVersion2)
+	defaultEventVersionRegistry.RegisterEventVersion("UserDeleted", EventVersion1)
+	
+	// Register migrators
+	defaultEventVersionRegistry.migrations.RegisterMigrator("UserCreated", NewUserEventMigrator())
+	defaultEventVersionRegistry.migrations.RegisterMigrator("UserUpdated", NewUserEventMigrator())
+	defaultEventVersionRegistry.migrations.RegisterMigrator("UserDeleted", NewUserEventMigrator())
+	
+	// Register schemas
+	userV1Schema := map[string]interface{}{
+		"type": "object",
+		"required": []interface{}{"id", "name", "email"},
+		"properties": map[string]interface{}{
+			"id":    map[string]interface{}{"type": "string"},
+			"name":  map[string]interface{}{"type": "string"},
+			"email": map[string]interface{}{"type": "string"},
+		},
+	}
+	
+	userV2Schema := map[string]interface{}{
+		"type": "object",
+		"required": []interface{}{"id", "profile", "email", "status"},
+		"properties": map[string]interface{}{
+			"id":     map[string]interface{}{"type": "string"},
+			"email":  map[string]interface{}{"type": "string"},
+			"status": map[string]interface{}{"type": "string"},
+			"profile": map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"firstName": map[string]interface{}{"type": "string"},
+					"lastName":  map[string]interface{}{"type": "string"},
+					"avatar":    map[string]interface{}{"type": "string"},
+				},
+			},
+		},
+	}
+	
+	defaultEventVersionRegistry.validator.RegisterSchema("UserCreated", EventVersion1, userV1Schema)
+	defaultEventVersionRegistry.validator.RegisterSchema("UserCreated", EventVersion2, userV2Schema)
+	defaultEventVersionRegistry.validator.RegisterSchema("UserUpdated", EventVersion1, userV1Schema)
+	defaultEventVersionRegistry.validator.RegisterSchema("UserUpdated", EventVersion2, userV2Schema)
+}

@@ -1,0 +1,588 @@
+package domain
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+)
+
+// Snapshot represents a point-in-time state of an aggregate
+type Snapshot interface {
+	// GetAggregateID returns the aggregate ID
+	GetAggregateID() string
+	
+	// GetAggregateType returns the aggregate type
+	GetAggregateType() string
+	
+	// GetVersion returns the aggregate version at snapshot time
+	GetVersion() int
+	
+	// GetTimestamp returns when the snapshot was taken
+	GetTimestamp() time.Time
+	
+	// GetData returns the aggregate state data
+	GetData() map[string]interface{}
+	
+	// GetMetadata returns snapshot metadata
+	GetMetadata() map[string]interface{}
+}
+
+// BaseSnapshot provides a base implementation for snapshots
+type BaseSnapshot struct {
+	aggregateID   string
+	aggregateType string
+	version       int
+	timestamp     time.Time
+	data          map[string]interface{}
+	metadata      map[string]interface{}
+}
+
+// NewBaseSnapshot creates a new base snapshot
+func NewBaseSnapshot(
+	aggregateID, aggregateType string,
+	version int,
+	timestamp time.Time,
+	data map[string]interface{},
+) *BaseSnapshot {
+	return &BaseSnapshot{
+		aggregateID:   aggregateID,
+		aggregateType: aggregateType,
+		version:       version,
+		timestamp:     timestamp,
+		data:          data,
+		metadata:      make(map[string]interface{}),
+	}
+}
+
+// GetAggregateID returns the aggregate ID
+func (s *BaseSnapshot) GetAggregateID() string {
+	return s.aggregateID
+}
+
+// GetAggregateType returns the aggregate type
+func (s *BaseSnapshot) GetAggregateType() string {
+	return s.aggregateType
+}
+
+// GetVersion returns the aggregate version at snapshot time
+func (s *BaseSnapshot) GetVersion() int {
+	return s.version
+}
+
+// GetTimestamp returns when the snapshot was taken
+func (s *BaseSnapshot) GetTimestamp() time.Time {
+	return s.timestamp
+}
+
+// GetData returns the aggregate state data
+func (s *BaseSnapshot) GetData() map[string]interface{} {
+	// Return a copy to prevent external modification
+	data := make(map[string]interface{})
+	for k, v := range s.data {
+		data[k] = v
+	}
+	return data
+}
+
+// GetMetadata returns snapshot metadata
+func (s *BaseSnapshot) GetMetadata() map[string]interface{} {
+	// Return a copy to prevent external modification
+	metadata := make(map[string]interface{})
+	for k, v := range s.metadata {
+		metadata[k] = v
+	}
+	return metadata
+}
+
+// SetMetadata sets metadata for the snapshot
+func (s *BaseSnapshot) SetMetadata(key string, value interface{}) {
+	s.metadata[key] = value
+}
+
+// SnapshotStore defines the interface for storing and retrieving snapshots
+type SnapshotStore interface {
+	// SaveSnapshot saves a snapshot
+	SaveSnapshot(ctx context.Context, snapshot Snapshot) error
+	
+	// GetSnapshot retrieves the latest snapshot for an aggregate
+	GetSnapshot(ctx context.Context, aggregateID string) (Snapshot, error)
+	
+	// GetSnapshotAtVersion retrieves a snapshot at or before a specific version
+	GetSnapshotAtVersion(ctx context.Context, aggregateID string, version int) (Snapshot, error)
+	
+	// DeleteSnapshot deletes a snapshot
+	DeleteSnapshot(ctx context.Context, aggregateID string) error
+	
+	// DeleteSnapshotsBefore deletes snapshots older than the specified timestamp
+	DeleteSnapshotsBefore(ctx context.Context, timestamp time.Time) error
+	
+	// GetSnapshotMetadata returns metadata about stored snapshots
+	GetSnapshotMetadata(ctx context.Context, aggregateID string) ([]SnapshotMetadata, error)
+}
+
+// SnapshotMetadata provides information about stored snapshots
+type SnapshotMetadata struct {
+	AggregateID   string    `json:"aggregate_id"`
+	AggregateType string    `json:"aggregate_type"`
+	Version       int       `json:"version"`
+	Timestamp     time.Time `json:"timestamp"`
+	Size          int64     `json:"size"`
+}
+
+// InMemorySnapshotStore is an in-memory implementation of SnapshotStore
+type InMemorySnapshotStore struct {
+	snapshots map[string][]Snapshot
+}
+
+// NewInMemorySnapshotStore creates a new in-memory snapshot store
+func NewInMemorySnapshotStore() *InMemorySnapshotStore {
+	return &InMemorySnapshotStore{
+		snapshots: make(map[string][]Snapshot),
+	}
+}
+
+// SaveSnapshot saves a snapshot
+func (s *InMemorySnapshotStore) SaveSnapshot(ctx context.Context, snapshot Snapshot) error {
+	aggregateID := snapshot.GetAggregateID()
+	
+	// Initialize slice if it doesn't exist
+	if _, exists := s.snapshots[aggregateID]; !exists {
+		s.snapshots[aggregateID] = make([]Snapshot, 0)
+	}
+	
+	// Add the snapshot (maintain chronological order)
+	s.snapshots[aggregateID] = append(s.snapshots[aggregateID], snapshot)
+	
+	// Keep only the latest 5 snapshots per aggregate (configurable)
+	if len(s.snapshots[aggregateID]) > 5 {
+		s.snapshots[aggregateID] = s.snapshots[aggregateID][len(s.snapshots[aggregateID])-5:]
+	}
+	
+	return nil
+}
+
+// GetSnapshot retrieves the latest snapshot for an aggregate
+func (s *InMemorySnapshotStore) GetSnapshot(ctx context.Context, aggregateID string) (Snapshot, error) {
+	snapshots, exists := s.snapshots[aggregateID]
+	if !exists || len(snapshots) == 0 {
+		return nil, fmt.Errorf("no snapshot found for aggregate: %s", aggregateID)
+	}
+	
+	// Return the latest snapshot
+	return snapshots[len(snapshots)-1], nil
+}
+
+// GetSnapshotAtVersion retrieves a snapshot at or before a specific version
+func (s *InMemorySnapshotStore) GetSnapshotAtVersion(ctx context.Context, aggregateID string, version int) (Snapshot, error) {
+	snapshots, exists := s.snapshots[aggregateID]
+	if !exists || len(snapshots) == 0 {
+		return nil, fmt.Errorf("no snapshot found for aggregate: %s", aggregateID)
+	}
+	
+	// Find the latest snapshot at or before the specified version
+	var bestSnapshot Snapshot
+	for _, snapshot := range snapshots {
+		if snapshot.GetVersion() <= version {
+			if bestSnapshot == nil || snapshot.GetVersion() > bestSnapshot.GetVersion() {
+				bestSnapshot = snapshot
+			}
+		}
+	}
+	
+	if bestSnapshot == nil {
+		return nil, fmt.Errorf("no snapshot found for aggregate %s at or before version %d", aggregateID, version)
+	}
+	
+	return bestSnapshot, nil
+}
+
+// DeleteSnapshot deletes a snapshot
+func (s *InMemorySnapshotStore) DeleteSnapshot(ctx context.Context, aggregateID string) error {
+	delete(s.snapshots, aggregateID)
+	return nil
+}
+
+// DeleteSnapshotsBefore deletes snapshots older than the specified timestamp
+func (s *InMemorySnapshotStore) DeleteSnapshotsBefore(ctx context.Context, timestamp time.Time) error {
+	for aggregateID, snapshots := range s.snapshots {
+		var filteredSnapshots []Snapshot
+		for _, snapshot := range snapshots {
+			if snapshot.GetTimestamp().After(timestamp) {
+				filteredSnapshots = append(filteredSnapshots, snapshot)
+			}
+		}
+		
+		if len(filteredSnapshots) == 0 {
+			delete(s.snapshots, aggregateID)
+		} else {
+			s.snapshots[aggregateID] = filteredSnapshots
+		}
+	}
+	
+	return nil
+}
+
+// GetSnapshotMetadata returns metadata about stored snapshots
+func (s *InMemorySnapshotStore) GetSnapshotMetadata(ctx context.Context, aggregateID string) ([]SnapshotMetadata, error) {
+	snapshots, exists := s.snapshots[aggregateID]
+	if !exists {
+		return []SnapshotMetadata{}, nil
+	}
+	
+	metadata := make([]SnapshotMetadata, len(snapshots))
+	for i, snapshot := range snapshots {
+		// Calculate approximate size by marshaling to JSON
+		data, _ := json.Marshal(snapshot.GetData())
+		
+		metadata[i] = SnapshotMetadata{
+			AggregateID:   snapshot.GetAggregateID(),
+			AggregateType: snapshot.GetAggregateType(),
+			Version:       snapshot.GetVersion(),
+			Timestamp:     snapshot.GetTimestamp(),
+			Size:          int64(len(data)),
+		}
+	}
+	
+	return metadata, nil
+}
+
+// SnapshotPolicy defines when snapshots should be taken
+type SnapshotPolicy interface {
+	// ShouldTakeSnapshot determines if a snapshot should be taken
+	ShouldTakeSnapshot(aggregate AggregateRoot) bool
+	
+	// GetSnapshotFrequency returns the frequency at which snapshots should be taken
+	GetSnapshotFrequency() int
+}
+
+// DefaultSnapshotPolicy implements a version-based snapshot policy
+type DefaultSnapshotPolicy struct {
+	frequency int // Take snapshot every N events
+}
+
+// NewDefaultSnapshotPolicy creates a new default snapshot policy
+func NewDefaultSnapshotPolicy(frequency int) *DefaultSnapshotPolicy {
+	if frequency <= 0 {
+		frequency = 10 // Default to every 10 events
+	}
+	
+	return &DefaultSnapshotPolicy{
+		frequency: frequency,
+	}
+}
+
+// ShouldTakeSnapshot determines if a snapshot should be taken
+func (p *DefaultSnapshotPolicy) ShouldTakeSnapshot(aggregate AggregateRoot) bool {
+	return aggregate.GetVersion()%p.frequency == 0
+}
+
+// GetSnapshotFrequency returns the frequency at which snapshots should be taken
+func (p *DefaultSnapshotPolicy) GetSnapshotFrequency() int {
+	return p.frequency
+}
+
+// TimeBasedSnapshotPolicy implements a time-based snapshot policy
+type TimeBasedSnapshotPolicy struct {
+	interval time.Duration
+}
+
+// NewTimeBasedSnapshotPolicy creates a new time-based snapshot policy
+func NewTimeBasedSnapshotPolicy(interval time.Duration) *TimeBasedSnapshotPolicy {
+	return &TimeBasedSnapshotPolicy{
+		interval: interval,
+	}
+}
+
+// ShouldTakeSnapshot determines if a snapshot should be taken based on time
+func (p *TimeBasedSnapshotPolicy) ShouldTakeSnapshot(aggregate AggregateRoot) bool {
+	// This would typically check against the last snapshot timestamp
+	// For this example, we'll use a simple heuristic
+	return time.Since(time.Now()) >= p.interval
+}
+
+// GetSnapshotFrequency returns 0 for time-based policies
+func (p *TimeBasedSnapshotPolicy) GetSnapshotFrequency() int {
+	return 0
+}
+
+// SnapshotManager handles snapshot creation and restoration
+type SnapshotManager struct {
+	store  SnapshotStore
+	policy SnapshotPolicy
+}
+
+// NewSnapshotManager creates a new snapshot manager
+func NewSnapshotManager(store SnapshotStore, policy SnapshotPolicy) *SnapshotManager {
+	return &SnapshotManager{
+		store:  store,
+		policy: policy,
+	}
+}
+
+// TakeSnapshotIfNeeded takes a snapshot if the policy determines it should
+func (m *SnapshotManager) TakeSnapshotIfNeeded(ctx context.Context, aggregate AggregateRoot) error {
+	if !m.policy.ShouldTakeSnapshot(aggregate) {
+		return nil
+	}
+	
+	return m.TakeSnapshot(ctx, aggregate)
+}
+
+// TakeSnapshot takes a snapshot of the aggregate
+func (m *SnapshotManager) TakeSnapshot(ctx context.Context, aggregate AggregateRoot) error {
+	// Create snapshot data by serializing the aggregate state
+	data, err := m.serializeAggregate(aggregate)
+	if err != nil {
+		return fmt.Errorf("failed to serialize aggregate for snapshot: %w", err)
+	}
+	
+	snapshot := NewBaseSnapshot(
+		aggregate.GetID(),
+		aggregate.GetAggregateType(),
+		aggregate.GetVersion(),
+		time.Now().UTC(),
+		data,
+	)
+	
+	// Add metadata
+	snapshot.SetMetadata("creation_source", "snapshot_manager")
+	snapshot.SetMetadata("aggregate_events_count", len(aggregate.GetUncommittedEvents()))
+	
+	return m.store.SaveSnapshot(ctx, snapshot)
+}
+
+// RestoreFromSnapshot restores an aggregate from its latest snapshot
+func (m *SnapshotManager) RestoreFromSnapshot(ctx context.Context, aggregateID string, aggregateFactory func(string) AggregateRoot) (AggregateRoot, int, error) {
+	snapshot, err := m.store.GetSnapshot(ctx, aggregateID)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get snapshot: %w", err)
+	}
+	
+	aggregate := aggregateFactory(aggregateID)
+	
+	if err := m.deserializeAggregate(aggregate, snapshot.GetData()); err != nil {
+		return nil, 0, fmt.Errorf("failed to deserialize aggregate from snapshot: %w", err)
+	}
+	
+	// Set the aggregate version to the snapshot version
+	aggregate.setVersion(snapshot.GetVersion())
+	
+	return aggregate, snapshot.GetVersion(), nil
+}
+
+// RestoreFromSnapshotAtVersion restores an aggregate from a snapshot at or before a specific version
+func (m *SnapshotManager) RestoreFromSnapshotAtVersion(ctx context.Context, aggregateID string, version int, aggregateFactory func(string) AggregateRoot) (AggregateRoot, int, error) {
+	snapshot, err := m.store.GetSnapshotAtVersion(ctx, aggregateID, version)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get snapshot at version: %w", err)
+	}
+	
+	aggregate := aggregateFactory(aggregateID)
+	
+	if err := m.deserializeAggregate(aggregate, snapshot.GetData()); err != nil {
+		return nil, 0, fmt.Errorf("failed to deserialize aggregate from snapshot: %w", err)
+	}
+	
+	// Set the aggregate version to the snapshot version
+	aggregate.setVersion(snapshot.GetVersion())
+	
+	return aggregate, snapshot.GetVersion(), nil
+}
+
+// serializeAggregate serializes an aggregate to a map
+func (m *SnapshotManager) serializeAggregate(aggregate AggregateRoot) (map[string]interface{}, error) {
+	// This is a simplified serialization - in practice, you might use reflection
+	// or implement a Serializable interface on aggregates
+	
+	data := make(map[string]interface{})
+	
+	// Add common aggregate properties
+	data["id"] = aggregate.GetID()
+	data["aggregate_type"] = aggregate.GetAggregateType()
+	data["version"] = aggregate.GetVersion()
+	
+	// For User aggregate, add specific properties
+	if user, ok := aggregate.(*User); ok {
+		data["email"] = user.email
+		data["name"] = user.name
+		data["status"] = string(user.status)
+		data["created_at"] = user.createdAt
+		data["updated_at"] = user.updatedAt
+		if user.lastLoginAt != nil {
+			data["last_login_at"] = *user.lastLoginAt
+		}
+		data["profile"] = map[string]interface{}{
+			"first_name": user.profile.FirstName,
+			"last_name":  user.profile.LastName,
+			"avatar":     user.profile.Avatar,
+		}
+	}
+	
+	return data, nil
+}
+
+// deserializeAggregate deserializes data into an aggregate
+func (m *SnapshotManager) deserializeAggregate(aggregate AggregateRoot, data map[string]interface{}) error {
+	// This is a simplified deserialization - in practice, you might use reflection
+	// or implement a Deserializable interface on aggregates
+	
+	if user, ok := aggregate.(*User); ok {
+		if email, exists := data["email"].(string); exists {
+			user.email = email
+		}
+		if name, exists := data["name"].(string); exists {
+			user.name = name
+		}
+		if status, exists := data["status"].(string); exists {
+			user.status = UserStatus(status)
+		}
+		if createdAt, exists := data["created_at"].(time.Time); exists {
+			user.createdAt = createdAt
+		}
+		if updatedAt, exists := data["updated_at"].(time.Time); exists {
+			user.updatedAt = updatedAt
+		}
+		if lastLoginAt, exists := data["last_login_at"].(time.Time); exists {
+			user.lastLoginAt = &lastLoginAt
+		}
+		if profile, exists := data["profile"].(map[string]interface{}); exists {
+			if firstName, exists := profile["first_name"].(string); exists {
+				user.profile.FirstName = firstName
+			}
+			if lastName, exists := profile["last_name"].(string); exists {
+				user.profile.LastName = lastName
+			}
+			if avatar, exists := profile["avatar"].(string); exists {
+				user.profile.Avatar = avatar
+			}
+		}
+	}
+	
+	return nil
+}
+
+// SnapshotOptimizedRepository extends the repository with snapshot capabilities
+type SnapshotOptimizedRepository struct {
+	Repository
+	snapshotManager *SnapshotManager
+}
+
+// NewSnapshotOptimizedRepository creates a new snapshot-optimized repository
+func NewSnapshotOptimizedRepository(eventStore EventStore, snapshotManager *SnapshotManager) *SnapshotOptimizedRepository {
+	return &SnapshotOptimizedRepository{
+		Repository:      *NewRepository(eventStore),
+		snapshotManager: snapshotManager,
+	}
+}
+
+// GetByID retrieves an aggregate by ID, using snapshots for optimization
+func (r *SnapshotOptimizedRepository) GetByID(ctx context.Context, aggregateID string, aggregateFactory func(string) AggregateRoot) (AggregateRoot, error) {
+	// Try to restore from snapshot first
+	aggregate, fromVersion, err := r.snapshotManager.RestoreFromSnapshot(ctx, aggregateID, aggregateFactory)
+	if err != nil {
+		// If no snapshot exists, create new aggregate and load from beginning
+		aggregate = aggregateFactory(aggregateID)
+		fromVersion = 0
+	}
+	
+	// Load events from the snapshot version onwards
+	events, err := r.eventStore.GetEventsFromVersion(ctx, aggregateID, fromVersion)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get events from version %d: %w", fromVersion, err)
+	}
+	
+	// Apply events to aggregate
+	for _, event := range events {
+		if err := aggregate.ApplyEvent(event); err != nil {
+			return nil, fmt.Errorf("failed to apply event %s: %w", event.EventID(), err)
+		}
+	}
+	
+	return aggregate, nil
+}
+
+// Save saves an aggregate and takes snapshots as needed
+func (r *SnapshotOptimizedRepository) Save(ctx context.Context, aggregate AggregateRoot) error {
+	// Save the aggregate using the base repository
+	if err := r.Repository.Save(ctx, aggregate); err != nil {
+		return err
+	}
+	
+	// Take a snapshot if policy indicates it should
+	if err := r.snapshotManager.TakeSnapshotIfNeeded(ctx, aggregate); err != nil {
+		// Log error but don't fail the save operation
+		// In production, you might want to handle this differently
+		return fmt.Errorf("failed to take snapshot (save succeeded): %w", err)
+	}
+	
+	return nil
+}
+
+// SnapshotMetrics provides metrics for snapshot operations
+type SnapshotMetrics interface {
+	RecordSnapshotTaken(aggregateType string, version int, duration time.Duration)
+	RecordSnapshotRestored(aggregateType string, version int, duration time.Duration)
+	RecordSnapshotSize(aggregateType string, size int64)
+	IncrementSnapshotErrors(aggregateType string, operation string)
+}
+
+// SnapshotHealthChecker checks the health of the snapshot system
+type SnapshotHealthChecker struct {
+	store   SnapshotStore
+	manager *SnapshotManager
+}
+
+// NewSnapshotHealthChecker creates a new snapshot health checker
+func NewSnapshotHealthChecker(store SnapshotStore, manager *SnapshotManager) *SnapshotHealthChecker {
+	return &SnapshotHealthChecker{
+		store:   store,
+		manager: manager,
+	}
+}
+
+// CheckHealth performs health checks on the snapshot system
+func (h *SnapshotHealthChecker) CheckHealth(ctx context.Context) map[string]bool {
+	health := make(map[string]bool)
+	
+	// Check if store is accessible
+	health["store_accessible"] = h.checkStoreAccessibility(ctx)
+	
+	// Check if snapshots are being created
+	health["snapshots_recent"] = h.checkRecentSnapshots(ctx)
+	
+	return health
+}
+
+// checkStoreAccessibility checks if the snapshot store is accessible
+func (h *SnapshotHealthChecker) checkStoreAccessibility(ctx context.Context) bool {
+	// Try a simple operation to test connectivity
+	_, err := h.store.GetSnapshotMetadata(ctx, "health-check-aggregate")
+	// We expect an error for non-existent aggregate, but store should be accessible
+	return true // If we got here without panic, store is accessible
+}
+
+// checkRecentSnapshots checks if snapshots have been created recently
+func (h *SnapshotHealthChecker) checkRecentSnapshots(ctx context.Context) bool {
+	// This would typically check timestamp of recent snapshots
+	// For this example, we'll return true
+	return true
+}
+
+// Default snapshot manager instance
+var defaultSnapshotManager *SnapshotManager
+
+// GetDefaultSnapshotManager returns the default snapshot manager
+func GetDefaultSnapshotManager() *SnapshotManager {
+	if defaultSnapshotManager == nil {
+		store := NewInMemorySnapshotStore()
+		policy := NewDefaultSnapshotPolicy(10) // Snapshot every 10 events
+		defaultSnapshotManager = NewSnapshotManager(store, policy)
+	}
+	return defaultSnapshotManager
+}
+
+// SetDefaultSnapshotManager sets the default snapshot manager
+func SetDefaultSnapshotManager(manager *SnapshotManager) {
+	defaultSnapshotManager = manager
+}

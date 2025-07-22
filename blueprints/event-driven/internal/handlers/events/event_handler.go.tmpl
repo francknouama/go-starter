@@ -1,0 +1,574 @@
+package events
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+)
+
+// EventHandler defines the interface for handling domain events
+type EventHandler interface {
+	// Handle processes a domain event
+	Handle(ctx context.Context, event domain.Event) error
+	
+	// CanHandle determines if this handler can process the given event
+	CanHandle(event domain.Event) bool
+	
+	// GetEventTypes returns the event types this handler supports
+	GetEventTypes() []string
+	
+	// GetName returns the handler name for identification
+	GetName() string
+}
+
+// BaseEventHandler provides a base implementation for event handlers
+type BaseEventHandler struct {
+	name       string
+	eventTypes []string
+}
+
+// NewBaseEventHandler creates a new base event handler
+func NewBaseEventHandler(name string, eventTypes []string) *BaseEventHandler {
+	return &BaseEventHandler{
+		name:       name,
+		eventTypes: eventTypes,
+	}
+}
+
+// GetName returns the handler name
+func (h *BaseEventHandler) GetName() string {
+	return h.name
+}
+
+// GetEventTypes returns the supported event types
+func (h *BaseEventHandler) GetEventTypes() []string {
+	return h.eventTypes
+}
+
+// CanHandle determines if this handler can process the given event
+func (h *BaseEventHandler) CanHandle(event domain.Event) bool {
+	eventType := event.EventType()
+	for _, supportedType := range h.eventTypes {
+		if supportedType == eventType {
+			return true
+		}
+	}
+	return false
+}
+
+// EventBus defines the interface for event publishing and subscription
+type EventBus interface {
+	// Publish publishes an event to all subscribers
+	Publish(ctx context.Context, event domain.Event) error
+	
+	// PublishBatch publishes multiple events as a batch
+	PublishBatch(ctx context.Context, events []domain.Event) error
+	
+	// Subscribe subscribes a handler to events
+	Subscribe(handler EventHandler) error
+	
+	// Unsubscribe unsubscribes a handler from events
+	Unsubscribe(handlerName string) error
+	
+	// GetSubscribers returns all registered handlers
+	GetSubscribers() []EventHandler
+	
+	// Close closes the event bus and cleanup resources
+	Close() error
+}
+
+// DefaultEventBus is the default implementation of EventBus
+type DefaultEventBus struct {
+	handlers map[string]EventHandler
+	mutex    sync.RWMutex
+	metrics  EventMetrics
+}
+
+// NewEventBus creates a new event bus
+func NewEventBus() *DefaultEventBus {
+	return &DefaultEventBus{
+		handlers: make(map[string]EventHandler),
+	}
+}
+
+// SetMetrics sets the metrics collector
+func (eb *DefaultEventBus) SetMetrics(metrics EventMetrics) {
+	eb.metrics = metrics
+}
+
+// Publish publishes an event to all subscribers
+func (eb *DefaultEventBus) Publish(ctx context.Context, event domain.Event) error {
+	if event == nil {
+		return fmt.Errorf("event cannot be nil")
+	}
+	
+	eb.mutex.RLock()
+	handlers := make([]EventHandler, 0)
+	for _, handler := range eb.handlers {
+		if handler.CanHandle(event) {
+			handlers = append(handlers, handler)
+		}
+	}
+	eb.mutex.RUnlock()
+	
+	// Process handlers concurrently for better performance
+	var wg sync.WaitGroup
+	errChan := make(chan error, len(handlers))
+	
+	for _, handler := range handlers {
+		wg.Add(1)
+		go func(h EventHandler) {
+			defer wg.Done()
+			
+			start := time.Now()
+			err := h.Handle(ctx, event)
+			duration := time.Since(start)
+			
+			// Record metrics
+			if eb.metrics != nil {
+				eb.metrics.RecordEventHandled(h.GetName(), event.EventType(), duration, err == nil)
+				if err != nil {
+					eb.metrics.RecordEventError(h.GetName(), event.EventType(), err.Error())
+				}
+			}
+			
+			if err != nil {
+				errChan <- fmt.Errorf("handler %s failed to process event %s: %w", 
+					h.GetName(), event.EventType(), err)
+			}
+		}(handler)
+	}
+	
+	// Wait for all handlers to complete
+	wg.Wait()
+	close(errChan)
+	
+	// Collect any errors
+	var errors []error
+	for err := range errChan {
+		errors = append(errors, err)
+	}
+	
+	if len(errors) > 0 {
+		return fmt.Errorf("event handling failed with %d errors: %v", len(errors), errors)
+	}
+	
+	return nil
+}
+
+// PublishBatch publishes multiple events as a batch
+func (eb *DefaultEventBus) PublishBatch(ctx context.Context, events []domain.Event) error {
+	for _, event := range events {
+		if err := eb.Publish(ctx, event); err != nil {
+			return fmt.Errorf("failed to publish event %s: %w", event.EventID(), err)
+		}
+	}
+	return nil
+}
+
+// Subscribe subscribes a handler to events
+func (eb *DefaultEventBus) Subscribe(handler EventHandler) error {
+	if handler == nil {
+		return fmt.Errorf("handler cannot be nil")
+	}
+	
+	name := handler.GetName()
+	if name == "" {
+		return fmt.Errorf("handler name cannot be empty")
+	}
+	
+	eb.mutex.Lock()
+	defer eb.mutex.Unlock()
+	
+	if _, exists := eb.handlers[name]; exists {
+		return fmt.Errorf("handler already subscribed: %s", name)
+	}
+	
+	eb.handlers[name] = handler
+	
+	if eb.metrics != nil {
+		eb.metrics.IncrementSubscriberCount(name)
+	}
+	
+	return nil
+}
+
+// Unsubscribe unsubscribes a handler from events
+func (eb *DefaultEventBus) Unsubscribe(handlerName string) error {
+	eb.mutex.Lock()
+	defer eb.mutex.Unlock()
+	
+	if _, exists := eb.handlers[handlerName]; !exists {
+		return fmt.Errorf("handler not found: %s", handlerName)
+	}
+	
+	delete(eb.handlers, handlerName)
+	
+	if eb.metrics != nil {
+		eb.metrics.DecrementSubscriberCount(handlerName)
+	}
+	
+	return nil
+}
+
+// GetSubscribers returns all registered handlers
+func (eb *DefaultEventBus) GetSubscribers() []EventHandler {
+	eb.mutex.RLock()
+	defer eb.mutex.RUnlock()
+	
+	handlers := make([]EventHandler, 0, len(eb.handlers))
+	for _, handler := range eb.handlers {
+		handlers = append(handlers, handler)
+	}
+	
+	return handlers
+}
+
+// Close closes the event bus and cleanup resources
+func (eb *DefaultEventBus) Close() error {
+	eb.mutex.Lock()
+	defer eb.mutex.Unlock()
+	
+	eb.handlers = make(map[string]EventHandler)
+	return nil
+}
+
+// UserCreatedEventHandler handles user created events
+type UserCreatedEventHandler struct {
+	*BaseEventHandler
+	emailService EmailService
+	auditService AuditService
+}
+
+// NewUserCreatedEventHandler creates a new user created event handler
+func NewUserCreatedEventHandler(emailService EmailService, auditService AuditService) *UserCreatedEventHandler {
+	return &UserCreatedEventHandler{
+		BaseEventHandler: NewBaseEventHandler("UserCreatedEventHandler", []string{"UserCreated"}),
+		emailService:     emailService,
+		auditService:     auditService,
+	}
+}
+
+// Handle processes a user created event
+func (h *UserCreatedEventHandler) Handle(ctx context.Context, event domain.Event) error {
+	if !h.CanHandle(event) {
+		return fmt.Errorf("cannot handle event type: %s", event.EventType())
+	}
+	
+	// Extract user data from event
+	userData, ok := event.Data()["user"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid user data in event")
+	}
+	
+	userID, _ := userData["id"].(string)
+	userName, _ := userData["name"].(string)
+	userEmail, _ := userData["email"].(string)
+	
+	// Send welcome email
+	if h.emailService != nil {
+		welcomeEmail := &Email{
+			To:      userEmail,
+			Subject: "Welcome to our platform!",
+			Body:    fmt.Sprintf("Hello %s, welcome to our platform!", userName),
+		}
+		
+		if err := h.emailService.SendEmail(ctx, welcomeEmail); err != nil {
+			return fmt.Errorf("failed to send welcome email: %w", err)
+		}
+	}
+	
+	// Record audit log
+	if h.auditService != nil {
+		auditEntry := &AuditEntry{
+			EventID:     event.EventID(),
+			EventType:   event.EventType(),
+			AggregateID: event.AggregateID(),
+			UserID:      userID,
+			Action:      "user_created",
+			Timestamp:   event.Timestamp(),
+			Details:     map[string]interface{}{
+				"user_name":  userName,
+				"user_email": userEmail,
+			},
+		}
+		
+		if err := h.auditService.RecordAudit(ctx, auditEntry); err != nil {
+			return fmt.Errorf("failed to record audit log: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// UserUpdatedEventHandler handles user updated events
+type UserUpdatedEventHandler struct {
+	*BaseEventHandler
+	cacheService CacheService
+	auditService AuditService
+}
+
+// NewUserUpdatedEventHandler creates a new user updated event handler
+func NewUserUpdatedEventHandler(cacheService CacheService, auditService AuditService) *UserUpdatedEventHandler {
+	return &UserUpdatedEventHandler{
+		BaseEventHandler: NewBaseEventHandler("UserUpdatedEventHandler", []string{"UserUpdated"}),
+		cacheService:     cacheService,
+		auditService:     auditService,
+	}
+}
+
+// Handle processes a user updated event
+func (h *UserUpdatedEventHandler) Handle(ctx context.Context, event domain.Event) error {
+	if !h.CanHandle(event) {
+		return fmt.Errorf("cannot handle event type: %s", event.EventType())
+	}
+	
+	// Extract user data from event
+	userData, ok := event.Data()["user"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid user data in event")
+	}
+	
+	userID, _ := userData["id"].(string)
+	
+	// Invalidate cache
+	if h.cacheService != nil {
+		cacheKey := fmt.Sprintf("user:%s", userID)
+		if err := h.cacheService.Delete(ctx, cacheKey); err != nil {
+			return fmt.Errorf("failed to invalidate user cache: %w", err)
+		}
+	}
+	
+	// Record audit log
+	if h.auditService != nil {
+		auditEntry := &AuditEntry{
+			EventID:     event.EventID(),
+			EventType:   event.EventType(),
+			AggregateID: event.AggregateID(),
+			UserID:      userID,
+			Action:      "user_updated",
+			Timestamp:   event.Timestamp(),
+			Details:     userData,
+		}
+		
+		if err := h.auditService.RecordAudit(ctx, auditEntry); err != nil {
+			return fmt.Errorf("failed to record audit log: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// UserDeletedEventHandler handles user deleted events
+type UserDeletedEventHandler struct {
+	*BaseEventHandler
+	cacheService     CacheService
+	cleanupService   CleanupService
+	auditService     AuditService
+}
+
+// NewUserDeletedEventHandler creates a new user deleted event handler
+func NewUserDeletedEventHandler(cacheService CacheService, cleanupService CleanupService, auditService AuditService) *UserDeletedEventHandler {
+	return &UserDeletedEventHandler{
+		BaseEventHandler: NewBaseEventHandler("UserDeletedEventHandler", []string{"UserDeleted"}),
+		cacheService:     cacheService,
+		cleanupService:   cleanupService,
+		auditService:     auditService,
+	}
+}
+
+// Handle processes a user deleted event
+func (h *UserDeletedEventHandler) Handle(ctx context.Context, event domain.Event) error {
+	if !h.CanHandle(event) {
+		return fmt.Errorf("cannot handle event type: %s", event.EventType())
+	}
+	
+	// Extract user data from event
+	userData, ok := event.Data()["user"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid user data in event")
+	}
+	
+	userID, _ := userData["id"].(string)
+	
+	// Remove from cache
+	if h.cacheService != nil {
+		cacheKey := fmt.Sprintf("user:%s", userID)
+		if err := h.cacheService.Delete(ctx, cacheKey); err != nil {
+			return fmt.Errorf("failed to remove user from cache: %w", err)
+		}
+	}
+	
+	// Cleanup related data
+	if h.cleanupService != nil {
+		if err := h.cleanupService.CleanupUserData(ctx, userID); err != nil {
+			return fmt.Errorf("failed to cleanup user data: %w", err)
+		}
+	}
+	
+	// Record audit log
+	if h.auditService != nil {
+		auditEntry := &AuditEntry{
+			EventID:     event.EventID(),
+			EventType:   event.EventType(),
+			AggregateID: event.AggregateID(),
+			UserID:      userID,
+			Action:      "user_deleted",
+			Timestamp:   event.Timestamp(),
+			Details:     userData,
+		}
+		
+		if err := h.auditService.RecordAudit(ctx, auditEntry); err != nil {
+			return fmt.Errorf("failed to record audit log: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// Service interfaces for dependency injection
+type EmailService interface {
+	SendEmail(ctx context.Context, email *Email) error
+}
+
+type Email struct {
+	To      string
+	Subject string
+	Body    string
+}
+
+type CacheService interface {
+	Delete(ctx context.Context, key string) error
+}
+
+type CleanupService interface {
+	CleanupUserData(ctx context.Context, userID string) error
+}
+
+type AuditService interface {
+	RecordAudit(ctx context.Context, entry *AuditEntry) error
+}
+
+type AuditEntry struct {
+	EventID     string
+	EventType   string
+	AggregateID string
+	UserID      string
+	Action      string
+	Timestamp   time.Time
+	Details     map[string]interface{}
+}
+
+// EventMetrics provides metrics for event handling
+type EventMetrics interface {
+	RecordEventHandled(handlerName, eventType string, duration time.Duration, success bool)
+	RecordEventError(handlerName, eventType, errorType string)
+	IncrementSubscriberCount(handlerName string)
+	DecrementSubscriberCount(handlerName string)
+}
+
+// EventBusBuilder provides a fluent interface for building an event bus
+type EventBusBuilder struct {
+	bus *DefaultEventBus
+}
+
+// NewEventBusBuilder creates a new event bus builder
+func NewEventBusBuilder() *EventBusBuilder {
+	return &EventBusBuilder{
+		bus: NewEventBus(),
+	}
+}
+
+// WithHandler adds an event handler
+func (ebb *EventBusBuilder) WithHandler(handler EventHandler) *EventBusBuilder {
+	ebb.bus.Subscribe(handler)
+	return ebb
+}
+
+// WithMetrics sets the metrics collector
+func (ebb *EventBusBuilder) WithMetrics(metrics EventMetrics) *EventBusBuilder {
+	ebb.bus.SetMetrics(metrics)
+	return ebb
+}
+
+// Build creates the event bus
+func (ebb *EventBusBuilder) Build() EventBus {
+	return ebb.bus
+}
+
+// AsyncEventBus provides asynchronous event processing
+type AsyncEventBus struct {
+	*DefaultEventBus
+	eventQueue chan domain.Event
+	workers    int
+	ctx        context.Context
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
+}
+
+// NewAsyncEventBus creates a new async event bus
+func NewAsyncEventBus(workers int, queueSize int) *AsyncEventBus {
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	aeb := &AsyncEventBus{
+		DefaultEventBus: NewEventBus(),
+		eventQueue:      make(chan domain.Event, queueSize),
+		workers:         workers,
+		ctx:             ctx,
+		cancel:          cancel,
+	}
+	
+	// Start workers
+	for i := 0; i < workers; i++ {
+		aeb.wg.Add(1)
+		go aeb.worker()
+	}
+	
+	return aeb
+}
+
+// Publish publishes an event asynchronously
+func (aeb *AsyncEventBus) Publish(ctx context.Context, event domain.Event) error {
+	select {
+	case aeb.eventQueue <- event:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-aeb.ctx.Done():
+		return fmt.Errorf("event bus is closed")
+	}
+}
+
+// Close closes the async event bus
+func (aeb *AsyncEventBus) Close() error {
+	aeb.cancel()
+	close(aeb.eventQueue)
+	aeb.wg.Wait()
+	return aeb.DefaultEventBus.Close()
+}
+
+// worker processes events from the queue
+func (aeb *AsyncEventBus) worker() {
+	defer aeb.wg.Done()
+	
+	for {
+		select {
+		case event, ok := <-aeb.eventQueue:
+			if !ok {
+				return // Queue closed
+			}
+			
+			// Process event synchronously within worker
+			if err := aeb.DefaultEventBus.Publish(context.Background(), event); err != nil {
+				// Log error (implementation would depend on logger)
+				continue
+			}
+			
+		case <-aeb.ctx.Done():
+			return
+		}
+	}
+}
