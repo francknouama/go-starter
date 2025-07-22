@@ -31,8 +31,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		// Get the project root (parent of tests/acceptance/blueprints/monolith)
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build the CLI tool first
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -62,8 +62,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build the CLI tool
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -192,8 +192,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -251,8 +251,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter once
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -322,8 +322,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -374,8 +374,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -461,8 +461,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -531,8 +531,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -612,8 +612,8 @@ func TestMonolithBlueprintATDD(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -688,8 +688,8 @@ func TestMonolithProductionReadiness(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -746,8 +746,8 @@ func TestMonolithProductionReadiness(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -804,8 +804,8 @@ func TestMonolithProductionReadiness(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -855,8 +855,8 @@ func TestMonolithProductionReadiness(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -916,8 +916,8 @@ func TestMonolithQualityGates(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -978,8 +978,8 @@ func TestMonolithQualityGates(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -1016,8 +1016,8 @@ func TestMonolithQualityGates(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -1166,7 +1166,7 @@ func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error)
 		return res.output, res.err
 	case <-time.After(timeout):
 		if cmd.Process != nil {
-			cmd.Process.Kill()
+			_ = cmd.Process.Kill()
 		}
 		return nil, fmt.Errorf("command timed out after %v", timeout)
 	}

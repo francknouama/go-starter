@@ -719,7 +719,7 @@ func (ctx *CLITestContext) compileCLIProject() error {
 // Helper method to count files in directory
 func (ctx *CLITestContext) countFiles(dir string) int {
 	count := 0
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -747,7 +747,7 @@ func (ctx *CLITestContext) checkFileContains(relativePath, content string) error
 	// Check if it's a directory - if so, check all files in it
 	if stat, err := os.Stat(fullPath); err == nil && stat.IsDir() {
 		found := false
-		filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}

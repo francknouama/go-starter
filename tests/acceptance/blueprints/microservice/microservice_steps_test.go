@@ -731,7 +731,7 @@ func (ctx *MicroserviceTestContext) cleanup() {
 	// Stop all containers
 	for name, container := range ctx.containers {
 		if container != nil {
-			container.Terminate(context.Background())
+			_ = container.Terminate(context.Background())
 		}
 		delete(ctx.containers, name)
 	}
@@ -771,14 +771,14 @@ func (ctx *MicroserviceTestContext) afterScenario(sc *godog.Scenario, err error)
 	// Cleanup containers and processes for this scenario
 	for name, container := range ctx.containers {
 		if container != nil {
-			container.Terminate(context.Background())
+			_ = container.Terminate(context.Background())
 		}
 		delete(ctx.containers, name)
 	}
 	
 	if ctx.serviceProcess != nil {
-		ctx.serviceProcess.Process.Kill()
-		ctx.serviceProcess.Wait()
+		_ = ctx.serviceProcess.Process.Kill()
+		_ = ctx.serviceProcess.Wait()
 		ctx.serviceProcess = nil
 	}
 	return nil

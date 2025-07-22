@@ -42,8 +42,8 @@ func setupAcceptanceTest(t *testing.T) *MonolithAcceptanceTestSuite {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		os.Chdir(suite.originalDir)
-		os.RemoveAll(suite.workingDir)
+		_ = os.Chdir(suite.originalDir)
+		_ = os.RemoveAll(suite.workingDir)
 	})
 
 	return suite

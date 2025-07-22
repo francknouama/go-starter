@@ -21,7 +21,7 @@ func setupCompilationTestTemplates(t *testing.T) {
 
 	// Get the project root for tests
 	_, file, _, _ := runtime.Caller(0)
-	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(file)))
+	projectRoot := filepath.Dir(filepath.Dir(filepath.Dir(filepath.Dir(file))))
 	templatesDir := filepath.Join(projectRoot, "blueprints")
 
 	// Verify blueprints directory exists

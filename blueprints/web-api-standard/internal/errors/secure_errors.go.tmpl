@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	
+	"{{.ModulePath}}/internal/logger"
 )
 
 // ErrorCode represents a secure error code that doesn't leak internal details
@@ -191,17 +193,11 @@ func WrapError(err error, requestID string) *SecureError {
 
 // ErrorHandler provides framework-agnostic error handling
 type ErrorHandler struct {
-	Logger Logger
-}
-
-// Logger interface for error logging
-type Logger interface {
-	ErrorWith(msg string, fields map[string]interface{})
-	WarnWith(msg string, fields map[string]interface{})
+	Logger logger.Logger
 }
 
 // NewErrorHandler creates a new error handler
-func NewErrorHandler(logger Logger) *ErrorHandler {
+func NewErrorHandler(logger logger.Logger) *ErrorHandler {
 	return &ErrorHandler{Logger: logger}
 }
 
@@ -215,14 +211,14 @@ func (h *ErrorHandler) HandleError(err error, requestID string) (int, map[string
 	
 	// Log internal error details for debugging (never exposed to client)
 	if secureErr.Internal() != nil {
-		h.Logger.ErrorWith("Internal error occurred", map[string]interface{}{
+		h.Logger.ErrorWith("Internal error occurred", logger.Fields{
 			"request_id":    requestID,
 			"error_code":    secureErr.Code,
 			"error_message": secureErr.Message,
 			"internal_error": secureErr.Internal().Error(),
 		})
 	} else {
-		h.Logger.WarnWith("Secure error returned", map[string]interface{}{
+		h.Logger.WarnWith("Secure error returned", logger.Fields{
 			"request_id":    requestID,
 			"error_code":    secureErr.Code,
 			"error_message": secureErr.Message,

@@ -47,6 +47,9 @@ import (
 	{{- end}}
 	"{{.ModulePath}}/internal/handlers"
 	"{{.ModulePath}}/internal/logger"
+	{{- if eq .Framework "gin"}}
+	"{{.ModulePath}}/internal/errors"
+	{{- end}}
 	{{- if eq .Framework "echo"}}
 	appMiddleware "{{.ModulePath}}/internal/middleware"
 	{{- else if eq .Framework "chi"}}
@@ -206,7 +209,12 @@ func (suite *APITestSuite) setupRoutes() {
 	
 	{{- if ne .AuthType ""}}
 	// Auth routes
+	{{- if eq .Framework "gin"}}
+	errorHandler := errors.NewErrorHandler(suite.logger)
+	authHandler := handlers.NewAuthHandler(suite.authService, errorHandler)
+	{{- else}}
 	authHandler := handlers.NewAuthHandler(suite.authService)
+	{{- end}}
 	auth := api.Group("/auth")
 	{
 		auth.POST("/login", authHandler.Login)
@@ -241,7 +249,12 @@ func (suite *APITestSuite) setupRoutes() {
 	
 	{{- if ne .AuthType ""}}
 	// Auth routes
+	{{- if eq .Framework "gin"}}
+	errorHandler := errors.NewErrorHandler(suite.logger)
+	authHandler := handlers.NewAuthHandler(suite.authService, errorHandler)
+	{{- else}}
 	authHandler := handlers.NewAuthHandler(suite.authService)
+	{{- end}}
 	auth := api.Group("/auth")
 	auth.POST("/login", authHandler.Login)
 	auth.POST("/register", authHandler.Register)
@@ -311,7 +324,12 @@ func (suite *APITestSuite) setupRoutes() {
 	
 	{{- if ne .AuthType ""}}
 	// Auth routes
+	{{- if eq .Framework "gin"}}
+	errorHandler := errors.NewErrorHandler(suite.logger)
+	authHandler := handlers.NewAuthHandler(suite.authService, errorHandler)
+	{{- else}}
 	authHandler := handlers.NewAuthHandler(suite.authService)
+	{{- end}}
 	auth := api.Group("/auth")
 	auth.Post("/login", authHandler.Login)
 	auth.Post("/register", authHandler.Register)
@@ -341,7 +359,12 @@ func (suite *APITestSuite) setupRoutes() {
 	userHandler := handlers.NewUsersHandler(suite.userService)
 	{{- if ne .AuthType ""}}
 	// Auth routes
+	{{- if eq .Framework "gin"}}
+	errorHandler := errors.NewErrorHandler(suite.logger)
+	authHandler := handlers.NewAuthHandler(suite.authService, errorHandler)
+	{{- else}}
 	authHandler := handlers.NewAuthHandler(suite.authService)
+	{{- end}}
 	suite.router.HandleFunc("/api/v1/auth/login", authHandler.Login)
 	suite.router.HandleFunc("/api/v1/auth/register", authHandler.Register)
 	suite.router.HandleFunc("/api/v1/auth/refresh", authHandler.Refresh)

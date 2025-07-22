@@ -52,76 +52,69 @@ func NewZerologAdapterWithLevel(level string) output.LoggerPort {
 }
 
 // Debug logs a debug message
-func (z *ZerologAdapter) Debug(ctx context.Context, msg string, args ...interface{}) {
+func (z *ZerologAdapter) Debug(ctx context.Context, msg string, fields ...output.Field) {
 	event := z.logger.Debug()
-	z.addFieldsToEvent(event, args...)
+	z.addFieldsToEventFromFields(event, fields...)
 	event.Msg(msg)
 }
 
 // Info logs an info message
-func (z *ZerologAdapter) Info(ctx context.Context, msg string, args ...interface{}) {
+func (z *ZerologAdapter) Info(ctx context.Context, msg string, fields ...output.Field) {
 	event := z.logger.Info()
-	z.addFieldsToEvent(event, args...)
+	z.addFieldsToEventFromFields(event, fields...)
 	event.Msg(msg)
 }
 
 // Warn logs a warning message
-func (z *ZerologAdapter) Warn(ctx context.Context, msg string, args ...interface{}) {
+func (z *ZerologAdapter) Warn(ctx context.Context, msg string, fields ...output.Field) {
 	event := z.logger.Warn()
-	z.addFieldsToEvent(event, args...)
+	z.addFieldsToEventFromFields(event, fields...)
 	event.Msg(msg)
 }
 
 // Error logs an error message
-func (z *ZerologAdapter) Error(ctx context.Context, msg string, args ...interface{}) {
+func (z *ZerologAdapter) Error(ctx context.Context, msg string, fields ...output.Field) {
 	event := z.logger.Error()
-	z.addFieldsToEvent(event, args...)
+	z.addFieldsToEventFromFields(event, fields...)
 	event.Msg(msg)
 }
 
-// With creates a new logger with additional fields
-func (z *ZerologAdapter) With(args ...interface{}) output.LoggerPort {
+// Fatal logs a fatal message and terminates the application
+func (z *ZerologAdapter) Fatal(ctx context.Context, msg string, fields ...output.Field) {
+	event := z.logger.Fatal()
+	z.addFieldsToEventFromFields(event, fields...)
+	event.Msg(msg)
+}
+
+// WithFields returns a logger with additional fields
+func (z *ZerologAdapter) WithFields(fields ...output.Field) output.LoggerPort {
 	logger := z.logger.With()
-	z.addFieldsToContext(logger, args...)
+	
+	for _, field := range fields {
+		logger = logger.Interface(field.Key, field.Value)
+	}
 	
 	return &ZerologAdapter{
 		logger: logger.Logger(),
 	}
 }
 
-// WithFields creates a new logger with additional fields from a map
-func (z *ZerologAdapter) WithFields(fields map[string]interface{}) output.LoggerPort {
-	logger := z.logger.With()
-	
-	for k, v := range fields {
-		logger = logger.Interface(k, v)
-	}
-	
+// WithError returns a logger with an error field
+func (z *ZerologAdapter) WithError(err error) output.LoggerPort {
 	return &ZerologAdapter{
-		logger: logger.Logger(),
+		logger: z.logger.With().Err(err).Logger(),
 	}
 }
 
-// addFieldsToEvent adds variadic arguments as fields to a zerolog event
-func (z *ZerologAdapter) addFieldsToEvent(event *zerolog.Event, args ...interface{}) {
-	for i := 0; i < len(args); i += 2 {
-		if i+1 < len(args) {
-			key, ok := args[i].(string)
-			if ok {
-				event.Interface(key, args[i+1])
-			}
-		}
-	}
+// DisableColor disables color output
+func (z *ZerologAdapter) DisableColor() {
+	// Zerolog doesn't have built-in color support to disable
+	// This is a no-op for compatibility with the Logger interface
 }
 
-// addFieldsToContext adds variadic arguments as fields to a zerolog context
-func (z *ZerologAdapter) addFieldsToContext(ctx zerolog.Context, args ...interface{}) {
-	for i := 0; i < len(args); i += 2 {
-		if i+1 < len(args) {
-			key, ok := args[i].(string)
-			if ok {
-				ctx = ctx.Interface(key, args[i+1])
-			}
-		}
+// addFieldsToEventFromFields converts output.Field slice to zerolog event fields
+func (z *ZerologAdapter) addFieldsToEventFromFields(event *zerolog.Event, fields ...output.Field) {
+	for _, field := range fields {
+		event.Interface(field.Key, field.Value)
 	}
 }
