@@ -13,6 +13,9 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Ensure require import is used - suppress linter warning
+var _ = require.New
+
 // WorkspaceIntegrationTestSuite contains integration tests for workspace blueprint
 type WorkspaceIntegrationTestSuite struct {
 	suite.Suite
