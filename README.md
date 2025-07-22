@@ -5,15 +5,16 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Release](https://img.shields.io/github/v/release/francknouama/go-starter)](https://github.com/francknouama/go-starter/releases)
 
-Stop fighting boilerplate. Generate complete, production-ready Go projects that compile immediately and follow best practices.
+The most comprehensive Go project generator with **12 blueprints**, **progressive disclosure**, and **4 logger options**. Generate production-ready Go projects in 30 seconds that compile immediately and follow enterprise best practices.
 
 ## ⚡ See It In Action
 
+### Beginner-Friendly Mode (Default)
 ```bash
 # Install once
 go install github.com/francknouama/go-starter@latest
 
-# Create a production-ready API in 30 seconds
+# Generate with simple guided prompts
 go-starter new my-api --type web-api --logger zap
 
 cd my-api
@@ -22,7 +23,19 @@ make test   # All tests pass ✅
 make build  # Production binary ready 🚀
 ```
 
-**That's it.** No configuration files. No dependency hunting. No project structure decisions. Just working, production-ready code.
+### Progressive Disclosure - Start Simple, Scale Smart
+```bash
+# Simple CLI (8 files) - Perfect for learning
+go-starter new my-tool --type cli --complexity simple
+
+# Standard CLI (29 files) - Production-ready
+go-starter new my-tool --type cli --complexity standard
+
+# Advanced mode - See all 18+ options
+go-starter new --advanced --help
+```
+
+**That's it.** No configuration files. No dependency hunting. No project structure decisions. Just working, production-ready code that scales with your needs.
 
 ## 🎯 What You Get
 
@@ -33,14 +46,37 @@ make build  # Production binary ready 🚀
 ✅ **CI/CD included** - GitHub Actions configured  
 ✅ **Full documentation** - README, API docs, examples  
 
-## 🚀 Four Project Types
+## 🚀 12 Complete Blueprints
 
-| Type | Use Case | Framework | 
-|------|----------|-----------|
-| **🌐 Web API** | REST APIs, microservices | Gin + database |
-| **🖥️ CLI Tool** | DevOps, automation | Cobra + subcommands |
+### 📊 Core Web APIs (4 Architecture Patterns)
+| Blueprint | Use Case | Architecture | 
+|-----------|----------|--------------|
+| **🌐 Standard Web API** | REST APIs, CRUD services | Standard layered |
+| **🏗️ Clean Architecture API** | Enterprise applications | Clean Architecture |
+| **⚙️ DDD Web API** | Domain-rich applications | Domain-Driven Design |
+| **🔩 Hexagonal Architecture API** | Highly testable systems | Ports & Adapters |
+
+### 🖥️ CLI Applications (2 Complexity Levels)
+| Blueprint | Use Case | Files | Complexity |
+|-----------|----------|--------|------------|
+| **📱 Simple CLI** | Scripts, utilities | 8 files | Beginner |
+| **⚙️ Standard CLI** | Production tools | 29 files | Professional |
+
+### 🏢 Enterprise & Cloud-Native
+| Blueprint | Use Case | Key Features |
+|-----------|----------|--------------|
+| **🌐 gRPC Gateway** | API Gateway + gRPC | Dual HTTP/gRPC, TLS |
+| **🔄 Event-Driven** | CQRS, Event Sourcing | Event streams, projections |
+| **🏗️ Microservice** | Service mesh, K8s | Discovery, circuit breakers |
+| **🏢 Monolith** | Traditional web apps | Full-stack, templating |
+
+### ☁️ Serverless & Tools  
+| Blueprint | Use Case | Runtime |
+|-----------|----------|---------|
+| **⚡ AWS Lambda** | Event functions | AWS Lambda Go |
+| **🌉 Lambda Proxy** | API Gateway integration | HTTP proxy patterns |
 | **📦 Library** | SDKs, packages | Clean API + examples |
-| **⚡ Lambda** | Serverless, events | AWS runtime + SAM |
+| **🔧 Go Workspace** | Monorepo projects | Multi-module workspace |
 
 ## 🎛️ Unique Logger Selector
 
@@ -51,6 +87,16 @@ go-starter new api --logger zap        # Zero allocations ⚡
 go-starter new app --logger slog       # Standard library 📚  
 go-starter new service --logger zerolog # JSON optimized ☁️
 go-starter new tool --logger logrus    # Feature-rich 🔧
+```
+
+**Progressive Complexity Examples:**
+
+```bash
+# Start simple, grow as needed
+go-starter new my-tool --type cli --complexity simple   # 8 files
+go-starter new my-api --type web-api --architecture clean
+go-starter new my-service --type microservice --logger zap
+go-starter new my-workspace --type workspace   # Multi-module monorepo
 ```
 
 **Switch anytime** without changing application code.
@@ -66,15 +112,28 @@ go-starter new tool --logger logrus    # Feature-rich 🔧
 
 ## 🏃‍♂️ Quick Start
 
+### Basic Mode (Beginner-Friendly)
 ```bash
 # 1. Install
 go install github.com/francknouama/go-starter@latest
 
-# 2. Generate (interactive mode)
+# 2. Generate with guided prompts (shows 14 essential options)
 go-starter new my-project
 
 # 3. Ship
 cd my-project && make run
+```
+
+### Advanced Mode (Power Users)
+```bash
+# See all 18+ options for complex projects
+go-starter new --advanced --help
+
+# Generate enterprise patterns directly
+go-starter new enterprise-api --type web-api --architecture hexagonal --advanced
+
+# Create workspace for monorepos
+go-starter new my-workspace --type workspace
 ```
 
 **Alternative installation:** [Download binaries](docs/guides/INSTALLATION.md) • [All methods](docs/guides/INSTALLATION.md)
@@ -90,17 +149,27 @@ cd my-project && make run
 | 🔧 **[Configuration](docs/guides/CONFIGURATION.md)** | Customize your setup |
 | 📋 **[Complete Docs](docs/README.md)** | Full documentation index |
 
-## 🛣️ What's Next
+## 🛣️ Current Status & Roadmap
 
-**Current (v1.3.1):** 4 project types, 4 logger options, production-ready code
+**Current (v2.0+):** 12 complete blueprints, progressive disclosure, enterprise architecture patterns
 
-**Coming Soon:**
-- 🏗️ **Advanced Architectures** - Clean, DDD, Hexagonal patterns  
+### ✅ Phase 2 Complete - Advanced Architecture Patterns
+- 🏗️ **Advanced Architectures** - Clean, DDD, Hexagonal ✅
+- 🔄 **Event-Driven Architecture** - CQRS, Event Sourcing ✅  
+- 🏢 **Enterprise Patterns** - Microservices, Monoliths ✅
+- 🌐 **gRPC Gateway** - Dual HTTP/gRPC APIs ✅
+- 🔧 **Go Workspace** - Multi-module monorepos ✅
+
+### 🚧 Phase 3 - In Development
+- 📱 **Web Interface** - Browser-based project generator
 - 🌐 **More Frameworks** - Echo, Fiber, Chi, Bun Router
 - 🗃️ **Database Options** - GORM, sqlx, sqlc, ent, Bun ORM
 - 📊 **Analytics Databases** - ClickHouse, TimescaleDB
+
+### 🔮 Phase 4 - Future Vision
 - 🔍 **Monitoring & APM** - Prometheus, OpenTelemetry, Uptrace
-- 📱 **Web Interface** - Browser-based project generator
+- ☁️ **Cloud Platforms** - AWS, GCP, Azure deployment
+- 🏪 **Blueprint Marketplace** - Community templates
 
 ## ❤️ Community
 
@@ -114,11 +183,17 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-**Ready to 10x your Go development?**
+**Ready to experience the most comprehensive Go generator?**
 
 ```bash
+# Beginner? Start here
 go install github.com/francknouama/go-starter@latest
-go-starter new my-project
+go-starter new my-first-project
+
+# Power user? Go advanced
+go-starter new enterprise-system --type microservice --architecture hexagonal --advanced
 ```
+
+🚀 **From simple scripts to enterprise architectures - go-starter scales with you.**
 
 ⭐ **[Star us on GitHub](https://github.com/francknouama/go-starter)** • 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** • 💬 **[Join Discussions](https://github.com/francknouama/go-starter/discussions)**

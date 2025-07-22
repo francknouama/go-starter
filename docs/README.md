@@ -10,7 +10,10 @@ docs/
 ├── references/       # API and command references  
 ├── project-plans/    # Project roadmaps and plans
 ├── migration-guides/ # Migration and transition guides
-└── audits/          # Blueprint audits and reports
+├── audits/           # Blueprint audits and reports
+├── analysis/         # Technical analysis and research
+├── releases/         # Release notes and distribution
+└── maintenance/      # Project maintenance and admin
 ```
 
 ## 🚀 Getting Started
@@ -44,9 +47,16 @@ docs/
 
 ## 🗺️ Project Plans
 
-- 🎯 **[Phase 2 Completion Plan](project-plans/PHASE_2_COMPLETION_PLAN.md)** - Current development status (95% complete)
+- 🎯 **[Phase 2 Completion Plan](project-plans/PHASE_2_COMPLETION_PLAN.md)** - Current development status ✅ Complete
 - 🌐 **[Phase 3 Web UI Plan](project-plans/PHASE_3_WEB_UI_DEVELOPMENT_PLAN.md)** - Web interface development roadmap  
 - 🚀 **[CI/CD Infrastructure Plan](project-plans/CI_CD_INFRASTRUCTURE_IMPROVEMENT_PLAN.md)** - Deployment automation plans
+- 📋 **[Project Roadmap](project-plans/PROJECT_ROADMAP.md)** - Long-term vision and milestones
+- 🧪 **[TDD Implementation Plan](project-plans/TDD_IMPLEMENTATION_PLAN.md)** - Test-driven development strategy
+- 📊 **[Test Coverage Plan](project-plans/TEST_COVERAGE_PLAN.md)** - Comprehensive testing strategy
+- 🌐 **[Web Tool Backlog](project-plans/WEB_TOOL_BACKLOG.md)** - Web interface features
+- 🏢 **[SaaS Backlog](project-plans/SAAS_BACKLOG.md)** - SaaS platform development
+- 📋 **[Demo Project Review Plan](project-plans/DEMO_PROJECT_REVIEW_PLAN.md)** - Generated project validation
+- 🔧 **[Workspace Implementation Plan](project-plans/WORKSPACE_IMPLEMENTATION_PLAN.md)** - Go workspace blueprint development
 
 ## 🔄 Migration Guides
 
@@ -58,6 +68,26 @@ docs/
 ## 🔍 Audit Reports
 
 Comprehensive blueprint quality assessments and improvement reports are available in the [audits/](audits/) directory.
+
+## 📊 Technical Analysis
+
+- 🏗️ **[Blueprint Review Report](analysis/BLUEPRINT_REVIEW_REPORT.md)** - Comprehensive quality analysis
+- 🤖 **[AI Design Tools Evaluation](analysis/AI_DESIGN_TOOLS_EVALUATION.md)** - AI tooling research
+- 📋 **[Blueprint Externalization Plan](analysis/BLUEPRINT_EXTERNALIZATION_PLAN.md)** - External blueprint system
+- 🔧 **[CLI Enhancement Analysis](analysis/CLI_ENHANCEMENT_TICKET.md)** - CLI system improvements
+- 🏗️ **[Hexagonal Architecture Tasks](analysis/HEXAGONAL_ARCHITECTURE_REMEDIATION_TASKS.md)** - Architecture improvements
+
+## 📦 Release Information
+
+- 📋 **[Release Notes](releases/RELEASE_NOTES.md)** - Version history and changes
+- 🍺 **[Homebrew Setup](releases/HOMEBREW_SETUP.md)** - Distribution configuration
+- 📖 **[v1.0.0 Release Notes](releases/RELEASE_NOTES_v1.0.0.md)** - Detailed v1.0.0 documentation
+
+## 🔧 Project Maintenance
+
+- 📋 **[Blueprint Backlog](maintenance/BLUEPRINT_BACKLOG.md)** - Development priorities
+- 🐛 **[Issues to Close](maintenance/ISSUES_TO_CLOSE.md)** - Issue cleanup tasks
+- 🤖 **[Gemini Configuration](maintenance/GEMINI.md)** - AI assistant setup
 
 ## 🆘 Help & Support
 
@@ -140,7 +170,7 @@ docs/
 
 We welcome contributions! Please see:
 - [Contributing Guide](../CONTRIBUTING.md)
-- [Project Roadmap](../PROJECT_ROADMAP.md)
+- [Project Roadmap](project-plans/PROJECT_ROADMAP.md)
 
 ## 🔗 Links
 

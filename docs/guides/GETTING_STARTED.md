@@ -1,13 +1,15 @@
 # Getting Started with go-starter
 
-Welcome to **go-starter**! This guide will help you get up and running with the most powerful Go project generator available. In just a few minutes, you'll be creating production-ready Go applications with the perfect logging strategy for your needs.
+Welcome to **go-starter**! This guide will help you get up and running with the most comprehensive Go project generator available. With **12 blueprints**, **progressive disclosure**, and **enterprise architecture patterns**, you'll be creating production-ready Go applications that scale from simple scripts to complex enterprise systems.
 
 ## Table of Contents
 
 - [Installation](#installation)
+- [Progressive Disclosure System](#progressive-disclosure-system)
 - [Your First Project](#your-first-project)
+- [Understanding Project Complexity](#understanding-project-complexity)
+- [All 12 Blueprint Types](#all-12-blueprint-types)
 - [Understanding the Logger Selector](#understanding-the-logger-selector)
-- [Project Types](#project-types)
 - [Working with Generated Projects](#working-with-generated-projects)
 - [Advanced Usage](#advanced-usage)
 - [Tips and Best Practices](#tips-and-best-practices)
@@ -47,67 +49,340 @@ go-starter version
 
 You should see output like:
 ```
-Version: 1.1.0
-Commit: 760abac
-Built: 2025-06-25
+Version: 2.0.0
+Commit: 1f9d312
+Built: 2025-07-22
 ```
+
+## Progressive Disclosure System
+
+go-starter features a **progressive disclosure system** that adapts to your experience level and project complexity needs. No more overwhelming beginners with advanced options or limiting experts with simplified interfaces.
+
+### 🎯 Two Disclosure Modes
+
+#### Basic Mode (Default - Beginner Friendly)
+Shows only **14 essential options** with clear descriptions:
+
+```bash
+go-starter new --help
+# Shows: --type, --name, --module, --logger, --framework, etc.
+# Hides: --database-driver, --auth-type, --architecture, etc.
+```
+
+#### Advanced Mode (Power Users)
+Shows all **18+ options** including enterprise features:
+
+```bash
+go-starter new --advanced --help
+# Shows: All database options, authentication types, deployment configs
+```
+
+### 🎓 Smart Learning Path
+
+The system automatically suggests the right complexity level:
+
+```bash
+# Beginner: Simple CLI (8 files)
+go-starter new my-script --type cli --complexity simple
+
+# Intermediate: Standard CLI (29 files) 
+go-starter new my-tool --type cli --complexity standard
+
+# Advanced: Enterprise architectures
+go-starter new my-api --type web-api --architecture hexagonal --advanced
+```
+
+### 💡 Key Benefits
+
+- **No Overwhelm**: Beginners see only what they need
+- **No Limits**: Experts access all advanced features  
+- **Smart Defaults**: Reasonable choices for quick generation
+- **Clear Progression**: Obvious path from simple to complex
 
 ## Your First Project
 
-### Interactive Mode (Recommended for Beginners)
+### Progressive Disclosure Workflow
 
-The easiest way to get started is using interactive mode:
+The system adapts to your experience level automatically:
 
+#### Beginner Workflow (Basic Mode)
 ```bash
-go-starter new my-first-api
+go-starter new my-first-project
 ```
 
-You'll be guided through a series of prompts:
+You'll see **simplified prompts** with only essential options:
 
 ```
-? Project type: 
-  ❯ Web API - REST API or web service
-    CLI Application - Command-line tool
-    Library - Reusable Go package
-    AWS Lambda - Serverless function
+? Choose your project type:
+  ❯ 🌐 Web API (Standard) - REST APIs, CRUD services  
+    🏗️ Clean Architecture API - Enterprise applications
+    🖥️ Simple CLI - Scripts, utilities (8 files)
+    ⚙️ Standard CLI - Production tools (29 files)
+    📦 Library - SDKs, packages
+    ⚡ AWS Lambda - Event functions
+    [Show more options...]
 
-? Framework: 
-  ❯ gin (recommended)
+? Select logger:
+  ❯ slog - Go standard library (recommended)
+    zap - High performance, zero allocation  
+    logrus - Feature-rich, popular choice
+    zerolog - Zero allocation JSON
 
-? Logger type: 
-  ❯ slog - Standard library structured logging
-    zap - High performance, zero allocation
-    logrus - Feature-rich, popular logger
-    zerolog - Zero allocation JSON logger
+? Module path: github.com/yourusername/my-first-project
+```
 
-? Database support? 
-  ❯ Yes
-    No
+#### Advanced Workflow (Power Users)
+```bash
+go-starter new enterprise-system --advanced
+```
 
-? Select databases (space to select, enter to continue):
-  ❯ ◉ PostgreSQL
-    ◯ MySQL
-    ◉ Redis
-    ◯ MongoDB
-    ◯ SQLite
+Access **all 18+ options** for complex projects:
 
-? Module path: github.com/yourusername/my-first-api
+```
+? Choose architecture pattern:
+  ❯ Standard - Simple layered architecture
+    Clean - Clean Architecture principles
+    DDD - Domain-Driven Design  
+    Hexagonal - Ports & Adapters
+    Event-Driven - CQRS + Event Sourcing
+
+? Select databases (multiple allowed):
+  ◯ PostgreSQL - Production RDBMS
+  ◯ MySQL - Popular RDBMS  
+  ◯ MongoDB - Document database
+  ◯ Redis - In-memory cache
+  ◯ SQLite - File-based DB
+
+? Authentication type:
+  ❯ None
+    JWT - JSON Web Tokens
+    OAuth2 - OAuth2 providers
+    Session - Server-side sessions
+
+? Deployment targets:
+  ◯ Docker - Container deployment
+  ◯ Kubernetes - Container orchestration
+  ◯ AWS Lambda - Serverless
+  ◯ Terraform - Infrastructure as Code
 ```
 
 ### Direct Mode (For Power Users)
 
-If you know exactly what you want, use direct mode:
+Skip prompts when you know exactly what you want:
 
 ```bash
-# Create a high-performance API with zap logger
-go-starter new fast-api --type web-api --logger zap --database postgres
+# Progressive complexity examples
+go-starter new my-script --type cli --complexity simple         # 8 files
+go-starter new my-tool --type cli --complexity standard         # 29 files  
+go-starter new fast-api --type web-api --architecture clean --logger zap
+go-starter new my-service --type microservice --logger zerolog
+go-starter new my-workspace --type workspace                    # Monorepo
 
-# Create a CLI tool with logrus
-go-starter new mycli --type cli --logger logrus
-
-# Create a library with standard slog
-go-starter new mylib --type library
+# Enterprise patterns with advanced mode
+go-starter new enterprise-api --type web-api --architecture hexagonal --advanced
+go-starter new event-system --type event-driven --logger zap --advanced
 ```
+
+## Understanding Project Complexity
+
+go-starter uses a **4-tier complexity system** to help you choose the right blueprint:
+
+### 🟢 Beginner (Simple)
+**Perfect for**: Learning, scripts, prototypes  
+**Files**: 8-15 files  
+**Features**: Basic structure, minimal dependencies  
+
+```bash
+go-starter new my-script --type cli --complexity simple
+# Generates: 8 files, single main.go, basic config
+```
+
+### 🟡 Intermediate (Standard)  
+**Perfect for**: Production tools, standard applications  
+**Files**: 20-30 files  
+**Features**: Full structure, testing, CI/CD  
+
+```bash
+go-starter new my-api --type web-api  
+# Generates: 29 files, layered architecture, Docker, tests
+```
+
+### 🟠 Advanced (Enterprise Patterns)
+**Perfect for**: Complex systems, team projects  
+**Files**: 40-60 files  
+**Features**: Advanced architectures, multiple patterns  
+
+```bash
+go-starter new my-system --type web-api --architecture clean
+# Generates: Clean Architecture, dependency injection, mocks
+```
+
+### 🔴 Expert (Full-Featured)
+**Perfect for**: Large-scale systems, microservices  
+**Files**: 60+ files  
+**Features**: All patterns, monitoring, deployment  
+
+```bash
+go-starter new my-platform --type microservice --advanced
+# Generates: Service mesh, K8s, monitoring, distributed tracing
+```
+
+## All 12 Blueprint Types
+
+go-starter provides **12 production-ready blueprints** covering every Go project type:
+
+### 📊 Core Web APIs (4 Architecture Patterns)
+
+#### 1. 🌐 Standard Web API
+**Use Case**: REST APIs, CRUD services, microservices  
+**Architecture**: Standard layered (handlers → services → repository)  
+**Files**: ~29 files
+
+```bash
+go-starter new my-api --type web-api
+```
+
+#### 2. 🏗️ Clean Architecture Web API  
+**Use Case**: Enterprise applications, complex business logic  
+**Architecture**: Clean Architecture (entities → use cases → adapters)  
+**Files**: ~45 files
+
+```bash
+go-starter new enterprise-api --type web-api --architecture clean
+```
+
+#### 3. ⚙️ DDD Web API
+**Use Case**: Domain-rich applications, business rule heavy systems  
+**Architecture**: Domain-Driven Design (domain → application → infrastructure)  
+**Files**: ~42 files
+
+```bash
+go-starter new domain-api --type web-api --architecture ddd  
+```
+
+#### 4. 🔩 Hexagonal Architecture Web API
+**Use Case**: Highly testable systems, multiple adapters  
+**Architecture**: Ports & Adapters (core → ports → adapters)  
+**Files**: ~48 files  
+
+```bash
+go-starter new testable-api --type web-api --architecture hexagonal
+```
+
+### 🖥️ CLI Applications (2 Complexity Levels)
+
+#### 5. 📱 Simple CLI
+**Use Case**: Scripts, utilities, quick tools  
+**Complexity**: Beginner (8 files)  
+**Features**: Single command, basic flags, minimal structure  
+
+```bash
+go-starter new my-script --type cli --complexity simple
+```
+
+#### 6. ⚙️ Standard CLI  
+**Use Case**: Production CLI tools, DevOps utilities  
+**Complexity**: Professional (29 files)  
+**Features**: Subcommands, config files, advanced patterns  
+
+```bash
+go-starter new my-tool --type cli --complexity standard
+```
+
+### 🏢 Enterprise & Cloud-Native (4 Blueprints)
+
+#### 7. 🌐 gRPC Gateway
+**Use Case**: API Gateway with dual HTTP/gRPC support  
+**Features**: Protocol buffers, TLS, dual endpoints  
+
+```bash
+go-starter new api-gateway --type grpc-gateway
+```
+
+#### 8. 🔄 Event-Driven Architecture
+**Use Case**: CQRS, Event Sourcing, distributed systems  
+**Features**: Event streams, command/query separation, projections  
+
+```bash
+go-starter new event-system --type event-driven
+```
+
+#### 9. 🏗️ Microservice  
+**Use Case**: Service mesh, Kubernetes, distributed systems  
+**Features**: Service discovery, circuit breakers, health checks  
+
+```bash
+go-starter new user-service --type microservice
+```
+
+#### 10. 🏢 Monolith
+**Use Case**: Traditional web applications, full-stack systems  
+**Features**: HTML templating, sessions, asset pipeline  
+
+```bash
+go-starter new webapp --type monolith
+```
+
+### ☁️ Serverless & Tools (2 Blueprints)
+
+#### 11. ⚡ AWS Lambda
+**Use Case**: Event-driven functions, webhooks  
+**Runtime**: AWS Lambda Go  
+
+```bash
+go-starter new my-function --type lambda
+```
+
+#### 12. 🌉 Lambda Proxy  
+**Use Case**: API Gateway integration, RESTful serverless  
+**Features**: HTTP proxy patterns, API Gateway optimized  
+
+```bash
+go-starter new serverless-api --type lambda-proxy
+```
+
+#### 13. 📦 Library
+**Use Case**: SDKs, reusable packages, open source  
+**Features**: Clean public API, examples, documentation  
+
+```bash
+go-starter new awesome-lib --type library
+```
+
+#### 14. 🔧 Go Workspace
+**Use Case**: Monorepos, multi-module projects  
+**Features**: Multiple services, shared packages  
+
+```bash
+go-starter new my-platform --type workspace
+```
+
+### 🎯 Choosing the Right Blueprint
+
+**Starting a new project?** Use this decision tree:
+
+1. **Web API needed?** → Choose architecture complexity:
+   - Simple CRUD → `web-api` (standard)
+   - Enterprise system → `web-api --architecture clean`
+   - Domain-heavy → `web-api --architecture ddd`  
+   - Maximum testability → `web-api --architecture hexagonal`
+
+2. **CLI tool needed?** → Choose complexity:
+   - Quick script → `cli --complexity simple`
+   - Production tool → `cli --complexity standard`
+
+3. **Distributed system?** → Choose pattern:
+   - Event-driven → `event-driven`
+   - Microservices → `microservice`
+   - API Gateway → `grpc-gateway`
+
+4. **Serverless?** → Choose runtime:
+   - Simple functions → `lambda`
+   - REST API → `lambda-proxy`
+
+5. **Package/Library?** → `library`
+
+6. **Multiple services?** → `workspace`
 
 ## Understanding the Logger Selector
 
