@@ -187,7 +187,7 @@ func validateCLIProject(t *testing.T, projectPath string) {
 	// Try to run help command
 	helpCmd := exec.Command("./"+binaryName, "--help")
 	helpCmd.Dir = projectPath
-	output, err = helpCmd.CombinedOutput()
+	output, _ = helpCmd.CombinedOutput()
 
 	// It's okay if help command fails, but it shouldn't panic
 	outputStr := string(output)

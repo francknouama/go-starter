@@ -147,7 +147,7 @@ func (h *Hub) UpgradeConnection(c *gin.Context, clientType string) (*Client, err
 func (c *Client) readPump() {
 	defer func() {
 		c.Hub.unregister <- c
-		c.Conn.Close()
+		_ = c.Conn.Close()
 	}()
 
 	for {
@@ -172,7 +172,7 @@ func (c *Client) writePump() {
 		select {
 		case message, ok := <-c.Send:
 			if !ok {
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 

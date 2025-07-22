@@ -51,7 +51,7 @@ func NewTestContext(t *testing.T) *TestContext {
 // Cleanup removes temporary directories
 func (tc *TestContext) Cleanup() {
 	if tc.tempDir != "" {
-		os.RemoveAll(tc.tempDir)
+		_ = os.RemoveAll(tc.tempDir)
 	}
 }
 

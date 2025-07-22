@@ -46,7 +46,7 @@ func (s *WorkspaceIntegrationTestSuite) SetupSuite() {
 // TearDownSuite cleans up after tests
 func (s *WorkspaceIntegrationTestSuite) TearDownSuite() {
 	if s.tempDir != "" {
-		os.RemoveAll(s.tempDir)
+		_ = os.RemoveAll(s.tempDir)
 	}
 }
 

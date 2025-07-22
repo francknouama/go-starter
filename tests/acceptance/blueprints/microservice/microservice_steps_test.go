@@ -665,7 +665,7 @@ func (ctx *MicroserviceTestContext) testDatabaseConnectivity(dbType string) erro
 	if err != nil {
 		return fmt.Errorf("failed to connect to database: %s", err.Error())
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	return nil
 }
@@ -714,7 +714,7 @@ func (ctx *MicroserviceTestContext) makeHTTPRequest(method, path string, body []
 	
 	// Read response body
 	ctx.lastResponseBody, err = io.ReadAll(ctx.lastResponse.Body)
-	ctx.lastResponse.Body.Close()
+	_ = ctx.lastResponse.Body.Close()
 	
 	return err
 }

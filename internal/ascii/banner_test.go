@@ -224,9 +224,9 @@ func TestConfigFromEnv(t *testing.T) {
 	
 	// Cleanup after test
 	defer func() {
-		os.Setenv("GO_STARTER_BANNER", originalBanner)
-		os.Setenv("GO_STARTER_BANNER_STYLE", originalStyle)
-		os.Setenv("NO_COLOR", originalNoColor)
+		_ = os.Setenv("GO_STARTER_BANNER", originalBanner)
+		_ = os.Setenv("GO_STARTER_BANNER_STYLE", originalStyle)
+		_ = os.Setenv("NO_COLOR", originalNoColor)
 	}()
 	
 	tests := []struct {

@@ -3,7 +3,7 @@ package lambda_proxy_test
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +30,7 @@ func (s *LambdaProxyIntegrationTestSuite) SetupSuite() {
 	var err error
 	
 	// Create temporary directory
-	s.tempDir, err = ioutil.TempDir("", "lambda-proxy-integration-*")
+	s.tempDir, err = os.MkdirTemp("", "lambda-proxy-integration-*")
 	s.Require().NoError(err)
 	
 	// Build CLI tool
@@ -46,7 +46,7 @@ func (s *LambdaProxyIntegrationTestSuite) SetupSuite() {
 // TearDownSuite cleans up after tests
 func (s *LambdaProxyIntegrationTestSuite) TearDownSuite() {
 	if s.tempDir != "" {
-		os.RemoveAll(s.tempDir)
+		_ = os.RemoveAll(s.tempDir)
 	}
 }
 
@@ -116,7 +116,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyWithJWTAuth() {
 		s.Require().FileExists(fullPath, "Auth file should exist: %s", file)
 		
 		// Verify file contains JWT-related code
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		s.Require().NoError(err)
 		s.Contains(strings.ToLower(string(content)), "jwt", "File should contain JWT logic: %s", file)
 	}
@@ -149,7 +149,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyWithCognitoAuth() {
 	authServicePath := filepath.Join(projectPath, "internal/services/auth.go")
 	s.Require().FileExists(authServicePath)
 	
-	content, err := ioutil.ReadFile(authServicePath)
+	content, err := os.ReadFile(authServicePath)
 	s.Require().NoError(err)
 	
 	contentStr := strings.ToLower(string(content))
@@ -185,7 +185,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyMultiFramework() {
 			
 			// Verify framework-specific imports
 			mainGoPath := filepath.Join(projectPath, "main.go")
-			content, err := ioutil.ReadFile(mainGoPath)
+			content, err := os.ReadFile(mainGoPath)
 			s.Require().NoError(err)
 			
 			s.verifyFrameworkImports(string(content), framework)
@@ -224,7 +224,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyWithAllLoggers() {
 			loggerPath := filepath.Join(projectPath, "internal/observability/logger.go")
 			s.Require().FileExists(loggerPath)
 			
-			content, err := ioutil.ReadFile(loggerPath)
+			content, err := os.ReadFile(loggerPath)
 			s.Require().NoError(err)
 			
 			// Verify logger-specific imports and code
@@ -263,7 +263,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyTerraformIntegration() 
 		s.Require().FileExists(fullPath, "Terraform file should exist: %s", file)
 		
 		// Verify file is not empty
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		s.Require().NoError(err)
 		s.NotEmpty(string(content), "Terraform file should not be empty: %s", file)
 	}
@@ -300,7 +300,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyCICDWorkflows() {
 		s.Require().FileExists(fullPath, "Workflow file should exist: %s", file)
 		
 		// Verify YAML syntax
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		s.Require().NoError(err)
 		
 		var workflow interface{}
@@ -442,7 +442,7 @@ func (s *LambdaProxyIntegrationTestSuite) verifyProjectCompilation(projectPath s
 
 func (s *LambdaProxyIntegrationTestSuite) verifySAMTemplate(projectPath string) {
 	templatePath := filepath.Join(projectPath, "template.yaml")
-	content, err := ioutil.ReadFile(templatePath)
+	content, err := os.ReadFile(templatePath)
 	s.Require().NoError(err)
 	
 	var template interface{}
@@ -457,7 +457,7 @@ func (s *LambdaProxyIntegrationTestSuite) verifySAMTemplate(projectPath string) 
 
 func (s *LambdaProxyIntegrationTestSuite) verifySAMTemplateWithAuth(projectPath string) {
 	templatePath := filepath.Join(projectPath, "template.yaml")
-	content, err := ioutil.ReadFile(templatePath)
+	content, err := os.ReadFile(templatePath)
 	s.Require().NoError(err)
 	
 	templateStr := string(content)
@@ -503,7 +503,7 @@ func (s *LambdaProxyIntegrationTestSuite) verifyTerraformSyntax(projectPath stri
 	
 	for _, file := range terraformFiles {
 		fullPath := filepath.Join(projectPath, file)
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		s.Require().NoError(err)
 		
 		contentStr := string(content)

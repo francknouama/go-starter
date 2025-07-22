@@ -598,13 +598,13 @@ func (v *CLIRuntimeValidator) TestEnvironmentVariables(t *testing.T) {
 		for _, env := range originalEnv {
 			parts := strings.SplitN(env, "=", 2)
 			if len(parts) == 2 {
-				os.Setenv(parts[0], parts[1])
+				_ = os.Setenv(parts[0], parts[1])
 			}
 		}
 	}()
 
 	// Set test environment variables
-	os.Setenv("TEST_CLI_CONFIG_RUNTIME_LOGGING_LEVEL", "debug")
+	_ = os.Setenv("TEST_CLI_CONFIG_RUNTIME_LOGGING_LEVEL", "debug")
 	
 	// Test that environment variables are used
 	output, err := v.runCLI("create", "task", "env-test", "--force")

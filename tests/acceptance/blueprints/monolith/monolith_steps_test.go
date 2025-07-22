@@ -218,61 +218,61 @@ func (ctx *MonolithTestContext) iWantToCreateAMonolithApplication() error {
 }
 
 func (ctx *MonolithTestContext) iWantToCreateASecureMonolithApplication() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	ctx.authType = "session" // Will enable secure session configuration
 	return nil
 }
 
 func (ctx *MonolithTestContext) iWantToCreateAProductionReadyMonolith() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	// Production-ready settings will be validated in assertions
 	return nil
 }
 
 func (ctx *MonolithTestContext) iWantToCreateAMonolithWithFrontendAssets() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	// Asset pipeline will be enabled by default
 	return nil
 }
 
 func (ctx *MonolithTestContext) iWantToCreateAWellStructuredMonolith() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	// Structure will be validated in assertions
 	return nil
 }
 
 func (ctx *MonolithTestContext) iHaveGeneratedAMonolithWithDatabaseSupport() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return ctx.generateMonolithProject()
 }
 
 func (ctx *MonolithTestContext) iWantToEnsureCodeQuality() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return nil
 }
 
 func (ctx *MonolithTestContext) iHaveGeneratedAMonolithApplication() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return ctx.generateMonolithProject()
 }
 
 func (ctx *MonolithTestContext) iWantFlexibleLoggingOptions() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return nil
 }
 
 func (ctx *MonolithTestContext) iWantAHighPerformanceMonolith() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return nil
 }
 
 func (ctx *MonolithTestContext) iWantASecureMonolithApplication() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return nil
 }
 
 func (ctx *MonolithTestContext) iWantToDeployMyMonolithToProduction() error {
-	ctx.iWantToCreateAMonolithApplication()
+	_ = ctx.iWantToCreateAMonolithApplication()
 	return ctx.generateMonolithProject()
 }
 
@@ -463,7 +463,7 @@ func (ctx *MonolithTestContext) theApplicationShouldCompileAndRun() error {
 	// Try to start the application briefly to ensure it runs
 	runCmd := exec.Command("timeout", "2s", "./"+ctx.projectName)
 	runCmd.Dir = ctx.projectDir
-	runCmd.CombinedOutput() // Ignore output and error - timeout is expected
+	_, _ = runCmd.CombinedOutput() // Ignore output and error - timeout is expected
 	
 	return nil
 }
@@ -811,8 +811,8 @@ func (ctx *MonolithTestContext) checkFileDoesNotContain(filePath, content string
 func (ctx *MonolithTestContext) cleanup() {
 	// Cleanup after test execution
 	if ctx.serverCmd != nil && ctx.serverCmd.Process != nil {
-		ctx.serverCmd.Process.Kill()
-		ctx.serverCmd.Wait()
+		_ = ctx.serverCmd.Process.Kill()
+		_ = ctx.serverCmd.Wait()
 	}
 	
 	// Cleanup database
@@ -885,12 +885,12 @@ func (ctx *MonolithTestContext) connectToDatabase() error {
 
 func (ctx *MonolithTestContext) cleanupDatabase() {
 	if ctx.database != nil {
-		ctx.database.Close()
+		_ = ctx.database.Close()
 		ctx.database = nil
 	}
 
 	if ctx.postgresContainer != nil {
-		ctx.postgresContainer.Terminate(ctx.ctx)
+		_ = ctx.postgresContainer.Terminate(ctx.ctx)
 		ctx.postgresContainer = nil
 	}
 }

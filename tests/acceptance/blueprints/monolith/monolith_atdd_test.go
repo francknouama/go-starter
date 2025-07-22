@@ -1074,7 +1074,7 @@ func waitForServerStart(url string, timeout time.Duration) error {
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -1177,7 +1177,7 @@ func readFileLines(filePath string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	
 	var lines []string
 	scanner := bufio.NewScanner(file)

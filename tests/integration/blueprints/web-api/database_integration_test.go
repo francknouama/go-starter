@@ -124,7 +124,7 @@ func testConstraintViolations(t *testing.T, client *http.Client, baseURL string)
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// Try to register second user with same email
@@ -135,7 +135,7 @@ func testConstraintViolations(t *testing.T, client *http.Client, baseURL string)
 		resp, err = client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should fail with conflict or bad request
 		assert.True(t, resp.StatusCode == http.StatusConflict ||
@@ -158,7 +158,7 @@ func testConstraintViolations(t *testing.T, client *http.Client, baseURL string)
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Login
 		loginData := map[string]interface{}{
@@ -176,7 +176,7 @@ func testConstraintViolations(t *testing.T, client *http.Client, baseURL string)
 		var authResp AuthResponse
 		err = json.NewDecoder(resp.Body).Decode(&authResp)
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Try to update with non-existent reference
 		updateData := map[string]interface{}{
@@ -197,7 +197,7 @@ func testConstraintViolations(t *testing.T, client *http.Client, baseURL string)
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should fail with not found
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
@@ -219,7 +219,7 @@ func testConstraintViolations(t *testing.T, client *http.Client, baseURL string)
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should fail validation
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -247,14 +247,14 @@ func testTransactionFailures(t *testing.T, client *http.Client, baseURL string, 
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// Try to register same user again (should fail atomically)
 		resp, err = client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should fail without partial data being saved
 		assert.True(t, resp.StatusCode == http.StatusConflict ||
@@ -286,7 +286,7 @@ func testTransactionFailures(t *testing.T, client *http.Client, baseURL string, 
 					results <- 0
 					return
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 
 				results <- resp.StatusCode
 			}(i)
@@ -326,7 +326,7 @@ func testConnectionPoolExhaustion(t *testing.T, client *http.Client, baseURL str
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Login to get token
 		loginData := map[string]interface{}{
@@ -344,7 +344,7 @@ func testConnectionPoolExhaustion(t *testing.T, client *http.Client, baseURL str
 		var authResp AuthResponse
 		err = json.NewDecoder(resp.Body).Decode(&authResp)
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Send many concurrent requests
 		for i := 0; i < concurrentRequests; i++ {
@@ -364,7 +364,7 @@ func testConnectionPoolExhaustion(t *testing.T, client *http.Client, baseURL str
 					results <- 0
 					return
 				}
-				defer resp.Body.Close()
+				defer func() { _ = resp.Body.Close() }()
 
 				results <- resp.StatusCode
 			}()
@@ -414,7 +414,7 @@ func testDatabaseDeadlocks(t *testing.T, client *http.Client, baseURL string, db
 			resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 				strings.NewReader(string(jsonData)))
 			require.NoError(t, err)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			assert.Equal(t, http.StatusCreated, resp.StatusCode)
 		}
 
@@ -442,8 +442,8 @@ func testDatabaseDeadlocks(t *testing.T, client *http.Client, baseURL string, db
 			}
 
 			var authResp AuthResponse
-			json.NewDecoder(resp.Body).Decode(&authResp)
-			resp.Body.Close()
+			_ = json.NewDecoder(resp.Body).Decode(&authResp)
+			_ = resp.Body.Close()
 
 			// Update profile
 			updateData := map[string]interface{}{
@@ -462,7 +462,7 @@ func testDatabaseDeadlocks(t *testing.T, client *http.Client, baseURL string, db
 				results <- err
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			results <- nil
 		}()
@@ -490,8 +490,8 @@ func testDatabaseDeadlocks(t *testing.T, client *http.Client, baseURL string, db
 			}
 
 			var authResp AuthResponse
-			json.NewDecoder(resp.Body).Decode(&authResp)
-			resp.Body.Close()
+			_ = json.NewDecoder(resp.Body).Decode(&authResp)
+			_ = resp.Body.Close()
 
 			// Update profile
 			updateData := map[string]interface{}{
@@ -510,7 +510,7 @@ func testDatabaseDeadlocks(t *testing.T, client *http.Client, baseURL string, db
 				results <- err
 				return
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 
 			results <- nil
 		}()
@@ -551,7 +551,7 @@ func testQueryTimeouts(t *testing.T, client *http.Client, baseURL string, dbConn
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Login
 		loginData := map[string]interface{}{
@@ -569,7 +569,7 @@ func testQueryTimeouts(t *testing.T, client *http.Client, baseURL string, dbConn
 		var authResp AuthResponse
 		err = json.NewDecoder(resp.Body).Decode(&authResp)
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Create multiple users to simulate large dataset
 		for i := 0; i < 50; i++ {
@@ -581,7 +581,7 @@ func testQueryTimeouts(t *testing.T, client *http.Client, baseURL string, dbConn
 			}
 
 			jsonData, _ := json.Marshal(userData)
-			client.Post(baseURL+"/api/auth/register", "application/json",
+			_, _ = client.Post(baseURL+"/api/auth/register", "application/json",
 				strings.NewReader(string(jsonData)))
 		}
 
@@ -595,7 +595,7 @@ func testQueryTimeouts(t *testing.T, client *http.Client, baseURL string, dbConn
 
 		resp, err = shortTimeoutClient.Do(req)
 		if err == nil {
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			// Request completed within timeout
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 		} else {
@@ -623,7 +623,7 @@ func testDataIntegrityErrors(t *testing.T, client *http.Client, baseURL string) 
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// Login
@@ -642,7 +642,7 @@ func testDataIntegrityErrors(t *testing.T, client *http.Client, baseURL string) 
 		var authResp AuthResponse
 		err = json.NewDecoder(resp.Body).Decode(&authResp)
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Try to update with inconsistent data
 		updateData := map[string]interface{}{
@@ -663,7 +663,7 @@ func testDataIntegrityErrors(t *testing.T, client *http.Client, baseURL string) 
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should reject invalid data
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -686,7 +686,7 @@ func testDataIntegrityErrors(t *testing.T, client *http.Client, baseURL string) 
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		assert.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// Login
@@ -705,7 +705,7 @@ func testDataIntegrityErrors(t *testing.T, client *http.Client, baseURL string) 
 		var authResp AuthResponse
 		err = json.NewDecoder(resp.Body).Decode(&authResp)
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Get user details
 		req, err := http.NewRequest("GET", baseURL+"/api/users/me", nil)
@@ -714,7 +714,7 @@ func testDataIntegrityErrors(t *testing.T, client *http.Client, baseURL string) 
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 

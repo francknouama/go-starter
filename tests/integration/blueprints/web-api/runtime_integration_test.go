@@ -122,7 +122,7 @@ func generateHexagonalProject(t *testing.T, ctx context.Context, testDir string,
 	// Change to test directory
 	originalDir, err := os.Getwd()
 	require.NoError(t, err)
-	defer os.Chdir(originalDir)
+	defer func() { _ = os.Chdir(originalDir) }()
 
 	err = os.Chdir(testDir)
 	require.NoError(t, err)
@@ -211,7 +211,7 @@ func setupTestDatabase(t *testing.T, ctx context.Context, config RuntimeTestConf
 
 	db, err := sql.Open("postgres", dsn)
 	require.NoError(t, err, "Failed to connect to test database")
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	err = db.Ping()
 	require.NoError(t, err, "Failed to ping test database")
@@ -263,18 +263,18 @@ func startApplicationServer(t *testing.T, ctx context.Context, projectPath strin
 
 	// Log application output
 	go func() {
-		io.Copy(os.Stdout, stdout)
+		_, _ = io.Copy(os.Stdout, stdout)
 	}()
 	go func() {
-		io.Copy(os.Stderr, stderr)
+		_, _ = io.Copy(os.Stderr, stderr)
 	}()
 
 	t.Logf("Started application server on port %d", config.ServerPort)
 
 	return func() {
 		if runCmd.Process != nil {
-			runCmd.Process.Kill()
-			runCmd.Wait()
+			_ = runCmd.Process.Kill()
+			_ = runCmd.Wait()
 		}
 	}
 }
