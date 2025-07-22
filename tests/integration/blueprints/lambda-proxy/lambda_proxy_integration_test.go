@@ -367,7 +367,7 @@ func (s *LambdaProxyIntegrationTestSuite) TestLambdaProxyWithLocalStackIntegrati
 	if err != nil {
 		s.T().Skipf("Failed to start LocalStack container: %v", err)
 	}
-	defer localstackContainer.Terminate(ctx)
+	defer func() { _ = localstackContainer.Terminate(ctx) }()
 	
 	// Get LocalStack endpoint
 	endpoint, err := localstackContainer.Endpoint(ctx, "")

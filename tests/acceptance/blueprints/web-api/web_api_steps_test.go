@@ -448,7 +448,9 @@ func (ctx *WebAPITestContext) iWantToSecureMyWebAPI() error {
 }
 
 func (ctx *WebAPITestContext) iHaveGeneratedAWebAPIApplication() error {
-	ctx.iWantToCreateAStandardWebAPIApplication()
+	if err := ctx.iWantToCreateAStandardWebAPIApplication(); err != nil {
+		return err
+	}
 	return ctx.generateWebAPIProject()
 }
 

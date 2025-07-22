@@ -188,10 +188,10 @@ func (suite *WebAPIAcceptanceTestSuite) compileProject(t *testing.T) {
 
 func (suite *WebAPIAcceptanceTestSuite) cleanupContainers() {
 	if suite.postgresContainer != nil {
-		suite.postgresContainer.Terminate(suite.ctx)
+		_ = suite.postgresContainer.Terminate(suite.ctx)
 	}
 	if suite.mysqlContainer != nil {
-		suite.mysqlContainer.Terminate(suite.ctx)
+		_ = suite.mysqlContainer.Terminate(suite.ctx)
 	}
 }
 

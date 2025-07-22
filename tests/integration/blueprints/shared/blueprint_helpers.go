@@ -58,7 +58,7 @@ func GenerateProject(t *testing.T, config BlueprintTestConfig) string {
 	err = os.Chdir(tmpDir)
 	require.NoError(t, err)
 	defer func() {
-		os.Chdir(originalDir)
+		_ = os.Chdir(originalDir)
 	}()
 
 	// Build generation command

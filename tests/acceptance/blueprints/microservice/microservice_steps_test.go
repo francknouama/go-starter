@@ -724,8 +724,8 @@ func (ctx *MicroserviceTestContext) makeHTTPRequest(method, path string, body []
 func (ctx *MicroserviceTestContext) cleanup() {
 	// Stop service process
 	if ctx.serviceProcess != nil {
-		ctx.serviceProcess.Process.Kill()
-		ctx.serviceProcess.Wait()
+		_ = ctx.serviceProcess.Process.Kill()
+		_ = ctx.serviceProcess.Wait()
 	}
 	
 	// Stop all containers

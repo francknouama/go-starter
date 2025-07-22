@@ -321,7 +321,9 @@ func (ctx *CLITestContext) iWantToEnsureCLIFrameworkWorksroperly() error {
 }
 
 func (ctx *CLITestContext) iHaveGeneratedACLIApplication() error {
-	ctx.iWantToCreateAProductionReadyCLIApplication()
+	if err := ctx.iWantToCreateAProductionReadyCLIApplication(); err != nil {
+		return err
+	}
 	return ctx.generateCLIProject()
 }
 

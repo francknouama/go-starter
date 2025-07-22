@@ -77,8 +77,8 @@ func setupCLIAcceptanceTest(t *testing.T, tier string) *CLIAcceptanceTestSuite {
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		os.Chdir(suite.originalDir)
-		os.RemoveAll(suite.workingDir)
+		_ = os.Chdir(suite.originalDir)
+		_ = os.RemoveAll(suite.workingDir)
 	})
 
 	return suite
@@ -134,7 +134,7 @@ func (suite *CLIAcceptanceTestSuite) generateCLIProject(t *testing.T, args ...st
 
 func (suite *CLIAcceptanceTestSuite) countFiles(dir string) int {
 	count := 0
-	filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -160,7 +160,7 @@ func (suite *CLIAcceptanceTestSuite) checkFileContains(t *testing.T, relativePat
 	// Handle directory searches
 	if stat, err := os.Stat(fullPath); err == nil && stat.IsDir() {
 		found := false
-		filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
@@ -646,7 +646,7 @@ func TestCLIAcceptance_TestingInfrastructure(t *testing.T) {
 		// Check for test files in the directory
 		testDir := filepath.Join(suite.projectDir, testPath)
 		found := false
-		filepath.Walk(testDir, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(testDir, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return nil
 			}

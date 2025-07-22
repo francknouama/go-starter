@@ -25,8 +25,8 @@ func TestCLISimpleBlueprintIntegration(t *testing.T) {
 		// Get the project root (parent of tests/acceptance/blueprints/cli)
 		projectRoot := filepath.Join(originalDir, "..", "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build the CLI tool first
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -58,8 +58,8 @@ func TestCLISimpleBlueprintIntegration(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build the CLI tool
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -139,8 +139,8 @@ func TestCLISimpleBlueprintIntegration(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -196,8 +196,8 @@ func TestCLISimpleBlueprintIntegration(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -255,8 +255,8 @@ func TestCLISimpleBlueprintIntegration(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build and generate
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -301,8 +301,8 @@ func TestCLISimpleVsStandardIntegration(t *testing.T) {
 		originalDir, _ := os.Getwd()
 		projectRoot := filepath.Join(originalDir, "..", "..", "..")
 
-		defer os.Chdir(originalDir)
-		os.Chdir(tmpDir)
+		defer func() { _ = os.Chdir(originalDir) }()
+		_ = os.Chdir(tmpDir)
 
 		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")

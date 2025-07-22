@@ -21,8 +21,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 	// Get the project root (parent of tests/acceptance/cli)
 	projectRoot := filepath.Join(originalDir, "..", "..", "..")
 	
-	defer os.Chdir(originalDir)
-	os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(originalDir) }()
+	_ = os.Chdir(tmpDir)
 
 	// Build the CLI tool first
 	buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -148,8 +148,8 @@ func TestComplexityFlagValidation(t *testing.T) {
 	// Get the project root (parent of tests/acceptance/cli)
 	projectRoot := filepath.Join(originalDir, "..", "..", "..")
 	
-	defer os.Chdir(originalDir)
-	os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(originalDir) }()
+	_ = os.Chdir(tmpDir)
 
 	// Build the CLI tool first
 	buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
@@ -191,8 +191,8 @@ func TestProgressiveDisclosureIntegration(t *testing.T) {
 	// Get the project root (parent of tests/acceptance/cli)
 	projectRoot := filepath.Join(originalDir, "..", "..", "..")
 	
-	defer os.Chdir(originalDir)
-	os.Chdir(tmpDir)
+	defer func() { _ = os.Chdir(originalDir) }()
+	_ = os.Chdir(tmpDir)
 
 	// Build the CLI tool first
 	buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
