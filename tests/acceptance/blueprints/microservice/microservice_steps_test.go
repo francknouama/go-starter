@@ -35,23 +35,16 @@ type MicroserviceTestContext struct {
 	lastResponse    *http.Response
 	lastResponseBody []byte
 	serviceProcess  *exec.Cmd
-	servicePID      int
 
 	// Container testing
 	containers      map[string]testcontainers.Container
 	dbHost          string
 	dbPort          string
-	messageQueueURL string
-	tracingURL      string
 
 	// Test data
 	testData        map[string]interface{}
 	scenarios       map[string]interface{}
 	loadTestResults map[string]interface{}
-
-	// Performance tracking
-	responseTime    time.Duration
-	requestStart    time.Time
 }
 
 // Global test context
@@ -691,33 +684,6 @@ func (ctx *MicroserviceTestContext) checkRequiredFiles(files []string) error {
 
 // HTTP Request Helpers
 
-func (ctx *MicroserviceTestContext) makeHTTPRequest(method, path string, body []byte) error {
-	url := ctx.serviceURL + path
-	
-	var reqBody io.Reader
-	if body != nil {
-		reqBody = strings.NewReader(string(body))
-	}
-	
-	ctx.requestStart = time.Now()
-	req, err := http.NewRequest(method, url, reqBody)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %s", err.Error())
-	}
-	
-	ctx.lastResponse, err = ctx.httpClient.Do(req)
-	ctx.responseTime = time.Since(ctx.requestStart)
-	
-	if err != nil {
-		return fmt.Errorf("request failed: %s", err.Error())
-	}
-	
-	// Read response body
-	ctx.lastResponseBody, err = io.ReadAll(ctx.lastResponse.Body)
-	_ = ctx.lastResponse.Body.Close()
-	
-	return err
-}
 
 // Cleanup Functions
 

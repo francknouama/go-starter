@@ -10,8 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/cucumber/godog"
 )
 
 // LibraryTestContext holds the test execution context for library blueprints
@@ -21,7 +19,6 @@ type LibraryTestContext struct {
 	projectPath    string
 	modulePath     string
 	generatedFiles []string
-	lastCommand    *exec.Cmd
 	lastOutput     string
 	lastError      string
 	lastExitCode   int
@@ -857,23 +854,4 @@ func (ctx *LibraryTestContext) cleanup() {
 
 // Scenario hooks
 
-func (ctx *LibraryTestContext) beforeScenario(sc *godog.Scenario) {
-	// Reset state before each scenario
-	ctx.testData = make(map[string]interface{})
-	ctx.scenarios = make(map[string]interface{})
-	ctx.parsedFiles = make(map[string]*ast.File)
-}
 
-func (ctx *LibraryTestContext) afterScenario(sc *godog.Scenario, err error) {
-	// Cleanup after each scenario
-	if err != nil {
-		fmt.Printf("Scenario failed: %s - %v\n", sc.Name, err)
-		fmt.Printf("Last output: %s\n", ctx.lastOutput)
-	}
-	
-	// Clean up project directory
-	if ctx.projectPath != "" {
-		_ = os.RemoveAll(ctx.projectPath)
-		ctx.projectPath = ""
-	}
-}

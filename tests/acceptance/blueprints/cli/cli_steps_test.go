@@ -1235,9 +1235,3 @@ func (ctx *CLITestContext) theCLIShouldUseAppropriateExitCodes() error {
 	return ctx.checkFileContains("internal/errors", "exit")
 }
 
-// Helper method for cleanup (can be called manually in tests)
-func (ctx *CLITestContext) cleanup() {
-	if ctx.workingDir != "" {
-		_ = os.RemoveAll(ctx.workingDir)
-	}
-}

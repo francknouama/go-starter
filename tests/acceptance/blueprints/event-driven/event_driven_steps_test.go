@@ -28,12 +28,6 @@ type TestContext struct {
 	messageQueues   []string
 	frameworks      []string
 	loggers         []string
-	
-	// Performance tracking
-	commandLatency  time.Duration
-	queryLatency    time.Duration
-	eventThroughput int
-	memoryUsage     int64
 }
 
 // NewTestContext creates a new test context for event-driven blueprint testing

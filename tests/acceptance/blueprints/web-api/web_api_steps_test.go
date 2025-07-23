@@ -52,29 +52,17 @@ type WebAPITestContext struct {
 	// HTTP client for application testing
 	httpClient *http.Client
 	serverPort int
-	serverCmd  *exec.Cmd
 	baseURL    string
 	
 	// Testcontainers for realistic database testing
 	postgresContainer testcontainers.Container
 	mysqlContainer    testcontainers.Container
-	sqliteDB          string
-	databaseURL       string
 	database          *sql.DB
 	ctx               context.Context
 	
 	// Performance testing
 	benchmarkResults  map[string]time.Duration
 	loadTestResults   map[string]interface{}
-	
-	// Architecture validators
-	cleanValidator     *CleanArchitectureValidator
-	dddValidator       *DDDValidator
-	hexagonalValidator *HexagonalValidator
-	standardValidator  *StandardValidator
-	
-	// Test instance for assertions (used in step definitions)
-	t *testing.T
 }
 
 var webApiCtx *WebAPITestContext

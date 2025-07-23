@@ -33,7 +33,6 @@ type CLIAcceptanceTestSuite struct {
 	// Execution tracking
 	buildTime      time.Duration
 	execTime       time.Duration
-	cliExecutable  string
 }
 
 func setupCLIAcceptanceTest(t *testing.T, tier string) *CLIAcceptanceTestSuite {
@@ -202,7 +201,6 @@ func (suite *CLIAcceptanceTestSuite) compileCLIProject(t *testing.T) {
 	suite.buildTime = time.Since(buildStart)
 	require.NoError(t, err, "CLI project should compile successfully: %s", string(output))
 	
-	suite.cliExecutable = filepath.Join(suite.projectDir, suite.projectName)
 }
 
 func (suite *CLIAcceptanceTestSuite) testCLIExecution(t *testing.T, args ...string) ([]byte, error) {
