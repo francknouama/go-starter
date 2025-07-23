@@ -139,6 +139,41 @@ Our `.github/workflows/ci.yml` workflow automatically runs tests and checks cove
 
 *   The `test` job runs `scripts/check_coverage.sh` to enforce code coverage.
 *   The `benchmark` job runs performance benchmarks to track performance metrics.
+*   The `atdd` job runs Acceptance Test-Driven Development (ATDD) tests to validate generated blueprints.
+
+### ATDD Test Infrastructure
+
+Our ATDD tests provide comprehensive validation of generated project blueprints:
+
+#### Path Resolution System
+*   **Dynamic Project Root Detection**: Tests automatically locate the project root by searching for `go.mod`
+*   **Cross-Platform Compatibility**: Path resolution works consistently across Windows, macOS, and Linux
+*   **Template Discovery**: Automatically finds and loads blueprint templates from the `blueprints/` directory
+
+#### Blueprint Validation
+*   **CLI Blueprint Testing**: Validates both simple (11 files) and standard (25-35 files) CLI generations
+*   **Logger Integration**: Tests all four logger types (slog, zap, logrus, zerolog) with blueprint generation
+*   **Compilation Validation**: Ensures all generated projects compile successfully with `go build`
+*   **Runtime Testing**: Validates CLI functionality, command execution, and error handling
+
+#### Test Organization
+```
+tests/acceptance/
+├── blueprints/
+│   ├── cli/
+│   │   ├── cli_acceptance_test.go     # Comprehensive CLI ATDD tests
+│   │   ├── runtime_integration_test.go # Runtime functionality validation
+│   │   └── cli_steps_test.go          # BDD step definitions
+│   └── web-api/
+│       └── web_api_steps_test.go      # Web API blueprint validation
+└── helpers/
+    └── test_utils.go                  # Common test utilities
+```
+
+#### Performance Validation
+*   **Build Time Monitoring**: Tracks compilation performance across blueprints
+*   **Execution Speed**: Validates CLI startup time and command response
+*   **File Count Verification**: Ensures complexity tiers generate expected file counts
 
 ## ✅ TDD Development Commitment
 

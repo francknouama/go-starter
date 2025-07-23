@@ -3,7 +3,7 @@ package persistence
 import (
 	"fmt"
 	"gorm.io/gorm"
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	"gorm.io/driver/postgres"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	"gorm.io/driver/mysql"
@@ -32,7 +32,7 @@ type DatabaseConfig struct {
 
 // NewDatabase creates a new database connection
 func NewDatabase(config DatabaseConfig, log *logger.Logger) (*Database, error) {
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s",
 		config.Host, config.Username, config.Password, config.Database, config.Port, config.SSLMode)
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})

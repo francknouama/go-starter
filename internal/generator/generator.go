@@ -669,12 +669,32 @@ func (g *Generator) createTemplateContext(config types.ProjectConfig, tmpl types
 	}
 	context["AuthType"] = authType
 
-	ormValue := g.getFeatureValue(config, "database", "orm", "gorm")
+	ormValue := g.getFeatureValue(config, "database", "orm", "")
 
-	// Validate ORM implementation
-	if err := g.validateORM(ormValue); err != nil {
-		// Log warning but don't fail - fallback to default
-		ormValue = "gorm"
+	// Check Variables map if not found in Features (like we do for DatabaseDriver)
+	if ormValue == "" && config.Variables != nil {
+		if val, exists := config.Variables["DatabaseORM"]; exists {
+			ormValue = val
+		}
+	}
+	
+	// Apply template default for DatabaseORM if still empty
+	if ormValue == "" {
+		for _, variable := range tmpl.Variables {
+			if variable.Name == "DatabaseORM" && variable.Default != nil {
+				if defaultVal, ok := variable.Default.(string); ok {
+					ormValue = defaultVal
+				}
+			}
+		}
+	}
+	
+	// Validate ORM implementation (only if not empty - empty means raw SQL)
+	if ormValue != "" {
+		if err := g.validateORM(ormValue); err != nil {
+			// Log warning but don't fail - fallback to raw SQL (empty string)
+			ormValue = ""
+		}
 	}
 
 	context["ORM"] = ormValue

@@ -271,7 +271,7 @@ func (p *SurveyPrompter) promptDatabaseSupport(config *types.ProjectConfig) erro
 		// Use MultiSelect for multiple database selection
 		dbPrompt := &survey.MultiSelect{
 			Message: "Which databases do you want to use? (Space to select, Enter to confirm)",
-			Options: []string{"PostgreSQL", "MySQL", "MongoDB", "SQLite", "Redis"},
+			Options: []string{"PostgreSQL", "MySQL", "SQLite", "Redis"},
 			Default: []string{"PostgreSQL"},
 			Help:    "Select one or more databases for your project. PostgreSQL for main data, Redis for caching, etc.",
 		}

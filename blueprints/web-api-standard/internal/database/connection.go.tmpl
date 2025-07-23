@@ -8,27 +8,33 @@ import (
 	{{- if eq .DatabaseORM "gorm"}}
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	"gorm.io/driver/postgres"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	"gorm.io/driver/mysql"
 	{{- else if eq .DatabaseDriver "sqlite"}}
 	"gorm.io/driver/sqlite"
+	{{- else}}
+	"gorm.io/driver/sqlite"
 	{{- end}}
 	{{- else}}
 	"database/sql"
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	_ "github.com/lib/pq"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	_ "github.com/go-sql-driver/mysql"
 	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- else}}
 	_ "github.com/mattn/go-sqlite3"
 	{{- end}}
 	{{- end}}
 
 	"{{.ModulePath}}/internal/config"
 	appLogger "{{.ModulePath}}/internal/logger"
+	{{- if eq .DatabaseORM "gorm"}}
 	"{{.ModulePath}}/internal/models"
+	{{- end}}
 )
 
 {{- if eq .DatabaseORM "gorm"}}
@@ -42,12 +48,17 @@ func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*gorm.DB, erro
 	if dsn == "" {
 		dsn = "app.db"
 	}
+	{{- else if eq .DatabaseDriver ""}}
+	// Fallback to SQLite when no database driver is specified
+	if dsn == "" {
+		dsn = "app.db"
+	}
 	{{- end}}
 	
 	var db *gorm.DB
 	var err error
 
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
 		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
@@ -56,6 +67,11 @@ func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*gorm.DB, erro
 		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
 	{{- else if eq .DatabaseDriver "sqlite"}}
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- else}}
+	// Fallback to SQLite when no database driver is specified
 	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
 		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
 	})
@@ -124,11 +140,17 @@ func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*sql.DB, error
 	dsn := cfg.DSN()
 	var driverName string
 
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	driverName = "postgres"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	driverName = "mysql"
 	{{- else if eq .DatabaseDriver "sqlite"}}
+	driverName = "sqlite3"
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- else}}
+	// Fallback to SQLite when no database driver is specified
 	driverName = "sqlite3"
 	if dsn == "" {
 		dsn = "app.db"
@@ -160,7 +182,7 @@ func Migrate(db *sql.DB, logger appLogger.Logger) error {
 	logger.Info("Running database migrations...")
 	
 	// Create users table
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	userTable := `
 	CREATE TABLE IF NOT EXISTS users (
 		id SERIAL PRIMARY KEY,
@@ -181,6 +203,17 @@ func Migrate(db *sql.DB, logger appLogger.Logger) error {
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 	)`
 	{{- else if eq .DatabaseDriver "sqlite"}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		email TEXT UNIQUE NOT NULL,
+		password TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- else}}
+	// Fallback to SQLite when no database driver is specified
 	userTable := `
 	CREATE TABLE IF NOT EXISTS users (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,

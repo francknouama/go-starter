@@ -211,18 +211,18 @@ func (h *ErrorHandler) HandleError(err error, requestID string) (int, map[string
 	
 	// Log internal error details for debugging (never exposed to client)
 	if secureErr.Internal() != nil {
-		h.Logger.ErrorWith("Internal error occurred", logger.Fields{
+		h.Logger.WithFields(logger.Fields{
 			"request_id":    requestID,
 			"error_code":    secureErr.Code,
 			"error_message": secureErr.Message,
 			"internal_error": secureErr.Internal().Error(),
-		})
+		})("Internal error occurred")
 	} else {
-		h.Logger.WarnWith("Secure error returned", logger.Fields{
+		h.Logger.WithFields(logger.Fields{
 			"request_id":    requestID,
 			"error_code":    secureErr.Code,
 			"error_message": secureErr.Message,
-		})
+		})("Secure error returned")
 	}
 	
 	return secureErr.ToHTTPResponse()

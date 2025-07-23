@@ -7,30 +7,16 @@ import (
 	"{{.ModulePath}}/internal/logger"
 )
 
-var (
-	appLogger logger.Logger
-)
-
 func init() {
-	// Initialize logger for CloudWatch
-	factory := logger.NewFactory()
-	
-	// CloudWatch prefers JSON format for structured logging
+	// Initialize CloudWatch-optimized logger
 	logLevel := getEnv("LOG_LEVEL", "info")
 	
-	var err error
-	appLogger, err = factory.CreateFromProjectConfig(
-		"{{.Logger}}",
-		logLevel,
-		"json", // Always use JSON for CloudWatch
-		true,   // Always structured for Lambda
-	)
-	if err != nil {
-		// Fallback to basic logging if factory fails
-		appLogger = logger.NewSimpleLogger()
+	if err := logger.Initialize(logLevel); err != nil {
+		// Continue with default logger if initialization fails
+		logger.Initialize("info")
 	}
 
-	appLogger.InfoWith("Lambda function initialized", logger.Fields{
+	logger.Info("Lambda function initialized", logger.Fields{
 		"logger":    "{{.Logger}}",
 		"log_level": logLevel,
 		"runtime":   "aws-lambda-go",

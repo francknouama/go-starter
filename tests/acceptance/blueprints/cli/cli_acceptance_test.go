@@ -84,6 +84,7 @@ func setupCLIAcceptanceTest(t *testing.T, tier string) *CLIAcceptanceTestSuite {
 }
 
 func (suite *CLIAcceptanceTestSuite) buildCLI(t *testing.T) {
+<<<<<<< HEAD
 	// Use the original directory (where tests were started) to find the binary
 	srcBinary := filepath.Join(suite.originalDir, "go-starter")
 	
@@ -103,6 +104,12 @@ func (suite *CLIAcceptanceTestSuite) buildCLI(t *testing.T) {
 	
 	err = os.WriteFile(dstBinary, data, 0755)
 	require.NoError(t, err, "Failed to copy binary to working directory")
+=======
+	buildCmd := exec.Command("go", "build", "-ldflags", "-s -w", "-o", "go-starter", ".")
+	buildCmd.Dir = suite.projectRoot
+	output, err := buildCmd.CombinedOutput()
+	require.NoError(t, err, "Failed to build go-starter CLI: %s", string(output))
+>>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 }
 
 func (suite *CLIAcceptanceTestSuite) generateCLIProject(t *testing.T, args ...string) {
@@ -118,7 +125,11 @@ func (suite *CLIAcceptanceTestSuite) generateCLIProject(t *testing.T, args ...st
 	}
 
 	allArgs := append(baseArgs, args...)
+<<<<<<< HEAD
 	goStarterPath := filepath.Join(suite.workingDir, "go-starter")
+=======
+	goStarterPath := filepath.Join(suite.projectRoot, "go-starter")
+>>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 	generateCmd := exec.Command(goStarterPath, allArgs...)
 	generateCmd.Dir = suite.workingDir
 
@@ -463,7 +474,11 @@ func TestCLIAcceptance_CommandLineInterface(t *testing.T) {
 		{
 			name:     "help_command",
 			args:     []string{"--help"},
+<<<<<<< HEAD
 			contains: []string{"Usage:", "Available Commands:", "Flags:"},
+=======
+			contains: []string{"Usage:", "Resource Management:", "Flags:"},
+>>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 		},
 		{
 			name:     "version_command",
@@ -805,7 +820,11 @@ func TestCLIAcceptance_DocumentationAndUsability(t *testing.T) {
 	help := string(output)
 
 	helpElements := []string{
+<<<<<<< HEAD
 		"Usage:", "Available Commands:", "Flags:", 
+=======
+		"Usage:", "Resource Management:", "Flags:", 
+>>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 		"Global Flags:", "Use", "--help",
 	}
 

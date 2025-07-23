@@ -35,7 +35,7 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 	// Initialize tracing and metrics
 	observability.InitializeTracing()
 	if err := observability.InitializeMetrics(ctx); err != nil {
-		appLogger.WarnWith("Failed to initialize metrics", logger.Fields{
+		logger.Warn("Failed to initialize metrics", logger.Fields{
 			"error": err.Error(),
 		})
 	}
@@ -57,7 +57,7 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 		timeLeft := time.Until(deadline)
 		observability.AddTraceAnnotation(ctx, "time_remaining_ms", timeLeft.Milliseconds())
 		
-		appLogger.InfoWith("Lambda function invoked", logger.Fields{
+		logger.Info("Lambda function invoked", logger.Fields{
 			"request_id":            requestID,
 			"invoked_function_arn":  lc.InvokedFunctionArn,
 			"time_remaining":        timeLeft.String(),
@@ -65,7 +65,7 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 
 		// Check if we have sufficient time (need at least 100ms buffer for cleanup)
 		if timeLeft < 100*time.Millisecond {
-			appLogger.WarnWith("Insufficient time to process request", logger.Fields{
+			logger.Warn("Insufficient time to process request", logger.Fields{
 				"request_id":     requestID,
 				"time_remaining": timeLeft.String(),
 			})
@@ -85,14 +85,14 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 
 		// Log warning if we're approaching timeout
 		if timeLeft < 5*time.Second {
-			appLogger.WarnWith("Approaching Lambda timeout", logger.Fields{
+			logger.Warn("Approaching Lambda timeout", logger.Fields{
 				"request_id":     requestID,
 				"time_remaining": timeLeft.String(),
 			})
 			observability.AddTraceAnnotation(ctx, "approaching_timeout", true)
 		}
 	} else {
-		appLogger.InfoWith("Lambda function invoked (no deadline)", logger.Fields{
+		logger.Info("Lambda function invoked (no deadline)", logger.Fields{
 			"request_id":           requestID,
 			"invoked_function_arn": lc.InvokedFunctionArn,
 		})
@@ -128,7 +128,7 @@ func HandleRequest(ctx context.Context, event json.RawMessage) (Response, error)
 		observability.AddTraceAnnotation(ctx, "event_type", "direct_invocation")
 		var request Request
 		if err := json.Unmarshal(event, &request); err != nil {
-			appLogger.ErrorWith("Failed to parse request", logger.Fields{
+			logger.Error("Failed to parse request", logger.Fields{
 				"error":      err.Error(),
 				"request_id": requestID,
 			})
@@ -169,7 +169,7 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 	// Check for context cancellation at start
 	select {
 	case <-ctx.Done():
-		appLogger.WarnWith("API Gateway request cancelled", logger.Fields{
+		logger.Warn("API Gateway request cancelled", logger.Fields{
 			"request_id": requestID,
 			"error":      ctx.Err().Error(),
 		})
@@ -182,7 +182,7 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 		// Continue processing
 	}
 	
-	appLogger.InfoWith("Handling API Gateway request", logger.Fields{
+	logger.Info("Handling API Gateway request", logger.Fields{
 		"method":     event.HTTPMethod,
 		"path":       event.Path,
 		"request_id": requestID,
@@ -193,7 +193,7 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 	var request Request
 	if event.Body != "" {
 		if err := json.Unmarshal([]byte(event.Body), &request); err != nil {
-			appLogger.WarnWith("Failed to parse request body", logger.Fields{
+			logger.Warn("Failed to parse request body", logger.Fields{
 				"error":      err.Error(),
 				"request_id": requestID,
 			})
@@ -218,7 +218,7 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 	})
 	
 	if err != nil {
-		appLogger.ErrorWith("Request processing failed", logger.Fields{
+		logger.Error("Request processing failed", logger.Fields{
 			"error":      err.Error(),
 			"request_id": requestID,
 		})
@@ -231,7 +231,7 @@ func handleAPIGatewayRequest(ctx context.Context, event events.APIGatewayProxyRe
 
 	responseBody, _ := json.Marshal(result)
 	
-	appLogger.InfoWith("Request processed successfully", logger.Fields{
+	logger.Info("Request processed successfully", logger.Fields{
 		"request_id":    requestID,
 		"response_size": len(responseBody),
 	})
@@ -250,7 +250,7 @@ func handleDirectRequest(ctx context.Context, request Request) (Response, error)
 	// Check for context cancellation at start
 	select {
 	case <-ctx.Done():
-		appLogger.WarnWith("Direct request cancelled", logger.Fields{
+		logger.Warn("Direct request cancelled", logger.Fields{
 			"request_id": requestID,
 			"error":      ctx.Err().Error(),
 		})
@@ -262,14 +262,14 @@ func handleDirectRequest(ctx context.Context, request Request) (Response, error)
 		// Continue processing
 	}
 	
-	appLogger.InfoWith("Handling direct request", logger.Fields{
+	logger.Info("Handling direct request", logger.Fields{
 		"name":       request.Name,
 		"request_id": requestID,
 	})
 
 	result, err := processRequest(ctx, request)
 	if err != nil {
-		appLogger.ErrorWith("Request processing failed", logger.Fields{
+		logger.Error("Request processing failed", logger.Fields{
 			"error":      err.Error(),
 			"request_id": requestID,
 		})
@@ -281,7 +281,7 @@ func handleDirectRequest(ctx context.Context, request Request) (Response, error)
 
 	responseBody, _ := json.Marshal(result)
 	
-	appLogger.InfoWith("Request processed successfully", logger.Fields{
+	logger.Info("Request processed successfully", logger.Fields{
 		"request_id":    requestID,
 		"response_size": len(responseBody),
 	})
@@ -296,7 +296,7 @@ func handleDirectRequest(ctx context.Context, request Request) (Response, error)
 func processRequest(ctx context.Context, request Request) (map[string]interface{}, error) {
 	requestID := getRequestID(ctx)
 	
-	appLogger.DebugWith("Processing request", logger.Fields{
+	logger.Debug("Processing request", logger.Fields{
 		"name":       request.Name,
 		"message":    request.Message,
 		"request_id": requestID,
@@ -305,7 +305,7 @@ func processRequest(ctx context.Context, request Request) (map[string]interface{
 	// Check for context cancellation before starting processing
 	select {
 	case <-ctx.Done():
-		appLogger.WarnWith("Request cancelled before processing", logger.Fields{
+		logger.Warn("Request cancelled before processing", logger.Fields{
 			"request_id": requestID,
 			"error":      ctx.Err().Error(),
 		})
@@ -354,7 +354,7 @@ func processRequest(ctx context.Context, request Request) (map[string]interface{
 	// Wait for either processing completion or context cancellation
 	select {
 	case <-ctx.Done():
-		appLogger.WarnWith("Request cancelled during processing", logger.Fields{
+		logger.Warn("Request cancelled during processing", logger.Fields{
 			"request_id": requestID,
 			"error":      ctx.Err().Error(),
 		})
@@ -362,7 +362,7 @@ func processRequest(ctx context.Context, request Request) (map[string]interface{
 	case err := <-processingError:
 		return nil, err
 	case result := <-processingComplete:
-		appLogger.DebugWith("Request processing completed", logger.Fields{
+		logger.Debug("Request processing completed", logger.Fields{
 			"request_id": requestID,
 		})
 		return result, nil

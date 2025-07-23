@@ -68,10 +68,10 @@ func (m *MigrationRunner) RunMigrations() error {
 	// Apply pending migrations
 	for _, migration := range migrations {
 		if !contains(applied, migration.Version) {
-			m.logger.InfoWith("Applying migration", appLogger.Fields{
+			m.logger.WithFields(appLogger.Fields{
 				"version": migration.Version,
 				"name": migration.Name,
-			})
+			})("Applying migration")
 			if err := m.applyMigration(migration); err != nil {
 				return fmt.Errorf("failed to apply migration %s: %w", migration.Version, err)
 			}
@@ -114,10 +114,10 @@ func (m *MigrationRunner) RollbackMigration() error {
 		return fmt.Errorf("migration %s not found", version)
 	}
 
-	m.logger.InfoWith("Rolling back migration", appLogger.Fields{
+	m.logger.WithFields(appLogger.Fields{
 		"version": migration.Version,
 		"name": migration.Name,
-	})
+	})("Rolling back migration")
 	if err := m.rollbackMigration(*migration); err != nil {
 		return fmt.Errorf("failed to rollback migration %s: %w", migration.Version, err)
 	}

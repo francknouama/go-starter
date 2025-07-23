@@ -450,7 +450,11 @@ func (ctx *CLITestContext) iRunTheCommand(command string) error {
 	
 	// Handle special case for go-starter commands
 	if parts[0] == "go-starter" {
+<<<<<<< HEAD
 		parts[0] = filepath.Join(ctx.workingDir, "go-starter")
+=======
+		parts[0] = filepath.Join(ctx.projectRoot, "go-starter")
+>>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 	}
 	
 	ctx.lastCommand = exec.Command(parts[0], parts[1:]...)
@@ -610,9 +614,15 @@ func (ctx *CLITestContext) iGenerateACLIWithAdvancedPatterns() error {
 // Helper method to generate CLI projects
 func (ctx *CLITestContext) generateCLIProject() error {
 	// Build go-starter first if not done
+<<<<<<< HEAD
 	goStarterPath := filepath.Join(ctx.workingDir, "go-starter")
 	if _, err := os.Stat(goStarterPath); os.IsNotExist(err) {
 		buildCmd := exec.Command("go", "build", "-o", goStarterPath, ".")
+=======
+	goStarterPath := filepath.Join(ctx.projectRoot, "go-starter")
+	if _, err := os.Stat(goStarterPath); os.IsNotExist(err) {
+		buildCmd := exec.Command("go", "build", "-o", "go-starter", ".")
+>>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 		buildCmd.Dir = ctx.projectRoot
 		
 		if output, err := buildCmd.CombinedOutput(); err != nil {

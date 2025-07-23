@@ -5,7 +5,15 @@ import (
 	"net/http"
 	"strings"
 
+	{{- if eq .Framework "gin"}}
 	"github.com/gin-gonic/gin"
+	{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+	{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+	{{- else if eq .Framework "chi"}}
+	"context"
+	{{- end}}
 	"{{.ModulePath}}/internal/services"
 )
 
@@ -21,6 +29,7 @@ func NewAuthMiddleware(authService services.AuthService) *AuthMiddleware {
 	}
 }
 
+{{- if eq .Framework "gin"}}
 // RequireAuth validates JWT token and sets user context
 func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -63,6 +72,162 @@ func (m *AuthMiddleware) RequireAuth() gin.HandlerFunc {
 	}
 }
 
+{{- else if eq .Framework "echo"}}
+// RequireAuth validates JWT token and sets user context
+func (m *AuthMiddleware) RequireAuth() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			authHeader := c.Request().Header.Get("Authorization")
+			if authHeader == "" {
+				return echo.NewHTTPError(http.StatusUnauthorized, map[string]string{
+					"error": "Authorization header required",
+					"code":  "MISSING_AUTH_HEADER",
+				})
+			}
+
+			// Extract token from "Bearer <token>"
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				return echo.NewHTTPError(http.StatusUnauthorized, map[string]string{
+					"error": "Invalid authorization header format",
+					"code":  "INVALID_AUTH_HEADER",
+				})
+			}
+
+			token := tokenParts[1]
+			claims, err := m.authService.ValidateToken(token)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusUnauthorized, map[string]string{
+					"error": "Invalid or expired token",
+					"code":  "INVALID_TOKEN",
+				})
+			}
+
+			// Set user information in context
+			c.Set("userID", claims.UserID)
+			c.Set("email", claims.Email)
+			return next(c)
+		}
+	}
+}
+
+{{- else if eq .Framework "fiber"}}
+// RequireAuth validates JWT token and sets user context
+func (m *AuthMiddleware) RequireAuth() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Authorization header required",
+				"code":  "MISSING_AUTH_HEADER",
+			})
+		}
+
+		// Extract token from "Bearer <token>"
+		tokenParts := strings.Split(authHeader, " ")
+		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid authorization header format",
+				"code":  "INVALID_AUTH_HEADER",
+			})
+		}
+
+		token := tokenParts[1]
+		claims, err := m.authService.ValidateToken(token)
+		if err != nil {
+			return c.Status(http.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Invalid or expired token",
+				"code":  "INVALID_TOKEN",
+			})
+		}
+
+		// Set user information in context
+		c.Locals("userID", claims.UserID)
+		c.Locals("email", claims.Email)
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+// RequireAuth validates JWT token and sets user context
+func (m *AuthMiddleware) RequireAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Authorization header required","code":"MISSING_AUTH_HEADER"}`))
+				return
+			}
+
+			// Extract token from "Bearer <token>"
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Invalid authorization header format","code":"INVALID_AUTH_HEADER"}`))
+				return
+			}
+
+			token := tokenParts[1]
+			claims, err := m.authService.ValidateToken(token)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Invalid or expired token","code":"INVALID_TOKEN"}`))
+				return
+			}
+
+			// Set user information in context
+			ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+			ctx = context.WithValue(ctx, "email", claims.Email)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+{{- else if eq .Framework "stdlib"}}
+// RequireAuth validates JWT token and sets user context
+func (m *AuthMiddleware) RequireAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Authorization header required","code":"MISSING_AUTH_HEADER"}`))
+				return
+			}
+
+			// Extract token from "Bearer <token>"
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Invalid authorization header format","code":"INVALID_AUTH_HEADER"}`))
+				return
+			}
+
+			token := tokenParts[1]
+			claims, err := m.authService.ValidateToken(token)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				w.Write([]byte(`{"error":"Invalid or expired token","code":"INVALID_TOKEN"}`))
+				return
+			}
+
+			// Set user information in context
+			ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+			ctx = context.WithValue(ctx, "email", claims.Email)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+{{- end}}
+
+{{- if eq .Framework "gin"}}
 // OptionalAuth validates JWT token if present but doesn't require it
 func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -92,4 +257,129 @@ func (m *AuthMiddleware) OptionalAuth() gin.HandlerFunc {
 		c.Next()
 	}
 }
+
+{{- else if eq .Framework "echo"}}
+// OptionalAuth validates JWT token if present but doesn't require it
+func (m *AuthMiddleware) OptionalAuth() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			authHeader := c.Request().Header.Get("Authorization")
+			if authHeader == "" {
+				return next(c)
+			}
+
+			// Extract token from "Bearer <token>"
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				return next(c)
+			}
+
+			token := tokenParts[1]
+			claims, err := m.authService.ValidateToken(token)
+			if err != nil {
+				return next(c)
+			}
+
+			// Set user information in context if token is valid
+			c.Set("userID", claims.UserID)
+			c.Set("email", claims.Email)
+			return next(c)
+		}
+	}
+}
+
+{{- else if eq .Framework "fiber"}}
+// OptionalAuth validates JWT token if present but doesn't require it
+func (m *AuthMiddleware) OptionalAuth() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return c.Next()
+		}
+
+		// Extract token from "Bearer <token>"
+		tokenParts := strings.Split(authHeader, " ")
+		if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+			return c.Next()
+		}
+
+		token := tokenParts[1]
+		claims, err := m.authService.ValidateToken(token)
+		if err != nil {
+			return c.Next()
+		}
+
+		// Set user information in context if token is valid
+		c.Locals("userID", claims.UserID)
+		c.Locals("email", claims.Email)
+		return c.Next()
+	}
+}
+
+{{- else if eq .Framework "chi"}}
+// OptionalAuth validates JWT token if present but doesn't require it
+func (m *AuthMiddleware) OptionalAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Extract token from "Bearer <token>"
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			token := tokenParts[1]
+			claims, err := m.authService.ValidateToken(token)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Set user information in context if token is valid
+			ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+			ctx = context.WithValue(ctx, "email", claims.Email)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+{{- else if eq .Framework "stdlib"}}
+// OptionalAuth validates JWT token if present but doesn't require it
+func (m *AuthMiddleware) OptionalAuth() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Extract token from "Bearer <token>"
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			token := tokenParts[1]
+			claims, err := m.authService.ValidateToken(token)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Set user information in context if token is valid
+			ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+			ctx = context.WithValue(ctx, "email", claims.Email)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+{{- end}}
 {{- end}}

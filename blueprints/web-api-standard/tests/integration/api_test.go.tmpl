@@ -34,7 +34,7 @@ import (
 	{{- end}}
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/suite"
-	{{- if ne .DatabaseDriver ""}}
+	{{- if and (ne .DatabaseDriver "") (eq .DatabaseORM "gorm")}}
 	"gorm.io/gorm"
 	{{- end}}
 
@@ -91,10 +91,8 @@ func (suite *APITestSuite) SetupSuite() {
 	{{- end}}
 
 	// Initialize logger for tests
-	loggerFactory := logger.NewFactory()
-	var err error
-	suite.logger, err = loggerFactory.CreateFromProjectConfig("{{.Logger}}", "error", "text", false)
-	suite.Require().NoError(err)
+	logger.SetLevel("error")
+	suite.logger = logger.GetLogger()
 
 	{{- if ne .DatabaseDriver ""}}
 	// Setup test database (you might want to use SQLite for tests)
@@ -111,6 +109,7 @@ func (suite *APITestSuite) SetupSuite() {
 		LogLevel: "error",
 	}
 
+	var err error
 	suite.db, err = database.Connect(cfg, suite.logger)
 	suite.Require().NoError(err)
 

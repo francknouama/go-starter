@@ -24,18 +24,6 @@ var (
 		Padding(1, 2).
 		MarginBottom(1)
 
-	questionStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("10"))
-
-	optionStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("15"))
-
-	selectedStyle = lipgloss.NewStyle().
-		Bold(true).
-		Foreground(lipgloss.Color("0")).
-		Background(lipgloss.Color("12")).
-		Padding(0, 1)
 
 	helpStyle = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("8")).
@@ -446,46 +434,119 @@ func (p *BubbleTeaPrompter) promptArchitecture(config *types.ProjectConfig) erro
 	return nil
 }
 
-// promptDatabaseSupport prompts for database configuration
+// promptDatabaseSupport prompts for database configuration using BubbleTea
 func (p *BubbleTeaPrompter) promptDatabaseSupport(config *types.ProjectConfig) error {
 	if config.Features == nil {
 		config.Features = &types.Features{}
 	}
 
-	fmt.Print(questionStyle.Render("Add database support? (y/N): "))
-	fmt.Print(optionStyle.Render(" "))
-	var response string
-	if _, err := fmt.Scanln(&response); err != nil {
-		response = "n"
+	// Ask if user wants database support
+	items := []interfaces.SelectionItem{
+		interfaces.NewSelectionItem("Yes", "Include database configuration and setup", "yes"),
+		interfaces.NewSelectionItem("No", "Skip database support", "no"),
 	}
 
-	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
-		config.Features.Database.Drivers = []string{"postgres"}
-		config.Features.Database.ORM = ""
-		fmt.Println(selectedStyle.Render("✓ Database support enabled with PostgreSQL"))
+	choice, err := p.RunSelection("Add database support?", items)
+	if err != nil {
+		return err
+	}
+
+	if choice == "yes" {
+		// Prompt for database selection
+		if err := p.promptDatabaseDrivers(config); err != nil {
+			return err
+		}
+		
+		// Prompt for ORM selection
+		if err := p.promptORM(config); err != nil {
+			return err
+		}
 	}
 
 	return nil
 }
 
-// promptAuthentication prompts for authentication configuration
+// promptDatabaseDrivers prompts for database driver selection
+func (p *BubbleTeaPrompter) promptDatabaseDrivers(config *types.ProjectConfig) error {
+	items := []interfaces.SelectionItem{
+		interfaces.NewSelectionItem("PostgreSQL", "Full-featured, ACID-compliant database (recommended)", "postgresql"),
+		interfaces.NewSelectionItem("MySQL", "Popular relational database", "mysql"),  
+		interfaces.NewSelectionItem("SQLite", "Embedded database for simple apps", "sqlite"),
+		interfaces.NewSelectionItem("Redis", "In-memory cache and session store", "redis"),
+	}
+
+	choice, err := p.RunSelection("Which database?", items)
+	if err != nil {
+		return err
+	}
+
+	// Set the database configuration
+	config.Features.Database.Drivers = []string{choice}
+	config.Features.Database.Driver = choice //nolint:staticcheck // For backward compatibility
+
+	return nil
+}
+
+// promptORM prompts for ORM selection
+func (p *BubbleTeaPrompter) promptORM(config *types.ProjectConfig) error {
+	items := []interfaces.SelectionItem{
+		interfaces.NewSelectionItem("Raw SQL", "Database/sql package with manual queries", ""),
+		interfaces.NewSelectionItem("GORM", "Feature-rich ORM with associations (recommended)", "gorm"),
+		interfaces.NewSelectionItem("SQLX", "Lightweight extensions on database/sql (coming soon)", "sqlx"),
+		interfaces.NewSelectionItem("SQLC", "Generate type-safe code from SQL (coming soon)", "sqlc"),
+	}
+
+	choice, err := p.RunSelection("Which ORM/database abstraction?", items)
+	if err != nil {
+		return err
+	}
+
+	config.Features.Database.ORM = choice
+	return nil
+}
+
+// promptAuthentication prompts for authentication configuration using BubbleTea
 func (p *BubbleTeaPrompter) promptAuthentication(config *types.ProjectConfig) error {
 	if config.Features == nil {
 		config.Features = &types.Features{}
 	}
 
-	fmt.Print(questionStyle.Render("Add authentication? (y/N): "))
-	fmt.Print(optionStyle.Render(" "))
-	var response string
-	if _, err := fmt.Scanln(&response); err != nil {
-		response = "n"
+	// Ask if user wants authentication
+	items := []interfaces.SelectionItem{
+		interfaces.NewSelectionItem("Yes", "Include authentication and authorization", "yes"),
+		interfaces.NewSelectionItem("No", "Skip authentication support", "no"),
 	}
 
-	if strings.ToLower(response) == "y" || strings.ToLower(response) == "yes" {
-		config.Features.Authentication.Type = "jwt"
-		fmt.Println(selectedStyle.Render("✓ JWT authentication enabled"))
+	choice, err := p.RunSelection("Add authentication?", items)
+	if err != nil {
+		return err
 	}
 
+	if choice == "yes" {
+		// Prompt for authentication type
+		if err := p.promptAuthenticationType(config); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// promptAuthenticationType prompts for authentication type selection
+func (p *BubbleTeaPrompter) promptAuthenticationType(config *types.ProjectConfig) error {
+	items := []interfaces.SelectionItem{
+		interfaces.NewSelectionItem("JWT", "JSON Web Tokens (recommended)", "jwt"),
+		interfaces.NewSelectionItem("Session", "Server-side session management", "session"),
+		interfaces.NewSelectionItem("OAuth2", "OAuth2 with external providers", "oauth2"),
+		interfaces.NewSelectionItem("API Key", "Simple API key authentication", "api-key"),
+	}
+
+	choice, err := p.RunSelection("Authentication type?", items)
+	if err != nil {
+		return err
+	}
+
+	config.Features.Authentication.Type = choice
 	return nil
 }
 
