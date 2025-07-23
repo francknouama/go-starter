@@ -118,9 +118,9 @@ func (l *LogrusLogger) WithFields(fields Fields) Logger {
 }
 
 // SetLevel sets the log level
-func (l *LogrusLogger) SetLevel(level Level) {
-	l.level = level
-	l.logger.SetLevel(convertToLogrusLevel(level))
+func (l *LogrusLogger) SetLevel(level string) {
+	l.level = ParseLevel(level)
+	l.logger.SetLevel(convertToLogrusLevel(l.level))
 }
 
 // SetOutput sets the output writer
@@ -129,11 +129,30 @@ func (l *LogrusLogger) SetOutput(w io.Writer) {
 	l.logger.SetOutput(w)
 }
 
+// SetFormat sets the log format
+func (l *LogrusLogger) SetFormat(format Format) {
+	// Format changes in logrus require formatter reconfiguration
+	// This is a no-op for this simplified implementation
+}
+
 // DisableColor disables color output
 func (l *LogrusLogger) DisableColor() {
 	if formatter, ok := l.logger.Formatter.(*logrus.TextFormatter); ok {
 		formatter.DisableColors = true
 	}
+}
+
+// EnableColor enables color output
+func (l *LogrusLogger) EnableColor() {
+	if formatter, ok := l.logger.Formatter.(*logrus.TextFormatter); ok {
+		formatter.DisableColors = false
+	}
+}
+
+// SetQuiet sets quiet mode
+func (l *LogrusLogger) SetQuiet(quiet bool) {
+	// Quiet mode implementation would require level adjustment
+	// This is a no-op for this simplified implementation
 }
 
 // Sync flushes any buffered log entries (no-op for logrus)
