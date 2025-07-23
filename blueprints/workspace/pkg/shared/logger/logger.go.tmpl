@@ -2,7 +2,6 @@
 package logger
 
 import (
-<<<<<<< HEAD
 	"context"
 	"io"
 	"log/slog"
@@ -35,35 +34,6 @@ type Logger interface {
 	WithContext(ctx context.Context) Logger
 }
 
-=======
-{{- if eq .LoggerType "slog" }}
-	"log/slog"
-	"os"
-{{- else if eq .LoggerType "zap" }}
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-{{- else if eq .LoggerType "logrus" }}
-	"github.com/sirupsen/logrus"
-{{- else if eq .LoggerType "zerolog" }}
-	"github.com/rs/zerolog"
-	"os"
-{{- end }}
-)
-
-// Logger defines the minimal interface for logging operations across the workspace
-type Logger interface {
-	Debug(msg string, fields ...Fields)
-	Info(msg string, fields ...Fields)
-	Warn(msg string, fields ...Fields)
-	Error(msg string, fields ...Fields)
-	Fatal(msg string, fields ...Fields)
-	WithFields(fields Fields) func(string, ...Fields)
-}
-
-// Fields represents key-value pairs for structured logging
-type Fields map[string]interface{}
-
->>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 // Config holds logger configuration
 type Config struct {
 	Level  string // debug, info, warn, error
@@ -71,7 +41,6 @@ type Config struct {
 	Output string // stdout, stderr, or file path
 }
 
-<<<<<<< HEAD
 // New creates a new logger instance based on the configuration
 func New(config Config) Logger {
 {{- if eq .LoggerType "slog"}}
@@ -88,110 +57,12 @@ func New(config Config) Logger {
 // Default returns a default logger instance
 func Default() Logger {
 	return New(Config{
-=======
-var (
-{{- if eq .LoggerType "slog" }}
-	logger *slog.Logger
-{{- else if eq .LoggerType "zap" }}
-	logger *zap.Logger
-	sugar  *zap.SugaredLogger
-{{- else if eq .LoggerType "logrus" }}
-	logger *logrus.Logger
-{{- else if eq .LoggerType "zerolog" }}
-	logger zerolog.Logger
-{{- end }}
-)
-
-// Initialize sets up the logger with the given configuration
-func Initialize(config Config) error {
-{{- if eq .LoggerType "slog" }}
-	var slogLevel slog.Level
-	switch config.Level {
-	case "debug":
-		slogLevel = slog.LevelDebug
-	case "info":
-		slogLevel = slog.LevelInfo
-	case "warn":
-		slogLevel = slog.LevelWarn
-	case "error":
-		slogLevel = slog.LevelError
-	default:
-		slogLevel = slog.LevelInfo
-	}
-
-	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slogLevel,
-	})
-	logger = slog.New(handler)
-
-{{- else if eq .LoggerType "zap" }}
-	var zapLevel zapcore.Level
-	switch config.Level {
-	case "debug":
-		zapLevel = zapcore.DebugLevel
-	case "info":
-		zapLevel = zapcore.InfoLevel
-	case "warn":
-		zapLevel = zapcore.WarnLevel
-	case "error":
-		zapLevel = zapcore.ErrorLevel
-	default:
-		zapLevel = zapcore.InfoLevel
-	}
-
-	zapConfig := zap.NewProductionConfig()
-	zapConfig.Level.SetLevel(zapLevel)
-	
-	var err error
-	logger, err = zapConfig.Build()
-	if err != nil {
-		return err
-	}
-	sugar = logger.Sugar()
-
-{{- else if eq .LoggerType "logrus" }}
-	logger = logrus.New()
-	
-	logLevel, err := logrus.ParseLevel(config.Level)
-	if err != nil {
-		logLevel = logrus.InfoLevel
-	}
-	logger.SetLevel(logLevel)
-	logger.SetFormatter(&logrus.JSONFormatter{})
-
-{{- else if eq .LoggerType "zerolog" }}
-	var zeroLevel zerolog.Level
-	switch config.Level {
-	case "debug":
-		zeroLevel = zerolog.DebugLevel
-	case "info":
-		zeroLevel = zerolog.InfoLevel
-	case "warn":
-		zeroLevel = zerolog.WarnLevel
-	case "error":
-		zeroLevel = zerolog.ErrorLevel
-	default:
-		zeroLevel = zerolog.InfoLevel
-	}
-
-	zerolog.SetGlobalLevel(zeroLevel)
-	logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
-{{- end }}
-
-	return nil
-}
-
-// Default initializes a default logger instance
-func Default() error {
-	return Initialize(Config{
->>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
 		Level:  "info",
 		Format: "json",
 		Output: "stdout",
 	})
 }
 
-<<<<<<< HEAD
 {{- if eq .LoggerType "slog"}}
 // slogLogger implements Logger using slog
 type slogLogger struct {
@@ -615,163 +486,3 @@ func getTraceIDFromContext(ctx context.Context) string {
 	
 	return ""
 }
-=======
-// Debug logs a debug message with optional fields
-func Debug(msg string, fields ...Fields) {
-{{- if eq .LoggerType "slog" }}
-	args := fieldsToArgs(fields)
-	logger.Debug(msg, args...)
-{{- else if eq .LoggerType "zap" }}
-	zapFields := fieldsToZap(fields)
-	logger.Debug(msg, zapFields...)
-{{- else if eq .LoggerType "logrus" }}
-	entry := logger.WithFields(fieldsToLogrus(fields))
-	entry.Debug(msg)
-{{- else if eq .LoggerType "zerolog" }}
-	event := logger.Debug()
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			event = event.Interface(k, v)
-		}
-	}
-	event.Msg(msg)
-{{- end }}
-}
-
-// Info logs an info message with optional fields
-func Info(msg string, fields ...Fields) {
-{{- if eq .LoggerType "slog" }}
-	args := fieldsToArgs(fields)
-	logger.Info(msg, args...)
-{{- else if eq .LoggerType "zap" }}
-	zapFields := fieldsToZap(fields)
-	logger.Info(msg, zapFields...)
-{{- else if eq .LoggerType "logrus" }}
-	entry := logger.WithFields(fieldsToLogrus(fields))
-	entry.Info(msg)
-{{- else if eq .LoggerType "zerolog" }}
-	event := logger.Info()
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			event = event.Interface(k, v)
-		}
-	}
-	event.Msg(msg)
-{{- end }}
-}
-
-// Warn logs a warning message with optional fields
-func Warn(msg string, fields ...Fields) {
-{{- if eq .LoggerType "slog" }}
-	args := fieldsToArgs(fields)
-	logger.Warn(msg, args...)
-{{- else if eq .LoggerType "zap" }}
-	zapFields := fieldsToZap(fields)
-	logger.Warn(msg, zapFields...)
-{{- else if eq .LoggerType "logrus" }}
-	entry := logger.WithFields(fieldsToLogrus(fields))
-	entry.Warn(msg)
-{{- else if eq .LoggerType "zerolog" }}
-	event := logger.Warn()
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			event = event.Interface(k, v)
-		}
-	}
-	event.Msg(msg)
-{{- end }}
-}
-
-// Error logs an error message with optional fields
-func Error(msg string, fields ...Fields) {
-{{- if eq .LoggerType "slog" }}
-	args := fieldsToArgs(fields)
-	logger.Error(msg, args...)
-{{- else if eq .LoggerType "zap" }}
-	zapFields := fieldsToZap(fields)
-	logger.Error(msg, zapFields...)
-{{- else if eq .LoggerType "logrus" }}
-	entry := logger.WithFields(fieldsToLogrus(fields))
-	entry.Error(msg)
-{{- else if eq .LoggerType "zerolog" }}
-	event := logger.Error()
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			event = event.Interface(k, v)
-		}
-	}
-	event.Msg(msg)
-{{- end }}
-}
-
-// Fatal logs a fatal message and exits the program
-func Fatal(msg string, fields ...Fields) {
-{{- if eq .LoggerType "slog" }}
-	args := fieldsToArgs(fields)
-	logger.Error(msg, args...)
-	os.Exit(1)
-{{- else if eq .LoggerType "zap" }}
-	zapFields := fieldsToZap(fields)
-	logger.Fatal(msg, zapFields...)
-{{- else if eq .LoggerType "logrus" }}
-	entry := logger.WithFields(fieldsToLogrus(fields))
-	entry.Fatal(msg)
-{{- else if eq .LoggerType "zerolog" }}
-	event := logger.Fatal()
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			event = event.Interface(k, v)
-		}
-	}
-	event.Msg(msg)
-{{- end }}
-}
-
-// WithFields returns a function that logs with the provided fields
-func WithFields(fields Fields) func(string, ...Fields) {
-	return func(msg string, additionalFields ...Fields) {
-		allFields := make([]Fields, 0, len(additionalFields)+1)
-		allFields = append(allFields, fields)
-		allFields = append(allFields, additionalFields...)
-		Info(msg, allFields...)
-	}
-}
-
-{{- if eq .LoggerType "slog" }}
-// fieldsToArgs converts Fields maps to slog arguments
-func fieldsToArgs(fields []Fields) []interface{} {
-	var args []interface{}
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			args = append(args, k, v)
-		}
-	}
-	return args
-}
-
-{{- else if eq .LoggerType "zap" }}
-// fieldsToZap converts Fields maps to zap fields
-func fieldsToZap(fields []Fields) []zap.Field {
-	var zapFields []zap.Field
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			zapFields = append(zapFields, zap.Any(k, v))
-		}
-	}
-	return zapFields
-}
-
-{{- else if eq .LoggerType "logrus" }}
-// fieldsToLogrus converts Fields maps to logrus fields
-func fieldsToLogrus(fields []Fields) logrus.Fields {
-	logrusFields := make(logrus.Fields)
-	for _, fieldMap := range fields {
-		for k, v := range fieldMap {
-			logrusFields[k] = v
-		}
-	}
-	return logrusFields
-}
-{{- end }}
-
->>>>>>> 02dcb5f (feat: Phase 2 complete - enterprise-grade Go project generator with comprehensive blueprints)
