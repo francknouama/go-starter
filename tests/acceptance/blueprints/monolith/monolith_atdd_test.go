@@ -1,17 +1,11 @@
 package monolith
 
 import (
-	"bufio"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1067,123 +1061,3 @@ func TestMonolithQualityGates(t *testing.T) {
 
 // Helper functions for ATDD tests
 
-func waitForServerStart(url string, timeout time.Duration) error {
-	client := &http.Client{Timeout: 1 * time.Second}
-	deadline := time.Now().Add(timeout)
-	
-	for time.Now().Before(deadline) {
-		resp, err := client.Get(url)
-		if err == nil {
-			_ = resp.Body.Close()
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("server did not start within %v", timeout)
-}
-
-func checkProcessRunning(cmd *exec.Cmd) bool {
-	if cmd.Process == nil {
-		return false
-	}
-	// On Unix systems, sending signal 0 tests if process exists
-	err := cmd.Process.Signal(os.Signal(os.Kill))
-	return err == nil
-}
-
-func findAvailablePort() int {
-	// Simple port finding - in real tests you'd use net.Listen
-	return 8080
-}
-
-func extractProjectNameFromOutput(output string) string {
-	// Extract project name from generation output
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "Generated project:") {
-			parts := strings.Fields(line)
-			if len(parts) > 2 {
-				return parts[len(parts)-1]
-			}
-		}
-	}
-	return "unknown"
-}
-
-func countFilesInDirectory(dir string) (int, error) {
-	var count int
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		if !info.IsDir() {
-			count++
-		}
-		return nil
-	})
-	return count, err
-}
-
-func parseJSONResponse(body []byte, target interface{}) error {
-	return json.Unmarshal(body, target)
-}
-
-func validateResponseHeaders(headers http.Header, expectedHeaders map[string]string) error {
-	for key, expectedValue := range expectedHeaders {
-		actualValue := headers.Get(key)
-		if actualValue != expectedValue {
-			return fmt.Errorf("expected header %s to be %s, got %s", key, expectedValue, actualValue)
-		}
-	}
-	return nil
-}
-
-func checkFileContainsPattern(filePath string, pattern string) (bool, error) {
-	content, err := os.ReadFile(filePath)
-	if err != nil {
-		return false, err
-	}
-	
-	matched, err := regexp.MatchString(pattern, string(content))
-	return matched, err
-}
-
-func runCommandWithTimeout(cmd *exec.Cmd, timeout time.Duration) ([]byte, error) {
-	type result struct {
-		output []byte
-		err    error
-	}
-	
-	resultChan := make(chan result, 1)
-	
-	go func() {
-		output, err := cmd.CombinedOutput()
-		resultChan <- result{output, err}
-	}()
-	
-	select {
-	case res := <-resultChan:
-		return res.output, res.err
-	case <-time.After(timeout):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		return nil, fmt.Errorf("command timed out after %v", timeout)
-	}
-}
-
-func readFileLines(filePath string) ([]string, error) {
-	file, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = file.Close() }()
-	
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
-	}
-	
-	return lines, scanner.Err()
-}

@@ -2,7 +2,6 @@ package monolith
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -13,9 +12,6 @@ import (
 	"time"
 
 	"github.com/cucumber/godog"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
-	_ "github.com/lib/pq"
 )
 
 // MonolithTestContext holds the state for monolith BDD tests with testcontainers
@@ -24,9 +20,6 @@ type MonolithTestContext struct {
 	workingDir    string
 	projectDir    string
 	projectName   string
-	generatedPath string
-	originalDir   string
-	projectRoot   string
 	
 	// Command execution
 	lastCommand    *exec.Cmd
@@ -48,13 +41,6 @@ type MonolithTestContext struct {
 	
 	// HTTP client for testing running applications
 	httpClient *http.Client
-	serverPort int
-	serverCmd  *exec.Cmd
-	
-	// Testcontainers for database testing
-	postgresContainer testcontainers.Container
-	databaseURL       string
-	database          *sql.DB
 	ctx               context.Context
 }
 
@@ -807,175 +793,4 @@ func (ctx *MonolithTestContext) checkFileDoesNotContain(filePath, content string
 	return nil
 }
 
-// Helper method for cleanup (can be called manually in tests)
-func (ctx *MonolithTestContext) cleanup() {
-	// Cleanup after test execution
-	if ctx.serverCmd != nil && ctx.serverCmd.Process != nil {
-		_ = ctx.serverCmd.Process.Kill()
-		_ = ctx.serverCmd.Wait()
-	}
-	
-	// Cleanup database
-	ctx.cleanupDatabase()
-	
-	if ctx.workingDir != "" {
-		_ = os.RemoveAll(ctx.workingDir)
-	}
-}
 
-// Testcontainer methods for database testing
-
-func (ctx *MonolithTestContext) setupPostgresContainer() error {
-	postgresReq := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_DB":       "testdb",
-			"POSTGRES_USER":     "testuser", 
-			"POSTGRES_PASSWORD": "testpass",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(60 * time.Second),
-	}
-
-	var err error
-	ctx.postgresContainer, err = testcontainers.GenericContainer(ctx.ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: postgresReq,
-		Started:          true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start postgres container: %w", err)
-	}
-
-	// Get connection details
-	host, err := ctx.postgresContainer.Host(ctx.ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get container host: %w", err)
-	}
-
-	port, err := ctx.postgresContainer.MappedPort(ctx.ctx, "5432")
-	if err != nil {
-		return fmt.Errorf("failed to get container port: %w", err)
-	}
-
-	ctx.databaseURL = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
-
-	return nil
-}
-
-func (ctx *MonolithTestContext) connectToDatabase() error {
-	if ctx.databaseURL == "" {
-		if err := ctx.setupPostgresContainer(); err != nil {
-			return err
-		}
-	}
-
-	var err error
-	ctx.database, err = sql.Open("postgres", ctx.databaseURL)
-	if err != nil {
-		return fmt.Errorf("failed to connect to database: %w", err)
-	}
-
-	// Test connection
-	if err := ctx.database.Ping(); err != nil {
-		return fmt.Errorf("failed to ping database: %w", err)
-	}
-
-	return nil
-}
-
-func (ctx *MonolithTestContext) cleanupDatabase() {
-	if ctx.database != nil {
-		_ = ctx.database.Close()
-		ctx.database = nil
-	}
-
-	if ctx.postgresContainer != nil {
-		_ = ctx.postgresContainer.Terminate(ctx.ctx)
-		ctx.postgresContainer = nil
-	}
-}
-
-func (ctx *MonolithTestContext) runMigrationsOnTestDatabase() error {
-	if ctx.database == nil {
-		if err := ctx.connectToDatabase(); err != nil {
-			return err
-		}
-	}
-
-	// Create a simple users table for testing
-	_, err := ctx.database.ExecContext(ctx.ctx, `
-		CREATE TABLE IF NOT EXISTS users (
-			id SERIAL PRIMARY KEY,
-			email VARCHAR(255) UNIQUE NOT NULL,
-			first_name VARCHAR(100),
-			last_name VARCHAR(100),
-			password_hash VARCHAR(255),
-			is_active BOOLEAN DEFAULT true,
-			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-		CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
-	`)
-
-	return err
-}
-
-func (ctx *MonolithTestContext) verifyDatabaseConnection() error {
-	if ctx.database == nil {
-		return fmt.Errorf("database connection not established")
-	}
-
-	var result int
-	err := ctx.database.QueryRowContext(ctx.ctx, "SELECT 1").Scan(&result)
-	if err != nil {
-		return fmt.Errorf("database health check failed: %w", err)
-	}
-
-	if result != 1 {
-		return fmt.Errorf("database health check returned unexpected result: %d", result)
-	}
-
-	return nil
-}
-
-func (ctx *MonolithTestContext) createTestUser(email, firstName, lastName string) error {
-	if ctx.database == nil {
-		if err := ctx.connectToDatabase(); err != nil {
-			return err
-		}
-	}
-
-	_, err := ctx.database.ExecContext(ctx.ctx, 
-		"INSERT INTO users (email, first_name, last_name, password_hash) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO NOTHING",
-		email, firstName, lastName, "test_password_hash")
-	
-	return err
-}
-
-func (ctx *MonolithTestContext) verifyUserExists(email string) error {
-	if ctx.database == nil {
-		return fmt.Errorf("database connection not established")
-	}
-
-	var count int
-	err := ctx.database.QueryRowContext(ctx.ctx, "SELECT COUNT(*) FROM users WHERE email = $1", email).Scan(&count)
-	if err != nil {
-		return fmt.Errorf("failed to query user: %w", err)
-	}
-
-	if count == 0 {
-		return fmt.Errorf("user with email %s not found", email)
-	}
-
-	return nil
-}
-
-func (ctx *MonolithTestContext) clearTestData() error {
-	if ctx.database == nil {
-		return nil
-	}
-
-	_, err := ctx.database.ExecContext(ctx.ctx, "TRUNCATE users RESTART IDENTITY CASCADE")
-	return err
-}

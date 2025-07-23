@@ -25,12 +25,9 @@ type GRPCGatewayTestContext struct {
 	cmdOutput        string
 	cmdError         error
 	exitCode         int
-	generatedFiles   []string
 	postgresContainer *postgres.PostgresContainer
 	databaseURL      string
 	serverProcess    *os.Process
-	serverPort       int
-	grpcPort         int
 }
 
 // TestFeatures runs the gRPC Gateway BDD tests

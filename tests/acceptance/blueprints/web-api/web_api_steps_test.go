@@ -14,7 +14,6 @@ import (
 
 	"github.com/cucumber/godog"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 	_ "github.com/lib/pq"
 	
 	"github.com/francknouama/go-starter/tests/helpers"
@@ -52,13 +51,11 @@ type WebAPITestContext struct {
 	// HTTP client for application testing
 	httpClient *http.Client
 	serverPort int
-	serverCmd  *exec.Cmd
 	baseURL    string
 	
 	// Testcontainers for realistic database testing
 	postgresContainer testcontainers.Container
 	mysqlContainer    testcontainers.Container
-	databaseURL       string
 	database          *sql.DB
 	ctx               context.Context
 	
@@ -819,137 +816,6 @@ func (ctx *WebAPITestContext) theAPIShouldExposeOpenAPIDocumentation() error {
 	return ctx.checkFileExists("api/openapi.yaml")
 }
 
-// Enhanced logger validation steps
-func (ctx *WebAPITestContext) theLoggerShouldBeInInfrastructureLayer() error {
-	if !ctx.projectExists {
-		return fmt.Errorf("project was not generated")
-	}
-	
-	projectPath := filepath.Join(ctx.workingDir, ctx.projectName)
-	
-	switch ctx.architecture {
-	case "clean":
-		loggerDir := filepath.Join(projectPath, "internal/infrastructure/logger")
-		if !helpers.DirExists(loggerDir) {
-			return fmt.Errorf("Clean Architecture should have logger in infrastructure layer")
-		}
-		
-		// Logger implementation should exist
-		if ctx.logger != "" {
-			loggerFile := filepath.Join(loggerDir, ctx.logger+".go")
-			if !helpers.FileExists(loggerFile) {
-				return fmt.Errorf("logger implementation %s.go should exist in infrastructure layer", ctx.logger)
-			}
-		}
-		
-	case "ddd":
-		loggerDir := filepath.Join(projectPath, "internal/infrastructure/logger")
-		if !helpers.DirExists(loggerDir) {
-			return fmt.Errorf("DDD should have logger in infrastructure layer")
-		}
-		
-	case "hexagonal":
-		loggerDir := filepath.Join(projectPath, "internal/adapters/secondary/logger")
-		if !helpers.DirExists(loggerDir) {
-			return fmt.Errorf("Hexagonal Architecture should have logger as secondary adapter")
-		}
-	}
-	
-	return nil
-}
-
-func (ctx *WebAPITestContext) theLoggerShouldBeInjectedThroughInterfaces() error {
-	if !ctx.projectExists {
-		return fmt.Errorf("project was not generated")
-	}
-	
-	projectPath := filepath.Join(ctx.workingDir, ctx.projectName)
-	
-	switch ctx.architecture {
-	case "clean":
-		interfaceFile := filepath.Join(projectPath, "internal/infrastructure/logger/interface.go")
-		if !helpers.FileExists(interfaceFile) {
-			return fmt.Errorf("Clean Architecture should have logger interface")
-		}
-		
-		content := helpers.ReadFile(nil, interfaceFile)
-		if !strings.Contains(content, "interface") {
-			return fmt.Errorf("logger interface.go should define logger interface")
-		}
-		
-	case "hexagonal":
-		outputPortsDir := filepath.Join(projectPath, "internal/application/ports/output")
-		if helpers.DirExists(outputPortsDir) {
-			files := helpers.FindGoFiles(nil, outputPortsDir)
-			hasLoggerPort := false
-			for _, file := range files {
-				content := helpers.ReadFile(nil, file)
-				if strings.Contains(content, "Logger") && strings.Contains(content, "interface") {
-					hasLoggerPort = true
-					break
-				}
-			}
-			if !hasLoggerPort {
-				return fmt.Errorf("Hexagonal should define logger interface in output ports")
-			}
-		}
-	}
-	
-	return nil
-}
-
-func (ctx *WebAPITestContext) businessLogicShouldNotDependOnConcreteLogger() error {
-	if !ctx.projectExists {
-		return fmt.Errorf("project was not generated")
-	}
-	
-	projectPath := filepath.Join(ctx.workingDir, ctx.projectName)
-	
-	// Define business logic directories by architecture
-	var businessLogicDirs []string
-	switch ctx.architecture {
-	case "clean":
-		businessLogicDirs = []string{
-			"internal/domain/entities",
-			"internal/domain/usecases",
-		}
-	case "ddd":
-		businessLogicDirs = []string{
-			"internal/domain",
-		}
-	case "hexagonal":
-		businessLogicDirs = []string{
-			"internal/domain",
-		}
-	default:
-		// For standard architecture, logging coupling is acceptable
-		return nil
-	}
-	
-	// Concrete logger imports that should not be in business logic
-	concreteLoggerImports := []string{
-		"go.uber.org/zap",
-		"github.com/sirupsen/logrus",
-		"github.com/rs/zerolog",
-	}
-	
-	for _, dir := range businessLogicDirs {
-		dirPath := filepath.Join(projectPath, dir)
-		if helpers.DirExists(dirPath) {
-			files := helpers.FindGoFiles(nil, dirPath)
-			for _, file := range files {
-				content := helpers.ReadFile(nil, file)
-				for _, loggerImport := range concreteLoggerImports {
-					if strings.Contains(content, loggerImport) {
-						return fmt.Errorf("business logic %s should not import concrete logger %s", file, loggerImport)
-					}
-				}
-			}
-		}
-	}
-	
-	return nil
-}
 
 func (ctx *WebAPITestContext) theProjectShouldUseTheWebFramework(framework string) error {
 	return ctx.checkFileContains("main.go", framework)
@@ -1478,58 +1344,6 @@ func (ctx *WebAPITestContext) theShutdownShouldBeLoggedAppropriately() error {
 }
 
 // Helper method for cleanup (can be called manually in tests)
-func (ctx *WebAPITestContext) cleanup() {
-	// Cleanup after test execution
-	if ctx.serverCmd != nil && ctx.serverCmd.Process != nil {
-		_ = ctx.serverCmd.Process.Kill()
-		_ = ctx.serverCmd.Wait()
-	}
-	
-	// Cleanup database containers
-	ctx.cleanupDatabase()
-	
-	if ctx.workingDir != "" {
-		_ = os.RemoveAll(ctx.workingDir)
-	}
-}
-
-// Database container methods (similar to monolith implementation)
-func (ctx *WebAPITestContext) setupPostgresContainer() error {
-	postgresReq := testcontainers.ContainerRequest{
-		Image:        "postgres:16-alpine",
-		ExposedPorts: []string{"5432/tcp"},
-		Env: map[string]string{
-			"POSTGRES_DB":       "testdb",
-			"POSTGRES_USER":     "testuser", 
-			"POSTGRES_PASSWORD": "testpass",
-		},
-		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(60 * time.Second),
-	}
-
-	var err error
-	ctx.postgresContainer, err = testcontainers.GenericContainer(ctx.ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: postgresReq,
-		Started:          true,
-	})
-	if err != nil {
-		return fmt.Errorf("failed to start postgres container: %w", err)
-	}
-
-	// Get connection details
-	host, err := ctx.postgresContainer.Host(ctx.ctx)
-	if err != nil {
-		return fmt.Errorf("failed to get container host: %w", err)
-	}
-
-	port, err := ctx.postgresContainer.MappedPort(ctx.ctx, "5432")
-	if err != nil {
-		return fmt.Errorf("failed to get container port: %w", err)
-	}
-
-	ctx.databaseURL = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
-
-	return nil
-}
 
 func (ctx *WebAPITestContext) cleanupDatabase() {
 	if ctx.database != nil {

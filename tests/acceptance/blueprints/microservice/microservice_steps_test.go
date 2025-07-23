@@ -22,8 +22,6 @@ type MicroserviceTestContext struct {
 	projectName     string
 	projectType     string
 	projectPath     string
-	generatedFiles  []string
-	lastCommand     *exec.Cmd
 	lastOutput      string
 	lastError       string
 	lastExitCode    int

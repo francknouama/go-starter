@@ -31,7 +31,6 @@ type CLITestContext struct {
 	lastExitCode   int
 	
 	// CLI execution results
-	cliExecutable  string
 	cliOutput      []byte
 	cliError       error
 	cliExitCode    int
