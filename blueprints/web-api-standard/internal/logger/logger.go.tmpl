@@ -1,0 +1,302 @@
+package logger
+
+import (
+	"os"
+{{- if eq .LoggerType "slog" }}
+	"log/slog"
+{{- else if eq .LoggerType "zap" }}
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog" }}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+{{- else }}
+	"log/slog"
+{{- end }}
+)
+
+var (
+{{- if eq .LoggerType "slog" }}
+	// Default logger instance
+	logger *slog.Logger
+{{- else if eq .LoggerType "zap" }}
+	// Default logger instance
+	logger *zap.Logger
+	sugar  *zap.SugaredLogger
+{{- else if eq .LoggerType "logrus" }}
+	// Default logger instance
+	logger *logrus.Logger
+{{- else if eq .LoggerType "zerolog" }}
+	// Default logger instance
+	logger zerolog.Logger
+{{- else }}
+	// Default logger instance (fallback to slog)
+	logger *slog.Logger
+{{- end }}
+)
+
+func init() {
+	// Initialize with sensible production defaults
+{{- if eq .LoggerType "slog" }}
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger = slog.New(handler)
+	slog.SetDefault(logger)
+{{- else if eq .LoggerType "zap" }}
+	cfg := zap.NewProductionConfig()
+	cfg.OutputPaths = []string{"stdout"}
+	var err error
+	logger, err = cfg.Build()
+	if err != nil {
+		panic("failed to initialize zap logger: " + err.Error())
+	}
+	sugar = logger.Sugar()
+{{- else if eq .LoggerType "logrus" }}
+	logger = logrus.New()
+	logger.SetFormatter(&logrus.JSONFormatter{
+		TimestampFormat: "2006-01-02T15:04:05.000Z",
+	})
+	logger.SetOutput(os.Stdout)
+	logger.SetLevel(logrus.InfoLevel)
+{{- else if eq .LoggerType "zerolog" }}
+	zerolog.TimeFieldFormat = "2006-01-02T15:04:05.000Z"
+	logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+	log.Logger = logger
+{{- else }}
+	// Fallback to slog
+	opts := &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger = slog.New(handler)
+	slog.SetDefault(logger)
+{{- end }}
+}
+
+// SetLevel updates the logging level
+func SetLevel(level string) {
+{{- if eq .LoggerType "slog" }}
+	var slogLevel slog.Level
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "info":
+		slogLevel = slog.LevelInfo
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: slogLevel}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger = slog.New(handler)
+	slog.SetDefault(logger)
+{{- else if eq .LoggerType "zap" }}
+	var zapLevel zap.AtomicLevel
+	switch level {
+	case "debug":
+		zapLevel = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "info":
+		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	case "warn":
+		zapLevel = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		zapLevel = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		zapLevel = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	cfg := zap.NewProductionConfig()
+	cfg.Level = zapLevel
+	newLogger, _ := cfg.Build()
+	logger = newLogger
+	sugar = logger.Sugar()
+{{- else if eq .LoggerType "logrus" }}
+	switch level {
+	case "debug":
+		logger.SetLevel(logrus.DebugLevel)
+	case "info":
+		logger.SetLevel(logrus.InfoLevel)
+	case "warn":
+		logger.SetLevel(logrus.WarnLevel)
+	case "error":
+		logger.SetLevel(logrus.ErrorLevel)
+	default:
+		logger.SetLevel(logrus.InfoLevel)
+	}
+{{- else if eq .LoggerType "zerolog" }}
+	switch level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "info":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+{{- else }}
+	// Fallback to slog
+	var slogLevel slog.Level
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "info":
+		slogLevel = slog.LevelInfo
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+	opts := &slog.HandlerOptions{Level: slogLevel}
+	handler := slog.NewJSONHandler(os.Stdout, opts)
+	logger = slog.New(handler)
+	slog.SetDefault(logger)
+{{- end }}
+}
+
+// Debug logs a debug message
+func Debug(msg string, args ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	logger.Debug(msg, args...)
+{{- else if eq .LoggerType "zap" }}
+	sugar.Debugf(msg, args...)
+{{- else if eq .LoggerType "logrus" }}
+	logger.Debugf(msg, args...)
+{{- else if eq .LoggerType "zerolog" }}
+	log.Debug().Msgf(msg, args...)
+{{- else }}
+	// Fallback to slog
+	logger.Debug(msg, args...)
+{{- end }}
+}
+
+// Info logs an info message
+func Info(msg string, args ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	logger.Info(msg, args...)
+{{- else if eq .LoggerType "zap" }}
+	sugar.Infof(msg, args...)
+{{- else if eq .LoggerType "logrus" }}
+	logger.Infof(msg, args...)
+{{- else if eq .LoggerType "zerolog" }}
+	log.Info().Msgf(msg, args...)
+{{- else }}
+	// Fallback to slog
+	logger.Info(msg, args...)
+{{- end }}
+}
+
+// Warn logs a warning message
+func Warn(msg string, args ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	logger.Warn(msg, args...)
+{{- else if eq .LoggerType "zap" }}
+	sugar.Warnf(msg, args...)
+{{- else if eq .LoggerType "logrus" }}
+	logger.Warnf(msg, args...)
+{{- else if eq .LoggerType "zerolog" }}
+	log.Warn().Msgf(msg, args...)
+{{- else }}
+	// Fallback to slog
+	logger.Warn(msg, args...)
+{{- end }}
+}
+
+// Error logs an error message
+func Error(msg string, args ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	logger.Error(msg, args...)
+{{- else if eq .LoggerType "zap" }}
+	sugar.Errorf(msg, args...)
+{{- else if eq .LoggerType "logrus" }}
+	logger.Errorf(msg, args...)
+{{- else if eq .LoggerType "zerolog" }}
+	log.Error().Msgf(msg, args...)
+{{- else }}
+	// Fallback to slog
+	logger.Error(msg, args...)
+{{- end }}
+}
+
+// WithFields adds structured fields to a log entry
+func WithFields(fields map[string]interface{}) func(string, ...interface{}) {
+{{- if eq .LoggerType "slog" }}
+	args := make([]any, 0, len(fields)*2)
+	for k, v := range fields {
+		args = append(args, k, v)
+	}
+	return func(msg string, msgArgs ...interface{}) {
+		logger.Info(msg, append(args, msgArgs...)...)
+	}
+{{- else if eq .LoggerType "zap" }}
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	return func(msg string, msgArgs ...interface{}) {
+		logger.With(zapFields...).Sugar().Infof(msg, msgArgs...)
+	}
+{{- else if eq .LoggerType "logrus" }}
+	return func(msg string, msgArgs ...interface{}) {
+		logger.WithFields(logrus.Fields(fields)).Infof(msg, msgArgs...)
+	}
+{{- else if eq .LoggerType "zerolog" }}
+	return func(msg string, msgArgs ...interface{}) {
+		event := logger.Info()
+		for k, v := range fields {
+			event = event.Interface(k, v)
+		}
+		event.Msgf(msg, msgArgs...)
+	}
+{{- else }}
+	// Fallback to slog
+	args := make([]any, 0, len(fields)*2)
+	for k, v := range fields {
+		args = append(args, k, v)
+	}
+	return func(msg string, msgArgs ...interface{}) {
+		logger.Info(msg, append(args, msgArgs...)...)
+	}
+{{- end }}
+}
+
+{{- if eq .LoggerType "slog" }}
+// Get returns the slog logger for direct use
+func Get() *slog.Logger {
+	return logger
+}
+{{- else if eq .LoggerType "zap" }}
+// Get returns the zap logger for direct use
+func Get() *zap.Logger {
+	return logger
+}
+
+// Sugar returns the sugared zap logger
+func Sugar() *zap.SugaredLogger {
+	return sugar
+}
+{{- else if eq .LoggerType "logrus" }}
+// Get returns the logrus logger for direct use
+func Get() *logrus.Logger {
+	return logger
+}
+{{- else if eq .LoggerType "zerolog" }}
+// Get returns the zerolog logger for direct use
+func Get() zerolog.Logger {
+	return logger
+}
+{{- else }}
+// Get returns the slog logger for direct use (fallback)
+func Get() *slog.Logger {
+	return logger
+}
+{{- end }}

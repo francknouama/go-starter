@@ -1,0 +1,267 @@
+package logger
+
+import (
+{{- if eq .Logger "slog" }}
+	"log/slog"
+	"os"
+{{- else if eq .Logger "zap" }}
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+{{- else if eq .Logger "logrus" }}
+	"github.com/sirupsen/logrus"
+{{- else if eq .Logger "zerolog" }}
+	"github.com/rs/zerolog"
+	"os"
+{{- end }}
+)
+
+var (
+{{- if eq .Logger "slog" }}
+	logger *slog.Logger
+{{- else if eq .Logger "zap" }}
+	logger *zap.Logger
+	sugar  *zap.SugaredLogger
+{{- else if eq .Logger "logrus" }}
+	logger *logrus.Logger
+{{- else if eq .Logger "zerolog" }}
+	logger zerolog.Logger
+{{- end }}
+)
+
+
+// Initialize sets up the logger with default configuration
+func Initialize(level string) error {
+{{- if eq .Logger "slog" }}
+	var slogLevel slog.Level
+	switch level {
+	case "debug":
+		slogLevel = slog.LevelDebug
+	case "info":
+		slogLevel = slog.LevelInfo
+	case "warn":
+		slogLevel = slog.LevelWarn
+	case "error":
+		slogLevel = slog.LevelError
+	default:
+		slogLevel = slog.LevelInfo
+	}
+
+	handler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slogLevel,
+	})
+	logger = slog.New(handler)
+
+{{- else if eq .Logger "zap" }}
+	var zapLevel zapcore.Level
+	switch level {
+	case "debug":
+		zapLevel = zapcore.DebugLevel
+	case "info":
+		zapLevel = zapcore.InfoLevel
+	case "warn":
+		zapLevel = zapcore.WarnLevel
+	case "error":
+		zapLevel = zapcore.ErrorLevel
+	default:
+		zapLevel = zapcore.InfoLevel
+	}
+
+	config := zap.NewProductionConfig()
+	config.Level.SetLevel(zapLevel)
+	
+	var err error
+	logger, err = config.Build()
+	if err != nil {
+		return err
+	}
+	sugar = logger.Sugar()
+
+{{- else if eq .Logger "logrus" }}
+	logger = logrus.New()
+	
+	logLevel, err := logrus.ParseLevel(level)
+	if err != nil {
+		logLevel = logrus.InfoLevel
+	}
+	logger.SetLevel(logLevel)
+	logger.SetFormatter(&logrus.JSONFormatter{})
+
+{{- else if eq .Logger "zerolog" }}
+	var zeroLevel zerolog.Level
+	switch level {
+	case "debug":
+		zeroLevel = zerolog.DebugLevel
+	case "info":
+		zeroLevel = zerolog.InfoLevel
+	case "warn":
+		zeroLevel = zerolog.WarnLevel
+	case "error":
+		zeroLevel = zerolog.ErrorLevel
+	default:
+		zeroLevel = zerolog.InfoLevel
+	}
+
+	zerolog.SetGlobalLevel(zeroLevel)
+	logger = zerolog.New(os.Stdout).With().Timestamp().Logger()
+{{- end }}
+
+	return nil
+}
+
+// Debug logs a debug message with optional fields
+func Debug(msg string, fields ...Fields) {
+{{- if eq .Logger "slog" }}
+	args := fieldsToArgs(fields)
+	logger.Debug(msg, args...)
+{{- else if eq .Logger "zap" }}
+	zapFields := fieldsToZap(fields)
+	logger.Debug(msg, zapFields...)
+{{- else if eq .Logger "logrus" }}
+	entry := logger.WithFields(fieldsToLogrus(fields))
+	entry.Debug(msg)
+{{- else if eq .Logger "zerolog" }}
+	event := logger.Debug()
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end }}
+}
+
+// Info logs an info message with optional fields
+func Info(msg string, fields ...Fields) {
+{{- if eq .Logger "slog" }}
+	args := fieldsToArgs(fields)
+	logger.Info(msg, args...)
+{{- else if eq .Logger "zap" }}
+	zapFields := fieldsToZap(fields)
+	logger.Info(msg, zapFields...)
+{{- else if eq .Logger "logrus" }}
+	entry := logger.WithFields(fieldsToLogrus(fields))
+	entry.Info(msg)
+{{- else if eq .Logger "zerolog" }}
+	event := logger.Info()
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end }}
+}
+
+// Warn logs a warning message with optional fields
+func Warn(msg string, fields ...Fields) {
+{{- if eq .Logger "slog" }}
+	args := fieldsToArgs(fields)
+	logger.Warn(msg, args...)
+{{- else if eq .Logger "zap" }}
+	zapFields := fieldsToZap(fields)
+	logger.Warn(msg, zapFields...)
+{{- else if eq .Logger "logrus" }}
+	entry := logger.WithFields(fieldsToLogrus(fields))
+	entry.Warn(msg)
+{{- else if eq .Logger "zerolog" }}
+	event := logger.Warn()
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end }}
+}
+
+// Error logs an error message with optional fields
+func Error(msg string, fields ...Fields) {
+{{- if eq .Logger "slog" }}
+	args := fieldsToArgs(fields)
+	logger.Error(msg, args...)
+{{- else if eq .Logger "zap" }}
+	zapFields := fieldsToZap(fields)
+	logger.Error(msg, zapFields...)
+{{- else if eq .Logger "logrus" }}
+	entry := logger.WithFields(fieldsToLogrus(fields))
+	entry.Error(msg)
+{{- else if eq .Logger "zerolog" }}
+	event := logger.Error()
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end }}
+}
+
+// Fatal logs a fatal message and exits the program
+func Fatal(msg string, fields ...Fields) {
+{{- if eq .Logger "slog" }}
+	args := fieldsToArgs(fields)
+	logger.Error(msg, args...)
+	os.Exit(1)
+{{- else if eq .Logger "zap" }}
+	zapFields := fieldsToZap(fields)
+	logger.Fatal(msg, zapFields...)
+{{- else if eq .Logger "logrus" }}
+	entry := logger.WithFields(fieldsToLogrus(fields))
+	entry.Fatal(msg)
+{{- else if eq .Logger "zerolog" }}
+	event := logger.Fatal()
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			event = event.Interface(k, v)
+		}
+	}
+	event.Msg(msg)
+{{- end }}
+}
+
+// WithFields returns a function that logs with the provided fields
+func WithFields(fields Fields) func(string, ...Fields) {
+	return func(msg string, additionalFields ...Fields) {
+		allFields := make([]Fields, 0, len(additionalFields)+1)
+		allFields = append(allFields, fields)
+		allFields = append(allFields, additionalFields...)
+		Info(msg, allFields...)
+	}
+}
+
+{{- if eq .Logger "slog" }}
+// fieldsToArgs converts Fields maps to slog arguments
+func fieldsToArgs(fields []Fields) []interface{} {
+	var args []interface{}
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			args = append(args, k, v)
+		}
+	}
+	return args
+}
+
+{{- else if eq .Logger "zap" }}
+// fieldsToZap converts Fields maps to zap fields
+func fieldsToZap(fields []Fields) []zap.Field {
+	var zapFields []zap.Field
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			zapFields = append(zapFields, zap.Any(k, v))
+		}
+	}
+	return zapFields
+}
+
+{{- else if eq .Logger "logrus" }}
+// fieldsToLogrus converts Fields maps to logrus fields
+func fieldsToLogrus(fields []Fields) logrus.Fields {
+	logrusFields := make(logrus.Fields)
+	for _, fieldMap := range fields {
+		for k, v := range fieldMap {
+			logrusFields[k] = v
+		}
+	}
+	return logrusFields
+}
+{{- end }}

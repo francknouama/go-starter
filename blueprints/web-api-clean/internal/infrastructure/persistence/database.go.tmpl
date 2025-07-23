@@ -6,7 +6,7 @@ import (
 
 	"{{.ModulePath}}/internal/domain/ports"
 	"{{.ModulePath}}/internal/infrastructure/config"
-	{{if eq .DatabaseDriver "postgres"}}
+	{{if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	"gorm.io/driver/postgres"
 	{{else if eq .DatabaseDriver "mysql"}}
 	"gorm.io/driver/mysql"
@@ -40,8 +40,8 @@ func NewDatabase(config *config.DatabaseConfig, appLogger ports.Logger) (*Databa
 	// Open database connection
 	var dialector gorm.Dialector
 	switch config.Driver {
-	{{if eq .DatabaseDriver "postgres"}}
-	case "postgres":
+	{{if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	case "postgres", "postgresql":
 		dialector = postgres.Open(config.GetDSN())
 	{{end}}
 	{{if eq .DatabaseDriver "mysql"}}

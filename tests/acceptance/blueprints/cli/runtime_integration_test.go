@@ -520,12 +520,12 @@ func (v *CLIRuntimeValidator) TestBasicCommands(t *testing.T) {
 	helpOutput, err := v.runCLI("--help")
 	assert.NoError(t, err, "Help command should succeed")
 	assert.Contains(t, helpOutput, "Usage:")
-	assert.Contains(t, helpOutput, "Available Commands:")
+	assert.Contains(t, helpOutput, "Resource Management:")
 
 	// Test version command
 	versionOutput, err := v.runCLI("version")
 	assert.NoError(t, err, "Version command should succeed")
-	assert.Contains(t, versionOutput, "version information")
+	assert.Contains(t, versionOutput, "Version:")
 }
 
 // TestLoggerOutput tests logger-specific output

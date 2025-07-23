@@ -9,7 +9,7 @@ import (
 	"{{.ModulePath}}/internal/infrastructure/config"
 	{{- if eq .DatabaseORM "gorm"}}
 	"gorm.io/gorm"
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	"gorm.io/driver/postgres"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	"gorm.io/driver/mysql"
@@ -18,7 +18,7 @@ import (
 	{{- end}}
 	{{- else if eq .DatabaseORM "sqlx"}}
 	"github.com/jmoiron/sqlx"
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	_ "github.com/lib/pq"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	_ "github.com/go-sql-driver/mysql"
@@ -26,7 +26,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	{{- end}}
 	{{- else}}
-	{{- if eq .DatabaseDriver "postgres"}}
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	_ "github.com/lib/pq"
 	{{- else if eq .DatabaseDriver "mysql"}}
 	_ "github.com/go-sql-driver/mysql"
@@ -54,8 +54,8 @@ func NewDatabase(cfg *config.Config) (*Database, error) {
 	var dialector gorm.Dialector
 	
 	switch cfg.Database.Driver {
-	{{- if eq .DatabaseDriver "postgres"}}
-	case "postgres":
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	case "postgres", "postgresql":
 		dialector = postgres.Open(cfg.GetDatabaseDSN())
 	{{- end}}
 	{{- if eq .DatabaseDriver "mysql"}}

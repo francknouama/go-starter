@@ -18,24 +18,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize logger factory
-	loggerFactory := logger.NewFactory()
-	
-	// Create logger from configuration
-	appLogger, err := loggerFactory.CreateFromProjectConfig(
-		"{{.Logger}}",
-		cfg.Logging.Level,
-		cfg.Logging.Format,
-		cfg.Logging.Structured,
-	)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
+	// Initialize logger
+	if err := logger.Initialize(cfg.Logging.Level); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Execute the root command with logger
-	if err := cmd.Execute(appLogger); err != nil {
-		appLogger.ErrorWith("Command execution failed", logger.Fields{"error": err})
+	// Execute the root command
+	if err := cmd.Execute(); err != nil {
+		logger.Error("Command execution failed", logger.Fields{"error": err.Error()})
 		os.Exit(1)
 	}
 }

@@ -41,42 +41,31 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Initialize logger factory
-	loggerFactory := internalLogger.NewFactory()
+	// Initialize logger with configured level
+	internalLogger.SetLevel(cfg.Logging.Level)
 	
-	// Create logger from configuration
-	appLogger, err := loggerFactory.CreateFromProjectConfig(
-		"{{.Logger}}",
-		cfg.Logging.Level,
-		cfg.Logging.Format,
-		cfg.Logging.Structured,
-	)
-	if err != nil {
-		log.Fatalf("Failed to create logger: %v", err)
-	}
-
-	appLogger.InfoWith("Application starting", internalLogger.Fields{
-		"logger": "{{.Logger}}",
-		"environment": cfg.Environment,
-	})
+	// Log application startup
+	internalLogger.Info("Application starting with logger=%s environment=%s", "{{.LoggerType}}", cfg.Environment)
 
 	// Initialize security middleware
 	securityHeaders := middleware.DefaultSecurityHeaders()
 	validationConfig := middleware.DefaultValidationConfig()
 	requestIDConfig := middleware.DefaultRequestIDConfig()
-	errorHandler := errors.NewErrorHandler(appLogger)
+{{- if and (eq .Framework "gin") (ne .AuthType "")}}
+	errorHandler := errors.NewErrorHandler(internalLogger.GetLogger())
+{{- end}}
 
 {{- if ne .DatabaseDriver ""}}
 	// Initialize database
-	db, err := database.Connect(cfg.Database, appLogger)
+	db, err := database.Connect(cfg.Database, internalLogger.GetLogger())
 	if err != nil {
-		appLogger.ErrorWith("Failed to connect to database", internalLogger.Fields{"error": err})
+		internalLogger.Error("Failed to connect to database: %v", err)
 		os.Exit(1)
 	}
 
 	// Run migrations
-	if err := database.Migrate(db, appLogger); err != nil {
-		appLogger.ErrorWith("Failed to run migrations", internalLogger.Fields{"error": err})
+	if err := database.Migrate(db, internalLogger.GetLogger()); err != nil {
+		internalLogger.Error("Failed to run migrations: %v", err)
 		os.Exit(1)
 	}
 
@@ -378,16 +367,13 @@ func main() {
 	
 	// Start server in a goroutine
 	go func() {
-		appLogger.InfoWith("Starting server", internalLogger.Fields{
-			"address": addr,
-			"environment": cfg.Environment,
-		})
+		internalLogger.Info("Starting server on %s in %s environment", addr, cfg.Environment)
 {{if eq .Framework "gin"}}		if err := router.Run(addr); err != nil {
 {{end}}{{if eq .Framework "echo"}}		if err := router.Start(addr); err != nil {
 {{end}}{{if eq .Framework "fiber"}}		if err := router.Listen(addr); err != nil {
 {{end}}{{if eq .Framework "chi"}}		if err := http.ListenAndServe(addr, router); err != nil {
 {{end}}{{if eq .Framework "stdlib"}}		if err := http.ListenAndServe(addr, securedMux); err != nil {
-{{end}}			appLogger.ErrorWith("Failed to start server", internalLogger.Fields{"error": err})
+{{end}}			internalLogger.Error("Failed to start server: %v", err)
 			os.Exit(1)
 		}
 	}()
@@ -397,21 +383,21 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	appLogger.Info("Shutting down server...")
+	internalLogger.Info("Shutting down server...")
 
 {{if ne .Framework "fiber"}}	// Graceful shutdown for frameworks that support it
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 {{if eq .Framework "echo"}}	if err := router.Shutdown(ctx); err != nil {
-		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
+		internalLogger.Error("Server forced to shutdown: %v", err)
 	}{{end}}{{if eq .Framework "gin"}}	// Gin doesn't have graceful shutdown built-in, but we can implement it
 	_ = ctx // placeholder{{end}}{{if or (eq .Framework "chi") (eq .Framework "stdlib")}}	// Chi/stdlib uses standard http.Server, implement graceful shutdown if needed
 	_ = ctx // placeholder{{end}}
 {{else}}	// Fiber shutdown
 	if err := router.Shutdown(); err != nil {
-		appLogger.ErrorWith("Server forced to shutdown", internalLogger.Fields{"error": err})
+		internalLogger.Error("Server forced to shutdown: %v", err)
 	}
 {{end}}
 
-	appLogger.Info("Server exited")
+	internalLogger.Info("Server exited")
 }

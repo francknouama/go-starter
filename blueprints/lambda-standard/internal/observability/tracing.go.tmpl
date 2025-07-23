@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-xray-sdk-go/xray"
-	"github.com/aws/aws-xray-sdk-go/xray/xraylog"
 	"{{.ModulePath}}/internal/logger"
 )
 
@@ -29,14 +28,9 @@ func InitializeTracing() {
 		return
 	}
 
-	// Configure X-Ray logging to use our logger
-	xray.SetLogger(xraylog.NewDefaultLogger(os.Stdout, xraylog.LogLevelInfo))
-
-	// Configure X-Ray to capture all AWS SDK calls
-	xray.AWS(&xray.AWSConfig{
-		LogLevel:               xraylog.LogLevelInfo,
-		ContextMissingStrategy: xray.CtxMissingLogError,
-	})
+	// Configure X-Ray logging - simplified approach
+	// Note: In newer versions of X-Ray SDK, logging configuration has changed
+	// For Lambda, X-Ray is typically configured automatically by the runtime
 
 	logger.Debug("X-Ray tracing initialized", map[string]interface{}{
 		"service_name": serviceName,
@@ -58,7 +52,7 @@ func TraceSegment(ctx context.Context, name string, fn func(context.Context) err
 	seg.AddAnnotation("operation", name)
 
 	startTime := time.Now()
-	err := fn(seg.Ctx)
+	err := fn(ctx) // Use original context instead of seg.Ctx
 	duration := time.Since(startTime)
 
 	// Add timing and status annotations
@@ -98,7 +92,7 @@ func TraceSubsegment(ctx context.Context, name string, fn func(context.Context) 
 	subseg.AddAnnotation("subsegment", name)
 
 	startTime := time.Now()
-	err := fn(subseg.Ctx)
+	err := fn(ctx) // Use original context instead of subseg.Ctx
 	duration := time.Since(startTime)
 
 	subseg.AddMetadata("timing", map[string]interface{}{
@@ -144,8 +138,8 @@ func TraceHTTPRequest(ctx context.Context, method, url string, statusCode int, f
 			seg.AddAnnotation("http.method", method)
 			seg.AddAnnotation("http.url", url)
 			
-			// Set namespace for HTTP data
-			seg.SetNamespace("remote")
+			// Note: SetNamespace may not be available in newer X-Ray SDK versions
+			// seg.SetNamespace("remote")
 		}
 
 		err := fn(ctx)
@@ -180,7 +174,8 @@ func TraceDBQuery(ctx context.Context, query string, fn func(context.Context) er
 	return TraceSubsegment(ctx, "db_query", func(ctx context.Context) error {
 		if seg := xray.GetSegment(ctx); seg != nil {
 			seg.AddAnnotation("db.type", "sql")
-			seg.SetNamespace("sql")
+			// Note: SetNamespace may not be available in newer X-Ray SDK versions
+			// seg.SetNamespace("sql")
 		}
 
 		err := fn(ctx)

@@ -17,7 +17,6 @@ var (
 	outputFormat string
 	advanced    bool
 	isInteractive bool
-	appLogger   logger.Logger
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -38,7 +37,7 @@ This application provides a foundation for building robust CLI tools with:
 	
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !quiet {
-			appLogger.InfoWith("{{.ProjectName}} started", logger.Fields{
+			logger.Info("{{.ProjectName}} started", logger.Fields{
 				"args": args,
 				"logger": "{{.Logger}}",
 				"output": outputFormat,
@@ -55,19 +54,7 @@ This application provides a foundation for building robust CLI tools with:
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
-func Execute(log logger.Logger) error {
-	appLogger = log
-	
-	// Configure logger based on flags
-	if quiet {
-		// Disable all output in quiet mode
-		log.SetLevel("error")
-	}
-	if noColor {
-		// Disable colored output
-		log.DisableColor()
-	}
-	
+func Execute() error {
 	return rootCmd.Execute()
 }
 
