@@ -19,7 +19,6 @@ var _ = require.New
 type WorkspaceIntegrationTestSuite struct {
 	suite.Suite
 	tempDir           string
-	projectDir        string
 	cliPath           string
 	generatedProjects map[string]string // configuration -> project path
 }

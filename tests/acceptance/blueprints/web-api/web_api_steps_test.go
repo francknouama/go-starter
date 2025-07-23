@@ -2027,45 +2027,6 @@ func (ctx *WebAPITestContext) frameworksShouldImplementInterfaces() error {
 // Additional Architecture-Specific Steps
 // =============================================================================
 
-func (ctx *WebAPITestContext) theProjectShouldIncludeGinRouterSetup() error {
-	return ctx.checkDirectoryOrFileExists("internal/routes")
-}
-
-func (ctx *WebAPITestContext) theProjectShouldHaveBasicCRUDEndpoints() error {
-	return ctx.checkDirectoryOrFileExists("internal/handlers")
-}
-
-func (ctx *WebAPITestContext) theProjectShouldCompileAndRunSuccessfully() error {
-	return ctx.theGeneratedCodeShouldCompileSuccessfully()
-}
-
-func (ctx *WebAPITestContext) theHandlersShouldFollowStandardPatterns() error {
-	return ctx.checkDirectoryOrFileExists("internal/handlers")
-}
-
-func (ctx *WebAPITestContext) theMiddlewareShouldBeProperlyConfigured() error {
-	return ctx.checkDirectoryOrFileExists("internal/middleware")
-}
-
-func (ctx *WebAPITestContext) theRoutingShouldBeFrameworkAppropriate() error {
-	return ctx.checkDirectoryOrFileExists("internal/routes")
-}
-
-func (ctx *WebAPITestContext) theProjectShouldHaveThesePorts(portsTable *godog.Table) error {
-	for _, row := range portsTable.Rows[1:] { // Skip header
-		portType := row.Cells[0].Value
-		location := row.Cells[2].Value
-		
-		if err := ctx.checkDirectoryOrFileExists(location); err != nil {
-			return fmt.Errorf("port type %s not found at %s: %v", portType, location, err)
-		}
-	}
-	return nil
-}
-
-func (ctx *WebAPITestContext) primaryAdaptersShouldImplementInputPorts() error {
-	return ctx.checkDirectoryOrFileExists("internal/adapters/primary")
-}
 
 func (ctx *WebAPITestContext) secondaryAdaptersShouldImplementOutputPorts() error {
 	return ctx.checkDirectoryOrFileExists("internal/adapters/secondary")
