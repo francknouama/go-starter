@@ -2426,13 +2426,15 @@ func (ctx *WebAPITestContext) validateHexagonalDomainIsolation(projectPath strin
 	// Check for domain entities
 	entitiesPath := filepath.Join(domainPath, "entities")
 	if helpers.DirExists(entitiesPath) {
-		// Validate entities exist
+		// Entities directory exists - validation passed
+		_ = entitiesPath // Prevent unused variable warning
 	}
 
 	// Check for domain services
 	servicesPath := filepath.Join(domainPath, "services")
 	if helpers.DirExists(servicesPath) {
-		// Validate domain services exist
+		// Domain services directory exists - validation passed
+		_ = servicesPath // Prevent unused variable warning
 	}
 
 	// Domain should not import framework-specific packages

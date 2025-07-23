@@ -168,20 +168,14 @@ func (c *Client) readPump() {
 func (c *Client) writePump() {
 	defer func() { _ = c.Conn.Close() }()
 
-	for {
-		select {
-		case message, ok := <-c.Send:
-			if !ok {
-				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				return
-			}
-
-			if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
-				slog.Error("WebSocket write error", "error", err, "client_id", c.ID)
-				return
-			}
+	for message := range c.Send {
+		if err := c.Conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			slog.Error("WebSocket write error", "error", err, "client_id", c.ID)
+			return
 		}
 	}
+	// Channel was closed, send close message
+	_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 }
 
 // generateClientID generates a unique client identifier
