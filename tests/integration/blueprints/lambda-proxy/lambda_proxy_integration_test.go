@@ -3,7 +3,6 @@ package lambda_proxy_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"

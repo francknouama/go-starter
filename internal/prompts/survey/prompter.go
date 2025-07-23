@@ -5,6 +5,9 @@ import (
 	"sort"
 	"strings"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
+	
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/francknouama/go-starter/internal/prompts/interfaces"
 	"github.com/francknouama/go-starter/internal/templates"
@@ -635,7 +638,7 @@ func (p *SurveyPrompter) getAdvancedBlueprintCategories(blueprints []types.Templ
 	if webAPIs, exists := typeGroups["web-api"]; exists {
 		var items []BlueprintSelection
 		for _, bp := range webAPIs {
-			archName := strings.Title(strings.ReplaceAll(bp.Architecture, "-", " "))
+			archName := cases.Title(language.English).String(strings.ReplaceAll(bp.Architecture, "-", " "))
 			if bp.Architecture == "standard" {
 				archName = "Standard"
 			}
@@ -657,7 +660,7 @@ func (p *SurveyPrompter) getAdvancedBlueprintCategories(blueprints []types.Templ
 	if cliTools, exists := typeGroups["cli"]; exists {
 		var items []BlueprintSelection
 		for _, bp := range cliTools {
-			complexity := strings.Title(bp.Architecture)
+			complexity := cases.Title(language.English).String(bp.Architecture)
 			if bp.Architecture == "simple" {
 				complexity = "Simple"
 			}
@@ -844,7 +847,7 @@ func (p *SurveyPrompter) promptWebAPIArchitecture(config *types.ProjectConfig, a
 	var archMap = make(map[string]string)
 
 	for _, bp := range webAPIBlueprints {
-		archName := strings.Title(strings.ReplaceAll(bp.Architecture, "-", " "))
+		archName := cases.Title(language.English).String(strings.ReplaceAll(bp.Architecture, "-", " "))
 		if bp.Architecture == "standard" {
 			archName = "Standard"
 		}

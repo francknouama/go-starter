@@ -65,8 +65,8 @@ func setupWebAPIAcceptanceTest(t *testing.T, blueprintType string) *WebAPIAccept
 
 	t.Cleanup(func() {
 		suite.cleanupContainers()
-		os.Chdir(suite.originalDir)
-		os.RemoveAll(suite.workingDir)
+		_ = os.Chdir(suite.originalDir)
+		_ = os.RemoveAll(suite.workingDir)
 	})
 
 	return suite
@@ -122,7 +122,7 @@ func (suite *WebAPIAcceptanceTestSuite) checkFileContains(t *testing.T, relative
 	// Handle directory searches
 	if stat, err := os.Stat(fullPath); err == nil && stat.IsDir() {
 		found := false
-		filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}
@@ -149,7 +149,7 @@ func (suite *WebAPIAcceptanceTestSuite) checkFileDoesNotContain(t *testing.T, re
 	
 	// Handle directory searches
 	if stat, err := os.Stat(fullPath); err == nil && stat.IsDir() {
-		filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
+		_ = filepath.Walk(fullPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || info.IsDir() {
 				return nil
 			}

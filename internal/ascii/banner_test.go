@@ -279,9 +279,9 @@ func TestConfigFromEnv(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Set environment variables
-			os.Setenv("GO_STARTER_BANNER", tt.banner)
-			os.Setenv("GO_STARTER_BANNER_STYLE", tt.style)
-			os.Setenv("NO_COLOR", tt.noColor)
+			_ = os.Setenv("GO_STARTER_BANNER", tt.banner)
+			_ = os.Setenv("GO_STARTER_BANNER_STYLE", tt.style)
+			_ = os.Setenv("NO_COLOR", tt.noColor)
 			
 			config := ConfigFromEnv()
 			

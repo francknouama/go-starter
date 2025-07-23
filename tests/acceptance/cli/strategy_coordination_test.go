@@ -735,7 +735,7 @@ func buildCLIBinary(t *testing.T) string {
 func cleanupBinary(t *testing.T, binaryPath string) {
 	t.Helper()
 	if binaryPath != "" && helpers.FileExists(binaryPath) {
-		os.Remove(binaryPath)
+		_ = os.Remove(binaryPath)
 	}
 }
 

@@ -112,7 +112,7 @@ func testMalformedRequests(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(`{"email": "test@example.com", "password": "pass123", invalid json`))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -122,7 +122,7 @@ func testMalformedRequests(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(""))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -142,7 +142,7 @@ func testMalformedRequests(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -164,7 +164,7 @@ func testMalformedRequests(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should reject oversized payloads
 		assert.True(t, resp.StatusCode == http.StatusBadRequest ||
@@ -186,7 +186,7 @@ func testMalformedRequests(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -207,7 +207,7 @@ func testValidationErrors(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	})
@@ -237,7 +237,7 @@ func testValidationErrors(t *testing.T, client *http.Client, baseURL string) {
 			resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 				strings.NewReader(string(jsonData)))
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
 				"Expected bad request for email: %s", email)
@@ -266,7 +266,7 @@ func testValidationErrors(t *testing.T, client *http.Client, baseURL string) {
 			resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 				strings.NewReader(string(jsonData)))
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
 				"Expected bad request for password: '%s'", password)
@@ -301,7 +301,7 @@ func testValidationErrors(t *testing.T, client *http.Client, baseURL string) {
 			resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 				strings.NewReader(string(jsonData)))
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, http.StatusBadRequest, resp.StatusCode,
 				"Expected bad request for names: '%s' '%s'", names.firstName, names.lastName)
@@ -324,7 +324,7 @@ func testAuthenticationErrors(t *testing.T, client *http.Client, baseURL string)
 		resp, err := client.Post(baseURL+"/api/auth/login", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -345,7 +345,7 @@ func testAuthenticationErrors(t *testing.T, client *http.Client, baseURL string)
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		require.Equal(t, http.StatusCreated, resp.StatusCode)
 
 		// Try to login with wrong password
@@ -360,7 +360,7 @@ func testAuthenticationErrors(t *testing.T, client *http.Client, baseURL string)
 		resp, err = client.Post(baseURL+"/api/auth/login", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -369,7 +369,7 @@ func testAuthenticationErrors(t *testing.T, client *http.Client, baseURL string)
 	t.Run("protected_endpoint_no_token", func(t *testing.T) {
 		resp, err := client.Get(baseURL + "/api/users/me")
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -383,7 +383,7 @@ func testAuthenticationErrors(t *testing.T, client *http.Client, baseURL string)
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 	})
@@ -408,7 +408,7 @@ func testAuthenticationErrors(t *testing.T, client *http.Client, baseURL string)
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, http.StatusUnauthorized, resp.StatusCode,
 				"Expected unauthorized for header: '%s'", header)
@@ -430,7 +430,7 @@ func testNotFoundErrors(t *testing.T, client *http.Client, baseURL string) {
 		for _, path := range nonExistentPaths {
 			resp, err := client.Get(baseURL + path)
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			assert.Equal(t, http.StatusNotFound, resp.StatusCode,
 				"Expected not found for path: %s", path)
@@ -453,7 +453,7 @@ func testNotFoundErrors(t *testing.T, client *http.Client, baseURL string) {
 		resp, err := client.Post(baseURL+"/api/auth/register", "application/json",
 			strings.NewReader(string(jsonData)))
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Login
 		loginData := map[string]interface{}{
@@ -471,7 +471,7 @@ func testNotFoundErrors(t *testing.T, client *http.Client, baseURL string) {
 		var authResp AuthResponse
 		err = json.NewDecoder(resp.Body).Decode(&authResp)
 		require.NoError(t, err)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		// Try to get non-existent user
 		req, err := http.NewRequest("GET", baseURL+"/api/users/00000000-0000-0000-0000-000000000000", nil)
@@ -480,7 +480,7 @@ func testNotFoundErrors(t *testing.T, client *http.Client, baseURL string) {
 
 		resp, err = client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	})
@@ -507,7 +507,7 @@ func testMethodNotAllowed(t *testing.T, client *http.Client, baseURL string) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode,
 			"Expected method not allowed for %s %s", test.method, test.endpoint)
@@ -539,7 +539,7 @@ func testContentTypeErrors(t *testing.T, client *http.Client, baseURL string) {
 
 			resp, err := client.Do(req)
 			require.NoError(t, err)
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			// Some frameworks are more lenient with content types
 			assert.True(t, resp.StatusCode == http.StatusBadRequest ||
@@ -561,7 +561,7 @@ func testContentTypeErrors(t *testing.T, client *http.Client, baseURL string) {
 
 		resp, err := client.Do(req)
 		require.NoError(t, err)
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		// Should reject or handle gracefully
 		assert.True(t, resp.StatusCode >= 400)
@@ -589,7 +589,7 @@ func testConcurrentErrors(t *testing.T, client *http.Client, baseURL string) {
 			if err != nil {
 				return 0
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			return resp.StatusCode
 		}
@@ -608,9 +608,10 @@ func testConcurrentErrors(t *testing.T, client *http.Client, baseURL string) {
 
 		for i := 0; i < 10; i++ {
 			statusCode := <-results
-			if statusCode == http.StatusCreated {
+			switch statusCode {
+			case http.StatusCreated:
 				successCount++
-			} else if statusCode == http.StatusConflict || statusCode == http.StatusBadRequest {
+			case http.StatusConflict, http.StatusBadRequest:
 				conflictCount++
 			}
 		}
@@ -629,7 +630,7 @@ func testConcurrentErrors(t *testing.T, client *http.Client, baseURL string) {
 			if err != nil {
 				return 0
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			return resp.StatusCode
 		}

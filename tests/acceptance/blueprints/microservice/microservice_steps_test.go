@@ -107,7 +107,7 @@ func (ctx *MicroserviceTestContext) iRunTheCommand(command string) error {
 	ctx.projectPath = filepath.Join(tempDir, ctx.projectName)
 	
 	// Remove existing directory if it exists
-	os.RemoveAll(ctx.projectPath)
+	_ = os.RemoveAll(ctx.projectPath)
 
 	// Prepare command with working directory
 	fullCommand := strings.Join(parts, " ")
@@ -738,7 +738,7 @@ func (ctx *MicroserviceTestContext) cleanup() {
 	
 	// Clean up temporary files
 	if ctx.projectPath != "" {
-		os.RemoveAll(ctx.projectPath)
+		_ = os.RemoveAll(ctx.projectPath)
 	}
 	
 	// Reset context

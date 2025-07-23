@@ -819,7 +819,7 @@ func (ctx *MonolithTestContext) cleanup() {
 	ctx.cleanupDatabase()
 	
 	if ctx.workingDir != "" {
-		os.RemoveAll(ctx.workingDir)
+		_ = os.RemoveAll(ctx.workingDir)
 	}
 }
 

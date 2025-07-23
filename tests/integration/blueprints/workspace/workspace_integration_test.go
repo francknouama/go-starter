@@ -2,7 +2,6 @@ package workspace_test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +29,7 @@ func (s *WorkspaceIntegrationTestSuite) SetupSuite() {
 	var err error
 	
 	// Create temporary directory
-	s.tempDir, err = ioutil.TempDir("", "workspace-integration-*")
+	s.tempDir, err = os.MkdirTemp("", "workspace-integration-*")
 	s.Require().NoError(err)
 	
 	// Build CLI tool
@@ -460,7 +459,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyFrameworkImports(projectPath, fram
 	}
 	
 	apiMainPath := filepath.Join(projectPath, "cmd/api/main.go")
-	content, err := ioutil.ReadFile(apiMainPath)
+	content, err := os.ReadFile(apiMainPath)
 	s.Require().NoError(err)
 	
 	expectedImports := map[string]string{
@@ -482,7 +481,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyDatabaseConfiguration(projectPath,
 	
 	// Verify database-specific dependencies
 	goModPath := filepath.Join(storageDir, "go.mod")
-	content, err := ioutil.ReadFile(goModPath)
+	content, err := os.ReadFile(goModPath)
 	s.Require().NoError(err)
 	
 	expectedDrivers := map[string]string{
@@ -504,7 +503,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyMessageQueueConfiguration(projectP
 	
 	// Verify message queue specific dependencies
 	goModPath := filepath.Join(eventsDir, "go.mod")
-	content, err := ioutil.ReadFile(goModPath)
+	content, err := os.ReadFile(goModPath)
 	s.Require().NoError(err)
 	
 	expectedLibraries := map[string]string{
@@ -521,7 +520,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyMessageQueueConfiguration(projectP
 
 func (s *WorkspaceIntegrationTestSuite) verifyLoggerImplementation(projectPath, logger string) {
 	loggerPath := filepath.Join(projectPath, "pkg/shared/logger/logger.go")
-	content, err := ioutil.ReadFile(loggerPath)
+	content, err := os.ReadFile(loggerPath)
 	s.Require().NoError(err)
 	
 	expectedPackages := map[string]string{
@@ -547,7 +546,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyDockerConfiguration(projectPath st
 		s.Require().FileExists(fullPath, "Docker file should exist: %s", file)
 		
 		// Verify YAML syntax
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		s.Require().NoError(err)
 		
 		var dockerCompose interface{}
@@ -568,7 +567,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyKubernetesConfiguration(projectPat
 		s.Require().FileExists(fullPath, "Kubernetes file should exist: %s", file)
 		
 		// Verify YAML syntax
-		content, err := ioutil.ReadFile(fullPath)
+		content, err := os.ReadFile(fullPath)
 		s.Require().NoError(err)
 		
 		var k8sManifest interface{}
@@ -579,7 +578,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyKubernetesConfiguration(projectPat
 
 func (s *WorkspaceIntegrationTestSuite) verifyMakefileTargets(projectPath string) {
 	makefilePath := filepath.Join(projectPath, "Makefile")
-	content, err := ioutil.ReadFile(makefilePath)
+	content, err := os.ReadFile(makefilePath)
 	s.Require().NoError(err)
 	
 	makefileStr := string(content)
@@ -627,7 +626,7 @@ func (s *WorkspaceIntegrationTestSuite) testBuildScripts(projectPath string) {
 
 func (s *WorkspaceIntegrationTestSuite) verifyGoWorkConfiguration(projectPath string) {
 	goWorkPath := filepath.Join(projectPath, "go.work")
-	content, err := ioutil.ReadFile(goWorkPath)
+	content, err := os.ReadFile(goWorkPath)
 	s.Require().NoError(err)
 	
 	goWorkStr := string(content)
@@ -641,7 +640,7 @@ func (s *WorkspaceIntegrationTestSuite) verifyModuleDependencies(projectPath str
 	// Verify that dependent modules reference shared modules properly
 	apiGoModPath := filepath.Join(projectPath, "cmd/api/go.mod")
 	if s.fileExists(apiGoModPath) {
-		content, err := ioutil.ReadFile(apiGoModPath)
+		content, err := os.ReadFile(apiGoModPath)
 		s.Require().NoError(err)
 		
 		// Should contain replace directives for local modules

@@ -1238,6 +1238,6 @@ func (ctx *CLITestContext) theCLIShouldUseAppropriateExitCodes() error {
 // Helper method for cleanup (can be called manually in tests)
 func (ctx *CLITestContext) cleanup() {
 	if ctx.workingDir != "" {
-		os.RemoveAll(ctx.workingDir)
+		_ = os.RemoveAll(ctx.workingDir)
 	}
 }

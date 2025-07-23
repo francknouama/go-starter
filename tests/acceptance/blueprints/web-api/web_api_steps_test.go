@@ -993,7 +993,7 @@ func (ctx *WebAPITestContext) theApplicationShouldCompileAndServeRequests() erro
 	// Try to start the application briefly to ensure it serves requests
 	runCmd := exec.Command("timeout", "2s", "./"+ctx.projectName)
 	runCmd.Dir = ctx.projectDir
-	runCmd.CombinedOutput() // Ignore output and error - timeout is expected
+	_, _ = runCmd.CombinedOutput() // Ignore output and error - timeout is expected
 	
 	return nil
 }
@@ -1491,15 +1491,15 @@ func (ctx *WebAPITestContext) theShutdownShouldBeLoggedAppropriately() error {
 func (ctx *WebAPITestContext) cleanup() {
 	// Cleanup after test execution
 	if ctx.serverCmd != nil && ctx.serverCmd.Process != nil {
-		ctx.serverCmd.Process.Kill()
-		ctx.serverCmd.Wait()
+		_ = ctx.serverCmd.Process.Kill()
+		_ = ctx.serverCmd.Wait()
 	}
 	
 	// Cleanup database containers
 	ctx.cleanupDatabase()
 	
 	if ctx.workingDir != "" {
-		os.RemoveAll(ctx.workingDir)
+		_ = os.RemoveAll(ctx.workingDir)
 	}
 }
 
@@ -1543,17 +1543,17 @@ func (ctx *WebAPITestContext) setupPostgresContainer() error {
 
 func (ctx *WebAPITestContext) cleanupDatabase() {
 	if ctx.database != nil {
-		ctx.database.Close()
+		_ = ctx.database.Close()
 		ctx.database = nil
 	}
 
 	if ctx.postgresContainer != nil {
-		ctx.postgresContainer.Terminate(ctx.ctx)
+		_ = ctx.postgresContainer.Terminate(ctx.ctx)
 		ctx.postgresContainer = nil
 	}
 	
 	if ctx.mysqlContainer != nil {
-		ctx.mysqlContainer.Terminate(ctx.ctx)
+		_ = ctx.mysqlContainer.Terminate(ctx.ctx)
 		ctx.mysqlContainer = nil
 	}
 }

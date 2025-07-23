@@ -166,7 +166,7 @@ func (c *Client) readPump() {
 
 // writePump handles writing to the WebSocket connection
 func (c *Client) writePump() {
-	defer c.Conn.Close()
+	defer func() { _ = c.Conn.Close() }()
 
 	for {
 		select {
