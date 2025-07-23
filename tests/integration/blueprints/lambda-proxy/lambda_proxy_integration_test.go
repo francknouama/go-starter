@@ -19,7 +19,6 @@ import (
 type LambdaProxyIntegrationTestSuite struct {
 	suite.Suite
 	tempDir        string
-	projectDir     string
 	cliPath        string
 	generatedProjects map[string]string // framework -> project path
 }

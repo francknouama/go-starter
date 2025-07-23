@@ -9,12 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cucumber/godog"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // GRPCGatewayTestContext holds test state for gRPC Gateway scenarios
@@ -25,9 +21,6 @@ type GRPCGatewayTestContext struct {
 	cmdOutput        string
 	cmdError         error
 	exitCode         int
-	postgresContainer *postgres.PostgresContainer
-	databaseURL      string
-	serverProcess    *os.Process
 }
 
 // TestFeatures runs the gRPC Gateway BDD tests
@@ -823,67 +816,6 @@ func (ctx *GRPCGatewayTestContext) theServiceShouldReturnAppropriateErrorRespons
 	return fmt.Errorf("no error handling implementation found")
 }
 
-// Helper method to start PostgreSQL container for database tests
-func (ctx *GRPCGatewayTestContext) startPostgreSQLContainer() error {
-	if ctx.postgresContainer != nil {
-		return nil // Already started
-	}
-	
-	container, err := postgres.RunContainer(context.Background(),
-		testcontainers.WithImage("postgres:15-alpine"),
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(
-			wait.ForLog("database system is ready to accept connections").
-				WithOccurrence(2).WithStartupTimeout(30*time.Second)),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to start PostgreSQL container: %w", err)
-	}
-	
-	ctx.postgresContainer = container
-	
-	connStr, err := container.ConnectionString(context.Background(), "sslmode=disable")
-	if err != nil {
-		return fmt.Errorf("failed to get connection string: %w", err)
-	}
-	
-	ctx.databaseURL = connStr
-	return nil
-}
-
-// Helper method to stop containers and cleanup
-func (ctx *GRPCGatewayTestContext) cleanup() error {
-	var errors []string
-	
-	// Stop server process if running
-	if ctx.serverProcess != nil {
-		if err := ctx.serverProcess.Kill(); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to stop server: %v", err))
-		}
-	}
-	
-	// Stop PostgreSQL container
-	if ctx.postgresContainer != nil {
-		if err := ctx.postgresContainer.Terminate(context.Background()); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to stop PostgreSQL container: %v", err))
-		}
-	}
-	
-	// Clean up temp directory
-	if ctx.workDir != "" {
-		if err := os.RemoveAll(ctx.workDir); err != nil {
-			errors = append(errors, fmt.Sprintf("failed to remove temp directory: %v", err))
-		}
-	}
-	
-	if len(errors) > 0 {
-		return fmt.Errorf("cleanup errors: %s", strings.Join(errors, "; "))
-	}
-	
-	return nil
-}
 
 // Remaining step implementations follow the same pattern as above...
 // For brevity, I'll implement them as simple intention steps or basic file existence checks
