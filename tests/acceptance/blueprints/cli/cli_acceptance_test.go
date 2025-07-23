@@ -118,7 +118,8 @@ func (suite *CLIAcceptanceTestSuite) generateCLIProject(t *testing.T, args ...st
 	}
 
 	allArgs := append(baseArgs, args...)
-	generateCmd := exec.Command("./go-starter", allArgs...)
+	goStarterPath := filepath.Join(suite.workingDir, "go-starter")
+	generateCmd := exec.Command(goStarterPath, allArgs...)
 	generateCmd.Dir = suite.workingDir
 
 	output, err := generateCmd.CombinedOutput()

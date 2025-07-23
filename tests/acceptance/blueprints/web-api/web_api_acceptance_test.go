@@ -55,7 +55,21 @@ func setupWebAPIAcceptanceTest(t *testing.T, blueprintType string) *WebAPIAccept
 	suite.originalDir, err = os.Getwd()
 	require.NoError(t, err)
 
-	suite.projectRoot = filepath.Join(suite.originalDir, "..", "..", "..", "..")
+	// Find project root by looking for go.mod file
+	projectRoot := suite.originalDir
+	for {
+		if _, err := os.Stat(filepath.Join(projectRoot, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(projectRoot)
+		if parent == projectRoot {
+			// Reached filesystem root without finding go.mod
+			projectRoot = filepath.Join(suite.originalDir, "..", "..", "..", "..")
+			break
+		}
+		projectRoot = parent
+	}
+	suite.projectRoot = projectRoot
 	
 	suite.workingDir, err = os.MkdirTemp("", "web-api-acceptance-*")
 	require.NoError(t, err)
@@ -101,10 +115,37 @@ func (suite *WebAPIAcceptanceTestSuite) generateWebAPIProject(t *testing.T, args
 	}
 
 	allArgs := append(baseArgs, args...)
-	generateCmd := exec.Command("./go-starter", allArgs...)
+	goStarterPath := filepath.Join(suite.projectRoot, "go-starter")
+	generateCmd := exec.Command(goStarterPath, allArgs...)
 	generateCmd.Dir = suite.workingDir
 
 	output, err := generateCmd.CombinedOutput()
+	t.Logf("Binary path: %s", goStarterPath)
+	t.Logf("Binary exists: %v", fileExists(goStarterPath))
+	t.Logf("Working dir: %s", suite.workingDir)
+	t.Logf("Command: %s %v", goStarterPath, allArgs)
+	t.Logf("Command output: %s", string(output))
+	if err != nil {
+		t.Logf("Command error: %v", err)
+	}
+	// Check what's actually in the working directory
+	entries, _ := os.ReadDir(suite.workingDir)
+	t.Logf("Working directory contents:")
+	for _, entry := range entries {
+		t.Logf("  %s", entry.Name())
+	}
+	
+	// Check what's inside the project directory
+	projectPath := filepath.Join(suite.workingDir, suite.projectName)
+	if projectEntries, err := os.ReadDir(projectPath); err == nil {
+		t.Logf("Project directory (%s) contents:", projectPath)
+		for _, entry := range projectEntries {
+			t.Logf("  %s", entry.Name())
+		}
+	} else {
+		t.Logf("Cannot read project directory %s: %v", projectPath, err)
+	}
+	
 	require.NoError(t, err, "Project generation should succeed: %s", string(output))
 
 	suite.projectDir = filepath.Join(suite.workingDir, suite.projectName)
@@ -754,6 +795,12 @@ func getDefault(value, defaultValue string) string {
 		return defaultValue
 	}
 	return value
+}
+
+// Helper function to check if file exists
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Meta-test to ensure all acceptance tests can run together

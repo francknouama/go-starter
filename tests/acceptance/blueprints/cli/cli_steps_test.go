@@ -450,7 +450,7 @@ func (ctx *CLITestContext) iRunTheCommand(command string) error {
 	
 	// Handle special case for go-starter commands
 	if parts[0] == "go-starter" {
-		parts[0] = "./go-starter"
+		parts[0] = filepath.Join(ctx.workingDir, "go-starter")
 	}
 	
 	ctx.lastCommand = exec.Command(parts[0], parts[1:]...)

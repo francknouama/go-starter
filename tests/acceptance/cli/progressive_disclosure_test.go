@@ -38,7 +38,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 	t.Run("basic_mode_shows_essential_options_only", func(t *testing.T) {
 		// GIVEN: User wants to see basic options only
 		// WHEN: User runs go-starter new --basic --help
-		cmd := exec.Command("./go-starter", "new", "--basic", "--help")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--basic", "--help")
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "Command should succeed")
 
@@ -59,7 +60,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 	t.Run("advanced_mode_shows_all_options", func(t *testing.T) {
 		// GIVEN: User wants to see all options
 		// WHEN: User runs go-starter new --advanced --help
-		cmd := exec.Command("./go-starter", "new", "--advanced", "--help")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--advanced", "--help")
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "Command should succeed")
 
@@ -76,7 +78,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 	t.Run("complexity_simple_limits_blueprint_options", func(t *testing.T) {
 		// GIVEN: User wants simple complexity level
 		// WHEN: User runs go-starter new --complexity=simple test-project --type=cli --dry-run
-		cmd := exec.Command("./go-starter", "new", "--complexity=simple", "test-project", "--type=cli", "--dry-run")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--complexity=simple", "test-project", "--type=cli", "--dry-run")
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "Command should succeed")
 
@@ -90,7 +93,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 	t.Run("complexity_standard_uses_full_blueprint", func(t *testing.T) {
 		// GIVEN: User wants standard complexity level
 		// WHEN: User runs go-starter new --complexity=standard test-project --type=cli --dry-run
-		cmd := exec.Command("./go-starter", "new", "--complexity=standard", "test-project", "--type=cli", "--dry-run")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--complexity=standard", "test-project", "--type=cli", "--dry-run")
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "Command should succeed")
 
@@ -104,7 +108,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 	t.Run("default_mode_shows_basic_options", func(t *testing.T) {
 		// GIVEN: User doesn't specify any complexity flags
 		// WHEN: User runs go-starter new --help
-		cmd := exec.Command("./go-starter", "new", "--help")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--help")
 		output, err := cmd.CombinedOutput()
 		require.NoError(t, err, "Command should succeed")
 
@@ -123,7 +128,8 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 		// This test would require mock input, so we'll test the dry run approach
 		// GIVEN: User wants to test interactive mode with complexity
 		// WHEN: User runs go-starter new --complexity=simple --dry-run
-		cmd := exec.Command("./go-starter", "new", "--complexity=simple", "--dry-run")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--complexity=simple", "--dry-run")
 		
 		// Simulate interactive input for project name and type
 		cmd.Stdin = strings.NewReader("test-project\ncli\n")
@@ -167,7 +173,8 @@ func TestComplexityFlagValidation(t *testing.T) {
 		
 		for _, level := range validLevels {
 			t.Run("complexity_"+level, func(t *testing.T) {
-				cmd := exec.Command("./go-starter", "new", "--complexity="+level, "test-project", "--type=cli", "--dry-run")
+				goStarterPath := filepath.Join(tmpDir, "go-starter")
+			cmd := exec.Command(goStarterPath, "new", "--complexity="+level, "test-project", "--type=cli", "--dry-run")
 				err := cmd.Run()
 				assert.NoError(t, err, "Valid complexity level %s should be accepted", level)
 			})
@@ -175,7 +182,8 @@ func TestComplexityFlagValidation(t *testing.T) {
 	})
 
 	t.Run("invalid_complexity_level_rejected", func(t *testing.T) {
-		cmd := exec.Command("./go-starter", "new", "--complexity=invalid", "test-project", "--type=cli", "--dry-run")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--complexity=invalid", "test-project", "--type=cli", "--dry-run")
 		output, err := cmd.CombinedOutput()
 		
 		assert.Error(t, err, "Invalid complexity level should be rejected")
@@ -208,7 +216,8 @@ func TestProgressiveDisclosureIntegration(t *testing.T) {
 	t.Run("simple_cli_generates_minimal_structure", func(t *testing.T) {
 		// GIVEN: User wants a simple CLI project
 		// WHEN: User generates with simple complexity
-		cmd := exec.Command("./go-starter", "new", "--complexity=simple", "simple-cli", "--type=cli", "--module=github.com/test/simple-cli")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--complexity=simple", "simple-cli", "--type=cli", "--module=github.com/test/simple-cli")
 		output, err := cmd.CombinedOutput()
 		
 		if err != nil {
@@ -236,7 +245,8 @@ func TestProgressiveDisclosureIntegration(t *testing.T) {
 	t.Run("standard_cli_generates_full_structure", func(t *testing.T) {
 		// GIVEN: User wants a standard CLI project
 		// WHEN: User generates with standard complexity
-		cmd := exec.Command("./go-starter", "new", "--complexity=standard", "standard-cli", "--type=cli", "--module=github.com/test/standard-cli")
+		goStarterPath := filepath.Join(tmpDir, "go-starter")
+		cmd := exec.Command(goStarterPath, "new", "--complexity=standard", "standard-cli", "--type=cli", "--module=github.com/test/standard-cli")
 		output, err := cmd.CombinedOutput()
 		
 		if err != nil {
