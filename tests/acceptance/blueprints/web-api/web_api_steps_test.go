@@ -52,11 +52,13 @@ type WebAPITestContext struct {
 	// HTTP client for application testing
 	httpClient *http.Client
 	serverPort int
+	serverCmd  *exec.Cmd
 	baseURL    string
 	
 	// Testcontainers for realistic database testing
 	postgresContainer testcontainers.Container
 	mysqlContainer    testcontainers.Container
+	databaseURL       string
 	database          *sql.DB
 	ctx               context.Context
 	
