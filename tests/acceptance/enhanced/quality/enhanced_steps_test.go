@@ -95,7 +95,10 @@ func (ctx *EnhancedQualityTestContext) Given_I_generate_a_project_with_framework
 		Features:  &types.Features{},
 	}
 	
-	projectPath := generateProjectForBDD(config)
+	projectPath, err := generateProjectForBDD(config)
+	if err != nil {
+		t.Fatalf("Failed to generate project for framework %s: %v", framework, err)
+	}
 	
 	ctx.ProjectConfigs[framework] = config
 	ctx.ProjectPaths[framework] = projectPath
@@ -231,7 +234,7 @@ func generateConfigKey(config types.ProjectConfig) string {
 }
 
 // generateProjectForBDD generates a project for BDD testing with caching for performance
-func generateProjectForBDD(config types.ProjectConfig) string {
+func generateProjectForBDD(config types.ProjectConfig) (string, error) {
 	cacheKey := generateConfigKey(config)
 	
 	// Check if we already have this project configuration cached
@@ -240,10 +243,8 @@ func generateProjectForBDD(config types.ProjectConfig) string {
 		// Verify the cached project still exists
 		if _, err := os.Stat(cachedPath); err == nil {
 			projectCacheMutex.RUnlock()
-			return cachedPath
+			return cachedPath, nil
 		}
-		// Remove stale cache entry
-		delete(projectCache, cacheKey)
 	}
 	projectCacheMutex.RUnlock()
 	
@@ -254,7 +255,7 @@ func generateProjectForBDD(config types.ProjectConfig) string {
 	// Double-check after acquiring write lock
 	if cachedPath, exists := projectCache[cacheKey]; exists {
 		if _, err := os.Stat(cachedPath); err == nil {
-			return cachedPath
+			return cachedPath, nil
 		}
 		delete(projectCache, cacheKey)
 	}
@@ -262,8 +263,15 @@ func generateProjectForBDD(config types.ProjectConfig) string {
 	// Create a temporary directory
 	outputDir, err := os.MkdirTemp("", "go-starter-bdd-test-")
 	if err != nil {
-		panic(fmt.Sprintf("Failed to create temporary directory: %v", err))
+		return "", fmt.Errorf("failed to create temporary directory: %w", err)
 	}
+	
+	// Ensure cleanup on any exit path
+	defer func() {
+		if err != nil {
+			os.RemoveAll(outputDir)
+		}
+	}()
 	
 	projectPath := filepath.Join(outputDir, config.Name)
 	
@@ -278,15 +286,13 @@ func generateProjectForBDD(config types.ProjectConfig) string {
 	
 	_, err = gen.Generate(config, options)
 	if err != nil {
-		// Clean up on error
-		os.RemoveAll(outputDir)
-		panic(fmt.Sprintf("Failed to generate project: %v", err))
+		return "", fmt.Errorf("failed to generate project: %w", err)
 	}
 	
 	// Cache the generated project
 	projectCache[cacheKey] = projectPath
 	
-	return projectPath
+	return projectPath, nil
 }
 
 // Then_the_project_should_only_contain_framework_imports validates framework isolation
@@ -330,7 +336,10 @@ func (ctx *EnhancedQualityTestContext) Given_I_generate_a_project_with_database(
 	
 	config.Features.Database.Driver = driver
 	
-	projectPath := generateProjectForBDD(config)
+	projectPath, err := generateProjectForBDD(config)
+	if err != nil {
+		t.Fatalf("Failed to generate project for database %s-%s: %v", database, driver, err)
+	}
 	
 	projectKey := fmt.Sprintf("%s-%s", database, driver)
 	ctx.ProjectConfigs[projectKey] = config
@@ -548,7 +557,10 @@ func (ctx *EnhancedQualityTestContext) Given_I_generate_multiple_projects_with_d
 			Features:  &types.Features{},
 		}
 		
-		projectPath := generateProjectForBDD(config)
+		projectPath, err := generateProjectForBDD(config)
+		if err != nil {
+			t.Fatalf("Failed to generate project %s: %v", projectName, err)
+		}
 		
 		ctx.ProjectConfigs[projectName] = config
 		ctx.ProjectPaths[projectName] = projectPath
@@ -570,7 +582,7 @@ func (ctx *EnhancedQualityTestContext) When_I_validate_framework_consistency_acr
 		// Scan for framework references
 		frameworkRefs := make(map[string][]string)
 		
-		filepath.Walk(projectPath, func(path string, info os.FileInfo, err error) error {
+		err := filepath.Walk(projectPath, func(path string, info os.FileInfo, err error) error {
 			if err != nil || !strings.HasSuffix(path, ".go") || strings.Contains(path, "vendor/") {
 				return nil
 			}
@@ -594,6 +606,10 @@ func (ctx *EnhancedQualityTestContext) When_I_validate_framework_consistency_acr
 			
 			return nil
 		})
+		if err != nil {
+			t.Errorf("Error walking project path %s: %v", projectPath, err)
+			continue
+		}
 		
 		validation["framework_references"] = frameworkRefs
 		projectValidation[projectName] = validation
@@ -701,7 +717,10 @@ func (ctx *EnhancedQualityTestContext) iGenerateAProjectWithFramework(framework 
 	}
 	
 	// Generate the project
-	projectPath := generateProjectForBDD(config)
+	projectPath, err := generateProjectForBDD(config)
+	if err != nil {
+		return fmt.Errorf("failed to generate project: %w", err)
+	}
 	
 	// Store the configuration and path
 	ctx.ProjectConfigs[framework] = config
@@ -730,7 +749,10 @@ func (ctx *EnhancedQualityTestContext) iGenerateAProjectWithDatabase(database, d
 	config.Features.Database.Driver = driver
 	
 	// Generate the project
-	projectPath := generateProjectForBDD(config)
+	projectPath, err := generateProjectForBDD(config)
+	if err != nil {
+		return fmt.Errorf("failed to generate project: %w", err)
+	}
 	
 	// Store the configuration and path
 	projectKey := fmt.Sprintf("%s-%s", database, driver)
@@ -778,7 +800,10 @@ func (ctx *EnhancedQualityTestContext) iGenerateAProjectWithConfiguration(table 
 	}
 	
 	// Generate the project using direct generator approach (no testing.T available in godog)
-	projectPath := generateProjectForBDD(config)
+	projectPath, err := generateProjectForBDD(config)
+	if err != nil {
+		return fmt.Errorf("failed to generate project: %w", err)
+	}
 	
 	// Store the configuration and path
 	projectKey := config.Name
@@ -815,7 +840,10 @@ func (ctx *EnhancedQualityTestContext) iGenerateMultipleProjectsWithDifferentFra
 			Features:  &types.Features{},
 		}
 		
-		projectPath := generateProjectForBDD(config)
+		projectPath, err := generateProjectForBDD(config)
+		if err != nil {
+			return fmt.Errorf("failed to generate project %s: %w", projectName, err)
+		}
 		
 		ctx.ProjectConfigs[projectName] = config
 		ctx.ProjectPaths[projectName] = projectPath
@@ -1236,7 +1264,7 @@ func (ctx *EnhancedQualityTestContext) iExamineTheGeneratedConfigurationFiles() 
 	for _, configDir := range configDirs {
 		configDirPath := filepath.Join(projectPath, configDir)
 		if _, err := os.Stat(configDirPath); err == nil {
-			filepath.Walk(configDirPath, func(path string, info os.FileInfo, err error) error {
+			err := filepath.Walk(configDirPath, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
 					return nil
 				}
@@ -1248,6 +1276,10 @@ func (ctx *EnhancedQualityTestContext) iExamineTheGeneratedConfigurationFiles() 
 				}
 				return nil
 			})
+			if err != nil {
+				// Continue processing other config directories even if one fails
+				// (in a BDD context, we can't use t.Logf, so we just continue silently)
+			}
 		}
 	}
 	
