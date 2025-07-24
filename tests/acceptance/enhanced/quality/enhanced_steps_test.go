@@ -2,6 +2,9 @@ package quality
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -207,6 +210,50 @@ func getConfigValue(configMap map[string]string, key, defaultValue string) strin
 var projectCache = make(map[string]string)
 var projectCacheMutex sync.RWMutex
 
+// Cache metrics for monitoring
+type CacheMetrics struct {
+	Hits   int64
+	Misses int64
+	mutex  sync.RWMutex
+}
+
+var cacheMetrics = &CacheMetrics{}
+
+// IncrementCacheHit safely increments the cache hit counter
+func (cm *CacheMetrics) IncrementCacheHit() {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.Hits++
+}
+
+// IncrementCacheMiss safely increments the cache miss counter
+func (cm *CacheMetrics) IncrementCacheMiss() {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.Misses++
+}
+
+// GetStats returns current cache statistics
+func (cm *CacheMetrics) GetStats() (hits, misses int64, hitRate float64) {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	hits = cm.Hits
+	misses = cm.Misses
+	total := hits + misses
+	if total > 0 {
+		hitRate = float64(hits) / float64(total) * 100
+	}
+	return
+}
+
+// Reset clears the cache metrics (useful for testing)
+func (cm *CacheMetrics) Reset() {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cm.Hits = 0
+	cm.Misses = 0
+}
+
 // generateConfigKey creates a unique key for project configuration caching
 func generateConfigKey(config types.ProjectConfig) string {
 	var databaseDriver, databaseORM, authType string
@@ -243,10 +290,14 @@ func generateProjectForBDD(config types.ProjectConfig) (string, error) {
 		// Verify the cached project still exists
 		if _, err := os.Stat(cachedPath); err == nil {
 			projectCacheMutex.RUnlock()
+			cacheMetrics.IncrementCacheHit()
 			return cachedPath, nil
 		}
 	}
 	projectCacheMutex.RUnlock()
+	
+	// Record cache miss
+	cacheMetrics.IncrementCacheMiss()
 	
 	// Generate new project
 	projectCacheMutex.Lock()
@@ -293,6 +344,97 @@ func generateProjectForBDD(config types.ProjectConfig) (string, error) {
 	projectCache[cacheKey] = projectPath
 	
 	return projectPath, nil
+}
+
+// analyzeImportsWithAST uses Go AST parsing to accurately analyze imports and their usage
+func analyzeImportsWithAST(filePath string, problematicImports map[string]string) map[string]string {
+	unusedImports := make(map[string]string)
+	
+	// Parse the Go file
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, filePath, nil, parser.ParseComments)
+	if err != nil {
+		return unusedImports // Return empty if we can't parse
+	}
+	
+	// Track which imports are declared
+	declaredImports := make(map[string]string) // package name -> import path
+	importPaths := make(map[string]string)     // import path -> package name
+	
+	// Collect import declarations
+	for _, imp := range node.Imports {
+		if imp.Path != nil {
+			importPath := strings.Trim(imp.Path.Value, "\"")
+			packageName := ""
+			
+			if imp.Name != nil {
+				// Aliased import (import foo "bar")
+				packageName = imp.Name.Name
+			} else {
+				// Standard import - get package name from path
+				parts := strings.Split(importPath, "/")
+				packageName = parts[len(parts)-1]
+			}
+			
+			// Check if this is one of our problematic imports
+			for problematicImport := range problematicImports {
+				if importPath == problematicImport || packageName == problematicImport {
+					declaredImports[packageName] = importPath
+					importPaths[importPath] = packageName
+				}
+			}
+		}
+	}
+	
+	// Track usage of declared imports
+	usedImports := make(map[string]bool)
+	
+	// Walk the AST to find usage
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			// Handle packageName.Function() calls
+			if ident, ok := x.X.(*ast.Ident); ok {
+				if _, exists := declaredImports[ident.Name]; exists {
+					usedImports[ident.Name] = true
+				}
+			}
+		case *ast.CallExpr:
+			// Handle direct function calls that might use imports
+			if ident, ok := x.Fun.(*ast.Ident); ok {
+				// Check if this function name matches any import
+				for packageName := range declaredImports {
+					if ident.Name == packageName {
+						usedImports[packageName] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	
+	// Identify unused problematic imports
+	for packageName, importPath := range declaredImports {
+		if !usedImports[packageName] {
+			if reason, exists := problematicImports[packageName]; exists {
+				unusedImports[packageName] = reason
+			} else if reason, exists := problematicImports[importPath]; exists {
+				unusedImports[importPath] = reason
+			}
+		}
+	}
+	
+	return unusedImports
+}
+
+// logCacheMetrics logs current cache performance statistics
+func logCacheMetrics() {
+	hits, misses, hitRate := cacheMetrics.GetStats()
+	total := hits + misses
+	if total > 0 {
+		fmt.Printf("📊 Cache Performance: %d hits, %d misses, %.1f%% hit rate (total: %d)\n", 
+			hits, misses, hitRate, total)
+	}
 }
 
 // Then_the_project_should_only_contain_framework_imports validates framework isolation
@@ -468,47 +610,11 @@ func (ctx *EnhancedQualityTestContext) When_I_scan_for_problematic_import_patter
 			return nil
 		}
 		
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil // Skip files we can't read
-		}
-		
-		fileContent := string(content)
-		
-		for importName, reason := range problematicImports {
-			// Look for the import statement
-			importPatterns := []string{
-				fmt.Sprintf("\"%s\"", importName),        // "fmt"
-				fmt.Sprintf("'%s'", importName),          // 'fmt' (less common)
-				fmt.Sprintf("\"%s/", importName),         // "fmt/..." (subpackages)
-			}
-			
-			for _, importPattern := range importPatterns {
-				if strings.Contains(fileContent, importPattern) {
-					// Check if import is actually used in the code
-					usagePatterns := []string{
-						importName + ".",          // fmt.Printf
-						importName + "(",          // fmt()
-						importName + " ",          // fmt as parameter
-						"\t" + importName + ".",   // fmt.Printf with tab
-						" " + importName + ".",    // fmt.Printf with space
-					}
-					
-					isUsed := false
-					for _, usagePattern := range usagePatterns {
-						if strings.Contains(fileContent, usagePattern) {
-							isUsed = true
-							break
-						}
-					}
-					
-					if !isUsed {
-						violations = append(violations,
-							fmt.Sprintf("File %s imports '%s' but appears unused (%s)", path, importName, reason))
-					}
-					break // Found the import, no need to check other patterns
-				}
-			}
+		// Use AST parsing for more accurate import analysis
+		unusedImports := analyzeImportsWithAST(path, problematicImports)
+		for importName, reason := range unusedImports {
+			violations = append(violations,
+				fmt.Sprintf("File %s imports '%s' but appears unused (%s)", path, importName, reason))
 		}
 		
 		return nil
@@ -1081,47 +1187,11 @@ func (ctx *EnhancedQualityTestContext) iScanForProblematicImportPatterns() error
 			return nil
 		}
 		
-		content, err := os.ReadFile(path)
-		if err != nil {
-			return nil // Skip files we can't read
-		}
-		
-		fileContent := string(content)
-		
-		for importName, reason := range problematicImports {
-			// Look for the import statement
-			importPatterns := []string{
-				fmt.Sprintf("\"%s\"", importName),        // "fmt"
-				fmt.Sprintf("'%s'", importName),          // 'fmt' (less common)
-				fmt.Sprintf("\"%s/", importName),         // "fmt/..." (subpackages)
-			}
-			
-			for _, importPattern := range importPatterns {
-				if strings.Contains(fileContent, importPattern) {
-					// Check if import is actually used in the code
-					usagePatterns := []string{
-						importName + ".",          // fmt.Printf
-						importName + "(",          // fmt()
-						importName + " ",          // fmt as parameter
-						"\t" + importName + ".",   // fmt.Printf with tab
-						" " + importName + ".",    // fmt.Printf with space
-					}
-					
-					isUsed := false
-					for _, usagePattern := range usagePatterns {
-						if strings.Contains(fileContent, usagePattern) {
-							isUsed = true
-							break
-						}
-					}
-					
-					if !isUsed {
-						violations = append(violations,
-							fmt.Sprintf("File %s imports '%s' but appears unused (%s)", path, importName, reason))
-					}
-					break // Found the import, no need to check other patterns
-				}
-			}
+		// Use AST parsing for more accurate import analysis
+		unusedImports := analyzeImportsWithAST(path, problematicImports)
+		for importName, reason := range unusedImports {
+			violations = append(violations,
+				fmt.Sprintf("File %s imports '%s' but appears unused (%s)", path, importName, reason))
 		}
 		
 		return nil
