@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,15 +87,33 @@ func GetFileInfo(path string) (os.FileInfo, error) {
 	return os.Stat(path)
 }
 
-// FileExists checks if file exists
-func FileExists(path string) bool {
-	info, err := os.Stat(path)
+// FileExists checks if file exists - supports both single path and project+filename
+func FileExists(args ...string) bool {
+	var filePath string
+	if len(args) == 1 {
+		filePath = args[0]
+	} else if len(args) == 2 {
+		filePath = filepath.Join(args[0], args[1])
+	} else {
+		return false
+	}
+	
+	info, err := os.Stat(filePath)
 	return err == nil && !info.IsDir()
 }
 
-// DirExists checks if directory exists
-func DirExists(path string) bool {
-	info, err := os.Stat(path)
+// DirExists checks if directory exists - supports both single path and project+dirname
+func DirExists(args ...string) bool {
+	var dirPath string
+	if len(args) == 1 {
+		dirPath = args[0]
+	} else if len(args) == 2 {
+		dirPath = filepath.Join(args[0], args[1])
+	} else {
+		return false
+	}
+	
+	info, err := os.Stat(dirPath)
 	return err == nil && info.IsDir()
 }
 
@@ -313,9 +332,18 @@ func CountAllFiles(t *testing.T, dirPath string) int {
 	return count
 }
 
-// ReadFile reads file content as string
-func ReadFile(t *testing.T, filePath string) string {
+// ReadFile reads file content as string - supports both single path and project+filename
+func ReadFile(t *testing.T, args ...string) string {
 	t.Helper()
+	var filePath string
+	if len(args) == 1 {
+		filePath = args[0]
+	} else if len(args) == 2 {
+		filePath = filepath.Join(args[0], args[1])
+	} else {
+		t.Fatalf("ReadFile expects 1 or 2 arguments, got %d", len(args))
+	}
+	
 	content, err := os.ReadFile(filePath)
 	assert.NoError(t, err, "Failed to read file %s", filePath)
 	return string(content)
@@ -375,6 +403,17 @@ func FindGoFiles(t *testing.T, dirPath string) []string {
 func CountInterfaces(content string) int {
 	// Simple count of "type ... interface" patterns
 	return strings.Count(content, "interface{")
+}
+
+// CompileProject compiles a Go project and returns any error
+func CompileProject(projectPath string) error {
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = projectPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("compilation failed: %v\nOutput: %s", err, string(output))
+	}
+	return nil
 }
 
 // GetMaxDirectoryDepth gets maximum directory depth in project

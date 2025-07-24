@@ -4,8 +4,17 @@ package middleware
 import (
 	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
+
+{{- if eq .Framework "gin"}}
+	"github.com/gin-gonic/gin"
+{{- else if eq .Framework "echo"}}
+	"github.com/labstack/echo/v4"
+{{- else if eq .Framework "fiber"}}
+	"github.com/gofiber/fiber/v2"
+{{- end}}
+
+	"{{.ModulePath}}/internal/domain/ports"
 )
 
 // ValidationConfig holds validation middleware configuration
@@ -317,4 +326,89 @@ func (s *InputSanitizer) ValidatePassword(password string) error {
 	}
 	
 	return nil
+}
+
+// ValidationMiddleware returns a domain abstraction middleware for request validation
+func ValidationMiddleware() ports.HTTPHandler {
+	config := DefaultValidationConfig()
+	return func(ctx ports.HTTPContext) {
+		request := ctx.GetRequest()
+		
+		// Validate content type for requests with body
+		if config.RequireContentType && request.ContentLength > 0 {
+			contentType := ctx.GetHeader("Content-Type")
+			if contentType == "" {
+				ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+					"error": "Request validation failed",
+					"code":  "VALIDATION_ERROR", 
+					"details": "content-type header required",
+				})
+				return
+			}
+			
+			if !isAllowedContentType(config, contentType) {
+				ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+					"error": "Request validation failed",
+					"code":  "VALIDATION_ERROR",
+					"details": fmt.Sprintf("unsupported content type: %s", contentType),
+				})
+				return
+			}
+		}
+		
+		// Validate request size
+		if request.ContentLength > config.MaxRequestSize {
+			ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR",
+				"details": "request body too large",
+			})
+			return
+		}
+		
+		// Validate URI length
+		if len(request.RequestURI) > config.MaxURILength {
+			ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR",
+				"details": "URI too long",
+			})
+			return
+		}
+		
+		// Validate HTTP method
+		if !isAllowedMethod(config, request.Method) {
+			ctx.JSON(http.StatusBadRequest, map[string]interface{}{
+				"error": "Request validation failed",
+				"code":  "VALIDATION_ERROR",
+				"details": fmt.Sprintf("method not allowed: %s", request.Method),
+			})
+			return
+		}
+		
+		ctx.Next()
+	}
+}
+
+// Helper functions for domain abstraction middleware
+func isAllowedContentType(vc *ValidationConfig, contentType string) bool {
+	baseType := strings.Split(contentType, ";")[0]
+	baseType = strings.TrimSpace(strings.ToLower(baseType))
+	
+	for _, allowed := range vc.AllowedContentTypes {
+		if strings.ToLower(allowed) == baseType {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedMethod(vc *ValidationConfig, method string) bool {
+	method = strings.ToUpper(method)
+	for _, allowed := range vc.AllowedMethods {
+		if strings.ToUpper(allowed) == method {
+			return true
+		}
+	}
+	return false
 }

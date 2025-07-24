@@ -5,7 +5,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+{{- if or (eq .Framework "chi") (eq .Framework "stdlib") (eq .Framework "")}}
 	"net/http"
+{{- end}}
 	"time"
 
 {{- if eq .Framework "gin"}}
@@ -15,6 +17,8 @@ import (
 {{- else if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
 {{- end}}
+
+	"{{.ModulePath}}/internal/domain/ports"
 )
 
 // RequestIDKey is the context key for request ID
@@ -146,4 +150,21 @@ func GetRequestID(ctx context.Context) string {
 		return requestID
 	}
 	return ""
+}
+
+// RequestID returns a domain abstraction middleware for request ID handling
+func RequestID() ports.HTTPHandler {
+	config := DefaultRequestIDConfig()
+	return func(ctx ports.HTTPContext) {
+		requestID := ctx.GetHeader(config.Header)
+		if requestID == "" {
+			requestID = config.GenerateID()
+		}
+		
+		// Set in response header and context
+		ctx.SetHeader(config.Header, requestID)
+		ctx.Set("request_id", requestID)
+		
+		ctx.Next()
+	}
 }

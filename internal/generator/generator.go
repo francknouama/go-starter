@@ -922,10 +922,15 @@ func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig
 		// Determine working directory
 		workDir := outputPath
 		if hook.WorkDir != "" {
-			// Process template variables in work directory
-			workDir = g.processTemplatePath(hook.WorkDir, config, &tmpl)
-			if !filepath.IsAbs(workDir) {
-				workDir = filepath.Join(outputPath, workDir)
+			// Handle special case of {{.OutputPath}} in hook work directory
+			if hook.WorkDir == "{{.OutputPath}}" {
+				workDir = outputPath
+			} else {
+				// Process other template variables in work directory
+				workDir = g.processTemplatePath(hook.WorkDir, config, &tmpl)
+				if !filepath.IsAbs(workDir) {
+					workDir = filepath.Join(outputPath, workDir)
+				}
 			}
 		}
 
@@ -934,18 +939,28 @@ func (g *Generator) executeHooks(tmpl types.Template, config types.ProjectConfig
 		if len(hook.Args) > 0 {
 			cmd = exec.Command(hook.Command, hook.Args...)
 		} else {
-			// Split command string if no explicit args
-			parts := strings.Fields(hook.Command)
-			if len(parts) == 0 {
-				continue
+			// Check if command contains shell metacharacters that need expansion
+			if strings.Contains(hook.Command, "*") || strings.Contains(hook.Command, "?") || strings.Contains(hook.Command, "[") {
+				// Use shell for wildcard expansion
+				cmd = exec.Command("sh", "-c", hook.Command)
+			} else {
+				// Split command string if no explicit args
+				parts := strings.Fields(hook.Command)
+				if len(parts) == 0 {
+					continue
+				}
+				cmd = exec.Command(parts[0], parts[1:]...)
 			}
-			cmd = exec.Command(parts[0], parts[1:]...)
 		}
 
 		cmd.Dir = workDir
 		if output, err := cmd.CombinedOutput(); err != nil {
 			// Don't fail the generation for hook errors, just warn
-			fmt.Printf("Warning: Hook '%s' failed: %s\n", hook.Name, string(output))
+			if len(output) > 0 {
+				fmt.Printf("Warning: Hook '%s' failed with error: %v\nOutput: %s\n", hook.Name, err, string(output))
+			} else {
+				fmt.Printf("Warning: Hook '%s' failed with error: %v\n", hook.Name, err)
+			}
 		}
 	}
 }

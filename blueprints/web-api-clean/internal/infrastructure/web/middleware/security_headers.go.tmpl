@@ -4,6 +4,8 @@ package middleware
 
 import (
 	"net/http"
+
+	"{{.ModulePath}}/internal/domain/ports"
 )
 
 // SecurityHeaders adds essential security headers to prevent common attacks
@@ -159,5 +161,33 @@ func NewSecurityHeaders(level SecurityLevel) *SecurityHeaders {
 		}
 	default:
 		return DefaultSecurityHeaders()
+	}
+}
+
+// SecurityHeaders returns a domain abstraction middleware for security headers
+func SecurityHeaders() ports.HTTPHandler {
+	config := DefaultSecurityHeaders()
+	return func(ctx ports.HTTPContext) {
+		// Set security headers
+		if config.ContentSecurityPolicy != "" {
+			ctx.SetHeader("Content-Security-Policy", config.ContentSecurityPolicy)
+		}
+		if config.StrictTransportSecurity != "" {
+			ctx.SetHeader("Strict-Transport-Security", config.StrictTransportSecurity)
+		}
+		if config.EnableXSSProtection {
+			ctx.SetHeader("X-XSS-Protection", "1; mode=block")
+		}
+		if config.EnableFrameOptions {
+			ctx.SetHeader("X-Frame-Options", "DENY")
+		}
+		if config.EnableContentTypeOptions {
+			ctx.SetHeader("X-Content-Type-Options", "nosniff")
+		}
+		if config.ReferrerPolicy != "" {
+			ctx.SetHeader("Referrer-Policy", config.ReferrerPolicy)
+		}
+		
+		ctx.Next()
 	}
 }

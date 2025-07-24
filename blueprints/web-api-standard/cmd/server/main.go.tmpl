@@ -8,7 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-{{if or (ne .Framework "fiber") (ne .AuthType "")}}	"time"{{end}}
+{{if or (ne .Framework "fiber") (and (ne .AuthType "") (ne .AuthType "none"))}}	"time"{{end}}
 
 {{if eq .Framework "gin"}}	"github.com/gin-gonic/gin"{{end}}
 {{if eq .Framework "echo"}}	"github.com/labstack/echo/v4"
@@ -18,18 +18,20 @@ import (
 	"github.com/gofiber/fiber/v2/middleware/logger"
 	"github.com/gofiber/fiber/v2/middleware/recover"{{end}}
 {{if eq .Framework "chi"}}	"github.com/go-chi/chi/v5"
-	"github.com/go-chi/chi/v5/middleware"{{end}}{{if and (eq .Framework "stdlib") (ne .AuthType "") (ne .DatabaseDriver "")}}	"strings"{{end}}
+	"github.com/go-chi/chi/v5/middleware"{{end}}{{if and (eq .Framework "stdlib") (and (ne .AuthType "") (ne .AuthType "none")) (ne .DatabaseDriver "")}}	"strings"{{end}}
 
 	"{{.ModulePath}}/internal/config"
+{{- if and (eq .Framework "gin") (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 	"{{.ModulePath}}/internal/errors"
+{{- end}}
 	"{{.ModulePath}}/internal/handlers"
 	internalLogger "{{.ModulePath}}/internal/logger"
-	"{{.ModulePath}}/internal/middleware"
+	internalMiddleware "{{.ModulePath}}/internal/middleware"
 {{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/database"
 	"{{.ModulePath}}/internal/repository"
 	"{{.ModulePath}}/internal/services"
-{{- else if ne .AuthType ""}}
+{{- else if and (ne .AuthType "") (ne .AuthType "none")}}
 	"{{.ModulePath}}/internal/services"
 {{- end}}
 )
@@ -48,10 +50,10 @@ func main() {
 	internalLogger.Info("Application starting with logger=%s environment=%s", "{{.LoggerType}}", cfg.Environment)
 
 	// Initialize security middleware
-	securityHeaders := middleware.DefaultSecurityHeaders()
-	validationConfig := middleware.DefaultValidationConfig()
-	requestIDConfig := middleware.DefaultRequestIDConfig()
-{{- if and (eq .Framework "gin") (ne .AuthType "")}}
+	securityHeaders := internalMiddleware.DefaultSecurityHeaders()
+	validationConfig := internalMiddleware.DefaultValidationConfig()
+	requestIDConfig := internalMiddleware.DefaultRequestIDConfig()
+{{- if and (eq .Framework "gin") (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 	errorHandler := errors.NewErrorHandler(internalLogger.GetLogger())
 {{- end}}
 
@@ -78,7 +80,7 @@ func main() {
 {{- if eq .AuthType "jwt"}}
 	// Initialize auth service
 	authService := services.NewAuthService({{- if ne .DatabaseDriver ""}}userService{{- else}}nil{{- end}}, cfg.JWT.Secret, time.Duration(cfg.JWT.Expiration)*time.Hour)
-{{- else if ne .AuthType ""}}
+{{- else if and (ne .AuthType "") (ne .AuthType "none")}}
 	// Initialize auth service
 	authService := services.NewAuthService({{- if ne .DatabaseDriver ""}}userService{{- else}}nil{{- end}}, "default-secret", 24*time.Hour)
 {{- end}}
@@ -105,7 +107,7 @@ func main() {
 	// API routes
 	v1 := router.Group("/api/v1")
 	{
-{{- if ne .AuthType ""}}
+{{- if and (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 		// Public routes
 		public := v1.Group("/")
 		{
@@ -116,7 +118,7 @@ func main() {
 
 		// Protected routes  
 		protected := v1.Group("/")
-		// protected.Use(middleware.AuthMiddleware()) // Add auth middleware here
+		// protected.Use(internalMiddleware.AuthMiddleware()) // Add auth middleware here
 		{
 {{- if ne .DatabaseDriver ""}}
 			userHandler := handlers.NewUserHandler(userService)
@@ -159,10 +161,10 @@ func main() {
 	router.GET("/health", handlers.HealthCheck)
 	router.GET("/ready", handlers.ReadinessCheck)
 
-{{- if or (ne .AuthType "") (ne .DatabaseDriver "")}}
+{{- if or (and (ne .AuthType "") (ne .AuthType "none")) (ne .DatabaseDriver "")}}
 	// API routes
 	v1 := router.Group("/api/v1")
-{{- if ne .AuthType ""}}
+{{- if and (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 	// Public routes
 	public := v1.Group("")
 	authHandler := handlers.NewAuthHandler(authService)
@@ -207,10 +209,10 @@ func main() {
 	router.Get("/health", handlers.HealthCheck)
 	router.Get("/ready", handlers.ReadinessCheck)
 
-{{- if or (ne .AuthType "") (ne .DatabaseDriver "")}}
+{{- if or (and (ne .AuthType "") (ne .AuthType "none")) (ne .DatabaseDriver "")}}
 	// API routes
 	v1 := router.Group("/api/v1")
-{{- if ne .AuthType ""}}
+{{- if and (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 	// Public routes
 	public := v1.Group("")
 	authHandler := handlers.NewAuthHandler(authService)
@@ -254,7 +256,7 @@ func main() {
 
 	// API routes
 	router.Route("/api/v1", func(v1 chi.Router) {
-{{- if ne .AuthType ""}}
+{{- if and (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 		// Public routes
 		authHandler := handlers.NewAuthHandler(authService)
 		v1.Post("/auth/login", authHandler.Login)
@@ -262,7 +264,7 @@ func main() {
 
 		// Protected routes
 		v1.Group(func(protected chi.Router) {
-			// protected.Use(middleware.AuthMiddleware()) // Add auth middleware here
+			// protected.Use(internalMiddleware.AuthMiddleware()) // Add auth middleware here
 {{- if ne .DatabaseDriver ""}}
 			userHandler := handlers.NewUserHandler(userService)
 			protected.Get("/users", userHandler.GetUsers)
@@ -292,7 +294,7 @@ func main() {
 	mux.HandleFunc("/ready", handlers.ReadinessCheck)
 
 	// API routes - we'll use a simple routing approach
-{{- if ne .AuthType ""}}
+{{- if and (and (ne .AuthType "") (ne .AuthType "none")) (ne .AuthType "none")}}
 	// Public routes
 	authHandler := handlers.NewAuthHandler(authService)
 	mux.HandleFunc("/api/v1/auth/login", authHandler.Login)

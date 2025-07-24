@@ -2,10 +2,10 @@
 package database
 
 import (
+	{{- if eq .DatabaseORM "gorm"}}
 	"fmt"
 	"time"
 
-	{{- if eq .DatabaseORM "gorm"}}
 	"gorm.io/gorm"
 	gormLogger "gorm.io/gorm/logger"
 	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
@@ -17,8 +17,15 @@ import (
 	{{- else}}
 	"gorm.io/driver/sqlite"
 	{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	appLogger "{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
 	{{- else}}
 	"database/sql"
+	"fmt"
+	"time"
+
 	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
 	_ "github.com/lib/pq"
 	{{- else if eq .DatabaseDriver "mysql"}}
@@ -28,12 +35,9 @@ import (
 	{{- else}}
 	_ "github.com/mattn/go-sqlite3"
 	{{- end}}
-	{{- end}}
 
 	"{{.ModulePath}}/internal/config"
 	appLogger "{{.ModulePath}}/internal/logger"
-	{{- if eq .DatabaseORM "gorm"}}
-	"{{.ModulePath}}/internal/models"
 	{{- end}}
 )
 
