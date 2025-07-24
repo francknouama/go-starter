@@ -210,6 +210,10 @@ func getConfigValue(configMap map[string]string, key, defaultValue string) strin
 var projectCache = make(map[string]string)
 var projectCacheMutex sync.RWMutex
 
+// Track temporary directories for cleanup
+var tempDirTracker = make(map[string]bool)
+var tempDirMutex sync.Mutex
+
 // Cache metrics for monitoring
 type CacheMetrics struct {
 	Hits   int64
@@ -317,7 +321,10 @@ func generateProjectForBDD(config types.ProjectConfig) (string, error) {
 		return "", fmt.Errorf("failed to create temporary directory: %w", err)
 	}
 	
-	// Ensure cleanup on any exit path
+	// Register for tracking and potential cleanup
+	registerTempDir(outputDir)
+	
+	// Ensure cleanup on any exit path (error cases)
 	defer func() {
 		if err != nil {
 			os.RemoveAll(outputDir)
@@ -427,14 +434,59 @@ func analyzeImportsWithAST(filePath string, problematicImports map[string]string
 	return unusedImports
 }
 
-// logCacheMetrics logs current cache performance statistics
+// logCacheMetrics logs current cache performance statistics with alerts
 func logCacheMetrics() {
 	hits, misses, hitRate := cacheMetrics.GetStats()
 	total := hits + misses
 	if total > 0 {
 		fmt.Printf("📊 Cache Performance: %d hits, %d misses, %.1f%% hit rate (total: %d)\n", 
 			hits, misses, hitRate, total)
+		
+		// Performance alerts
+		if hitRate < 50.0 && total > 10 {
+			fmt.Printf("⚠️  Cache Performance Alert: Hit rate %.1f%% is below 50%% threshold\n", hitRate)
+		} else if hitRate >= 80.0 && total > 5 {
+			fmt.Printf("✅ Excellent Cache Performance: Hit rate %.1f%% exceeds 80%% threshold\n", hitRate)
+		}
+		
+		// Temp directory cleanup alert
+		tempDirCount := GetTempDirCount()
+		if tempDirCount > 20 {
+			fmt.Printf("⚠️  Resource Alert: %d temporary directories tracked (consider cleanup)\n", tempDirCount)
+		}
 	}
+}
+
+// registerTempDir tracks a temporary directory for potential cleanup
+func registerTempDir(dir string) {
+	tempDirMutex.Lock()
+	defer tempDirMutex.Unlock()
+	tempDirTracker[dir] = true
+}
+
+// CleanupTempDirs removes all tracked temporary directories
+func CleanupTempDirs() {
+	tempDirMutex.Lock()
+	defer tempDirMutex.Unlock()
+	
+	cleaned := 0
+	for dir := range tempDirTracker {
+		if err := os.RemoveAll(dir); err == nil {
+			cleaned++
+		}
+		delete(tempDirTracker, dir)
+	}
+	
+	if cleaned > 0 {
+		fmt.Printf("🧹 Cleaned up %d temporary directories\n", cleaned)
+	}
+}
+
+// GetTempDirCount returns the number of tracked temporary directories
+func GetTempDirCount() int {
+	tempDirMutex.Lock()
+	defer tempDirMutex.Unlock()
+	return len(tempDirTracker)
 }
 
 // Then_the_project_should_only_contain_framework_imports validates framework isolation
