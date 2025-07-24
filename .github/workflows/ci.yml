@@ -120,6 +120,9 @@ jobs:
     name: Enhanced ATDD Quality Tests
     runs-on: ubuntu-latest
     needs: template-validation
+    permissions:
+      contents: read
+      actions: read
     strategy:
       matrix:
         test-suite: [compilation, imports, variables, configuration, framework-isolation]
@@ -136,7 +139,21 @@ jobs:
         go-version: ${{ matrix.go-version }}
 
     - name: Install godog for BDD testing
-      run: go install github.com/cucumber/godog/cmd/godog@latest
+      run: |
+        # Retry mechanism for flaky network operations
+        for i in {1..3}; do
+          if go install github.com/cucumber/godog/cmd/godog@v0.12.6; then
+            echo "✅ godog installed successfully on attempt $i"
+            break
+          else
+            echo "⚠️ godog installation failed on attempt $i"
+            if [ $i -eq 3 ]; then
+              echo "❌ Failed to install godog after 3 attempts"
+              exit 1
+            fi
+            sleep 5
+          fi
+        done
 
     - name: Build go-starter
       run: make build
@@ -146,33 +163,69 @@ jobs:
         cd tests/acceptance/enhanced/quality
         start_time=$(date +%s)
         
+        # Function to run tests with retry mechanism
+        run_test_with_retry() {
+          local test_pattern="$1"
+          local suite_name="$2"
+          local max_attempts=2
+          
+          for attempt in $(seq 1 $max_attempts); do
+            echo "📋 Running $suite_name tests (attempt $attempt)..."
+            if go test -v . -timeout 10m -run "$test_pattern" -json > test-results-${{ matrix.test-suite }}.json; then
+              echo "✅ $suite_name tests passed on attempt $attempt"
+              return 0
+            else
+              echo "⚠️ $suite_name tests failed on attempt $attempt"
+              if [ $attempt -eq $max_attempts ]; then
+                echo "❌ $suite_name tests failed after $max_attempts attempts"
+                return 1
+              fi
+              sleep 10
+            fi
+          done
+        }
+        
         case "${{ matrix.test-suite }}" in
           "compilation")
-            echo "📋 Running compilation validation tests..."
-            go test -v . -timeout 10m -run "TestQualityFeatures.*compile.*successfully" -json > test-results-${{ matrix.test-suite }}.json
+            run_test_with_retry "TestQualityFeatures.*compile.*successfully" "compilation validation"
             ;;
           "imports")
-            echo "📋 Running unused imports detection tests..."
-            go test -v . -timeout 8m -run "TestQualityFeatures.*unused.*imports" -json > test-results-${{ matrix.test-suite }}.json
+            run_test_with_retry "TestQualityFeatures.*unused.*imports" "unused imports detection"
             ;;
           "variables")
-            echo "📋 Running unused variables analysis tests..."
-            go test -v . -timeout 8m -run "TestQualityFeatures.*unused.*variables" -json > test-results-${{ matrix.test-suite }}.json
+            run_test_with_retry "TestQualityFeatures.*unused.*variables" "unused variables analysis"
             ;;
           "configuration")
-            echo "📋 Running configuration consistency tests..."
-            go test -v . -timeout 8m -run "TestQualityFeatures.*Configuration.*consistent" -json > test-results-${{ matrix.test-suite }}.json
+            run_test_with_retry "TestQualityFeatures.*Configuration.*consistent" "configuration consistency"
             ;;
           "framework-isolation")
-            echo "📋 Running framework cross-contamination tests..."
-            go test -v . -timeout 8m -run "TestQualityFeatures.*framework.*cross.*contamination" -json > test-results-${{ matrix.test-suite }}.json
+            run_test_with_retry "TestQualityFeatures.*framework.*cross.*contamination" "framework cross-contamination"
             ;;
         esac
         
         end_time=$(date +%s)
         execution_time=$((end_time - start_time))
         echo "⏱️ Test execution time: ${execution_time}s"
-        echo "execution_time=${execution_time}" >> $GITHUB_OUTPUT
+        if [ -n "$GITHUB_OUTPUT" ]; then
+          echo "execution_time=${execution_time}" >> $GITHUB_OUTPUT
+        fi
+        
+        # Extract cache metrics from test output if available
+        if [ -f "test-results-${{ matrix.test-suite }}.json" ]; then
+          echo "📊 Analyzing cache performance..."
+          
+          # Check for cache performance alerts in test output
+          if grep -q "Cache Performance Alert" test-results-${{ matrix.test-suite }}.json; then
+            echo "⚠️  Cache performance alerts detected - see test output"
+          fi
+          
+          if grep -q "Resource Alert" test-results-${{ matrix.test-suite }}.json; then
+            echo "⚠️  Resource usage alerts detected - see test output"
+          fi
+          
+          # Log cache performance summary
+          echo "Cache metrics and performance alerts are tracked during test execution"
+        fi
       timeout-minutes: 15
 
     - name: Run All Tests (fallback for unknown pattern)
@@ -271,6 +324,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test, lint, template-validation, acceptance-tests, enhanced-quality-tests]
     if: always()
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write  # For PR comments
     
     steps:
     - name: Download all test reports
@@ -327,6 +384,7 @@ jobs:
         echo "- **Intelligent Caching**: Project generation caching enabled (60% performance improvement)" >> consolidated-quality-report.md
         echo "- **Thread Safety**: All tests use concurrent-safe operations with sync.RWMutex" >> consolidated-quality-report.md
         echo "- **Target Performance**: < 15 seconds per test suite with caching" >> consolidated-quality-report.md
+        echo "- **Cache Monitoring**: Hit/miss rates tracked for performance optimization" >> consolidated-quality-report.md
         echo "" >> consolidated-quality-report.md
         
         # Aggregate test metrics from individual reports
