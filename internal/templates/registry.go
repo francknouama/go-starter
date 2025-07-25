@@ -2,6 +2,7 @@ package templates
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 
 	"github.com/francknouama/go-starter/pkg/types"
@@ -58,6 +59,26 @@ func (r *Registry) List() []types.Template {
 	for _, template := range r.templates {
 		templates = append(templates, template)
 	}
+	
+	// Sort templates to ensure consistent ordering
+	// Priority: cli-simple first, then by type, then by name
+	sort.Slice(templates, func(i, j int) bool {
+		// cli-simple always comes first
+		if templates[i].ID == "cli-simple" {
+			return true
+		}
+		if templates[j].ID == "cli-simple" {
+			return false
+		}
+		
+		// Then sort by type
+		if templates[i].Type != templates[j].Type {
+			return templates[i].Type < templates[j].Type
+		}
+		
+		// Finally sort by ID
+		return templates[i].ID < templates[j].ID
+	})
 
 	return templates
 }

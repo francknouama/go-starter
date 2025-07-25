@@ -1,6 +1,9 @@
 package handlers
 
 import (
+{{- if eq .Framework "none"}}
+	// Minimal imports for none framework
+{{- else}}
 	"context"
 	"encoding/json"
 	"net/http"
@@ -12,7 +15,6 @@ import (
 {{- else if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
 {{- else if eq .Framework "chi"}}
-	"net/http"
 	"github.com/go-chi/chi/v5"
 {{- else if eq .Framework "stdlib"}}
 	"github.com/aws/aws-lambda-go/events"
@@ -20,8 +22,18 @@ import (
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/models"
 	"{{.ModulePath}}/internal/services"
+{{- end}}
 )
 
+{{- if eq .Framework "none"}}
+// UserHandler is a stub for the none framework
+type UserHandler struct{}
+
+// NewUserHandler creates a new user handler stub
+func NewUserHandler() *UserHandler {
+	return &UserHandler{}
+}
+{{- else}}
 // UserHandler handles user-related requests
 type UserHandler struct {
 	userService services.UserService
@@ -33,6 +45,7 @@ func NewUserHandler() *UserHandler {
 		userService: services.NewUserService(),
 	}
 }
+{{- end}}
 
 {{- if ne .AuthType "none"}}
 {{- if eq .Framework "gin"}}

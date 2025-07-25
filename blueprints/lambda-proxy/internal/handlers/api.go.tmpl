@@ -1,6 +1,9 @@
 package handlers
 
 import (
+{{- if eq .Framework "none"}}
+	// Minimal imports for none framework
+{{- else}}
 	"context"
 	"encoding/json"
 	"net/http"
@@ -12,14 +15,24 @@ import (
 {{- else if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
 {{- else if eq .Framework "chi"}}
-	"net/http"
+	// net/http already imported above
 {{- else if eq .Framework "stdlib"}}
 	"github.com/aws/aws-lambda-go/events"
 {{- end}}
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/models"
+{{- end}}
 )
 
+{{- if eq .Framework "none"}}
+// APIHandler is a stub for the none framework
+type APIHandler struct{}
+
+// NewAPIHandler creates a new API handler stub
+func NewAPIHandler() *APIHandler {
+	return &APIHandler{}
+}
+{{- else}}
 // APIHandler handles general API requests
 type APIHandler struct{}
 
@@ -27,6 +40,7 @@ type APIHandler struct{}
 func NewAPIHandler() *APIHandler {
 	return &APIHandler{}
 }
+{{- end}}
 
 {{- if eq .Framework "gin"}}
 // GetData handles GET /api/data

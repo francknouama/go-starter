@@ -1,6 +1,9 @@
 package handlers
 
 import (
+{{- if eq .Framework "none"}}
+	// Minimal imports for none framework
+{{- else}}
 	"context"
 	"encoding/json"
 	"net/http"
@@ -14,14 +17,24 @@ import (
 {{- else if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
 {{- else if eq .Framework "chi"}}
-	"net/http"
+	// net/http already imported above
 {{- else if eq .Framework "stdlib"}}
 	"github.com/aws/aws-lambda-go/events"
 {{- end}}
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/models"
+{{- end}}
 )
 
+{{- if eq .Framework "none"}}
+// HealthHandler is a stub for the none framework
+type HealthHandler struct{}
+
+// NewHealthHandler creates a new health handler stub
+func NewHealthHandler() *HealthHandler {
+	return &HealthHandler{}
+}
+{{- else}}
 // HealthHandler handles health check requests
 type HealthHandler struct {
 	startTime time.Time
@@ -33,6 +46,7 @@ func NewHealthHandler() *HealthHandler {
 		startTime: time.Now(),
 	}
 }
+{{- end}}
 
 {{- if eq .Framework "gin"}}
 // Check handles GET /health
@@ -155,6 +169,7 @@ func (h *HealthHandler) ReadyStdlib(ctx context.Context, request events.APIGatew
 }
 {{- end}}
 
+{{- if ne .Framework "none"}}
 // getHealthStatus returns the current health status
 func (h *HealthHandler) getHealthStatus() models.HealthResponse {
 	var m runtime.MemStats
@@ -214,3 +229,4 @@ func (h *HealthHandler) getReadinessStatus() models.ReadinessResponse {
 		Checks:    checks,
 	}
 }
+{{- end}}

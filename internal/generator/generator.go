@@ -260,8 +260,8 @@ func (g *Generator) Preview(config types.ProjectConfig, outputDir string) error 
 	templateID := g.getTemplateID(config)
 	template, err := g.registry.Get(templateID)
 	if err != nil {
-		fmt.Printf("\nTemplate '%s' is not available yet.\n", templateID)
-		fmt.Printf("This template will be implemented in upcoming phases.\n")
+		fmt.Printf("\nTemplate '%s' not found.\n", templateID)
+		fmt.Printf("Use 'go-starter list' to see available blueprints.\n")
 		return nil
 	}
 
@@ -308,14 +308,19 @@ func (g *Generator) getTemplateID(config types.ProjectConfig) string {
 func (g *Generator) handleMissingTemplate(config types.ProjectConfig, result *types.GenerationResult) (*types.GenerationResult, error) {
 	templateID := g.getTemplateID(config)
 
-	fmt.Printf("Template '%s' is not available yet.\n", templateID)
-	fmt.Println("\ngo-starter is currently in Phase 0 (Foundation).")
-	fmt.Println("Project templates will be added in the following phases:")
-	fmt.Println("  • Phase 1: Web API template (Gin framework)")
-	fmt.Println("  • Phase 2: CLI Application template (Cobra framework)")
-	fmt.Println("  • Phase 3: Go Library template")
-	fmt.Println("  • Phase 4: AWS Lambda template")
-	fmt.Println("  • Phase 5+: Additional templates and architectures")
+	fmt.Printf("Template '%s' not found.\n", templateID)
+	fmt.Println("\nAvailable templates:")
+	
+	// Get list of available templates from registry
+	templates := g.registry.List()
+	if len(templates) > 0 {
+		for _, tmpl := range templates {
+			fmt.Printf("  • %s - %s\n", tmpl.ID, tmpl.Description)
+		}
+		fmt.Printf("\nUse 'go-starter list' to see all available blueprints with detailed descriptions.\n")
+	} else {
+		fmt.Println("  No templates currently available.")
+	}
 
 	err := types.NewTemplateNotFoundError(templateID)
 	result.Error = err

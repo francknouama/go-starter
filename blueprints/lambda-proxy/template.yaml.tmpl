@@ -201,7 +201,9 @@ Resources:
       FunctionName: !GetAtt {{.ProjectName}}AuthorizerFunction.Arn
       Action: lambda:InvokeFunction
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${{{.ProjectName}}Api}/authorizers/*"
+      SourceArn: !Sub 
+        - "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ApiId}/authorizers/*"
+        - ApiId: !Ref {{.ProjectName | replace "-" ""}}Api
 {{- end}}
 
   # CloudWatch Log Group for API Gateway
@@ -298,7 +300,9 @@ Resources:
 Outputs:
   {{.ProjectName}}ApiUrl:
     Description: "API Gateway endpoint URL"
-    Value: !Sub "https://${{{.ProjectName}}Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/"
+    Value: !Sub 
+      - "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/"
+      - ApiId: !Ref {{.ProjectName | replace "-" ""}}Api
     Export:
       Name: !Sub "${AWS::StackName}-ApiUrl"
 

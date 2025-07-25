@@ -1,6 +1,9 @@
 package middleware
 
 import (
+{{- if eq .Framework "none"}}
+	// Minimal imports for none framework
+{{- else}}
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,13 +17,14 @@ import (
 {{- else if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
 {{- else if eq .Framework "chi"}}
-	"net/http"
+	// net/http already imported above
 {{- else if eq .Framework "stdlib"}}
 	"github.com/aws/aws-lambda-go/events"
 {{- end}}
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/models"
 	"{{.ModulePath}}/internal/observability"
+{{- end}}
 )
 
 {{- if eq .Framework "gin"}}
@@ -139,6 +143,7 @@ func handlePanicStdlib(ctx context.Context, err interface{}) events.APIGatewayPr
 }
 {{- end}}
 
+{{- if ne .Framework "none"}}
 // handlePanic processes a recovered panic
 func handlePanic(ctx context.Context, err interface{}, respond func(int, models.ErrorResponse)) {
 	stack := debug.Stack()
@@ -174,3 +179,4 @@ func getRequestID(ctx context.Context) string {
 	}
 	return "unknown"
 }
+{{- end}}

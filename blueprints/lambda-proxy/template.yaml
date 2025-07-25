@@ -12,7 +12,6 @@ metadata:
   author: "go-starter"
   license: "MIT"
   goVersion: "1.21"
-  targetScore: "8.5/10"
 
 # Template Variables
 variables:
@@ -42,52 +41,8 @@ variables:
     description: "Logging library"
     options: ["slog", "zap", "logrus", "zerolog"]
     default: "slog"
-    
-  - name: AuthType
-    type: select
-    description: "Authentication method"
-    options: ["none", "jwt", "cognito", "custom"]
-    default: "jwt"
-    
-  - name: CorsOrigins
-    type: string
-    description: "CORS allowed origins (comma-separated or '*')"
-    default: "*"
-    
-  - name: JWTIssuer
-    type: string
-    description: "JWT token issuer URL"
-    default: "https://your-auth-provider.com"
-    condition: "{{eq .AuthType \"jwt\"}}"
-    
-  - name: CognitoUserPool
-    type: string
-    description: "AWS Cognito User Pool ID"
-    default: "us-east-1_XXXXXXXXX"
-    condition: "{{eq .AuthType \"cognito\"}}"
 
-# Features Configuration
-features:
-  - name: "authentication"
-    description: "Authentication support with JWT and Cognito"
-    enabled_when: "{{ne .AuthType \"none\"}}"
-  - name: "cors"
-    description: "Cross-Origin Resource Sharing support"
-    enabled_when: "true"
-  - name: "structured_logging"
-    description: "Structured logging with configurable levels"
-    enabled_when: "true"
-  - name: "observability"
-    description: "Tracing, metrics, CloudWatch, and X-Ray integration"
-    enabled_when: "true"
-  - name: "sam_deployment"
-    description: "AWS SAM deployment templates"
-    enabled_when: "true"
-  - name: "terraform_deployment"
-    description: "Terraform deployment configuration"
-    enabled_when: "true"
-
-# File Definitions
+# File Definitions - Only existing files
 files:
   # Core Application Files
   - source: main.go.tmpl
@@ -162,7 +117,7 @@ files:
     destination: internal/services/users.go
     description: "User management service"
 
-  # Observability (from lambda-standard)
+  # Observability
   - source: internal/observability/tracing.go.tmpl
     destination: internal/observability/tracing.go
     description: "X-Ray tracing integration"
@@ -200,15 +155,6 @@ files:
   - source: samconfig.toml.tmpl
     destination: samconfig.toml
     description: "SAM CLI configuration"
-
-  # Development Tools
-  - source: Dockerfile.tmpl
-    destination: Dockerfile
-    description: "Container for local development"
-    
-  - source: docker-compose.yml.tmpl
-    destination: docker-compose.yml
-    description: "Local development environment"
     
   - source: scripts/deploy.sh.tmpl
     destination: scripts/deploy.sh
@@ -220,51 +166,12 @@ files:
     description: "Local development script"
     mode: 0755
 
-  # Testing
-  - source: tests/integration/api_test.go.tmpl
-    destination: tests/integration/api_test.go
-    description: "API integration tests"
-    
-  - source: tests/unit/handlers_test.go.tmpl
-    destination: tests/unit/handlers_test.go
-    description: "Handler unit tests"
-    
-  - source: event-examples/api-gateway-proxy.json.tmpl
-    destination: event-examples/api-gateway-proxy.json
-    description: "Example API Gateway proxy event"
-
-  # Documentation
-  - source: README.md.tmpl
-    destination: README.md
-    description: "Project documentation"
-    
-  - source: API.md.tmpl
-    destination: API.md
-    description: "API documentation"
-
   # Go Module
   - source: go.mod.tmpl
     destination: go.mod
     description: "Go module dependencies"
 
-  # CI/CD (Inherited from shared infrastructure)
-  - source: ../.github/workflows/ci.yml.tmpl
-    destination: .github/workflows/ci.yml
-    description: "Continuous integration workflow"
-    
-  - source: ../.github/workflows/deploy.yml.tmpl
-    destination: .github/workflows/deploy.yml
-    description: "Deployment workflow"
-    
-  - source: ../.github/workflows/release.yml.tmpl
-    destination: .github/workflows/release.yml
-    description: "Release workflow"
-    
-  - source: ../.github/workflows/security.yml.tmpl
-    destination: .github/workflows/security.yml
-    description: "Security scanning workflow"
-
-# Dependencies by Framework
+# Dependencies
 dependencies:
   - module: "github.com/aws/aws-lambda-go"
     version: "v1.41.0"
@@ -272,30 +179,5 @@ dependencies:
     version: "v1.18.1"
   - module: "github.com/aws/aws-xray-sdk-go"
     version: "v1.8.2"
-  - module: "github.com/gin-gonic/gin"
-    version: "v1.9.1"
   - module: "github.com/awslabs/aws-lambda-go-api-proxy"
     version: "v0.16.0"
-  - module: "github.com/labstack/echo/v4"
-    version: "v4.11.2"
-  - module: "github.com/gofiber/fiber/v2"
-    version: "v2.51.0"
-  - module: "github.com/go-chi/chi/v5"
-    version: "v5.0.10"
-  - module: "github.com/golang-jwt/jwt/v5"
-    version: "v5.0.0"
-  - module: "github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
-    version: "v1.18.0"
-
-# Quality Requirements
-quality:
-  target_score: 8.5
-  requirements:
-    - Cold start time < 500ms
-    - Response time < 100ms (warm)
-    - Memory usage < 256MB
-    - Security scan pass rate > 95%
-    - Test coverage > 85%
-    - API Gateway integration compliance
-    - CORS handling correctness
-    - Authentication security standards

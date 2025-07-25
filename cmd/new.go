@@ -469,21 +469,21 @@ func parseDisclosureModeFromArgs(args []string) prompts.DisclosureMode {
 func printBasicHelp(cmd *cobra.Command) {
 	// Essential flags that beginners need to see
 	essentialFlags := map[string]bool{
-		"name":       true,
-		"type":       true,
-		"module":     true,
-		"framework":  true,
-		"logger":     true,
-		"go-version": true,
-		"output":     true,
-		"complexity": true,
-		"basic":      true,
-		"advanced":   true,
-		"dry-run":    true,
-		"help":       true,
-		"quiet":      true,
-		"no-git":     true,
-		"random-name": true,
+		"name":         true,
+		"type":         true,
+		"module":       true,
+		"framework":    true,
+		"logger":       true,
+		"go-version":   true,
+		"output":       true,
+		"complexity":   true,
+		"basic":        true,
+		"advanced":     true,
+		"dry-run":      true,
+		"help":         true,
+		"quiet":        true,
+		"no-git":       true,
+		"random-name":  true,
 	}
 	
 	fmt.Print(buildCustomHelp(cmd, essentialFlags, true))

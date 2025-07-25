@@ -14,7 +14,7 @@ import (
 var (
 	metricsClient   *cloudwatch.Client
 	metricsEnabled  = true
-	serviceName     = "{{.ProjectName}}"
+	metricsService  = "{{.ProjectName}}"
 	namespace       = "AWS/Lambda/Custom"
 )
 
@@ -29,8 +29,8 @@ func InitializeMetrics() {
 	
 	// Set service name from config
 	if name := appconfig.GetServiceName(); name != "" {
-		serviceName = name
-		namespace = "Custom/" + serviceName
+		metricsService = name
+		namespace = "Custom/" + metricsService
 	}
 	
 	// Initialize AWS config
@@ -49,7 +49,7 @@ func InitializeMetrics() {
 	
 	LogInfo("CloudWatch metrics initialized", map[string]interface{}{
 		"namespace":    namespace,
-		"service_name": serviceName,
+		"service_name": metricsService,
 		"region":       appconfig.GetAWSRegion(),
 	})
 }
@@ -81,7 +81,7 @@ func PutMetric(metricName string, value float64, unit types.StandardUnit, dimens
 	// Add default service dimension
 	cwDimensions = append(cwDimensions, types.Dimension{
 		Name:  aws.String("Service"),
-		Value: aws.String(serviceName),
+		Value: aws.String(metricsService),
 	})
 	
 	metricData := types.MetricDatum{

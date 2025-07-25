@@ -1,6 +1,9 @@
 package middleware
 
 import (
+{{- if eq .Framework "none"}}
+	// Minimal imports for none framework
+{{- else}}
 	"context"
 	"time"
 	"fmt"
@@ -13,11 +16,12 @@ import (
 {{- else if eq .Framework "fiber"}}
 	"github.com/gofiber/fiber/v2"
 {{- else if eq .Framework "chi"}}
-	"net/http"
+	// net/http already imported above
 {{- else if eq .Framework "stdlib"}}
 	"github.com/aws/aws-lambda-go/events"
 {{- end}}
 	"{{.ModulePath}}/internal/observability"
+{{- end}}
 )
 
 {{- if eq .Framework "gin"}}
@@ -245,7 +249,9 @@ func Logger(next http.Handler) http.Handler {
 		}
 	})
 }
+{{- end}}
 
+{{- if ne .Framework "none"}}
 // responseWriter wraps http.ResponseWriter to capture status code and response size
 type responseWriter struct {
 	http.ResponseWriter
@@ -312,5 +318,9 @@ func getHeader(headers map[string]string, key string) string {
 
 // generateRequestID generates a unique request ID
 func generateRequestID() string {
+{{- if ne .Framework "none"}}
 	return fmt.Sprintf("req_%d", time.Now().UnixNano())
+{{- else}}
+	return "req_none"
+{{- end}}
 }
