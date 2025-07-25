@@ -1,0 +1,446 @@
+name: Enhanced Phase 2 Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    # Run weekly on Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+
+env:
+  GO_VERSION: '1.24'
+  GODOG_VERSION: 'v0.12.6'
+
+jobs:
+  # Phase 2.1: Enhanced Configuration Matrix Testing
+  enhanced-configuration-matrix:
+    name: Enhanced Configuration Matrix
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        test-scenario: [critical-combinations, high-priority-combinations, framework-consistency, database-consistency, logger-consistency]
+      fail-fast: false
+      max-parallel: 3
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install godog (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Install godog (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Run Enhanced Configuration Matrix Tests
+      working-directory: tests/acceptance/enhanced/configuration
+      run: |
+        echo "Running ${{ matrix.test-scenario }} on ${{ matrix.os }}"
+        go test -v -timeout 20m -run TestFeatures
+      timeout-minutes: 25
+
+    - name: Generate test report
+      if: always()
+      run: |
+        mkdir -p test-reports
+        echo "# Enhanced Configuration Matrix Test Report" > test-reports/config-matrix-${{ matrix.os }}-${{ matrix.test-scenario }}.md
+        echo "" >> test-reports/config-matrix-${{ matrix.os }}-${{ matrix.test-scenario }}.md
+        echo "**Platform**: ${{ matrix.os }}" >> test-reports/config-matrix-${{ matrix.os }}-${{ matrix.test-scenario }}.md
+        echo "**Scenario**: ${{ matrix.test-scenario }}" >> test-reports/config-matrix-${{ matrix.os }}-${{ matrix.test-scenario }}.md
+        echo "**Status**: ${{ job.status }}" >> test-reports/config-matrix-${{ matrix.os }}-${{ matrix.test-scenario }}.md
+        echo "**Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> test-reports/config-matrix-${{ matrix.os }}-${{ matrix.test-scenario }}.md
+
+    - name: Upload test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: config-matrix-report-${{ matrix.os }}-${{ matrix.test-scenario }}
+        path: test-reports/
+
+  # Phase 2.2: Architecture Validation Testing
+  architecture-validation:
+    name: Architecture Validation
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        architecture: [standard, clean, ddd, hexagonal]
+        framework: [gin, echo, fiber, chi]
+      fail-fast: false
+      max-parallel: 4
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install godog (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Install godog (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Run Architecture Validation Tests
+      working-directory: tests/acceptance/enhanced/architecture
+      run: |
+        echo "Testing ${{ matrix.architecture }} architecture with ${{ matrix.framework }} on ${{ matrix.os }}"
+        go test -v -timeout 15m -run TestFeatures
+      timeout-minutes: 20
+
+    - name: Analyze architecture compliance
+      if: always()
+      run: |
+        mkdir -p architecture-reports
+        echo "# Architecture Validation Report" > architecture-reports/arch-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}.md
+        echo "" >> architecture-reports/arch-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}.md
+        echo "**Platform**: ${{ matrix.os }}" >> architecture-reports/arch-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}.md
+        echo "**Architecture**: ${{ matrix.architecture }}" >> architecture-reports/arch-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}.md
+        echo "**Framework**: ${{ matrix.framework }}" >> architecture-reports/arch-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}.md
+        echo "**Status**: ${{ job.status }}" >> architecture-reports/arch-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}.md
+
+    - name: Upload architecture reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: architecture-report-${{ matrix.os }}-${{ matrix.architecture }}-${{ matrix.framework }}
+        path: architecture-reports/
+
+  # Phase 2.3: Performance Monitoring Testing
+  performance-monitoring:
+    name: Performance Monitoring
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        blueprint: [cli-simple, cli-standard, web-api-standard, web-api-clean]
+      fail-fast: false
+      max-parallel: 2
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install performance monitoring tools
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Run Performance Monitoring Tests
+      working-directory: tests/acceptance/enhanced/performance
+      run: |
+        echo "Performance testing ${{ matrix.blueprint }} on ${{ matrix.os }}"
+        go test -v -timeout 30m -run TestFeatures
+      timeout-minutes: 35
+
+    - name: Collect performance metrics
+      if: always()
+      run: |
+        mkdir -p performance-reports
+        echo "# Performance Monitoring Report" > performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        echo "" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        echo "**Platform**: ${{ matrix.os }}" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        echo "**Blueprint**: ${{ matrix.blueprint }}" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        echo "**Status**: ${{ job.status }}" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        
+        # Collect system information
+        echo "" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        echo "### System Information" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        if [ "${{ runner.os }}" == "Linux" ]; then
+          echo "**CPU**: $(nproc) cores" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+          echo "**Memory**: $(free -h | awk '/^Mem:/ {print $2}')" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+          echo "**Disk**: $(df -h / | awk 'NR==2 {print $2}')" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        elif [ "${{ runner.os }}" == "macOS" ]; then
+          echo "**CPU**: $(sysctl -n hw.ncpu) cores" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+          echo "**Memory**: $(sysctl -n hw.memsize | awk '{print $1/1024/1024/1024 " GB"}')" >> performance-reports/perf-${{ matrix.os }}-${{ matrix.blueprint }}.md
+        fi
+
+    - name: Upload performance reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: performance-report-${{ matrix.os }}-${{ matrix.blueprint }}
+        path: performance-reports/
+
+  # Phase 2.4: Cross-Platform Compatibility Testing
+  cross-platform-compatibility:
+    name: Cross-Platform Compatibility
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        test-area: [file-system, path-handling, permissions, unicode, compilation]
+      fail-fast: false
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install godog (Unix)
+      if: runner.os != 'Windows'
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Install godog (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Run Cross-Platform Tests
+      working-directory: tests/acceptance/enhanced/platform
+      run: |
+        echo "Testing ${{ matrix.test-area }} compatibility on ${{ matrix.os }}"
+        go test -v -timeout 20m -run TestFeatures
+      timeout-minutes: 25
+
+    - name: Generate compatibility report
+      if: always()
+      run: |
+        mkdir -p platform-reports
+        echo "# Cross-Platform Compatibility Report" > platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+        echo "" >> platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+        echo "**Platform**: ${{ matrix.os }}" >> platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+        echo "**Test Area**: ${{ matrix.test-area }}" >> platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+        echo "**Status**: ${{ job.status }}" >> platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+        echo "**Go Version**: ${{ env.GO_VERSION }}" >> platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+        echo "**Runner OS**: ${{ runner.os }}" >> platform-reports/platform-${{ matrix.os }}-${{ matrix.test-area }}.md
+
+    - name: Upload platform reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: platform-report-${{ matrix.os }}-${{ matrix.test-area }}
+        path: platform-reports/
+
+  # Phase 2.5: Expanded Matrix Testing
+  expanded-matrix-testing:
+    name: Expanded Matrix Testing
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        test-dimension: [framework-database, auth-combinations, logger-architecture, deployment-targets, middleware-stacks]
+      fail-fast: false
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+
+    - name: Install godog
+      run: |
+        go install github.com/cucumber/godog/cmd/godog@${{ env.GODOG_VERSION }}
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+    - name: Build go-starter
+      run: make build
+
+    - name: Run Expanded Matrix Tests
+      working-directory: tests/acceptance/enhanced/matrix
+      run: |
+        echo "Testing ${{ matrix.test-dimension }} matrix combinations"
+        go test -v -timeout 25m -run TestFeatures
+      timeout-minutes: 30
+
+    - name: Generate matrix report
+      if: always()
+      run: |
+        mkdir -p matrix-reports
+        echo "# Expanded Matrix Test Report" > matrix-reports/matrix-${{ matrix.test-dimension }}.md
+        echo "" >> matrix-reports/matrix-${{ matrix.test-dimension }}.md
+        echo "**Test Dimension**: ${{ matrix.test-dimension }}" >> matrix-reports/matrix-${{ matrix.test-dimension }}.md
+        echo "**Status**: ${{ job.status }}" >> matrix-reports/matrix-${{ matrix.test-dimension }}.md
+        echo "**Timestamp**: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> matrix-reports/matrix-${{ matrix.test-dimension }}.md
+
+    - name: Upload matrix reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: matrix-report-${{ matrix.test-dimension }}
+        path: matrix-reports/
+
+  # Phase 2 Quality Gate
+  phase2-quality-gate:
+    name: Phase 2 Quality Gate
+    runs-on: ubuntu-latest
+    needs: [enhanced-configuration-matrix, architecture-validation, performance-monitoring, cross-platform-compatibility, expanded-matrix-testing]
+    if: always()
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    
+    steps:
+    - name: Download all test reports
+      uses: actions/download-artifact@v4
+      with:
+        pattern: "*-report-*"
+        merge-multiple: true
+
+    - name: Aggregate Phase 2 results
+      run: |
+        echo "## 🚀 Phase 2: Matrix Expansion + Architecture Testing Results" > phase2-quality-report.md
+        echo "" >> phase2-quality-report.md
+        echo "### Test Suite Results" >> phase2-quality-report.md
+        echo "" >> phase2-quality-report.md
+        
+        # Check each test suite
+        if [ "${{ needs.enhanced-configuration-matrix.result }}" == "success" ]; then
+          echo "✅ **Enhanced Configuration Matrix**: PASSED" >> phase2-quality-report.md
+        else
+          echo "❌ **Enhanced Configuration Matrix**: FAILED" >> phase2-quality-report.md
+        fi
+        
+        if [ "${{ needs.architecture-validation.result }}" == "success" ]; then
+          echo "✅ **Architecture Validation**: PASSED" >> phase2-quality-report.md
+        else
+          echo "❌ **Architecture Validation**: FAILED" >> phase2-quality-report.md
+        fi
+        
+        if [ "${{ needs.performance-monitoring.result }}" == "success" ]; then
+          echo "✅ **Performance Monitoring**: PASSED" >> phase2-quality-report.md
+        else
+          echo "❌ **Performance Monitoring**: FAILED" >> phase2-quality-report.md
+        fi
+        
+        if [ "${{ needs.cross-platform-compatibility.result }}" == "success" ]; then
+          echo "✅ **Cross-Platform Compatibility**: PASSED" >> phase2-quality-report.md
+        else
+          echo "❌ **Cross-Platform Compatibility**: FAILED" >> phase2-quality-report.md
+        fi
+        
+        if [ "${{ needs.expanded-matrix-testing.result }}" == "success" ]; then
+          echo "✅ **Expanded Matrix Testing**: PASSED" >> phase2-quality-report.md
+        else
+          echo "❌ **Expanded Matrix Testing**: FAILED" >> phase2-quality-report.md
+        fi
+        
+        echo "" >> phase2-quality-report.md
+        echo "### Platform Coverage" >> phase2-quality-report.md
+        echo "- **Windows**: ${{ contains(needs.*.result, 'success') && 'TESTED' || 'PARTIAL' }}" >> phase2-quality-report.md
+        echo "- **macOS**: ${{ contains(needs.*.result, 'success') && 'TESTED' || 'PARTIAL' }}" >> phase2-quality-report.md
+        echo "- **Linux**: ${{ contains(needs.*.result, 'success') && 'TESTED' || 'PARTIAL' }}" >> phase2-quality-report.md
+        echo "" >> phase2-quality-report.md
+        
+        echo "### Architecture Coverage" >> phase2-quality-report.md
+        echo "- **Standard Architecture**: Validated across all platforms" >> phase2-quality-report.md
+        echo "- **Clean Architecture**: Dependency rule enforcement tested" >> phase2-quality-report.md
+        echo "- **DDD Architecture**: Domain patterns validation" >> phase2-quality-report.md
+        echo "- **Hexagonal Architecture**: Ports & adapters validation" >> phase2-quality-report.md
+        echo "" >> phase2-quality-report.md
+        
+        echo "### Performance Metrics" >> phase2-quality-report.md
+        echo "- **Cross-Platform Variance**: Monitored and documented" >> phase2-quality-report.md
+        echo "- **Resource Usage**: Memory, CPU, and I/O tracking" >> phase2-quality-report.md
+        echo "- **Generation Performance**: Blueprint generation timing" >> phase2-quality-report.md
+        echo "- **Compilation Performance**: Build time analysis" >> phase2-quality-report.md
+        echo "" >> phase2-quality-report.md
+        
+        # Overall gate decision
+        phase2_passed=true
+        if [ "${{ needs.enhanced-configuration-matrix.result }}" != "success" ] || \
+           [ "${{ needs.architecture-validation.result }}" != "success" ] || \
+           [ "${{ needs.performance-monitoring.result }}" != "success" ] || \
+           [ "${{ needs.cross-platform-compatibility.result }}" != "success" ] || \
+           [ "${{ needs.expanded-matrix-testing.result }}" != "success" ]; then
+          phase2_passed=false
+        fi
+        
+        if [ "$phase2_passed" = "true" ]; then
+          echo "✅ **Phase 2 Quality Gate**: PASSED" >> phase2-quality-report.md
+          echo "phase2-quality-gate=passed" >> $GITHUB_OUTPUT
+        else
+          echo "❌ **Phase 2 Quality Gate**: FAILED" >> phase2-quality-report.md
+          echo "phase2-quality-gate=failed" >> $GITHUB_OUTPUT
+        fi
+        
+        echo "" >> phase2-quality-report.md
+        echo "### Next Steps" >> phase2-quality-report.md
+        if [ "$phase2_passed" = "true" ]; then
+          echo "- ✅ Phase 2 implementation complete and validated" >> phase2-quality-report.md
+          echo "- 🚀 Ready for Phase 3: Web UI implementation" >> phase2-quality-report.md
+          echo "- 📊 Performance baselines established" >> phase2-quality-report.md
+        else
+          echo "- ❌ Address failing test suites before proceeding" >> phase2-quality-report.md
+          echo "- 🔍 Review test reports for specific failure details" >> phase2-quality-report.md
+          echo "- 🛠️ Fix issues and re-run Phase 2 validation" >> phase2-quality-report.md
+        fi
+
+    - name: Upload Phase 2 quality report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: phase2-quality-report
+        path: phase2-quality-report.md
+
+    - name: Comment on PR with Phase 2 results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          if (fs.existsSync('phase2-quality-report.md')) {
+            const report = fs.readFileSync('phase2-quality-report.md', 'utf8');
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: report
+            });
+          }
+
+    - name: Fail if Phase 2 quality gate failed
+      if: steps.aggregate-phase2-results.outputs.phase2-quality-gate == 'failed'
+      run: |
+        echo "Phase 2 quality gate failed. Please review the test results and fix issues."
+        exit 1

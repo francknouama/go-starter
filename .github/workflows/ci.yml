@@ -319,6 +319,35 @@ jobs:
           tests/acceptance/enhanced/quality/quality-test-report-${{ matrix.test-suite }}.md
           tests/acceptance/enhanced/quality/test-results-${{ matrix.test-suite }}.json
 
+  # Phase 2 Enhanced Tests Integration
+  trigger-phase2-tests:
+    name: Trigger Phase 2 Enhanced Tests
+    runs-on: ubuntu-latest
+    needs: [test, lint, template-validation]
+    if: |
+      github.event_name == 'push' || 
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'phase2-tests'))
+    
+    steps:
+    - name: Trigger Phase 2 Test Workflow
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { data: workflow } = await github.rest.actions.getWorkflowByFilename({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            filename: 'enhanced-phase2-tests.yml'
+          });
+          
+          await github.rest.actions.createWorkflowDispatch({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            workflow_id: workflow.id,
+            ref: context.ref
+          });
+          
+          console.log('✅ Phase 2 enhanced tests triggered');
+
   quality-gate:
     name: Quality Gate Assessment
     runs-on: ubuntu-latest
@@ -385,6 +414,13 @@ jobs:
         echo "- **Thread Safety**: All tests use concurrent-safe operations with sync.RWMutex" >> consolidated-quality-report.md
         echo "- **Target Performance**: < 15 seconds per test suite with caching" >> consolidated-quality-report.md
         echo "- **Cache Monitoring**: Hit/miss rates tracked for performance optimization" >> consolidated-quality-report.md
+        echo "" >> consolidated-quality-report.md
+        
+        echo "### Phase 2 Enhanced Testing" >> consolidated-quality-report.md
+        echo "- **Status**: Available for comprehensive matrix and architecture testing" >> consolidated-quality-report.md
+        echo "- **Trigger**: Add 'phase2-tests' label to PR or push to main/develop" >> consolidated-quality-report.md
+        echo "- **Coverage**: Cross-platform, architecture validation, performance monitoring" >> consolidated-quality-report.md
+        echo "- **Platforms**: Windows, macOS, Linux with full matrix testing" >> consolidated-quality-report.md
         echo "" >> consolidated-quality-report.md
         
         # Aggregate test metrics from individual reports
