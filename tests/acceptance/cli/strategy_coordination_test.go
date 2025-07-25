@@ -568,9 +568,9 @@ func (v *CLIStrategyCoordinationValidator) ValidateEnterpriseFeatures(t *testing
 		helpers.AssertFileExists(t, cmdPath)
 	}
 
-	// Should have logger factory pattern
-	loggerFactory := filepath.Join(projectPath, "internal", "logger", "factory.go")
-	helpers.AssertFileExists(t, loggerFactory)
+	// Should have logger implementation
+	loggerFile := filepath.Join(projectPath, "internal", "logger", "logger.go")
+	helpers.AssertFileExists(t, loggerFile)
 
 	// Should have configuration management
 	configFile := filepath.Join(projectPath, "internal", "config", "config.go")

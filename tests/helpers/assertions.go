@@ -205,7 +205,15 @@ func AssertCLIHelpOutput(t *testing.T, projectPath string) {
 	// Verify help output contains expected content
 	helpText := string(helpOutput)
 	assert.Contains(t, helpText, "Usage:")
-	assert.Contains(t, helpText, "Available Commands:")
+	// Check for grouped commands (new format) or traditional format
+	if !strings.Contains(helpText, "Available Commands:") {
+		// New grouped format should have at least one command group
+		assert.True(t, 
+			strings.Contains(helpText, "Resource Management:") ||
+			strings.Contains(helpText, "Information:") ||
+			strings.Contains(helpText, "Configuration:"), 
+			"Expected either 'Available Commands:' or command group headers")
+	}
 }
 
 // AssertCLIVersionOutput validates CLI version output
