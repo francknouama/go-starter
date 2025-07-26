@@ -1,0 +1,58 @@
+#!/usr/bin/make -f
+
+# Debian rules file for go-starter
+
+export DH_VERBOSE = 1
+export DH_GOPKG := github.com/francknouama/go-starter
+export DH_GOLANG_BUILDPKG := $(DH_GOPKG)/cmd/go-starter
+
+# Get version information
+VERSION := $(shell dpkg-parsechangelog -SVersion | sed 's/-[^-]*$$//')
+BUILD_DATE := $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# Go build flags
+export DH_GOLANG_GO_GENERATE := 1
+export DH_GOLANG_INSTALL_EXTRA := blueprints
+export DH_GOLANG_EXCLUDES := tests
+
+# Build flags for version information
+LDFLAGS := -s -w \
+	-X '$(DH_GOPKG)/internal/version.Version=v$(VERSION)' \
+	-X '$(DH_GOPKG)/internal/version.BuildDate=$(BUILD_DATE)'
+
+export DH_GOLANG_BUILDFLAGS := -ldflags="$(LDFLAGS)"
+
+%:
+	dh $@ --buildsystem=golang --with=golang
+
+override_dh_auto_build:
+	dh_auto_build -- -ldflags="$(LDFLAGS)"
+
+override_dh_auto_test:
+	# Skip tests that require external dependencies
+	DH_GOLANG_EXCLUDES="tests/acceptance" dh_auto_test
+
+override_dh_auto_install:
+	dh_auto_install
+	# Install additional documentation
+	install -d debian/go-starter/usr/share/doc/go-starter
+	install -m 644 README.md debian/go-starter/usr/share/doc/go-starter/
+	install -m 644 CHANGELOG.md debian/go-starter/usr/share/doc/go-starter/ || true
+	
+	# Install bash completion if available
+	if [ -f scripts/completion/go-starter.bash ]; then \
+		install -d debian/go-starter/usr/share/bash-completion/completions; \
+		install -m 644 scripts/completion/go-starter.bash \
+			debian/go-starter/usr/share/bash-completion/completions/go-starter; \
+	fi
+	
+	# Install zsh completion if available
+	if [ -f scripts/completion/go-starter.zsh ]; then \
+		install -d debian/go-starter/usr/share/zsh/vendor-completions; \
+		install -m 644 scripts/completion/go-starter.zsh \
+			debian/go-starter/usr/share/zsh/vendor-completions/_go-starter; \
+	fi
+
+override_dh_dwz:
+	# Skip dwz for Go binaries
+	true

@@ -1,0 +1,96 @@
+name: go-starter
+base: core22
+version: '1.4.0'
+summary: Comprehensive Go project generator with modern best practices
+description: |
+  go-starter is a comprehensive Go project generator that combines the simplicity 
+  of create-react-app with the flexibility of Spring Initializr. Generate 
+  production-ready Go projects with modern best practices, multiple architecture 
+  patterns, and deployment configurations.
+
+  Features:
+  - 12 Project Types: CLI, Web API, Lambda, Microservice, Library, and more
+  - Multiple Architectures: Standard, Clean Architecture, DDD, Hexagonal, Event-driven
+  - Progressive Disclosure: Smart interface that adapts to user experience level
+  - Simplified Logger System: Support for slog, zap, logrus, zerolog
+  - Production Hardening: Advanced AST operations, automated test generation
+  - Cross-platform: Linux, macOS, Windows support
+
+  Quick start:
+    go-starter new my-project --type=cli
+  
+  Interactive mode:
+    go-starter new
+  
+  Advanced mode:
+    go-starter new --advanced
+
+grade: stable
+confinement: strict
+
+architectures:
+  - build-on: amd64
+  - build-on: arm64
+
+apps:
+  go-starter:
+    command: bin/go-starter
+    environment:
+      HOME: $SNAP_USER_DATA
+      PATH: $SNAP/bin:$PATH
+    plugs:
+      - home
+      - network
+      - network-bind
+
+parts:
+  go-starter:
+    plugin: go
+    source: https://github.com/francknouama/go-starter.git
+    source-tag: v1.4.0
+    source-depth: 1
+    
+    # Build configuration
+    go-channel: 1.21/stable
+    go-importpath: github.com/francknouama/go-starter
+    
+    # Build the main binary
+    build-packages:
+      - git
+      - ca-certificates
+    
+    override-build: |
+      # Set up Go environment
+      export GOPATH=$SNAPCRAFT_PART_BUILD/go
+      export PATH=$GOPATH/bin:$PATH
+      
+      # Build with version information
+      VERSION=$(git describe --tags --always --dirty)
+      BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+      
+      cd $SNAPCRAFT_PART_SRC
+      
+      # Build the binary
+      go build \
+        -ldflags="-s -w -X 'github.com/francknouama/go-starter/internal/version.Version=${VERSION}' -X 'github.com/francknouama/go-starter/internal/version.BuildDate=${BUILD_DATE}'" \
+        -o $SNAPCRAFT_PART_INSTALL/bin/go-starter \
+        ./cmd/go-starter
+    
+    # Copy additional files
+    override-stage: |
+      snapcraftctl stage
+      
+      # Copy license and documentation
+      if [ -f "$SNAPCRAFT_PART_SRC/LICENSE" ]; then
+        cp "$SNAPCRAFT_PART_SRC/LICENSE" "$SNAPCRAFT_STAGE/"
+      fi
+      
+      if [ -f "$SNAPCRAFT_PART_SRC/README.md" ]; then
+        cp "$SNAPCRAFT_PART_SRC/README.md" "$SNAPCRAFT_STAGE/"
+      fi
+
+layout:
+  /tmp:
+    bind: $SNAP_DATA/tmp
+  /var/tmp:
+    bind: $SNAP_DATA/var-tmp
