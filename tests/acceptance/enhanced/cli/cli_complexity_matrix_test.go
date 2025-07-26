@@ -146,7 +146,9 @@ func (ctx *CLIComplexityTestContext) RegisterSteps(s *godog.ScenarioContext) {
 
 // Background step implementations
 func (ctx *CLIComplexityTestContext) iHaveTheGoStarterCLIAvailable() error {
-	// Use local binary for testing\n	binaryPath := "../../../bin/go-starter"\n	cmd := exec.Command(binaryPath, "version")
+	// Use local binary for testing
+	binaryPath := "../../../bin/go-starter"
+	cmd := exec.Command(binaryPath, "version")
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("go-starter CLI not available: %v", err)
 	}
@@ -356,7 +358,8 @@ func (ctx *CLIComplexityTestContext) generateWithComplexity(config *types.Projec
 		"--output=" + tempDir,
 	}
 	
-	binaryPath := "../../../bin/go-starter"\n	cmd := exec.Command(binaryPath, args...)
+	binaryPath := "../../../bin/go-starter"
+	cmd := exec.Command(binaryPath, args...)
 	output, err := cmd.CombinedOutput()
 	
 	if err != nil {

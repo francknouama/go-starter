@@ -6,7 +6,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -160,8 +159,6 @@ func (ctx *ArchitectureTestContext) iAnalyzeTheProjectStructure() error {
 
 func (ctx *ArchitectureTestContext) determineArchitecturalLayer(filePath string) string {
 	// Determine which architectural layer a file belongs to based on its path
-	parts := strings.Split(filePath, string(filepath.Separator))
-	
 	switch ctx.architecture {
 	case "standard":
 		if strings.Contains(filePath, "handlers") {

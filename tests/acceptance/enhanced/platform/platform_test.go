@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -592,7 +591,7 @@ func (ctx *PlatformTestContext) iHaveGeneratedProjectsOnMultiplePlatforms() erro
 
 func (ctx *PlatformTestContext) iCompileAndRunTheProjects() error {
 	// Compile and run projects on each platform
-	for platform, project := range ctx.projects {
+	for _, project := range ctx.projects {
 		// Simulate compilation
 		startTime := time.Now()
 		
