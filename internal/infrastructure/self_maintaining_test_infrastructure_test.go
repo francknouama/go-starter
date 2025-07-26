@@ -634,7 +634,11 @@ func TestExample(t *testing.T) {
 	
 	err = infra.Start()
 	require.NoError(t, err)
-	defer infra.Stop()
+	defer func() {
+		if err := infra.Stop(); err != nil {
+			t.Logf("Warning: failed to stop infrastructure: %v", err)
+		}
+	}()
 	
 	// Run maintenance
 	report, err := infra.RunMaintenance()
@@ -668,7 +672,11 @@ func TestGetCurrentStatus(t *testing.T) {
 	// Start infrastructure
 	err = infra.Start()
 	require.NoError(t, err)
-	defer infra.Stop()
+	defer func() {
+		if err := infra.Stop(); err != nil {
+			t.Logf("Warning: failed to stop infrastructure: %v", err)
+		}
+	}()
 	
 	// Perform a health check to have data
 	err = infra.performHealthCheck()

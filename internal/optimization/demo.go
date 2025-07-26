@@ -42,7 +42,9 @@ func DemonstratePipeline() {
 		config.Level.String(), config.ProfileName)
 
 	// Change to aggressive optimization
-	config.SetProfile("performance")
+	if err := config.SetProfile("performance"); err != nil {
+		fmt.Printf("   Warning: failed to set performance profile: %v\n", err)
+	}
 	fmt.Printf("   Performance profile: Level=%s\n", config.Level.String())
 	
 	// Show configuration summary
@@ -164,7 +166,9 @@ func ExampleUsage() {
 	fmt.Println("   - Use dry-run mode to preview changes")
 	
 	devConfig := DefaultConfig()
-	devConfig.SetProfile("conservative")
+	if err := devConfig.SetProfile("conservative"); err != nil {
+		fmt.Printf("   Warning: failed to set conservative profile: %v\n", err)
+	}
 	devConfig.Options.DryRun = true
 	devConfig.Options.Verbose = true
 	
@@ -178,7 +182,9 @@ func ExampleUsage() {
 	fmt.Println("   - Skip test files for faster processing")
 	
 	ciConfig := DefaultConfig()
-	ciConfig.SetProfile("balanced")
+	if err := ciConfig.SetProfile("balanced"); err != nil {
+		fmt.Printf("   Warning: failed to set balanced profile: %v\n", err)
+	}
 	ciConfig.Options.SkipTestFiles = true
 	ciConfig.Options.DryRun = false // Actually apply changes in CI
 	

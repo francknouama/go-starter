@@ -704,7 +704,10 @@ func (ctx *PerformanceTestContext) runtimeMetricsShouldMeetStandards(table *godo
 			// Validate memory footprint
 			maxMemoryStr := strings.TrimSuffix(row.Cells[3].Value, "MB")
 			maxMemoryMB := 0
-			fmt.Sscanf(maxMemoryStr, "%d", &maxMemoryMB)
+			if _, err := fmt.Sscanf(maxMemoryStr, "%d", &maxMemoryMB); err != nil {
+				// Use default if parsing fails
+				maxMemoryMB = 512
+			}
 			maxMemory := uint64(maxMemoryMB) * 1024 * 1024
 			
 			if metrics.MemoryUsage > maxMemory {

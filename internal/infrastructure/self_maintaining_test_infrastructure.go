@@ -567,7 +567,12 @@ func (s *SelfMaintainingTestInfrastructure) runTestsWithMetrics() (string, error
 	if err != nil {
 		return "", err
 	}
-	defer os.Chdir(oldDir)
+	defer func() {
+		if err := os.Chdir(oldDir); err != nil {
+			// Log error but don't fail the function
+			fmt.Printf("Warning: failed to restore directory: %v\n", err)
+		}
+	}()
 	
 	if err := os.Chdir(s.config.ProjectRoot); err != nil {
 		return "", err

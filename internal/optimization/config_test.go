@@ -332,7 +332,8 @@ func TestConfig_ConfigSummary(t *testing.T) {
 func TestConfig_GetEffectiveOptions(t *testing.T) {
 	// Test with profile-based options
 	config := DefaultConfig()
-	config.SetProfile("performance")
+	err := config.SetProfile("performance")
+	require.NoError(t, err)
 
 	options := config.GetEffectiveOptions()
 	
