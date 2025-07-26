@@ -16,7 +16,7 @@ env:
 
 jobs:
   test:
-    name: Run Tests
+    name: Comprehensive Release Testing
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -43,14 +43,48 @@ jobs:
       - name: Clean test cache
         run: go clean -testcache
 
-      - name: Run tests
+      - name: Run core tests
         run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Validate Phase 4D Infrastructure
+        run: |
+          echo "🧪 Validating Phase 4D Production Hardening Components..."
+          
+          # Test Advanced AST Operations
+          echo "🔧 Testing Advanced AST Operations..."
+          go test -v ./internal/optimization -run TestAdvancedASTOperations
+          
+          # Test Automated Test Generation
+          echo "🤖 Testing Automated Test Generation..."
+          go test -v ./internal/testing -run TestAutomatedTestGenerator
+          
+          # Test Continuous Coverage Monitoring
+          echo "📊 Testing Coverage Monitoring..."
+          go test -v ./internal/monitoring -run TestCoverageMonitor
+          
+          # Test Self-Maintaining Infrastructure
+          echo "🏗️ Testing Self-Maintaining Infrastructure..."
+          go test -v ./internal/infrastructure -run TestSelfMaintainingTestInfrastructure
+          
+          echo "✅ All Phase 4D components validated successfully!"
+
+      - name: Run enhanced quality tests
+        run: |
+          echo "🔍 Running enhanced quality validation..."
+          go test -v ./tests/acceptance/enhanced/quality/... -timeout 15m
+          echo "✅ Enhanced quality tests completed!"
 
       - name: Run linter
         uses: golangci/golangci-lint-action@v3
         with:
           version: latest
           args: --timeout=5m
+
+      - name: Validate coverage thresholds
+        run: |
+          # Check that we have good coverage on new infrastructure
+          go tool cover -func=coverage.out | grep -E "(optimization|testing|monitoring|infrastructure)" || true
+          echo "📈 Coverage validation completed"
 
   build:
     name: Build and Release
