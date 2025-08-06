@@ -1,0 +1,187 @@
+.PHONY: build run test clean dev docker-build docker-run
+
+# Variables
+BINARY_NAME={{.ProjectName}}
+BUILD_DIR=bin
+DOCKER_IMAGE={{.ProjectName}}:latest
+
+# Build the application
+build:
+	@echo "Building {{.ProjectName}}..."
+	@mkdir -p $(BUILD_DIR)
+	@go build -o $(BUILD_DIR)/$(BINARY_NAME) .
+	@echo "Build completed: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Run the application
+run: build
+	@echo "Running {{.ProjectName}}..."
+	@./$(BUILD_DIR)/$(BINARY_NAME)
+
+# Run in development mode with hot reload
+dev:
+	@echo "Starting development mode..."
+	@go run main.go
+
+# Run tests
+test:
+	@echo "Running tests..."
+	@go test -v -race ./...
+	@go test -v -race -tags=integration ./tests/...
+
+# Run tests with coverage
+test-coverage:
+	@echo "Running tests with coverage..."
+	@go test -v -race -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+	@echo "Coverage report generated: coverage.html"
+
+# Run benchmarks
+bench:
+	@echo "Running benchmarks..."
+	@go test -bench=. -benchmem ./...
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning build artifacts..."
+	@rm -rf $(BUILD_DIR)
+	@rm -f coverage.out coverage.html
+	@go clean
+
+# Format code
+fmt:
+	@echo "Formatting code..."
+	@go fmt ./...
+
+# Lint code
+lint:
+	@echo "Linting code..."
+	@golangci-lint run
+
+# Tidy dependencies
+tidy:
+	@echo "Tidying dependencies..."
+	@go mod tidy
+
+# Generate code (mocks, protobuf, etc.)
+generate:
+	@echo "Generating code..."
+	@go generate ./...
+
+# Install development tools
+install-tools:
+	@echo "Installing development tools..."
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install github.com/golang/mock/mockgen@latest
+
+# Database operations
+{{- if eq .DatabaseType "postgres"}}
+db-up:
+	@echo "Starting PostgreSQL..."
+	@docker run -d --name {{.ProjectName}}-postgres \
+		-e POSTGRES_USER=postgres \
+		-e POSTGRES_PASSWORD=password \
+		-e POSTGRES_DB={{.ProjectName}} \
+		-p 5432:5432 \
+		postgres:15-alpine
+
+db-down:
+	@echo "Stopping PostgreSQL..."
+	@docker stop {{.ProjectName}}-postgres || true
+	@docker rm {{.ProjectName}}-postgres || true
+
+db-migrate:
+	@echo "Running database migrations..."
+	@go run migrations/*.go
+{{- else if eq .DatabaseType "mongodb"}}
+db-up:
+	@echo "Starting MongoDB..."
+	@docker run -d --name {{.ProjectName}}-mongo \
+		-e MONGO_INITDB_ROOT_USERNAME=root \
+		-e MONGO_INITDB_ROOT_PASSWORD=password \
+		-e MONGO_INITDB_DATABASE={{.ProjectName}} \
+		-p 27017:27017 \
+		mongo:7.0
+
+db-down:
+	@echo "Stopping MongoDB..."
+	@docker stop {{.ProjectName}}-mongo || true
+	@docker rm {{.ProjectName}}-mongo || true
+{{- end}}
+
+# Message queue operations
+{{- if eq .MessageQueue "nats"}}
+mq-up:
+	@echo "Starting NATS..."
+	@docker run -d --name {{.ProjectName}}-nats \
+		-p 4222:4222 \
+		nats:2.10-alpine
+
+mq-down:
+	@echo "Stopping NATS..."
+	@docker stop {{.ProjectName}}-nats || true
+	@docker rm {{.ProjectName}}-nats || true
+{{- else if eq .MessageQueue "redis"}}
+mq-up:
+	@echo "Starting Redis..."
+	@docker run -d --name {{.ProjectName}}-redis \
+		-p 6379:6379 \
+		redis:7-alpine
+
+mq-down:
+	@echo "Stopping Redis..."
+	@docker stop {{.ProjectName}}-redis || true
+	@docker rm {{.ProjectName}}-redis || true
+{{- end}}
+
+# Docker operations
+docker-build:
+	@echo "Building Docker image..."
+	@docker build -t $(DOCKER_IMAGE) .
+
+docker-run: docker-build
+	@echo "Running Docker container..."
+	@docker run -p 8080:8080 --name $(BINARY_NAME) $(DOCKER_IMAGE)
+
+docker-stop:
+	@docker stop $(BINARY_NAME) || true
+	@docker rm $(BINARY_NAME) || true
+
+# Development environment
+dev-up: {{- if ne .DatabaseType "none"}}db-up{{- end}}{{- if ne .MessageQueue "none"}} mq-up{{- end}}
+	@echo "Development environment started"
+
+dev-down: {{- if ne .DatabaseType "none"}}db-down{{- end}}{{- if ne .MessageQueue "none"}} mq-down{{- end}}
+	@echo "Development environment stopped"
+
+# Help
+help:
+	@echo "Available targets:"
+	@echo "  build           - Build the application"
+	@echo "  run             - Build and run the application"
+	@echo "  dev             - Run in development mode"
+	@echo "  test            - Run tests"
+	@echo "  test-coverage   - Run tests with coverage"
+	@echo "  bench           - Run benchmarks"
+	@echo "  clean           - Clean build artifacts"
+	@echo "  fmt             - Format code"
+	@echo "  lint            - Lint code"
+	@echo "  tidy            - Tidy dependencies"
+	@echo "  generate        - Generate code"
+	@echo "  install-tools   - Install development tools"
+{{- if ne .DatabaseType "none"}}
+	@echo "  db-up           - Start database"
+	@echo "  db-down         - Stop database"
+{{- if eq .DatabaseType "postgres"}}
+	@echo "  db-migrate      - Run database migrations"
+{{- end}}
+{{- end}}
+{{- if ne .MessageQueue "none"}}
+	@echo "  mq-up           - Start message queue"
+	@echo "  mq-down         - Stop message queue"
+{{- end}}
+	@echo "  docker-build    - Build Docker image"
+	@echo "  docker-run      - Run Docker container"
+	@echo "  docker-stop     - Stop Docker container"
+	@echo "  dev-up          - Start development environment"
+	@echo "  dev-down        - Stop development environment"
+	@echo "  help            - Show this help"

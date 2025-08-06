@@ -1,0 +1,134 @@
+#!/bin/bash
+
+set -e
+
+echo "🧪 Running tests for {{.ProjectName}}..."
+
+# Set test environment variables
+export GO_ENV=test
+export LOG_LEVEL=error
+
+# Clean test cache
+echo "🧹 Cleaning test cache..."
+go clean -testcache
+
+# Run unit tests
+echo "🔬 Running unit tests..."
+go test -v -race -coverprofile=coverage.out ./...
+
+# Generate coverage report
+echo "📊 Generating coverage report..."
+go tool cover -html=coverage.out -o coverage.html
+COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}')
+echo "📈 Test coverage: $COVERAGE"
+
+# Check coverage threshold
+COVERAGE_NUM=$(echo $COVERAGE | sed 's/%//')
+THRESHOLD=70
+
+if (( $(echo "$COVERAGE_NUM < $THRESHOLD" | bc -l) )); then
+    echo "❌ Coverage $COVERAGE is below threshold ${THRESHOLD}%"
+    exit 1
+else
+    echo "✅ Coverage $COVERAGE meets threshold ${THRESHOLD}%"
+fi
+
+{{- if .EnableObservability}}
+# Run health check tests
+echo "💊 Running health check tests..."
+go test -v ./tests/health_test.go
+{{- end}}
+
+# Run integration tests
+echo "🔗 Running integration tests..."
+go test -v -tags=integration ./tests/...
+
+# Run benchmark tests
+echo "⚡ Running benchmark tests..."
+go test -bench=. -benchmem ./...
+
+{{- if eq .CommunicationProtocol "grpc"}}
+# Test gRPC endpoints (if grpcurl is available)
+if command -v grpcurl &> /dev/null; then
+    echo "🌐 Testing gRPC endpoints..."
+    
+    # Start server in background for testing
+    echo "🚀 Starting server for integration testing..."
+    ./bin/{{.ProjectName}} &
+    SERVER_PID=$!
+    
+    # Wait for server to start
+    sleep 2
+    
+    # Test health endpoint
+    echo "💊 Testing health endpoint..."
+    grpcurl -plaintext localhost:{{.Port}} grpc.health.v1.Health/Check || true
+    
+    # Stop server
+    kill $SERVER_PID
+    wait $SERVER_PID 2>/dev/null || true
+    
+    echo "✅ gRPC integration tests completed"
+else
+    echo "⚠️  grpcurl not found, skipping gRPC integration tests"
+    echo "   Install from: https://github.com/fullstorydev/grpcurl"
+fi
+{{- else if eq .CommunicationProtocol "rest"}}
+# Test REST endpoints (if curl is available)
+if command -v curl &> /dev/null; then
+    echo "🌐 Testing REST endpoints..."
+    
+    # Start server in background for testing
+    echo "🚀 Starting server for integration testing..."
+    ./bin/{{.ProjectName}} &
+    SERVER_PID=$!
+    
+    # Wait for server to start
+    sleep 2
+    
+    # Test health endpoint
+    echo "💊 Testing health endpoint..."
+    curl -f http://localhost:8080/health || true
+    
+    # Test metrics endpoint
+    {{- if .EnableObservability}}
+    echo "📊 Testing metrics endpoint..."
+    curl -f http://localhost:8080/metrics || true
+    {{- end}}
+    
+    # Stop server
+    kill $SERVER_PID
+    wait $SERVER_PID 2>/dev/null || true
+    
+    echo "✅ REST integration tests completed"
+else
+    echo "⚠️  curl not found, skipping REST integration tests"
+fi
+{{- end}}
+
+# Run security tests (if gosec is available)
+if command -v gosec &> /dev/null; then
+    echo "🔒 Running security analysis..."
+    gosec ./...
+    echo "✅ Security analysis completed"
+else
+    echo "⚠️  gosec not found, skipping security analysis"
+    echo "   Install with: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest"
+fi
+
+# Run dependency vulnerability check (if govulncheck is available)
+if command -v govulncheck &> /dev/null; then
+    echo "🛡️  Checking for vulnerabilities..."
+    govulncheck ./...
+    echo "✅ Vulnerability check completed"
+else
+    echo "⚠️  govulncheck not found, skipping vulnerability check"
+    echo "   Install with: go install golang.org/x/vuln/cmd/govulncheck@latest"
+fi
+
+echo "🎉 All tests completed successfully!"
+echo ""
+echo "📊 Coverage report: coverage.html"
+echo "📁 Test artifacts:"
+echo "  • Coverage profile: coverage.out"
+echo "  • Coverage report: coverage.html"

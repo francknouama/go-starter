@@ -1,0 +1,226 @@
+version: '3.8'
+
+services:
+  {{.ProjectName}}:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+{{- if eq .CommunicationProtocol "grpc"}}
+      - "{{.Port}}:{{.Port}}"
+{{- else if eq .CommunicationProtocol "rest"}}
+      - "8080:8080"
+{{- end}}
+{{- if .EnableObservability}}
+      - "8081:8081"  # metrics port
+{{- end}}
+    environment:
+      - GO_ENV=development
+      - LOG_LEVEL=info
+{{- if .EnableObservability}}
+      - ENABLE_METRICS=true
+      - ENABLE_TRACING=true
+{{- end}}
+{{- if ne .DatabaseType "none"}}
+      - DB_HOST={{.DatabaseType}}
+      - DB_PORT={{- if eq .DatabaseType "postgres"}}5432{{- else if eq .DatabaseType "mysql"}}3306{{- else if eq .DatabaseType "mongodb"}}27017{{- else if eq .DatabaseType "redis"}}6379{{- end}}
+      - DB_NAME={{.ProjectName}}_dev
+      - DB_USER=dev_user
+      - DB_PASSWORD=dev_password
+{{- end}}
+{{- if eq .ServiceDiscovery "consul"}}
+      - CONSUL_URL=http://consul:8500
+{{- end}}
+    depends_on:
+{{- if eq .DatabaseType "postgres"}}
+      - postgres
+{{- else if eq .DatabaseType "mysql"}}
+      - mysql
+{{- else if eq .DatabaseType "mongodb"}}
+      - mongodb
+{{- else if eq .DatabaseType "redis"}}
+      - redis
+{{- end}}
+{{- if eq .ServiceDiscovery "consul"}}
+      - consul
+{{- end}}
+{{- if .EnableObservability}}
+      - jaeger
+{{- end}}
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+{{- if eq .CommunicationProtocol "grpc"}}
+      test: ["CMD", "grpcurl", "-plaintext", "localhost:{{.Port}}", "grpc.health.v1.Health/Check"]
+{{- else}}
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+{{- end}}
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+{{- if eq .DatabaseType "postgres"}}
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: {{.ProjectName}}_dev
+      POSTGRES_USER: dev_user
+      POSTGRES_PASSWORD: dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dev_user -d {{.ProjectName}}_dev"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- else if eq .DatabaseType "mysql"}}
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: {{.ProjectName}}_dev
+      MYSQL_USER: dev_user
+      MYSQL_PASSWORD: dev_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- else if eq .DatabaseType "mongodb"}}
+  mongodb:
+    image: mongo:7.0
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: root_password
+      MONGO_INITDB_DATABASE: {{.ProjectName}}_dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+      - ./scripts/init-db.js:/docker-entrypoint-initdb.d/init-db.js
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- else if eq .DatabaseType "redis"}}
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- end}}
+
+{{- if eq .ServiceDiscovery "consul"}}
+  consul:
+    image: consul:1.16
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    command: |
+      consul agent -dev -client 0.0.0.0 -ui -log-level INFO
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8500/v1/status/leader"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- end}}
+
+{{- if .EnableObservability}}
+  jaeger:
+    image: jaegertracing/all-in-one:1.50
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # HTTP collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:16686/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./configs/grafana:/etc/grafana/provisioning
+    networks:
+      - {{.ProjectName}}-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{- end}}
+
+volumes:
+{{- if eq .DatabaseType "postgres"}}
+  postgres_data:
+{{- else if eq .DatabaseType "mysql"}}
+  mysql_data:
+{{- else if eq .DatabaseType "mongodb"}}
+  mongodb_data:
+{{- else if eq .DatabaseType "redis"}}
+  redis_data:
+{{- end}}
+{{- if .EnableObservability}}
+  prometheus_data:
+  grafana_data:
+{{- end}}
+
+networks:
+  {{.ProjectName}}-network:
+    driver: bridge

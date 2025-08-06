@@ -1,0 +1,145 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+{{if eq .Framework "gin"}}	"github.com/gin-gonic/gin"{{end}}
+{{if eq .Framework "echo"}}	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"{{end}}
+{{if eq .Framework "fiber"}}	"github.com/gofiber/fiber/v2"{{end}}
+{{if eq .Framework "chi"}}	"github.com/go-chi/chi/v5"{{end}}
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/infrastructure"
+	"{{.ModulePath}}/internal/eventstore"
+	"{{.ModulePath}}/internal/eventbus"
+	"{{.ModulePath}}/internal/cqrs"
+	"{{.ModulePath}}/internal/api"
+	"{{.ModulePath}}/internal/application"
+	"{{.ModulePath}}/internal/projections"
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Initialize logger
+	logger := infrastructure.NewLogger(cfg.Logging)
+	logger.Info("Starting event-driven application")
+
+	// Initialize event store
+	eventStore, err := eventstore.New{{title .DatabaseType}}Store(cfg.Database)
+	if err != nil {
+		logger.Fatal("Failed to initialize event store", "error", err)
+	}
+
+	// Initialize event bus
+	eventBus, err := eventbus.New{{title .MessageQueue}}Bus(cfg.MessageQueue)
+	if err != nil {
+		logger.Fatal("Failed to initialize event bus", "error", err)
+	}
+
+	// Initialize CQRS components
+	commandBus := cqrs.NewCommandBus(logger)
+	queryBus := cqrs.NewQueryBus(logger)
+
+	// Initialize projections
+	projector := projections.NewProjector(eventStore, eventBus, logger)
+
+	// Initialize application services
+	userService := application.NewUserService(commandBus, queryBus, eventStore, logger)
+	orderService := application.NewOrderService(commandBus, queryBus, eventStore, logger)
+
+	// Start projections
+	go func() {
+		if err := projector.Start(context.Background()); err != nil {
+			logger.Error("Failed to start projections", "error", err)
+		}
+	}()
+
+	// Initialize HTTP router
+{{if eq .Framework "gin"}}	router := gin.New()
+	router.Use(gin.Logger())
+	router.Use(gin.Recovery()){{end}}
+{{if eq .Framework "echo"}}	router := echo.New()
+	router.Use(middleware.Logger())
+	router.Use(middleware.Recover()){{end}}
+{{if eq .Framework "fiber"}}	router := fiber.New(){{end}}
+{{if eq .Framework "chi"}}	router := chi.NewRouter(){{end}}
+
+	// Setup API routes
+	api.SetupRoutes(router, userService, orderService)
+
+	// Health check endpoint
+{{if eq .Framework "gin"}}	router.GET("/health", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok", "service": "event-driven"})
+	}){{end}}
+{{if eq .Framework "echo"}}	router.GET("/health", func(c echo.Context) error {
+		return c.JSON(200, map[string]string{"status": "ok", "service": "event-driven"})
+	}){{end}}
+{{if eq .Framework "fiber"}}	router.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok", "service": "event-driven"})
+	}){{end}}
+{{if eq .Framework "chi"}}	router.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(200)
+		w.Write([]byte(`{"status":"ok","service":"event-driven"}`))
+	}){{end}}
+
+	// Start server
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+	
+	// Start server in a goroutine
+	go func() {
+		logger.Info("Starting server", "address", addr, "framework", "{{.Framework}}")
+{{if eq .Framework "gin"}}		if err := router.Run(addr); err != nil {
+			logger.Fatal("Failed to start server", "error", err)
+		}{{end}}
+{{if eq .Framework "echo"}}		if err := router.Start(addr); err != nil {
+			logger.Fatal("Failed to start server", "error", err)
+		}{{end}}
+{{if eq .Framework "fiber"}}		if err := router.Listen(addr); err != nil {
+			logger.Fatal("Failed to start server", "error", err)
+		}{{end}}
+{{if eq .Framework "chi"}}		if err := http.ListenAndServe(addr, router); err != nil {
+			logger.Fatal("Failed to start server", "error", err)
+		}{{end}}
+	}()
+
+	// Wait for interrupt signal
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("Shutting down server...")
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Stop projections
+	if err := projector.Stop(ctx); err != nil {
+		logger.Error("Failed to stop projections", "error", err)
+	}
+
+	// Close event bus
+	if err := eventBus.Close(); err != nil {
+		logger.Error("Failed to close event bus", "error", err)
+	}
+
+	// Close event store
+	if err := eventStore.Close(); err != nil {
+		logger.Error("Failed to close event store", "error", err)
+	}
+
+	logger.Info("Server exited gracefully")
+}

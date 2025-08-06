@@ -1,0 +1,85 @@
+#!/bin/bash
+
+set -e
+
+echo "🔧 Running code generation for {{.ProjectName}}..."
+
+{{- if eq .CommunicationProtocol "grpc"}}
+# Generate Protocol Buffer files
+if [ -f "proto/service.proto" ]; then
+    echo "🔨 Generating Protocol Buffer files..."
+    protoc --go_out=. --go-grpc_out=. proto/service.proto
+    echo "✅ Protocol Buffer files generated"
+else
+    echo "⚠️  No proto files found, skipping protobuf generation"
+fi
+{{- end}}
+
+# Format Go code
+echo "🔧 Formatting Go code..."
+go fmt ./...
+
+# Generate Go modules
+echo "🔧 Tidying Go modules..."
+go mod tidy
+
+# Generate mocks (if mockgen is available)
+if command -v mockgen &> /dev/null; then
+    echo "🔨 Generating mocks..."
+    
+    # Generate handler mocks
+    if [ -d "internal/handler" ]; then
+        mockgen -source=internal/handler/handler.go -destination=mocks/handler_mock.go -package=mocks
+    fi
+    
+    {{- if eq .ServiceDiscovery "consul"}}
+    # Generate service discovery mocks
+    if [ -f "internal/discovery/consul.go" ]; then
+        mockgen -source=internal/discovery/consul.go -destination=mocks/discovery_mock.go -package=mocks
+    fi
+    {{- else if eq .ServiceDiscovery "kubernetes"}}
+    # Generate service discovery mocks
+    if [ -f "internal/discovery/kubernetes.go" ]; then
+        mockgen -source=internal/discovery/kubernetes.go -destination=mocks/discovery_mock.go -package=mocks
+    fi
+    {{- end}}
+    
+    echo "✅ Mocks generated"
+else
+    echo "⚠️  mockgen not found, skipping mock generation"
+    echo "   Install with: go install github.com/golang/mock/mockgen@latest"
+fi
+
+# Generate OpenAPI docs (if swag is available)
+{{- if eq .CommunicationProtocol "rest"}}
+if command -v swag &> /dev/null; then
+    echo "🔨 Generating OpenAPI documentation..."
+    swag init -g main.go -o ./docs
+    echo "✅ OpenAPI documentation generated"
+else
+    echo "⚠️  swag not found, skipping OpenAPI doc generation"
+    echo "   Install with: go install github.com/swaggo/swag/cmd/swag@latest"
+fi
+{{- end}}
+
+# Build the application to verify everything compiles
+echo "🔧 Building application to verify compilation..."
+go build -o bin/{{.ProjectName}} .
+echo "✅ Application built successfully"
+
+# Run linter (if golangci-lint is available)
+if command -v golangci-lint &> /dev/null; then
+    echo "🔍 Running linter..."
+    golangci-lint run
+    echo "✅ Linting completed"
+else
+    echo "⚠️  golangci-lint not found, skipping linting"
+    echo "   Install from: https://golangci-lint.run/usage/install/"
+fi
+
+echo "🎉 Code generation completed successfully!"
+echo ""
+echo "Next steps:"
+echo "  • Run tests: ./scripts/test.sh"
+echo "  • Start development: make dev"
+echo "  • Build for production: make build"
