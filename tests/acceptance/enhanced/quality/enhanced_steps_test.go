@@ -434,28 +434,6 @@ func analyzeImportsWithAST(filePath string, problematicImports map[string]string
 	return unusedImports
 }
 
-// logCacheMetrics logs current cache performance statistics with alerts
-func logCacheMetrics() {
-	hits, misses, hitRate := cacheMetrics.GetStats()
-	total := hits + misses
-	if total > 0 {
-		fmt.Printf("📊 Cache Performance: %d hits, %d misses, %.1f%% hit rate (total: %d)\n", 
-			hits, misses, hitRate, total)
-		
-		// Performance alerts
-		if hitRate < 50.0 && total > 10 {
-			fmt.Printf("⚠️  Cache Performance Alert: Hit rate %.1f%% is below 50%% threshold\n", hitRate)
-		} else if hitRate >= 80.0 && total > 5 {
-			fmt.Printf("✅ Excellent Cache Performance: Hit rate %.1f%% exceeds 80%% threshold\n", hitRate)
-		}
-		
-		// Temp directory cleanup alert
-		tempDirCount := GetTempDirCount()
-		if tempDirCount > 20 {
-			fmt.Printf("⚠️  Resource Alert: %d temporary directories tracked (consider cleanup)\n", tempDirCount)
-		}
-	}
-}
 
 // registerTempDir tracks a temporary directory for potential cleanup
 func registerTempDir(dir string) {

@@ -25,7 +25,6 @@ type PerformanceTestContext struct {
 	// Project state
 	projectPaths    []string
 	tempDir         string
-	currentProject  string
 	
 	// Performance tracking
 	startTime       time.Time
@@ -50,13 +49,11 @@ type PerformanceTestContext struct {
 	
 	// Results and validation
 	optimizationResults []optimization.PipelineResult
-	performanceReport   performanceReport
 	validationErrors    []string
 	
 	// Test tracking
 	t                   *testing.T
 	testDirs            []string
-	lastError           error
 }
 
 type performanceBenchmark struct {
@@ -99,35 +96,7 @@ type performanceMetric struct {
 	Context     string
 }
 
-type performanceReport struct {
-	ExecutiveSummary    string
-	ProcessingTimes     map[string]time.Duration
-	ResourceUsage       resourceUsage
-	OptimizationImpact  optimizationImpact
-	ComparativeAnalysis comparativeAnalysis
-	Recommendations     []string
-}
-
-type resourceUsage struct {
-	PeakMemoryMB      int64
-	AverageCPUPercent float64
-	TotalDiskIOBytes  int64
-	MaxFileHandles    int
-}
-
-type optimizationImpact struct {
-	FilesProcessed     int
-	ImportsRemoved     int
-	VariablesRemoved   int
-	FunctionsRemoved   int
-	CodeSizeReduction  float64
-	QualityImprovement float64
-}
-
-type comparativeAnalysis struct {
-	BaselineTime       time.Duration
-	CurrentTime        time.Duration
-	PerformanceRatio   float64
+type performanceComparison struct {
 	MemoryComparison   string
 	ThroughputChange   float64
 }

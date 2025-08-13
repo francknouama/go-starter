@@ -22,7 +22,6 @@ type LambdaDeploymentTestContext struct {
 	projectPath       string
 	tempDir           string
 	startTime         time.Time
-	lastCommandOutput string
 	lastCommandError  error
 	generatedFiles    []string
 	lambdaType        string

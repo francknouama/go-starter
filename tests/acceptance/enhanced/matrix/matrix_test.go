@@ -792,14 +792,6 @@ func (ctx *MatrixTestContext) resultsShouldBeDeterministic() error {
 
 // Additional step definitions that might be missing
 
-func (ctx *MatrixTestContext) iWantToCreateANewProject(blueprintType string) error {
-	if ctx.currentConfig == nil {
-		ctx.currentConfig = &MatrixConfiguration{}
-	}
-	ctx.currentConfig.Name = fmt.Sprintf("%s-project", blueprintType)
-	return nil
-}
-
 // Optimization-Blueprint Integration step implementations
 
 func (ctx *MatrixTestContext) theOptimizationSystemIsAvailable() error {
@@ -1617,26 +1609,6 @@ func (ctx *MatrixTestContext) applyOptimizationWithLevel(projectPath, projectNam
 	}
 	
 	return ctx.applyOptimizationToProject(projectPath, projectName, false)
-}
-
-// Helper function to apply optimization with profile
-func (ctx *MatrixTestContext) applyOptimizationWithProfile(projectPath, projectName, profile string) (*optimization.PipelineResult, *OptimizationMetrics, error) {
-	// Set the optimization profile
-	ctx.optimizationProfile = profile
-	ctx.optimizationLevel = "" // Clear level when using profile
-	
-	// Initialize maps if needed
-	if ctx.optimizationResults == nil {
-		ctx.optimizationResults = make(map[string]*optimization.PipelineResult)
-	}
-	if ctx.optimizationMetrics == nil {
-		ctx.optimizationMetrics = make(map[string]*OptimizationMetrics)
-	}
-	if ctx.performanceData == nil {
-		ctx.performanceData = make(map[string]interface{})
-	}
-	
-	return ctx.applyOptimizationToProject(projectPath, projectName, true)
 }
 
 

@@ -20,7 +20,6 @@ type IDEIntegrationTestContext struct {
 	tempDir           string
 	
 	// IDE integration state
-	ideType            string
 	integrationEnabled bool
 	realTimeEnabled    bool
 	liveValidationEnabled bool
@@ -33,7 +32,6 @@ type IDEIntegrationTestContext struct {
 	
 	// Analysis and insights
 	codeAnalysisResults   *CodeAnalysisResults
-	optimizationInsights  *OptimizationInsights
 	templateFeatures      map[string]*TemplateFeatures
 	debuggingEnhancements *DebuggingEnhancements
 	

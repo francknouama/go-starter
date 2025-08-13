@@ -24,7 +24,6 @@ type EnterpriseTestContext struct {
 	projectPath       string
 	tempDir           string
 	startTime         time.Time
-	lastCommandOutput string
 	lastCommandError  error
 	generatedFiles    []string
 }

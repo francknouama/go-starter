@@ -904,13 +904,3 @@ func calculateVariance(baseline, actual time.Duration) float64 {
 	return variance
 }
 
-// Test runner for specific scenarios
-func (ctx *PlatformTestContext) runPlatformSpecificTest(platform string, testFunc func() error) error {
-	originalPlatform := ctx.currentPlatform
-	ctx.currentPlatform = platform
-	defer func() {
-		ctx.currentPlatform = originalPlatform
-	}()
-	
-	return testFunc()
-}

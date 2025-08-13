@@ -22,9 +22,7 @@ import (
 type PerformanceTestContext struct {
 	metrics           map[string]*PerformanceMetrics
 	currentBlueprint  string
-	currentProject    string
 	projectPath       string
-	tempDir           string
 	startTime         time.Time
 	cpuProfileFile    *os.File
 	memProfileFile    *os.File
@@ -33,7 +31,6 @@ type PerformanceTestContext struct {
 	
 	// Phase 4B fields
 	blueprintProfiles     map[string]*PerformanceProfile
-	resourceMonitor       *ResourceMonitor
 	performanceThresholds map[string]float64
 	
 	// Phase 4C benchmarking fields

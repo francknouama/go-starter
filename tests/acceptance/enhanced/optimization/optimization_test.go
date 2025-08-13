@@ -20,14 +20,12 @@ import (
 // OptimizationTestContext holds the state for optimization acceptance tests
 type OptimizationTestContext struct {
 	// Project generation state
-	projectConfig       *types.ProjectConfig
 	projectType         string
 	projectName         string
 	projectPath         string
 	tempDir             string
 	startTime           time.Time
 	lastCommandOutput   string
-	lastCommandError    error
 	generatedFiles      []string
 	
 	// Optimization-specific state
@@ -39,7 +37,6 @@ type OptimizationTestContext struct {
 	optimizationResult  *optimization.PipelineResult
 	config             *optimization.Config
 	warnings           []string
-	metrics            *optimization.OptimizationMetrics
 	
 	// Test data and cleanup
 	testProjects map[string]string
@@ -250,16 +247,6 @@ func (ctx *OptimizationTestContext) iHaveAnExistingProject(projectType, projectN
 	
 	ctx.testProjects[projectName] = projectPath
 	return nil
-}
-
-// createTempDir creates a temporary directory for testing
-func (ctx *OptimizationTestContext) createTempDir() string {
-	tempDir, err := os.MkdirTemp("", "go-starter-optimization-test-*")
-	if err != nil {
-		panic(fmt.Sprintf("failed to create temp directory: %v", err))
-	}
-	ctx.testDirs = append(ctx.testDirs, tempDir)
-	return tempDir
 }
 
 // Optimization configuration step implementations

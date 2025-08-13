@@ -48,7 +48,6 @@ type IntegrationTestContext struct {
 	
 	// Error tracking
 	errors              []error
-	warnings            []string
 	errorRecovery       bool
 	
 	// Backup and rollback

@@ -675,26 +675,6 @@ func (ctx *CrossSystemValidationTestContext) systemReliabilityMetricsShouldMeetO
 // Due to length constraints, I'm including key representative implementations
 
 // Helper methods for complex validation logic
-func (ctx *CrossSystemValidationTestContext) validatePerformanceWithinBounds(operation string, actual, expected string) bool {
-	// Implement performance validation logic
-	return true // Simplified for this implementation
-}
-
-func (ctx *CrossSystemValidationTestContext) validateDataFlowConsistency(pattern DataFlowPattern) bool {
-	// Implement data flow validation logic
-	return true // Simplified for this implementation
-}
-
-func (ctx *CrossSystemValidationTestContext) simulateErrorScenario(scenario ErrorScenario) ErrorHandlingResult {
-	// Simulate error scenario and return handling result
-	return ErrorHandlingResult{
-		ErrorType:         scenario.ErrorScenario,
-		HandlingEffective: true,
-		RecoverySuccessful: true,
-		CascadesPrevented: true,
-		UserGuidance:      "Clear error resolution steps provided",
-	}
-}
 
 // Placeholder implementations for remaining scenarios
 // These would be fully implemented based on the specific validation requirements
