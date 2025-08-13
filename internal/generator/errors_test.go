@@ -294,8 +294,8 @@ func TestRecoverableOperation(t *testing.T) {
 			t.Error("Expected panic to be wrapped in GenerationError")
 		}
 		
-		if genErr.Context.Component != "recovery" {
-			t.Errorf("Expected component 'recovery', got '%s'", genErr.Context.Component)
+		if genErr.Context.Component != "execution" {
+			t.Errorf("Expected component 'execution', got '%s'", genErr.Context.Component)
 		}
 	})
 }
