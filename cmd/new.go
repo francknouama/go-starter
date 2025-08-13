@@ -60,6 +60,10 @@ Examples:
   go-starter new my-api --type=web-api --logger=zap --advanced   # Direct mode (advanced)
   go-starter new my-cli --complexity=standard                    # Standard CLI project
   
+  # gRPC services (auto-sets microservice architecture)
+  go-starter new my-grpc --type=grpc-pure                        # gRPC service with microservice architecture
+  go-starter new my-grpc --type=grpc-pure --logger=zap           # gRPC service with Zap logging
+  
   # Complexity-based generation
   go-starter new my-proto --complexity=simple                    # Minimal structure
   go-starter new my-app --complexity=standard                    # Balanced structure
@@ -80,7 +84,7 @@ func init() {
 	// Project configuration flags
 	newCmd.Flags().StringVar(&projectName, "name", "", "Project name")
 	newCmd.Flags().StringVar(&projectModule, "module", "", "Go module path (e.g., github.com/user/project)")
-	newCmd.Flags().StringVar(&projectType, "type", "", "Project type (web-api, cli, library, lambda)")
+	newCmd.Flags().StringVar(&projectType, "type", "", "Project type (web-api, cli, library, lambda, grpc-pure)")
 	newCmd.Flags().StringVar(&architecture, "architecture", "", "Architecture pattern (standard, clean, ddd, hexagonal)")
 	newCmd.Flags().StringVarP(&goVersion, "go-version", "g", "", "Go version to use (auto, 1.23, 1.22, 1.21)")
 	newCmd.Flags().StringVar(&framework, "framework", "", "Framework to use (gin, echo, cobra, etc.)")
@@ -192,6 +196,11 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 	// Apply defaults for all project types when sufficient flags are provided (regardless of complexity)
 	if projectType != "" {
+		// Auto-set architecture for project types that require specific architectures
+		if projectType == "grpc-pure" && architecture == "" {
+			architecture = "microservice" // gRPC-Pure inherently uses microservice architecture
+		}
+		
 		// Set framework defaults for each project type
 		if framework == "" {
 			switch projectType {
@@ -199,7 +208,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 				actualFramework = "cobra"
 			case "web-api", "monolith":
 				actualFramework = "gin"
-			case "microservice":
+			case "microservice", "grpc-pure":
 				actualFramework = "gin"
 			default:
 				// Library and lambda don't need frameworks

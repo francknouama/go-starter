@@ -380,14 +380,6 @@ func (a *ASTAnalyzer) findVariableUsage(file *ast.File, declared map[string]*Var
 	})
 }
 
-// isDeclarationContext checks if an identifier is in a declaration context
-// This is a simplified check - a full implementation would need proper scope analysis
-func (a *ASTAnalyzer) isDeclarationContext(node ast.Node) bool {
-	// For now, we'll use a simple heuristic
-	// In a real implementation, we'd track the AST path to determine context
-	return false
-}
-
 // findUnusedFunctions identifies functions that are declared but not used
 func (a *ASTAnalyzer) findUnusedFunctions(file *ast.File) []FunctionInfo {
 	var unused []FunctionInfo

@@ -72,6 +72,15 @@ func TestGeneratorComprehensive(t *testing.T) {
 			Framework:    "echo",
 			Logger:       "zap",
 			GoVersion:    "1.21",
+			Features: &types.Features{
+				Database: types.DatabaseConfig{
+					Driver: "",
+					ORM:    "",
+				},
+				Authentication: types.AuthConfig{
+					Type: "",
+				},
+			},
 		}
 		options := types.GenerationOptions{
 			OutputPath: outputPath,
@@ -94,6 +103,15 @@ func TestGeneratorComprehensive(t *testing.T) {
 			Framework: "gin",
 			Logger:    "slog",
 			GoVersion: "1.21",
+			Features: &types.Features{
+				Database: types.DatabaseConfig{
+					Driver: "",
+					ORM:    "",
+				},
+				Authentication: types.AuthConfig{
+					Type: "",
+				},
+			},
 		}
 		options := types.GenerationOptions{
 			OutputPath: "/tmp/nonexistent",
@@ -104,7 +122,7 @@ func TestGeneratorComprehensive(t *testing.T) {
 
 		require.NoError(t, err)
 		assert.True(t, result.Success)
-		assert.Len(t, result.FilesCreated, 0) // No files should be created in dry run
+		assert.Greater(t, len(result.FilesCreated), 0) // Dry run should list files that would be created
 	})
 
 	t.Run("Generate_InvalidConfig", func(t *testing.T) {
@@ -211,6 +229,15 @@ func TestGeneratorValidation(t *testing.T) {
 				Module:    "github.com/test/valid",
 				Type:      "web-api",
 				GoVersion: "1.21",
+				Features: &types.Features{
+					Database: types.DatabaseConfig{
+						Driver: "",
+						ORM:    "",
+					},
+					Authentication: types.AuthConfig{
+						Type: "",
+					},
+				},
 			},
 			expectError: false,
 		},

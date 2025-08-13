@@ -191,6 +191,9 @@ func ValidateTemplateType(templateType string) error {
 		"microservice": true,
 		"monolith":     true,
 		"workspace":    true,
+		"grpc-pure":    true,
+		"grpc-gateway": true,
+		"graphql-api":  true,
 	}
 
 	if !validTypes[templateType] {
@@ -226,6 +229,8 @@ func ValidateArchitecture(architecture string) error {
 		"ddd":          true,
 		"hexagonal":    true,
 		"event-driven": true,
+		"microservice": true,
+		"simple":       true, // for cli-simple
 		"":             true, // empty is allowed
 	}
 

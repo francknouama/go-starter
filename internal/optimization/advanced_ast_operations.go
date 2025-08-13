@@ -631,14 +631,6 @@ func (a *AdvancedASTOperations) hasStringConcatenationInRange(rangeStmt *ast.Ran
 	return hasConcat
 }
 
-func (a *AdvancedASTOperations) isStringExpression(expr ast.Expr) bool {
-	// Simplified check for string expressions
-	if basicLit, ok := expr.(*ast.BasicLit); ok {
-		return basicLit.Kind == token.STRING
-	}
-	return false
-}
-
 func (a *AdvancedASTOperations) hasRepeatedLenCall(forStmt *ast.ForStmt) bool {
 	if forStmt.Cond != nil {
 		return a.hasLenCallInExpression(forStmt.Cond)

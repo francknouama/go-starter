@@ -241,7 +241,6 @@ type DependencyConflict struct {
 type OptimizationEngine struct {
 	optimizations []OptimizationRule
 	learned       []LearnedPattern
-	mu            sync.RWMutex
 	config        InfrastructureConfig
 }
 

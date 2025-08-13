@@ -6,12 +6,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"text/template"
 	"time"
 
 	"github.com/Masterminds/sprig/v3"
+	"github.com/francknouama/go-starter/internal/config"
 	"github.com/francknouama/go-starter/internal/templates"
 	"github.com/francknouama/go-starter/pkg/types"
 )
@@ -55,6 +57,7 @@ func (tx *GenerationTransaction) Rollback() error {
 		return nil
 	}
 
+	// Note: Use a fallback logger since g.logger might not be available during rollback
 	fmt.Printf("Rolling back failed generation at %s...\n", tx.outputPath)
 
 	var rollbackErrors []string
@@ -92,13 +95,29 @@ type Generator struct {
 	registry           *templates.Registry
 	loader             *templates.TemplateLoader
 	currentTransaction *GenerationTransaction
+	logger             *GeneratorLogger
+	errorHandler       *ErrorHandler
 }
 
-// New creates a new Generator instance
+// New creates a new Generator instance with default logging
 func New() *Generator {
+	logger := NewGeneratorLogger(LogLevelInfo)
 	return &Generator{
-		registry: templates.NewRegistry(),
-		loader:   templates.NewTemplateLoader(),
+		registry:     templates.NewRegistry(),
+		loader:       templates.NewTemplateLoader(),
+		logger:       logger,
+		errorHandler: NewErrorHandler(logger),
+	}
+}
+
+// NewWithLogger creates a new Generator instance with custom logging
+func NewWithLogger(logLevel LogLevel) *Generator {
+	logger := NewGeneratorLogger(logLevel)
+	return &Generator{
+		registry:     templates.NewRegistry(),
+		loader:       templates.NewTemplateLoader(),
+		logger:       logger,
+		errorHandler: NewErrorHandler(logger),
 	}
 }
 
@@ -118,7 +137,7 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 	// Set up recovery mechanism
 	defer func() {
 		if r := recover(); r != nil {
-			fmt.Printf("Generation panic occurred: %v\n", r)
+			g.logger.Error("Generation panic occurred: %v", r)
 			if rollbackErr := tx.Rollback(); rollbackErr != nil {
 				fmt.Printf("Rollback failed: %v\n", rollbackErr)
 			}
@@ -133,18 +152,24 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 	}
 
 	// Check if template exists
-	template, err := g.registry.Get(g.getTemplateID(config))
+	templateID := g.getTemplateID(config)
+	template, err := g.registry.Get(templateID)
 	if err != nil {
-		// For Phase 0, we'll show a helpful message about upcoming templates
-		return g.handleMissingTemplate(config, result)
+		// Try fallback: look for templates by type if direct ID lookup fails
+		templatesByType := g.registry.GetByType(config.Type)
+		if len(templatesByType) > 0 {
+			// Use the first template of this type as fallback
+			template = templatesByType[0]
+			g.logger.Debug("Using template '%s' for type '%s'", template.ID, config.Type)
+		} else {
+			// For Phase 0, we'll show a helpful message about upcoming templates
+			return g.handleMissingTemplate(config, result)
+		}
 	}
 
 	// Skip file system operations in dry run mode
 	if options.DryRun {
-		// In dry run mode, just validate the template and return success
-		result.Success = true
-		result.Duration = time.Since(startTime)
-		return result, nil
+		return g.performDryRun(config, &template, options, result, startTime)
 	}
 
 	// Check if output directory already exists and validate it
@@ -163,6 +188,7 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 	// Generate project files with transaction tracking
 	filesCreated, err := g.generateProjectFilesWithTransaction(template, config, options.OutputPath, tx)
 	if err != nil {
+		fmt.Printf("File generation error: %v\n", err)
 		result.Error = err
 		// Perform rollback on failure
 		if rollbackErr := tx.Rollback(); rollbackErr != nil {
@@ -174,14 +200,23 @@ func (g *Generator) Generate(config types.ProjectConfig, options types.Generatio
 
 	// Initialize git repository if requested
 	if !options.NoGit {
+		fmt.Printf("🔧 Initializing git repository...\n")
 		if err := g.initGitRepository(options.OutputPath); err != nil {
 			// Git init failure is not fatal, just log it
-			fmt.Printf("Warning: failed to initialize git repository: %v\n", err)
+			fmt.Printf("⚠️  Warning: failed to initialize git repository: %v\n", err)
+		} else {
+			fmt.Printf("✓ Git repository initialized\n")
 		}
 	}
 
 	result.Duration = time.Since(startTime)
 	result.Success = true
+
+	// Show completion summary
+	g.logger.Success("Project '%s' generated successfully!", config.Name)
+	g.logger.Info("Project location: %s", options.OutputPath)
+	g.logger.Info("Generation completed in %v", result.Duration)
+
 	return result, nil
 }
 
@@ -260,9 +295,17 @@ func (g *Generator) Preview(config types.ProjectConfig, outputDir string) error 
 	templateID := g.getTemplateID(config)
 	template, err := g.registry.Get(templateID)
 	if err != nil {
-		fmt.Printf("\nTemplate '%s' not found.\n", templateID)
-		fmt.Printf("Use 'go-starter list' to see available blueprints.\n")
-		return nil
+		// Try fallback: look for templates by type if direct ID lookup fails
+		templatesByType := g.registry.GetByType(config.Type)
+		if len(templatesByType) > 0 {
+			// Use the first template of this type as fallback
+			template = templatesByType[0]
+			g.logger.Debug("Using template '%s' for type '%s'", template.ID, config.Type)
+		} else {
+			fmt.Printf("\nTemplate '%s' not found.\n", templateID)
+			fmt.Printf("Use 'go-starter list' to see available blueprints.\n")
+			return nil
+		}
 	}
 
 	fmt.Printf("\nFiles to be generated:\n")
@@ -275,16 +318,63 @@ func (g *Generator) Preview(config types.ProjectConfig, outputDir string) error 
 }
 
 // validateConfig validates the project configuration
-func (g *Generator) validateConfig(config types.ProjectConfig) error {
-	if config.Name == "" {
-		return types.NewValidationError("project name is required", nil)
+func (g *Generator) validateConfig(cfg types.ProjectConfig) error {
+	// Validate project name
+	if err := config.ValidateProjectName(cfg.Name); err != nil {
+		return types.NewValidationError(fmt.Sprintf("invalid project name: %v", err), nil)
 	}
-	if config.Module == "" {
-		return types.NewValidationError("module path is required", nil)
+
+	// Validate module path
+	if err := config.ValidateModulePath(cfg.Module); err != nil {
+		return types.NewValidationError(fmt.Sprintf("invalid module path: %v", err), nil)
 	}
-	if config.Type == "" {
-		return types.NewValidationError("project type is required", nil)
+
+	// Validate project type
+	if err := config.ValidateTemplateType(cfg.Type); err != nil {
+		return types.NewValidationError(fmt.Sprintf("invalid project type: %v", err), nil)
 	}
+
+	// Validate Go version
+	if cfg.GoVersion != "" {
+		if err := config.ValidateGoVersion(cfg.GoVersion); err != nil {
+			return types.NewValidationError(fmt.Sprintf("invalid Go version: %v", err), nil)
+		}
+	}
+
+	// Validate framework
+	if err := config.ValidateFramework(cfg.Framework); err != nil {
+		return types.NewValidationError(fmt.Sprintf("invalid framework: %v", err), nil)
+	}
+
+	// Validate architecture
+	if err := config.ValidateArchitecture(cfg.Architecture); err != nil {
+		return types.NewValidationError(fmt.Sprintf("invalid architecture: %v", err), nil)
+	}
+
+	// Validate logger
+	if err := config.ValidateLogger(cfg.Logger); err != nil {
+		return types.NewValidationError(fmt.Sprintf("invalid logger: %v", err), nil)
+	}
+
+	// Validate features
+	if cfg.Features.Database.Driver != "" {
+		if err := config.ValidateDatabaseDriver(cfg.Features.Database.Driver); err != nil {
+			return types.NewValidationError(fmt.Sprintf("invalid database driver: %v", err), nil)
+		}
+	}
+
+	if cfg.Features.Database.ORM != "" {
+		if err := config.ValidateORM(cfg.Features.Database.ORM); err != nil {
+			return types.NewValidationError(fmt.Sprintf("invalid ORM: %v", err), nil)
+		}
+	}
+
+	if cfg.Features.Authentication.Type != "" {
+		if err := config.ValidateAuthType(cfg.Features.Authentication.Type); err != nil {
+			return types.NewValidationError(fmt.Sprintf("invalid authentication type: %v", err), nil)
+		}
+	}
+
 	return nil
 }
 
@@ -339,8 +429,6 @@ func (g *Generator) generateProjectFilesWithTransaction(tmpl types.Template, con
 }
 
 func (g *Generator) generateProjectFiles(tmpl types.Template, config types.ProjectConfig, outputPath string) ([]string, error) {
-	var filesCreated []string
-
 	// Create template context with all variables
 	context := g.createTemplateContext(config, tmpl)
 
@@ -350,7 +438,10 @@ func (g *Generator) generateProjectFiles(tmpl types.Template, config types.Proje
 		return nil, fmt.Errorf("template metadata missing path")
 	}
 
-	// Process each file in the template
+	g.logger.Progress("Generating project files...")
+
+	// Filter files that should be generated based on conditions
+	var filesToProcess []types.TemplateFile
 	for _, templateFile := range tmpl.Files {
 		// Evaluate condition if present
 		if templateFile.Condition != "" {
@@ -362,29 +453,33 @@ func (g *Generator) generateProjectFiles(tmpl types.Template, config types.Proje
 				continue
 			}
 		}
+		filesToProcess = append(filesToProcess, templateFile)
+	}
 
-		// Process template path with variables
-		destPath := g.processTemplatePath(templateFile.Destination, config, &tmpl)
-		fullDestPath := filepath.Join(outputPath, destPath)
+	// Use parallel processing for better performance
+	numWorkers := runtime.NumCPU()
+	if len(filesToProcess) < numWorkers {
+		// For small projects, limit workers to avoid overhead
+		numWorkers = len(filesToProcess)
+	}
+	if numWorkers < 1 {
+		numWorkers = 1
+	}
 
-		// Create directory if it doesn't exist
-		if err := os.MkdirAll(filepath.Dir(fullDestPath), 0755); err != nil {
-			return nil, types.NewFileSystemError("failed to create directory", err)
-		}
-
-		// Generate file from template
-		if err := g.processTemplateFile(templateDir, templateFile.Source, fullDestPath, context); err != nil {
-			return nil, fmt.Errorf("failed to process template file %s: %w", templateFile.Source, err)
-		}
-
-		// Set executable permission if needed
-		if templateFile.Executable {
-			if err := os.Chmod(fullDestPath, 0755); err != nil {
-				return nil, types.NewFileSystemError("failed to set executable permission", err)
-			}
-		}
-
-		filesCreated = append(filesCreated, fullDestPath)
+	// Create parallel processor with transaction support
+	processor := NewParallelTemplateProcessor(numWorkers, g.currentTransaction)
+	
+	// Process all template files in parallel
+	filesCreated, err := processor.ProcessTemplates(
+		filesToProcess,
+		templateDir,
+		outputPath,
+		context,
+		config,
+		&tmpl,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	// Process dependencies
@@ -481,8 +576,9 @@ func (g *Generator) processTemplatePath(path string, config types.ProjectConfig,
 		}
 	}
 
-	// Use text/template to process the path
-	tmpl, err := template.New("path").Funcs(sprig.FuncMap()).Parse(path)
+	// Use cached template parsing for paths
+	cacheKey := fmt.Sprintf("path:%s", path)
+	tmpl, err := templates.GetOrParseTemplate(cacheKey, path, sprig.FuncMap())
 	if err != nil {
 		// Log the error but continue with original path for backwards compatibility
 		fmt.Printf("Warning: Failed to parse template path %q: %v\n", path, err)
@@ -775,7 +871,9 @@ func (g *Generator) processTemplateFile(templateDir, sourceFile, destPath string
 	}
 
 	// Parse template with Sprig functions
-	tmpl, err := template.New(sourceFile).Funcs(sprig.FuncMap()).Parse(content)
+	// Use cached template parsing
+	cacheKey := fmt.Sprintf("%s:%s", templateDir, sourceFile)
+	tmpl, err := templates.GetOrParseTemplate(cacheKey, content, sprig.FuncMap())
 	if err != nil {
 		return fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -801,8 +899,9 @@ func (g *Generator) processTemplateFile(templateDir, sourceFile, destPath string
 
 // evaluateCondition evaluates a template condition
 func (g *Generator) evaluateCondition(condition string, context map[string]any) (bool, error) {
-	// Parse condition as a template
-	tmpl, err := template.New("condition").Funcs(sprig.FuncMap()).Parse(condition)
+	// Use cached template parsing for conditions
+	cacheKey := fmt.Sprintf("condition:%s", condition)
+	tmpl, err := templates.GetOrParseTemplate(cacheKey, condition, sprig.FuncMap())
 	if err != nil {
 		return false, fmt.Errorf("failed to parse condition: %w", err)
 	}
@@ -839,6 +938,7 @@ func (g *Generator) processDependencies(tmpl types.Template, _ types.ProjectConf
 		return nil
 	}
 
+	fmt.Printf("📦 Processing dependencies...\n")
 	var dependencies []string
 
 	// Process each dependency
@@ -864,7 +964,10 @@ func (g *Generator) processDependencies(tmpl types.Template, _ types.ProjectConf
 
 	// If we have dependencies, add them to go.mod
 	if len(dependencies) > 0 {
-		return g.addDependencies(outputPath, dependencies)
+		if err := g.addDependencies(outputPath, dependencies); err != nil {
+			return err
+		}
+		fmt.Printf("✓ Added %d dependencies\n", len(dependencies))
 	}
 
 	return nil
@@ -1053,7 +1156,7 @@ temp/
 
 	gitignorePath := filepath.Join(projectPath, ".gitignore")
 	if err := os.WriteFile(gitignorePath, []byte(strings.TrimSpace(gitignoreContent)), 0644); err != nil {
-		return err
+		return fmt.Errorf("failed to create .gitignore file: %w", err)
 	}
 
 	// Track file creation for rollback if transaction is active
@@ -1092,4 +1195,73 @@ func (g *Generator) checkOutputDirectory(outputPath string) error {
 	}
 
 	return nil
+}
+
+// performDryRun simulates project generation and shows what would be created
+func (g *Generator) performDryRun(config types.ProjectConfig, template *types.Template, options types.GenerationOptions, result *types.GenerationResult, startTime time.Time) (*types.GenerationResult, error) {
+	fmt.Printf("🔍 DRY RUN MODE - Preview of project generation\n\n")
+	fmt.Printf("📋 Project Configuration:\n")
+	fmt.Printf("   Name: %s\n", config.Name)
+	fmt.Printf("   Module: %s\n", config.Module)
+	fmt.Printf("   Type: %s\n", config.Type)
+	fmt.Printf("   Architecture: %s\n", config.Architecture)
+	fmt.Printf("   Framework: %s\n", config.Framework)
+	fmt.Printf("   Logger: %s\n", config.Logger)
+	fmt.Printf("   Go Version: %s\n\n", config.GoVersion)
+
+	fmt.Printf("📁 Files that would be generated:\n")
+
+	// Create template context
+	context := g.createTemplateContext(config, *template)
+
+	var fileList []string
+	for _, templateFile := range template.Files {
+		// Evaluate condition if present
+		if templateFile.Condition != "" {
+			shouldGenerate, err := g.evaluateCondition(templateFile.Condition, context)
+			if err != nil {
+				continue // Skip on error
+			}
+			if !shouldGenerate {
+				continue
+			}
+		}
+
+		// Process template path with variables
+		destPath := g.processTemplatePath(templateFile.Destination, config, template)
+		relPath := filepath.Join(config.Name, destPath)
+		fmt.Printf("   ✓ %s\n", relPath)
+		fileList = append(fileList, relPath)
+	}
+
+	// Show dependency information
+	if len(template.Dependencies) > 0 {
+		fmt.Printf("\n📦 Dependencies that would be added:\n")
+		for _, dep := range template.Dependencies {
+			// Check if dependency condition is met
+			if dep.Condition != "" {
+				shouldInclude, err := g.evaluateCondition(dep.Condition, context)
+				if err != nil || !shouldInclude {
+					continue
+				}
+			}
+			fmt.Printf("   + %s\n", dep.Module)
+		}
+	}
+
+	// Show git initialization info
+	if !options.NoGit {
+		fmt.Printf("\n🔧 Additional actions that would be performed:\n")
+		fmt.Printf("   ✓ Initialize git repository\n")
+		fmt.Printf("   ✓ Create .gitignore file\n")
+		fmt.Printf("   ✓ Run go mod tidy\n")
+	}
+
+	fmt.Printf("\n✨ Total files: %d\n", len(fileList))
+	fmt.Printf("💡 To actually generate the project, run the same command without --dry-run\n\n")
+
+	result.Success = true
+	result.FilesCreated = fileList
+	result.Duration = time.Since(startTime)
+	return result, nil
 }

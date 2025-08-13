@@ -57,6 +57,15 @@ func TestGenerator_validateConfig(t *testing.T) {
 				Name:   "test-project",
 				Module: "github.com/test/project",
 				Type:   "web-api",
+				Features: &types.Features{
+					Database: types.DatabaseConfig{
+						Driver: "",
+						ORM:    "",
+					},
+					Authentication: types.AuthConfig{
+						Type: "",
+					},
+				},
 			},
 			wantErr: false,
 		},

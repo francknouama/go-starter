@@ -88,7 +88,7 @@ func scanBlueprints(blueprintPath string, verbose bool, outputFormat string) err
 	// Walk through all blueprint files
 	err := filepath.Walk(blueprintPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return fmt.Errorf("error walking path %s: %w", path, err)
 		}
 
 		// Skip directories and non-blueprint files
