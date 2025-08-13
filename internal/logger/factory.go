@@ -118,3 +118,9 @@ func GetSupportedLevels() []string {
 func GetSupportedFormats() []string {
 	return []string{"json", "text", "console"}
 }
+
+// NewLogger creates a new logger instance with the given configuration
+func NewLogger(config *Config) (Logger, error) {
+	factory := NewFactory()
+	return factory.Create(config)
+}

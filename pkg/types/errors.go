@@ -10,6 +10,7 @@ const (
 	ErrCodeGenerationError  = "GENERATION_ERROR"
 	ErrCodeFileSystem       = "FILESYSTEM_ERROR"
 	ErrCodeConfigError      = "CONFIG_ERROR"
+	ErrCodeDependency       = "DEPENDENCY_ERROR"
 )
 
 // GoStarterError represents a go-starter specific error
