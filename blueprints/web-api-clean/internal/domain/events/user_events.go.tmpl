@@ -1,0 +1,241 @@
+package events
+
+import (
+	"time"
+
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+// DomainEvent represents a domain event in the Clean Architecture
+type DomainEvent interface {
+	// EventID returns the unique identifier of the event
+	EventID() string
+	
+	// EventType returns the type name of the event
+	EventType() string
+	
+	// OccurredAt returns when the event occurred
+	OccurredAt() time.Time
+	
+	// AggregateID returns the ID of the aggregate that produced this event
+	AggregateID() string
+	
+	// EventVersion returns the version of this event schema
+	EventVersion() int
+}
+
+// BaseEvent provides common event functionality
+type BaseEvent struct {
+	ID          string    `json:"id"`
+	Type        string    `json:"type"`
+	OccurredOn  time.Time `json:"occurred_at"`
+	Version     int       `json:"version"`
+	AggregateId string    `json:"aggregate_id"`
+}
+
+// EventID implements DomainEvent interface
+func (e BaseEvent) EventID() string {
+	return e.ID
+}
+
+// EventType implements DomainEvent interface
+func (e BaseEvent) EventType() string {
+	return e.Type
+}
+
+// OccurredAt implements DomainEvent interface
+func (e BaseEvent) OccurredAt() time.Time {
+	return e.OccurredOn
+}
+
+// AggregateID implements DomainEvent interface
+func (e BaseEvent) AggregateID() string {
+	return e.AggregateId
+}
+
+// EventVersion implements DomainEvent interface
+func (e BaseEvent) EventVersion() int {
+	return e.Version
+}
+
+// UserCreatedEvent is raised when a new user is created
+type UserCreatedEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	Username  string              `json:"username"`
+	FirstName string              `json:"first_name"`
+	LastName  string              `json:"last_name"`
+}
+
+// NewUserCreatedEvent creates a new UserCreatedEvent
+func NewUserCreatedEvent(userID valueobjects.UserID, email valueobjects.Email, username, firstName, lastName string) *UserCreatedEvent {
+	return &UserCreatedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.created",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		Username:  username,
+		FirstName: firstName,
+		LastName:  lastName,
+	}
+}
+
+// UserUpdatedEvent is raised when a user is updated
+type UserUpdatedEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	Username  string              `json:"username"`
+	FirstName string              `json:"first_name"`
+	LastName  string              `json:"last_name"`
+	Changes   map[string]interface{} `json:"changes"`
+}
+
+// NewUserUpdatedEvent creates a new UserUpdatedEvent
+func NewUserUpdatedEvent(userID valueobjects.UserID, email valueobjects.Email, username, firstName, lastName string, changes map[string]interface{}) *UserUpdatedEvent {
+	return &UserUpdatedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.updated",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		Username:  username,
+		FirstName: firstName,
+		LastName:  lastName,
+		Changes:   changes,
+	}
+}
+
+// UserDeletedEvent is raised when a user is deleted
+type UserDeletedEvent struct {
+	BaseEvent
+	UserID   valueobjects.UserID `json:"user_id"`
+	Email    valueobjects.Email  `json:"email"`
+	Username string              `json:"username"`
+	Reason   string              `json:"reason,omitempty"`
+}
+
+// NewUserDeletedEvent creates a new UserDeletedEvent
+func NewUserDeletedEvent(userID valueobjects.UserID, email valueobjects.Email, username, reason string) *UserDeletedEvent {
+	return &UserDeletedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.deleted",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:   userID,
+		Email:    email,
+		Username: username,
+		Reason:   reason,
+	}
+}
+
+// UserActivatedEvent is raised when a user is activated
+type UserActivatedEvent struct {
+	BaseEvent
+	UserID valueobjects.UserID `json:"user_id"`
+	Email  valueobjects.Email  `json:"email"`
+}
+
+// NewUserActivatedEvent creates a new UserActivatedEvent
+func NewUserActivatedEvent(userID valueobjects.UserID, email valueobjects.Email) *UserActivatedEvent {
+	return &UserActivatedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.activated",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID: userID,
+		Email:  email,
+	}
+}
+
+// UserDeactivatedEvent is raised when a user is deactivated
+type UserDeactivatedEvent struct {
+	BaseEvent
+	UserID valueobjects.UserID `json:"user_id"`
+	Email  valueobjects.Email  `json:"email"`
+	Reason string              `json:"reason,omitempty"`
+}
+
+// NewUserDeactivatedEvent creates a new UserDeactivatedEvent
+func NewUserDeactivatedEvent(userID valueobjects.UserID, email valueobjects.Email, reason string) *UserDeactivatedEvent {
+	return &UserDeactivatedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.deactivated",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID: userID,
+		Email:  email,
+		Reason: reason,
+	}
+}
+
+// UserEmailChangedEvent is raised when a user's email is changed
+type UserEmailChangedEvent struct {
+	BaseEvent
+	UserID   valueobjects.UserID `json:"user_id"`
+	OldEmail valueobjects.Email  `json:"old_email"`
+	NewEmail valueobjects.Email  `json:"new_email"`
+}
+
+// NewUserEmailChangedEvent creates a new UserEmailChangedEvent
+func NewUserEmailChangedEvent(userID valueobjects.UserID, oldEmail, newEmail valueobjects.Email) *UserEmailChangedEvent {
+	return &UserEmailChangedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.email_changed",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:   userID,
+		OldEmail: oldEmail,
+		NewEmail: newEmail,
+	}
+}
+
+// UserPasswordChangedEvent is raised when a user's password is changed
+type UserPasswordChangedEvent struct {
+	BaseEvent
+	UserID valueobjects.UserID `json:"user_id"`
+	Email  valueobjects.Email  `json:"email"`
+}
+
+// NewUserPasswordChangedEvent creates a new UserPasswordChangedEvent
+func NewUserPasswordChangedEvent(userID valueobjects.UserID, email valueobjects.Email) *UserPasswordChangedEvent {
+	return &UserPasswordChangedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.password_changed",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID: userID,
+		Email:  email,
+	}
+}
+
+// generateEventID generates a unique event ID
+func generateEventID() string {
+	// In a real implementation, you might use UUID or another unique ID generator
+	return valueobjects.NewRandomUserID().Value() // Reusing UserID generation logic
+}

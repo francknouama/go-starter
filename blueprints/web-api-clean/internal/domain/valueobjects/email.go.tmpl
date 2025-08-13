@@ -1,0 +1,112 @@
+package valueobjects
+
+import (
+	"errors"
+	"regexp"
+	"strings"
+)
+
+// Email represents a valid email address
+// This is an immutable value object that ensures email format validation
+type Email struct {
+	value string
+}
+
+// Domain errors for Email value object
+var (
+	ErrInvalidEmailFormat = errors.New("invalid email format")
+	ErrEmptyEmail         = errors.New("email cannot be empty")
+	ErrEmailTooLong       = errors.New("email must be less than 254 characters")
+)
+
+// Email validation regex (RFC 5322 simplified)
+var emailRegex = regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+
+// NewEmail creates a new Email value object from a string
+func NewEmail(value string) (*Email, error) {
+	if err := validateEmail(value); err != nil {
+		return nil, err
+	}
+
+	return &Email{
+		value: strings.ToLower(strings.TrimSpace(value)),
+	}, nil
+}
+
+// Value returns the string representation of the email
+func (e Email) Value() string {
+	return e.value
+}
+
+// String implements the Stringer interface
+func (e Email) String() string {
+	return e.value
+}
+
+// Equals checks if two emails are equal
+func (e Email) Equals(other Email) bool {
+	return e.value == other.value
+}
+
+// Domain returns the domain part of the email
+func (e Email) Domain() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[1]
+}
+
+// LocalPart returns the local part of the email (before @)
+func (e Email) LocalPart() string {
+	parts := strings.Split(e.value, "@")
+	if len(parts) != 2 {
+		return ""
+	}
+	return parts[0]
+}
+
+// IsEmpty checks if the email is empty
+func (e Email) IsEmpty() bool {
+	return e.value == ""
+}
+
+// validateEmail validates the email format and constraints
+func validateEmail(value string) error {
+	trimmed := strings.TrimSpace(value)
+	
+	if trimmed == "" {
+		return ErrEmptyEmail
+	}
+
+	if len(trimmed) > 254 {
+		return ErrEmailTooLong
+	}
+
+	// Convert to lowercase for validation
+	lower := strings.ToLower(trimmed)
+	
+	if !emailRegex.MatchString(lower) {
+		return ErrInvalidEmailFormat
+	}
+
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler interface
+func (e Email) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + e.value + `"`), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface
+func (e *Email) UnmarshalJSON(data []byte) error {
+	// Remove quotes from JSON string
+	value := strings.Trim(string(data), `"`)
+	
+	if err := validateEmail(value); err != nil {
+		return err
+	}
+	
+	e.value = strings.ToLower(strings.TrimSpace(value))
+	return nil
+}

@@ -132,6 +132,28 @@ files:
     destination: "internal/domain/entities/auth.go"
     condition: "{{ne .AuthType \"\"}}"
 
+  # Value Objects - immutable domain objects
+  - source: "internal/domain/valueobjects/user_id.go.tmpl"
+    destination: "internal/domain/valueobjects/user_id.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/domain/valueobjects/email.go.tmpl"
+    destination: "internal/domain/valueobjects/email.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/domain/valueobjects/password.go.tmpl"
+    destination: "internal/domain/valueobjects/password.go"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Domain Events - business events that occur in the domain
+  - source: "internal/domain/events/user_events.go.tmpl"
+    destination: "internal/domain/events/user_events.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "internal/domain/events/auth_events.go.tmpl"
+    destination: "internal/domain/events/auth_events.go"
+    condition: "{{ne .AuthType \"\"}}"
+
   # === USE CASES LAYER ===
   # Application business rules - depends only on entities
   - source: "internal/domain/usecases/user_usecase.go.tmpl"
@@ -341,6 +363,15 @@ files:
     destination: "tests/unit/usecases_test.go"
     condition: "{{ne .DatabaseDriver \"\"}}"
 
+  # Enhanced domain layer tests
+  - source: "tests/unit/domain/valueobjects_test.go.tmpl"
+    destination: "tests/unit/domain/valueobjects_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
+  - source: "tests/unit/domain/events_test.go.tmpl"
+    destination: "tests/unit/domain/events_test.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+
   - source: "tests/integration/api_test.go.tmpl"
     destination: "tests/integration/api_test.go"
 
@@ -372,6 +403,7 @@ files:
     destination: "scripts/dev.sh"
 
 dependencies:
+  # Framework dependencies (only the selected one is included)
   - module: "github.com/gin-gonic/gin"
     version: "v1.9.1"
     condition: "{{eq .Framework \"gin\"}}"
@@ -384,8 +416,12 @@ dependencies:
   - module: "github.com/go-chi/chi/v5"
     version: "v5.0.10"
     condition: "{{eq .Framework \"chi\"}}"
+
+  # Configuration
   - module: "github.com/spf13/viper"
     version: "v1.16.0"
+
+  # Logger dependencies (only the selected one is included)
   - module: "go.uber.org/zap"
     version: "v1.26.0"
     condition: "{{eq .Logger \"zap\"}}"
@@ -395,6 +431,8 @@ dependencies:
   - module: "github.com/rs/zerolog"
     version: "v1.31.0"
     condition: "{{eq .Logger \"zerolog\"}}"
+
+  # Database dependencies
   - module: "github.com/lib/pq"
     version: "v1.10.9"
     condition: "{{eq .DatabaseDriver \"postgres\"}}"
@@ -410,9 +448,21 @@ dependencies:
   - module: "gorm.io/driver/sqlite"
     version: "v1.5.4"
     condition: "{{eq .DatabaseDriver \"sqlite\"}}"
+
+  # Authentication dependencies
   - module: "github.com/golang-jwt/jwt/v5"
     version: "v5.0.0"
     condition: "{{eq .AuthType \"jwt\"}}"
+
+  # Enhanced Clean Architecture dependencies
+  - module: "github.com/google/uuid"
+    version: "v1.4.0"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  - module: "golang.org/x/crypto"
+    version: "v0.17.0"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Testing dependencies
   - module: "github.com/stretchr/testify"
     version: "v1.8.4"
 
@@ -434,6 +484,26 @@ features:
     description: "Clean Architecture with layered design and dependency inversion"
     enabled_when: "true"
     
+  - name: "value_objects"
+    description: "Immutable domain value objects for strong typing and validation"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
+  - name: "domain_events"
+    description: "Domain events for capturing business-significant occurrences"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
+  - name: "entity_encapsulation"
+    description: "Proper entity encapsulation with getters and business methods"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
+  - name: "password_security"
+    description: "Secure password handling with bcrypt and validation"
+    enabled_when: "{{ne .AuthType \"\"}}"
+    
+  - name: "email_validation"
+    description: "RFC-compliant email validation and handling"
+    enabled_when: "{{ne .DatabaseDriver \"\"}}"
+    
   - name: "logging"
     description: "Structured logging with configurable logger"
     enabled_when: "true"
@@ -443,7 +513,7 @@ features:
     enabled_when: "{{ne .DatabaseDriver \"\"}}"
     
   - name: "authentication"
-    description: "JWT authentication with use cases"
+    description: "JWT authentication with use cases and events"
     enabled_when: "{{ne .AuthType \"\"}}"
     
   - name: "docker"
@@ -456,6 +526,10 @@ features:
 
   - name: "dependency_injection"
     description: "Dependency injection container for Clean Architecture"
+    enabled_when: "true"
+    
+  - name: "comprehensive_testing"
+    description: "Unit tests for domain layer with value objects and events"
     enabled_when: "true"
 
 validation:

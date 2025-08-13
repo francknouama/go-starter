@@ -1,0 +1,314 @@
+package domain
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+
+	"{{.ModulePath}}/internal/domain/valueobjects"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestUserID(t *testing.T) {
+	t.Run("NewUserID_ValidUUID_Success", func(t *testing.T) {
+		validUUID := "123e4567-e89b-12d3-a456-426614174000"
+		userID, err := valueobjects.NewUserID(validUUID)
+		
+		require.NoError(t, err)
+		assert.Equal(t, validUUID, userID.Value())
+		assert.Equal(t, validUUID, userID.String())
+		assert.False(t, userID.IsEmpty())
+	})
+
+	t.Run("NewUserID_InvalidUUID_Error", func(t *testing.T) {
+		invalidUUID := "not-a-uuid"
+		userID, err := valueobjects.NewUserID(invalidUUID)
+		
+		assert.Error(t, err)
+		assert.Nil(t, userID)
+		assert.Equal(t, valueobjects.ErrInvalidUserID, err)
+	})
+
+	t.Run("NewUserID_EmptyString_Error", func(t *testing.T) {
+		userID, err := valueobjects.NewUserID("")
+		
+		assert.Error(t, err)
+		assert.Nil(t, userID)
+		assert.Equal(t, valueobjects.ErrEmptyUserID, err)
+	})
+
+	t.Run("NewRandomUserID_GeneratesValidUUID", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		
+		assert.NotNil(t, userID)
+		assert.NotEmpty(t, userID.Value())
+		assert.False(t, userID.IsEmpty())
+		
+		// Should be able to create another UserID from the generated value
+		_, err := valueobjects.NewUserID(userID.Value())
+		assert.NoError(t, err)
+	})
+
+	t.Run("UserID_Equals_SameValue_True", func(t *testing.T) {
+		uuid := "123e4567-e89b-12d3-a456-426614174000"
+		userID1, _ := valueobjects.NewUserID(uuid)
+		userID2, _ := valueobjects.NewUserID(uuid)
+		
+		assert.True(t, userID1.Equals(*userID2))
+	})
+
+	t.Run("UserID_Equals_DifferentValue_False", func(t *testing.T) {
+		userID1, _ := valueobjects.NewUserID("123e4567-e89b-12d3-a456-426614174000")
+		userID2, _ := valueobjects.NewUserID("987e6543-e21b-34d5-b678-642613174001")
+		
+		assert.False(t, userID1.Equals(*userID2))
+	})
+
+	t.Run("UserID_JSON_MarshalUnmarshal", func(t *testing.T) {
+		original, _ := valueobjects.NewUserID("123e4567-e89b-12d3-a456-426614174000")
+		
+		// Marshal to JSON
+		jsonData, err := json.Marshal(original)
+		require.NoError(t, err)
+		
+		// Unmarshal from JSON
+		var unmarshaled valueobjects.UserID
+		err = json.Unmarshal(jsonData, &unmarshaled)
+		require.NoError(t, err)
+		
+		assert.True(t, original.Equals(unmarshaled))
+	})
+}
+
+func TestEmail(t *testing.T) {
+	t.Run("NewEmail_ValidEmail_Success", func(t *testing.T) {
+		validEmail := "test@example.com"
+		email, err := valueobjects.NewEmail(validEmail)
+		
+		require.NoError(t, err)
+		assert.Equal(t, validEmail, email.Value())
+		assert.Equal(t, validEmail, email.String())
+		assert.False(t, email.IsEmpty())
+	})
+
+	t.Run("NewEmail_ValidEmailWithSpaces_TrimsAndLowercase", func(t *testing.T) {
+		emailWithSpaces := "  TEST@EXAMPLE.COM  "
+		expected := "test@example.com"
+		email, err := valueobjects.NewEmail(emailWithSpaces)
+		
+		require.NoError(t, err)
+		assert.Equal(t, expected, email.Value())
+	})
+
+	t.Run("NewEmail_InvalidFormat_Error", func(t *testing.T) {
+		testCases := []struct {
+			name  string
+			email string
+		}{
+			{"no at symbol", "testexample.com"},
+			{"no domain", "test@"},
+			{"no local part", "@example.com"},
+			{"invalid characters", "test@exam ple.com"},
+			{"no TLD", "test@example"},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				email, err := valueobjects.NewEmail(tc.email)
+				assert.Error(t, err)
+				assert.Nil(t, email)
+				assert.Equal(t, valueobjects.ErrInvalidEmailFormat, err)
+			})
+		}
+	})
+
+	t.Run("NewEmail_EmptyString_Error", func(t *testing.T) {
+		email, err := valueobjects.NewEmail("")
+		
+		assert.Error(t, err)
+		assert.Nil(t, email)
+		assert.Equal(t, valueobjects.ErrEmptyEmail, err)
+	})
+
+	t.Run("NewEmail_TooLong_Error", func(t *testing.T) {
+		// Create an email longer than 254 characters
+		longLocal := strings.Repeat("a", 200)
+		longDomain := strings.Repeat("b", 50) + ".com"
+		longEmail := longLocal + "@" + longDomain
+		
+		email, err := valueobjects.NewEmail(longEmail)
+		
+		assert.Error(t, err)
+		assert.Nil(t, email)
+		assert.Equal(t, valueobjects.ErrEmailTooLong, err)
+	})
+
+	t.Run("Email_Domain_ReturnsCorrectDomain", func(t *testing.T) {
+		email, _ := valueobjects.NewEmail("user@example.com")
+		
+		assert.Equal(t, "example.com", email.Domain())
+	})
+
+	t.Run("Email_LocalPart_ReturnsCorrectLocalPart", func(t *testing.T) {
+		email, _ := valueobjects.NewEmail("user@example.com")
+		
+		assert.Equal(t, "user", email.LocalPart())
+	})
+
+	t.Run("Email_Equals_SameValue_True", func(t *testing.T) {
+		email1, _ := valueobjects.NewEmail("test@example.com")
+		email2, _ := valueobjects.NewEmail("TEST@EXAMPLE.COM") // Should be normalized
+		
+		assert.True(t, email1.Equals(*email2))
+	})
+
+	t.Run("Email_JSON_MarshalUnmarshal", func(t *testing.T) {
+		original, _ := valueobjects.NewEmail("test@example.com")
+		
+		// Marshal to JSON
+		jsonData, err := json.Marshal(original)
+		require.NoError(t, err)
+		
+		// Unmarshal from JSON
+		var unmarshaled valueobjects.Email
+		err = json.Unmarshal(jsonData, &unmarshaled)
+		require.NoError(t, err)
+		
+		assert.True(t, original.Equals(unmarshaled))
+	})
+}
+
+func TestPassword(t *testing.T) {
+	t.Run("NewPassword_ValidPassword_Success", func(t *testing.T) {
+		validPassword := "StrongPass123!"
+		password, err := valueobjects.NewPassword(validPassword)
+		
+		require.NoError(t, err)
+		assert.NotEmpty(t, password.Hash())
+		assert.False(t, password.IsEmpty())
+		assert.True(t, password.Verify(validPassword))
+	})
+
+	t.Run("NewPassword_WeakPassword_Error", func(t *testing.T) {
+		testCases := []struct {
+			name     string
+			password string
+			expected error
+		}{
+			{"empty password", "", valueobjects.ErrEmptyPassword},
+			{"only spaces", "   ", valueobjects.ErrPasswordOnlySpaces},
+			{"too short", "Short1!", valueobjects.ErrPasswordTooShort},
+			{"no uppercase", "lowercase123!", valueobjects.ErrPasswordTooWeak},
+			{"no lowercase", "UPPERCASE123!", valueobjects.ErrPasswordTooWeak},
+			{"no digits", "NoDigitsHere!", valueobjects.ErrPasswordTooWeak},
+			{"no special", "NoSpecialChars123", valueobjects.ErrPasswordTooWeak},
+		}
+
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				password, err := valueobjects.NewPassword(tc.password)
+				assert.Error(t, err)
+				assert.Nil(t, password)
+				assert.Equal(t, tc.expected, err)
+			})
+		}
+	})
+
+	t.Run("NewPassword_TooLong_Error", func(t *testing.T) {
+		longPassword := strings.Repeat("StrongPass123!", 10) // Much longer than 128 chars
+		password, err := valueobjects.NewPassword(longPassword)
+		
+		assert.Error(t, err)
+		assert.Nil(t, password)
+		assert.Equal(t, valueobjects.ErrPasswordTooLong, err)
+	})
+
+	t.Run("NewPasswordFromHash_ValidHash_Success", func(t *testing.T) {
+		// Create a password and get its hash
+		originalPassword, _ := valueobjects.NewPassword("StrongPass123!")
+		hash := originalPassword.Hash()
+		
+		// Create password from hash
+		passwordFromHash, err := valueobjects.NewPasswordFromHash(hash)
+		
+		require.NoError(t, err)
+		assert.Equal(t, hash, passwordFromHash.Hash())
+		assert.True(t, passwordFromHash.Verify("StrongPass123!"))
+	})
+
+	t.Run("NewPasswordFromHash_InvalidHash_Error", func(t *testing.T) {
+		invalidHash := "not-a-bcrypt-hash"
+		password, err := valueobjects.NewPasswordFromHash(invalidHash)
+		
+		assert.Error(t, err)
+		assert.Nil(t, password)
+		assert.Equal(t, valueobjects.ErrInvalidHashedPassword, err)
+	})
+
+	t.Run("GenerateRandomPassword_ValidLength_Success", func(t *testing.T) {
+		password, err := valueobjects.GenerateRandomPassword(12)
+		
+		require.NoError(t, err)
+		assert.NotNil(t, password)
+		assert.NotEmpty(t, password.Hash())
+		assert.False(t, password.IsEmpty())
+	})
+
+	t.Run("GenerateRandomPassword_TooShort_UsesDefault", func(t *testing.T) {
+		password, err := valueobjects.GenerateRandomPassword(4)
+		
+		require.NoError(t, err)
+		assert.NotNil(t, password)
+		// Should generate at least 12 characters (default minimum)
+	})
+
+	t.Run("Password_Verify_CorrectPassword_True", func(t *testing.T) {
+		plaintext := "StrongPass123!"
+		password, _ := valueobjects.NewPassword(plaintext)
+		
+		assert.True(t, password.Verify(plaintext))
+	})
+
+	t.Run("Password_Verify_WrongPassword_False", func(t *testing.T) {
+		password, _ := valueobjects.NewPassword("StrongPass123!")
+		
+		assert.False(t, password.Verify("WrongPassword"))
+	})
+
+	t.Run("Password_Equals_SameHash_True", func(t *testing.T) {
+		plaintext := "StrongPass123!"
+		password1, _ := valueobjects.NewPassword(plaintext)
+		password2, _ := valueobjects.NewPasswordFromHash(password1.Hash())
+		
+		assert.True(t, password1.Equals(*password2))
+	})
+
+	t.Run("Password_Equals_DifferentHash_False", func(t *testing.T) {
+		password1, _ := valueobjects.NewPassword("Password1!")
+		password2, _ := valueobjects.NewPassword("Password2!")
+		
+		assert.False(t, password1.Equals(*password2))
+	})
+
+	t.Run("Password_JSON_Marshal_Redacted", func(t *testing.T) {
+		password, _ := valueobjects.NewPassword("StrongPass123!")
+		
+		jsonData, err := json.Marshal(password)
+		require.NoError(t, err)
+		
+		// Should be redacted for security
+		assert.Contains(t, string(jsonData), "[REDACTED]")
+	})
+
+	t.Run("Password_JSON_Unmarshal_RedactedValue_Error", func(t *testing.T) {
+		jsonData := []byte(`"[REDACTED]"`)
+		
+		var password valueobjects.Password
+		err := json.Unmarshal(jsonData, &password)
+		
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot unmarshal redacted password")
+	})
+}

@@ -1,0 +1,309 @@
+package domain
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+
+	"{{.ModulePath}}/internal/domain/events"
+	"{{.ModulePath}}/internal/domain/valueobjects"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestUserCreatedEvent(t *testing.T) {
+	t.Run("NewUserCreatedEvent_ValidData_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		username := "testuser"
+		firstName := "John"
+		lastName := "Doe"
+
+		event := events.NewUserCreatedEvent(*userID, *email, username, firstName, lastName)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.created", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, 1, event.EventVersion())
+		assert.NotEmpty(t, event.EventID())
+		assert.WithinDuration(t, time.Now().UTC(), event.OccurredAt(), time.Second)
+		
+		// Check event-specific data
+		assert.True(t, event.UserID.Equals(*userID))
+		assert.True(t, event.Email.Equals(*email))
+		assert.Equal(t, username, event.Username)
+		assert.Equal(t, firstName, event.FirstName)
+		assert.Equal(t, lastName, event.LastName)
+	})
+
+	t.Run("UserCreatedEvent_JSON_MarshalUnmarshal", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		originalEvent := events.NewUserCreatedEvent(*userID, *email, "testuser", "John", "Doe")
+
+		// Marshal to JSON
+		jsonData, err := json.Marshal(originalEvent)
+		require.NoError(t, err)
+
+		// Unmarshal from JSON
+		var unmarshaledEvent events.UserCreatedEvent
+		err = json.Unmarshal(jsonData, &unmarshaledEvent)
+		require.NoError(t, err)
+
+		assert.Equal(t, originalEvent.EventID(), unmarshaledEvent.EventID())
+		assert.Equal(t, originalEvent.EventType(), unmarshaledEvent.EventType())
+		assert.Equal(t, originalEvent.AggregateID(), unmarshaledEvent.AggregateID())
+		assert.True(t, originalEvent.UserID.Equals(unmarshaledEvent.UserID))
+		assert.True(t, originalEvent.Email.Equals(unmarshaledEvent.Email))
+	})
+}
+
+func TestUserUpdatedEvent(t *testing.T) {
+	t.Run("NewUserUpdatedEvent_WithChanges_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		changes := map[string]interface{}{
+			"first_name": map[string]string{"old": "John", "new": "Jane"},
+			"last_name":  map[string]string{"old": "Doe", "new": "Smith"},
+		}
+
+		event := events.NewUserUpdatedEvent(*userID, *email, "testuser", "Jane", "Smith", changes)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.updated", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.NotEmpty(t, event.Changes)
+		assert.Contains(t, event.Changes, "first_name")
+		assert.Contains(t, event.Changes, "last_name")
+	})
+}
+
+func TestUserDeletedEvent(t *testing.T) {
+	t.Run("NewUserDeletedEvent_WithReason_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		reason := "Account violation"
+
+		event := events.NewUserDeletedEvent(*userID, *email, "testuser", reason)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.deleted", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, reason, event.Reason)
+		assert.True(t, event.UserID.Equals(*userID))
+		assert.True(t, event.Email.Equals(*email))
+	})
+}
+
+func TestUserActivatedEvent(t *testing.T) {
+	t.Run("NewUserActivatedEvent_ValidData_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+
+		event := events.NewUserActivatedEvent(*userID, *email)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.activated", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.True(t, event.UserID.Equals(*userID))
+		assert.True(t, event.Email.Equals(*email))
+	})
+}
+
+func TestUserDeactivatedEvent(t *testing.T) {
+	t.Run("NewUserDeactivatedEvent_WithReason_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		reason := "Suspended for policy violation"
+
+		event := events.NewUserDeactivatedEvent(*userID, *email, reason)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.deactivated", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, reason, event.Reason)
+		assert.True(t, event.UserID.Equals(*userID))
+		assert.True(t, event.Email.Equals(*email))
+	})
+}
+
+func TestUserEmailChangedEvent(t *testing.T) {
+	t.Run("NewUserEmailChangedEvent_DifferentEmails_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		oldEmail, _ := valueobjects.NewEmail("old@example.com")
+		newEmail, _ := valueobjects.NewEmail("new@example.com")
+
+		event := events.NewUserEmailChangedEvent(*userID, *oldEmail, *newEmail)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.email_changed", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.True(t, event.UserID.Equals(*userID))
+		assert.True(t, event.OldEmail.Equals(*oldEmail))
+		assert.True(t, event.NewEmail.Equals(*newEmail))
+		assert.False(t, event.OldEmail.Equals(event.NewEmail))
+	})
+}
+
+func TestUserPasswordChangedEvent(t *testing.T) {
+	t.Run("NewUserPasswordChangedEvent_ValidData_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+
+		event := events.NewUserPasswordChangedEvent(*userID, *email)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.password_changed", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.True(t, event.UserID.Equals(*userID))
+		assert.True(t, event.Email.Equals(*email))
+	})
+}
+
+func TestAuthEvents(t *testing.T) {
+	t.Run("NewUserLoggedInEvent_WithContext_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		ipAddress := "192.168.1.1"
+		userAgent := "Mozilla/5.0 (Test Browser)"
+		sessionID := "session-123"
+
+		event := events.NewUserLoggedInEvent(*userID, *email, ipAddress, userAgent, sessionID)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.logged_in", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, ipAddress, event.IPAddress)
+		assert.Equal(t, userAgent, event.UserAgent)
+		assert.Equal(t, sessionID, event.SessionID)
+	})
+
+	t.Run("NewUserLoggedOutEvent_WithReason_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		sessionID := "session-123"
+		reason := "voluntary"
+
+		event := events.NewUserLoggedOutEvent(*userID, *email, sessionID, reason)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "user.logged_out", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, sessionID, event.SessionID)
+		assert.Equal(t, reason, event.Reason)
+	})
+
+	t.Run("NewLoginFailedEvent_WithDetails_Success", func(t *testing.T) {
+		email := "test@example.com"
+		ipAddress := "192.168.1.1"
+		userAgent := "Mozilla/5.0 (Test Browser)"
+		reason := "invalid_credentials"
+		attemptCount := 3
+
+		event := events.NewLoginFailedEvent(email, ipAddress, userAgent, reason, attemptCount)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "auth.login_failed", event.EventType())
+		assert.Equal(t, email, event.AggregateID()) // Email used as aggregate ID for failed attempts
+		assert.Equal(t, email, event.Email)
+		assert.Equal(t, reason, event.Reason)
+		assert.Equal(t, attemptCount, event.AttemptCount)
+	})
+
+	t.Run("NewTokenGeneratedEvent_WithExpiry_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		tokenType := "access"
+		expiresAt := time.Now().Add(time.Hour)
+
+		event := events.NewTokenGeneratedEvent(*userID, *email, tokenType, expiresAt, "192.168.1.1", "Test Agent")
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "auth.token_generated", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, tokenType, event.TokenType)
+		assert.WithinDuration(t, expiresAt, event.ExpiresAt, time.Second)
+	})
+
+	t.Run("NewPasswordResetRequestedEvent_WithContext_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		ipAddress := "192.168.1.1"
+		userAgent := "Mozilla/5.0 (Test Browser)"
+
+		event := events.NewPasswordResetRequestedEvent(*userID, *email, ipAddress, userAgent)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "auth.password_reset_requested", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, ipAddress, event.IPAddress)
+		assert.Equal(t, userAgent, event.UserAgent)
+	})
+
+	t.Run("NewAccountLockedEvent_WithFailureCount_Success", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		reason := "too_many_failed_attempts"
+		failedAttempts := 5
+		lockExpiresAt := time.Now().Add(30 * time.Minute)
+
+		event := events.NewAccountLockedEvent(*userID, *email, reason, failedAttempts, lockExpiresAt)
+
+		assert.NotNil(t, event)
+		assert.Equal(t, "auth.account_locked", event.EventType())
+		assert.Equal(t, userID.Value(), event.AggregateID())
+		assert.Equal(t, reason, event.Reason)
+		assert.Equal(t, failedAttempts, event.FailedAttempts)
+		assert.WithinDuration(t, lockExpiresAt, event.LockExpiresAt, time.Second)
+	})
+}
+
+func TestBaseEvent(t *testing.T) {
+	t.Run("BaseEvent_ImplementsDomainEvent", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		event := events.NewUserCreatedEvent(*userID, *email, "test", "John", "Doe")
+
+		// Verify it implements all DomainEvent methods
+		var domainEvent events.DomainEvent = event
+		
+		assert.NotEmpty(t, domainEvent.EventID())
+		assert.Equal(t, "user.created", domainEvent.EventType())
+		assert.Equal(t, userID.Value(), domainEvent.AggregateID())
+		assert.Equal(t, 1, domainEvent.EventVersion())
+		assert.WithinDuration(t, time.Now().UTC(), domainEvent.OccurredAt(), time.Second)
+	})
+}
+
+func TestEventSerialization(t *testing.T) {
+	t.Run("AllEvents_CanBeSerializedToJSON", func(t *testing.T) {
+		userID := valueobjects.NewRandomUserID()
+		email, _ := valueobjects.NewEmail("test@example.com")
+		
+		// Test different event types
+		events := []events.DomainEvent{
+			events.NewUserCreatedEvent(*userID, *email, "test", "John", "Doe"),
+			events.NewUserUpdatedEvent(*userID, *email, "test", "John", "Doe", map[string]interface{}{"field": "value"}),
+			events.NewUserDeletedEvent(*userID, *email, "test", "deleted"),
+			events.NewUserActivatedEvent(*userID, *email),
+			events.NewUserDeactivatedEvent(*userID, *email, "suspended"),
+			events.NewUserLoggedInEvent(*userID, *email, "192.168.1.1", "Mozilla", "session-1"),
+			events.NewLoginFailedEvent("test@example.com", "192.168.1.1", "Mozilla", "invalid_credentials", 1),
+		}
+
+		for _, event := range events {
+			jsonData, err := json.Marshal(event)
+			assert.NoError(t, err, "Event %s should be serializable", event.EventType())
+			assert.NotEmpty(t, jsonData, "JSON data should not be empty for event %s", event.EventType())
+			
+			// Verify JSON contains expected fields
+			var jsonMap map[string]interface{}
+			err = json.Unmarshal(jsonData, &jsonMap)
+			assert.NoError(t, err, "Should be able to unmarshal JSON for event %s", event.EventType())
+			assert.Contains(t, jsonMap, "id", "Event %s should have id field", event.EventType())
+			assert.Contains(t, jsonMap, "type", "Event %s should have type field", event.EventType())
+			assert.Contains(t, jsonMap, "occurred_at", "Event %s should have occurred_at field", event.EventType())
+		}
+	})
+}

@@ -2,33 +2,350 @@ package unit_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	
 	"{{.ModulePath}}/internal/domain/entities"
+	"{{.ModulePath}}/internal/domain/events"
 )
 
+func TestUser_NewUser(t *testing.T) {
+	t.Run("NewUser_ValidData_Success", func(t *testing.T) {
+		email := "john.doe@example.com"
+		username := "johndoe"
+		firstName := "John"
+		lastName := "Doe"
+		password := "StrongPass123!"
+
+		user, err := entities.NewUser(email, username, firstName, lastName, password)
+
+		require.NoError(t, err)
+		assert.NotNil(t, user)
+		assert.Equal(t, email, user.Email().Value())
+		assert.Equal(t, username, user.Username())
+		assert.Equal(t, firstName, user.FirstName())
+		assert.Equal(t, lastName, user.LastName())
+		assert.True(t, user.IsActive())
+		assert.True(t, user.VerifyPassword(password))
+		assert.NotEmpty(t, user.ID().Value())
+		
+		// Check that user creation event was added
+		domainEvents := user.DomainEvents()
+		assert.Len(t, domainEvents, 1)
+		assert.Equal(t, "user.created", domainEvents[0].EventType())
+	})
+
+	t.Run("NewUser_InvalidEmail_Error", func(t *testing.T) {
+		user, err := entities.NewUser("invalid-email", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		assert.Error(t, err)
+		assert.Nil(t, user)
+	})
+
+	t.Run("NewUser_WeakPassword_Error", func(t *testing.T) {
+		user, err := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "weak")
+		
+		assert.Error(t, err)
+		assert.Nil(t, user)
+	})
+
+	t.Run("NewUser_InvalidUsername_Error", func(t *testing.T) {
+		user, err := entities.NewUser("john@example.com", "", "John", "Doe", "StrongPass123!")
+		
+		assert.Error(t, err)
+		assert.Nil(t, user)
+	})
+}
+
+func TestUser_NewUserFromPersistence(t *testing.T) {
+	t.Run("NewUserFromPersistence_ValidData_Success", func(t *testing.T) {
+		id := "123e4567-e89b-12d3-a456-426614174000"
+		email := "john@example.com"
+		username := "johndoe"
+		firstName := "John"
+		lastName := "Doe"
+		passwordHash := "$2a$10$N9qo8uLOickgx2ZMRZoMye6pYxYyHllSOHSzDi/ac.JSYeu8/H5.6" // Hash for "password"
+		isActive := true
+		createdAt := time.Now().Add(-24 * time.Hour)
+		updatedAt := time.Now()
+
+		user, err := entities.NewUserFromPersistence(id, email, username, firstName, lastName, passwordHash, isActive, createdAt, updatedAt)
+
+		require.NoError(t, err)
+		assert.NotNil(t, user)
+		assert.Equal(t, id, user.ID().Value())
+		assert.Equal(t, email, user.Email().Value())
+		assert.Equal(t, username, user.Username())
+		assert.Equal(t, firstName, user.FirstName())
+		assert.Equal(t, lastName, user.LastName())
+		assert.Equal(t, isActive, user.IsActive())
+		assert.Equal(t, createdAt, user.CreatedAt())
+		assert.Equal(t, updatedAt, user.UpdatedAt())
+		
+		// No domain events should be added when creating from persistence
+		assert.Len(t, user.DomainEvents(), 0)
+	})
+}
+
 func TestUser_GetFullName(t *testing.T) {
-	user := entities.User{
-		FirstName: "John",
-		LastName:  "Doe",
-	}
-	assert.Equal(t, "John Doe", user.GetFullName())
+	t.Run("GetFullName_BothNames_ReturnsFullName", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		assert.Equal(t, "John Doe", user.GetFullName())
+	})
 
-	user = entities.User{
-		FirstName: "Jane",
-		LastName:  "",
-	}
-	assert.Equal(t, "Jane", user.GetFullName())
+	t.Run("GetFullName_FirstNameOnly_ReturnsFirstName", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "", "StrongPass123!")
+		assert.Equal(t, "John", user.GetFullName())
+	})
 
-	user = entities.User{
-		FirstName: "",
-		LastName:  "Doe",
-	}
-	assert.Equal(t, "Doe", user.GetFullName())
+	t.Run("GetFullName_LastNameOnly_ReturnsLastName", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "", "Doe", "StrongPass123!")
+		assert.Equal(t, "Doe", user.GetFullName())
+	})
 
-	user = entities.User{
-		FirstName: "",
-		LastName:  "",
-	}
-	assert.Equal(t, "", user.GetFullName())
+	t.Run("GetFullName_NoNames_ReturnsUsername", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "", "", "StrongPass123!")
+		assert.Equal(t, "johndoe", user.GetFullName())
+	})
+
+	t.Run("GetFullName_NamesWithSpaces_TrimsSpaces", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "  John  ", "  Doe  ", "StrongPass123!")
+		assert.Equal(t, "John Doe", user.GetFullName())
+	})
+}
+
+func TestUser_UpdateProfile(t *testing.T) {
+	t.Run("UpdateProfile_ValidChanges_Success", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents() // Clear creation event
+		
+		err := user.UpdateProfile("Jane", "Smith")
+		
+		require.NoError(t, err)
+		assert.Equal(t, "Jane", user.FirstName())
+		assert.Equal(t, "Smith", user.LastName())
+		
+		// Check that update event was added
+		domainEvents := user.DomainEvents()
+		assert.Len(t, domainEvents, 1)
+		
+		updateEvent, ok := domainEvents[0].(*events.UserUpdatedEvent)
+		assert.True(t, ok)
+		assert.Equal(t, "user.updated", updateEvent.EventType())
+		assert.NotEmpty(t, updateEvent.Changes)
+	})
+
+	t.Run("UpdateProfile_NoChanges_NoEvent", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents() // Clear creation event
+		
+		err := user.UpdateProfile("John", "Doe") // Same values
+		
+		require.NoError(t, err)
+		assert.Len(t, user.DomainEvents(), 0) // No events should be added
+	})
+
+	t.Run("UpdateProfile_InvalidName_Error", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		// Try to set a name that's too long
+		longName := make([]rune, 101)
+		for i := range longName {
+			longName[i] = 'a'
+		}
+		
+		err := user.UpdateProfile(string(longName), "Doe")
+		
+		assert.Error(t, err)
+		assert.Equal(t, entities.ErrNameTooLong, err)
+	})
+}
+
+func TestUser_ChangeEmail(t *testing.T) {
+	t.Run("ChangeEmail_ValidEmail_Success", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents() // Clear creation event
+		
+		newEmail := "jane@example.com"
+		err := user.ChangeEmail(newEmail)
+		
+		require.NoError(t, err)
+		assert.Equal(t, newEmail, user.Email().Value())
+		
+		// Check that email change event was added
+		domainEvents := user.DomainEvents()
+		assert.Len(t, domainEvents, 1)
+		assert.Equal(t, "user.email_changed", domainEvents[0].EventType())
+	})
+
+	t.Run("ChangeEmail_SameEmail_NoEvent", func(t *testing.T) {
+		email := "john@example.com"
+		user, _ := entities.NewUser(email, "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents() // Clear creation event
+		
+		err := user.ChangeEmail(email) // Same email
+		
+		require.NoError(t, err)
+		assert.Len(t, user.DomainEvents(), 0) // No events should be added
+	})
+
+	t.Run("ChangeEmail_InvalidEmail_Error", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		err := user.ChangeEmail("invalid-email")
+		
+		assert.Error(t, err)
+	})
+}
+
+func TestUser_ChangePassword(t *testing.T) {
+	t.Run("ChangePassword_ValidPassword_Success", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents() // Clear creation event
+		
+		newPassword := "NewStrongPass456!"
+		err := user.ChangePassword(newPassword)
+		
+		require.NoError(t, err)
+		assert.True(t, user.VerifyPassword(newPassword))
+		assert.False(t, user.VerifyPassword("StrongPass123!")) // Old password should not work
+		
+		// Check that password change event was added
+		domainEvents := user.DomainEvents()
+		assert.Len(t, domainEvents, 1)
+		assert.Equal(t, "user.password_changed", domainEvents[0].EventType())
+	})
+
+	t.Run("ChangePassword_WeakPassword_Error", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		err := user.ChangePassword("weak")
+		
+		assert.Error(t, err)
+		assert.True(t, user.VerifyPassword("StrongPass123!")) // Old password should still work
+	})
+}
+
+func TestUser_Activate(t *testing.T) {
+	t.Run("Activate_InactiveUser_Success", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.Deactivate("test") // First deactivate
+		user.ClearDomainEvents() // Clear previous events
+		
+		err := user.Activate()
+		
+		require.NoError(t, err)
+		assert.True(t, user.IsActive())
+		
+		// Check that activation event was added
+		domainEvents := user.DomainEvents()
+		assert.Len(t, domainEvents, 1)
+		assert.Equal(t, "user.activated", domainEvents[0].EventType())
+	})
+
+	t.Run("Activate_ActiveUser_Error", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		// User is already active by default
+		
+		err := user.Activate()
+		
+		assert.Error(t, err)
+		assert.Equal(t, entities.ErrUserAlreadyActive, err)
+	})
+}
+
+func TestUser_Deactivate(t *testing.T) {
+	t.Run("Deactivate_ActiveUser_Success", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents() // Clear creation event
+		
+		reason := "Account suspended"
+		err := user.Deactivate(reason)
+		
+		require.NoError(t, err)
+		assert.False(t, user.IsActive())
+		
+		// Check that deactivation event was added
+		domainEvents := user.DomainEvents()
+		assert.Len(t, domainEvents, 1)
+		
+		deactivateEvent, ok := domainEvents[0].(*events.UserDeactivatedEvent)
+		assert.True(t, ok)
+		assert.Equal(t, "user.deactivated", deactivateEvent.EventType())
+		assert.Equal(t, reason, deactivateEvent.Reason)
+	})
+
+	t.Run("Deactivate_InactiveUser_Error", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.Deactivate("first time") // First deactivate
+		
+		err := user.Deactivate("second time") // Try to deactivate again
+		
+		assert.Error(t, err)
+		assert.Equal(t, entities.ErrUserAlreadyInactive, err)
+	})
+}
+
+func TestUser_Equals(t *testing.T) {
+	t.Run("Equals_SameUser_True", func(t *testing.T) {
+		user1, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		assert.True(t, user1.Equals(user1))
+	})
+
+	t.Run("Equals_DifferentUsers_False", func(t *testing.T) {
+		user1, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user2, _ := entities.NewUser("jane@example.com", "janedoe", "Jane", "Doe", "StrongPass123!")
+		
+		assert.False(t, user1.Equals(user2))
+	})
+
+	t.Run("Equals_NilUser_False", func(t *testing.T) {
+		user1, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		assert.False(t, user1.Equals(nil))
+	})
+}
+
+func TestUser_DomainEvents(t *testing.T) {
+	t.Run("DomainEvents_NewUser_HasCreationEvent", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		
+		events := user.DomainEvents()
+		assert.Len(t, events, 1)
+		assert.Equal(t, "user.created", events[0].EventType())
+	})
+
+	t.Run("DomainEvents_ClearEvents_RemovesAllEvents", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		assert.Len(t, user.DomainEvents(), 1)
+		
+		user.ClearDomainEvents()
+		
+		assert.Len(t, user.DomainEvents(), 0)
+	})
+
+	t.Run("DomainEvents_MultipleActions_AccumulatesEvents", func(t *testing.T) {
+		user, _ := entities.NewUser("john@example.com", "johndoe", "John", "Doe", "StrongPass123!")
+		user.ClearDomainEvents()
+		
+		// Perform multiple actions that generate events
+		user.UpdateProfile("Jane", "Smith")
+		user.ChangeEmail("jane@example.com")
+		user.ChangePassword("NewPassword123!")
+		
+		events := user.DomainEvents()
+		assert.Len(t, events, 3)
+		
+		eventTypes := make([]string, len(events))
+		for i, event := range events {
+			eventTypes[i] = event.EventType()
+		}
+		
+		assert.Contains(t, eventTypes, "user.updated")
+		assert.Contains(t, eventTypes, "user.email_changed")
+		assert.Contains(t, eventTypes, "user.password_changed")
+	})
 }

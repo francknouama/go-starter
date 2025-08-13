@@ -1,0 +1,92 @@
+package valueobjects
+
+import (
+	"errors"
+	"strings"
+
+	"github.com/google/uuid"
+)
+
+// UserID represents a unique identifier for a user
+// This is an immutable value object that encapsulates user ID validation and behavior
+type UserID struct {
+	value string
+}
+
+// Domain errors for UserID value object
+var (
+	ErrInvalidUserID = errors.New("invalid user ID format")
+	ErrEmptyUserID   = errors.New("user ID cannot be empty")
+)
+
+// NewUserID creates a new UserID from a string value
+func NewUserID(value string) (*UserID, error) {
+	if err := validateUserID(value); err != nil {
+		return nil, err
+	}
+
+	return &UserID{
+		value: strings.TrimSpace(value),
+	}, nil
+}
+
+// NewRandomUserID generates a new random UserID using UUID v4
+func NewRandomUserID() *UserID {
+	return &UserID{
+		value: uuid.New().String(),
+	}
+}
+
+// Value returns the string representation of the UserID
+func (uid UserID) Value() string {
+	return uid.value
+}
+
+// String implements the Stringer interface
+func (uid UserID) String() string {
+	return uid.value
+}
+
+// Equals checks if two UserIDs are equal
+func (uid UserID) Equals(other UserID) bool {
+	return uid.value == other.value
+}
+
+// IsEmpty checks if the UserID is empty or invalid
+func (uid UserID) IsEmpty() bool {
+	return uid.value == ""
+}
+
+// validateUserID validates the format of a user ID
+func validateUserID(value string) error {
+	trimmed := strings.TrimSpace(value)
+	
+	if trimmed == "" {
+		return ErrEmptyUserID
+	}
+
+	// Check if it's a valid UUID format
+	if _, err := uuid.Parse(trimmed); err != nil {
+		return ErrInvalidUserID
+	}
+
+	return nil
+}
+
+// MarshalJSON implements json.Marshaler interface
+func (uid UserID) MarshalJSON() ([]byte, error) {
+	return []byte(`"` + uid.value + `"`), nil
+}
+
+// UnmarshalJSON implements json.Unmarshaler interface
+func (uid *UserID) UnmarshalJSON(data []byte) error {
+	// Remove quotes from JSON string
+	value := strings.Trim(string(data), `"`)
+	
+	if err := validateUserID(value); err != nil {
+		return err
+	}
+	
+	uid.value = value
+	return nil
+}

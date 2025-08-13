@@ -2,144 +2,342 @@ package entities
 
 import (
 	"errors"
+	"strings"
 	"time"
+
+	"{{.ModulePath}}/internal/domain/events"
+	"{{.ModulePath}}/internal/domain/valueobjects"
 )
 
-// User represents the core user entity in the domain
+// User represents the core user entity in the Clean Architecture domain
 // This is a pure business object with no external dependencies
 type User struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	Username  string    `json:"username"`
-	FirstName string    `json:"first_name"`
-	LastName  string    `json:"last_name"`
-	Password  string    `json:"-"` // Never serialize password
-	IsActive  bool      `json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	id           valueobjects.UserID
+	email        valueobjects.Email
+	username     string
+	firstName    string
+	lastName     string
+	password     valueobjects.Password
+	isActive     bool
+	createdAt    time.Time
+	updatedAt    time.Time
+	domainEvents []events.DomainEvent
 }
 
-// Domain errors
+// Domain errors for User entity
 var (
-	ErrUserNotFound         = errors.New("user not found")
-	ErrInvalidEmail         = errors.New("invalid email format")
-	ErrInvalidUsername      = errors.New("invalid username")
-	ErrWeakPassword         = errors.New("password does not meet requirements")
-	ErrEmailAlreadyExists   = errors.New("email already exists")
+	ErrUserNotFound          = errors.New("user not found")
+	ErrEmailAlreadyExists    = errors.New("email already exists")
 	ErrUsernameAlreadyExists = errors.New("username already exists")
+	ErrInvalidUsername       = errors.New("invalid username format")
+	ErrUsernameTooShort      = errors.New("username must be at least 3 characters")
+	ErrUsernameTooLong       = errors.New("username must be less than 50 characters")
+	ErrUsernameOnlySpaces    = errors.New("username cannot contain only spaces")
+	ErrInvalidFirstName      = errors.New("invalid first name")
+	ErrInvalidLastName       = errors.New("invalid last name")
+	ErrNameTooLong           = errors.New("name must be less than 100 characters")
+	ErrUserInactive          = errors.New("user is inactive")
+	ErrUserAlreadyActive     = errors.New("user is already active")
+	ErrUserAlreadyInactive   = errors.New("user is already inactive")
 )
 
-// NewUser creates a new User entity with validation
-func NewUser(email, username, firstName, lastName, password string) (*User, error) {
-	user := &User{
-		Email:     email,
-		Username:  username,
-		FirstName: firstName,
-		LastName:  lastName,
-		Password:  password,
-		IsActive:  true,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
-	if err := user.Validate(); err != nil {
+// NewUser creates a new User entity with validation and domain events
+func NewUser(emailStr, username, firstName, lastName, passwordStr string) (*User, error) {
+	// Create value objects with validation
+	userID := valueobjects.NewRandomUserID()
+	
+	email, err := valueobjects.NewEmail(emailStr)
+	if err != nil {
 		return nil, err
 	}
+	
+	password, err := valueobjects.NewPassword(passwordStr)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate other fields
+	if err := validateUsername(username); err != nil {
+		return nil, err
+	}
+	
+	if err := validateName(firstName, "first name"); err != nil {
+		return nil, err
+	}
+	
+	if err := validateName(lastName, "last name"); err != nil {
+		return nil, err
+	}
+
+	now := time.Now().UTC()
+	user := &User{
+		id:           *userID,
+		email:        *email,
+		username:     strings.TrimSpace(username),
+		firstName:    strings.TrimSpace(firstName),
+		lastName:     strings.TrimSpace(lastName),
+		password:     *password,
+		isActive:     true,
+		createdAt:    now,
+		updatedAt:    now,
+		domainEvents: []events.DomainEvent{},
+	}
+
+	// Add domain event for user creation
+	event := events.NewUserCreatedEvent(user.id, user.email, user.username, user.firstName, user.lastName)
+	user.AddDomainEvent(event)
 
 	return user, nil
 }
 
-// Validate performs business rule validation on the User entity
-func (u *User) Validate() error {
-	if err := u.validateEmail(); err != nil {
-		return err
-	}
-
-	if err := u.validateUsername(); err != nil {
-		return err
-	}
-
-	if err := u.validatePassword(); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// validateEmail checks if email format is valid (basic validation)
-func (u *User) validateEmail() error {
-	if u.Email == "" {
-		return ErrInvalidEmail
+// NewUserFromPersistence creates a User entity from persistence data (no validation, no events)
+func NewUserFromPersistence(id, emailStr, username, firstName, lastName string, passwordHash string, isActive bool, createdAt, updatedAt time.Time) (*User, error) {
+	userID, err := valueobjects.NewUserID(id)
+	if err != nil {
+		return nil, err
 	}
 	
-	// Basic email validation - could be enhanced
-	if len(u.Email) < 3 || !containsAt(u.Email) {
-		return ErrInvalidEmail
+	email, err := valueobjects.NewEmail(emailStr)
+	if err != nil {
+		return nil, err
 	}
 	
-	return nil
-}
-
-// validateUsername checks if username meets business requirements
-func (u *User) validateUsername() error {
-	if u.Username == "" {
-		return ErrInvalidUsername
+	password, err := valueobjects.NewPasswordFromHash(passwordHash)
+	if err != nil {
+		return nil, err
 	}
-	
-	if len(u.Username) < 3 || len(u.Username) > 50 {
-		return ErrInvalidUsername
-	}
-	
-	return nil
+
+	return &User{
+		id:           *userID,
+		email:        *email,
+		username:     username,
+		firstName:    firstName,
+		lastName:     lastName,
+		password:     *password,
+		isActive:     isActive,
+		createdAt:    createdAt,
+		updatedAt:    updatedAt,
+		domainEvents: []events.DomainEvent{},
+	}, nil
 }
 
-// validatePassword checks if password meets security requirements
-func (u *User) validatePassword() error {
-	if u.Password == "" {
-		return ErrWeakPassword
-	}
-	
-	if len(u.Password) < 8 {
-		return ErrWeakPassword
-	}
-	
-	return nil
+// Getters for value objects and fields (following encapsulation principles)
+func (u *User) ID() valueobjects.UserID {
+	return u.id
 }
 
-// UpdateProfile updates user profile information
-func (u *User) UpdateProfile(firstName, lastName string) {
-	u.FirstName = firstName
-	u.LastName = lastName
-	u.UpdatedAt = time.Now()
+func (u *User) Email() valueobjects.Email {
+	return u.email
 }
 
-// Deactivate marks the user as inactive
-func (u *User) Deactivate() {
-	u.IsActive = false
-	u.UpdatedAt = time.Now()
+func (u *User) Username() string {
+	return u.username
 }
 
-// Activate marks the user as active
-func (u *User) Activate() {
-	u.IsActive = true
-	u.UpdatedAt = time.Now()
+func (u *User) FirstName() string {
+	return u.firstName
+}
+
+func (u *User) LastName() string {
+	return u.lastName
+}
+
+func (u *User) IsActive() bool {
+	return u.isActive
+}
+
+func (u *User) CreatedAt() time.Time {
+	return u.createdAt
+}
+
+func (u *User) UpdatedAt() time.Time {
+	return u.updatedAt
 }
 
 // GetFullName returns the user's full name
 func (u *User) GetFullName() string {
-	if u.FirstName == "" && u.LastName == "" {
-		return u.Username
+	if u.firstName == "" && u.lastName == "" {
+		return u.username
 	}
-	return u.FirstName + " " + u.LastName
+	firstName := strings.TrimSpace(u.firstName)
+	lastName := strings.TrimSpace(u.lastName)
+	return strings.TrimSpace(firstName + " " + lastName)
 }
 
-// containsAt is a simple helper to check for @ symbol
-func containsAt(s string) bool {
-	for _, r := range s {
-		if r == '@' {
-			return true
-		}
+// VerifyPassword checks if the provided password matches the user's password
+func (u *User) VerifyPassword(plaintext string) bool {
+	return u.password.Verify(plaintext)
+}
+
+// UpdateProfile updates user profile information with validation and events
+func (u *User) UpdateProfile(firstName, lastName string) error {
+	if err := validateName(firstName, "first name"); err != nil {
+		return err
 	}
-	return false
+	
+	if err := validateName(lastName, "last name"); err != nil {
+		return err
+	}
+
+	changes := make(map[string]interface{})
+	
+	if u.firstName != firstName {
+		changes["first_name"] = map[string]string{"old": u.firstName, "new": firstName}
+		u.firstName = strings.TrimSpace(firstName)
+	}
+	
+	if u.lastName != lastName {
+		changes["last_name"] = map[string]string{"old": u.lastName, "new": lastName}
+		u.lastName = strings.TrimSpace(lastName)
+	}
+
+	if len(changes) > 0 {
+		u.updatedAt = time.Now().UTC()
+		
+		// Add domain event for profile update
+		event := events.NewUserUpdatedEvent(u.id, u.email, u.username, u.firstName, u.lastName, changes)
+		u.AddDomainEvent(event)
+	}
+
+	return nil
+}
+
+// ChangeEmail changes the user's email address with validation and events
+func (u *User) ChangeEmail(newEmailStr string) error {
+	newEmail, err := valueobjects.NewEmail(newEmailStr)
+	if err != nil {
+		return err
+	}
+
+	if u.email.Equals(*newEmail) {
+		return nil // No change needed
+	}
+
+	oldEmail := u.email
+	u.email = *newEmail
+	u.updatedAt = time.Now().UTC()
+
+	// Add domain event for email change
+	event := events.NewUserEmailChangedEvent(u.id, oldEmail, u.email)
+	u.AddDomainEvent(event)
+
+	return nil
+}
+
+// ChangePassword changes the user's password with validation and events
+func (u *User) ChangePassword(newPasswordStr string) error {
+	newPassword, err := valueobjects.NewPassword(newPasswordStr)
+	if err != nil {
+		return err
+	}
+
+	u.password = *newPassword
+	u.updatedAt = time.Now().UTC()
+
+	// Add domain event for password change
+	event := events.NewUserPasswordChangedEvent(u.id, u.email)
+	u.AddDomainEvent(event)
+
+	return nil
+}
+
+// Activate marks the user as active with validation and events
+func (u *User) Activate() error {
+	if u.isActive {
+		return ErrUserAlreadyActive
+	}
+
+	u.isActive = true
+	u.updatedAt = time.Now().UTC()
+
+	// Add domain event for activation
+	event := events.NewUserActivatedEvent(u.id, u.email)
+	u.AddDomainEvent(event)
+
+	return nil
+}
+
+// Deactivate marks the user as inactive with validation and events
+func (u *User) Deactivate(reason string) error {
+	if !u.isActive {
+		return ErrUserAlreadyInactive
+	}
+
+	u.isActive = false
+	u.updatedAt = time.Now().UTC()
+
+	// Add domain event for deactivation
+	event := events.NewUserDeactivatedEvent(u.id, u.email, reason)
+	u.AddDomainEvent(event)
+
+	return nil
+}
+
+// Equals checks if two users are the same entity
+func (u *User) Equals(other *User) bool {
+	if other == nil {
+		return false
+	}
+	return u.id.Equals(other.id)
+}
+
+// Domain Events Management
+
+// AddDomainEvent adds a domain event to the entity
+func (u *User) AddDomainEvent(event events.DomainEvent) {
+	u.domainEvents = append(u.domainEvents, event)
+}
+
+// DomainEvents returns all domain events for this entity
+func (u *User) DomainEvents() []events.DomainEvent {
+	return u.domainEvents
+}
+
+// ClearDomainEvents clears all domain events (typically called after publishing)
+func (u *User) ClearDomainEvents() {
+	u.domainEvents = []events.DomainEvent{}
+}
+
+// Validation helpers
+
+// validateUsername validates username according to business rules
+func validateUsername(username string) error {
+	trimmed := strings.TrimSpace(username)
+	
+	if trimmed == "" {
+		return ErrInvalidUsername
+	}
+	
+	if trimmed != username {
+		return ErrUsernameOnlySpaces
+	}
+	
+	if len(trimmed) < 3 {
+		return ErrUsernameTooShort
+	}
+	
+	if len(trimmed) > 50 {
+		return ErrUsernameTooLong
+	}
+	
+	return nil
+}
+
+// validateName validates first name and last name according to business rules
+func validateName(name, fieldName string) error {
+	trimmed := strings.TrimSpace(name)
+	
+	// Empty names are allowed
+	if trimmed == "" {
+		return nil
+	}
+	
+	if len(trimmed) > 100 {
+		return ErrNameTooLong
+	}
+	
+	// Additional validations could be added here (e.g., no numbers, special characters)
+	
+	return nil
 }
 

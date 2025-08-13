@@ -1,0 +1,275 @@
+package events
+
+import (
+	"time"
+
+	"{{.ModulePath}}/internal/domain/valueobjects"
+)
+
+// UserLoggedInEvent is raised when a user successfully logs in
+type UserLoggedInEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	IPAddress string              `json:"ip_address,omitempty"`
+	UserAgent string              `json:"user_agent,omitempty"`
+	SessionID string              `json:"session_id,omitempty"`
+}
+
+// NewUserLoggedInEvent creates a new UserLoggedInEvent
+func NewUserLoggedInEvent(userID valueobjects.UserID, email valueobjects.Email, ipAddress, userAgent, sessionID string) *UserLoggedInEvent {
+	return &UserLoggedInEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.logged_in",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+		SessionID: sessionID,
+	}
+}
+
+// UserLoggedOutEvent is raised when a user logs out
+type UserLoggedOutEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	SessionID string              `json:"session_id,omitempty"`
+	Reason    string              `json:"reason,omitempty"` // voluntary, expired, forced, etc.
+}
+
+// NewUserLoggedOutEvent creates a new UserLoggedOutEvent
+func NewUserLoggedOutEvent(userID valueobjects.UserID, email valueobjects.Email, sessionID, reason string) *UserLoggedOutEvent {
+	return &UserLoggedOutEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "user.logged_out",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		SessionID: sessionID,
+		Reason:    reason,
+	}
+}
+
+// LoginFailedEvent is raised when a login attempt fails
+type LoginFailedEvent struct {
+	BaseEvent
+	Email       string `json:"email"`
+	IPAddress   string `json:"ip_address,omitempty"`
+	UserAgent   string `json:"user_agent,omitempty"`
+	Reason      string `json:"reason"` // invalid_credentials, account_locked, etc.
+	AttemptCount int   `json:"attempt_count,omitempty"`
+}
+
+// NewLoginFailedEvent creates a new LoginFailedEvent
+func NewLoginFailedEvent(email, ipAddress, userAgent, reason string, attemptCount int) *LoginFailedEvent {
+	return &LoginFailedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.login_failed",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: email, // Use email as aggregate ID for failed attempts
+		},
+		Email:       email,
+		IPAddress:   ipAddress,
+		UserAgent:   userAgent,
+		Reason:      reason,
+		AttemptCount: attemptCount,
+	}
+}
+
+// TokenGeneratedEvent is raised when an authentication token is generated
+type TokenGeneratedEvent struct {
+	BaseEvent
+	UserID     valueobjects.UserID `json:"user_id"`
+	Email      valueobjects.Email  `json:"email"`
+	TokenType  string              `json:"token_type"` // access, refresh, reset_password, etc.
+	ExpiresAt  time.Time           `json:"expires_at"`
+	IPAddress  string              `json:"ip_address,omitempty"`
+	UserAgent  string              `json:"user_agent,omitempty"`
+}
+
+// NewTokenGeneratedEvent creates a new TokenGeneratedEvent
+func NewTokenGeneratedEvent(userID valueobjects.UserID, email valueobjects.Email, tokenType string, expiresAt time.Time, ipAddress, userAgent string) *TokenGeneratedEvent {
+	return &TokenGeneratedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.token_generated",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		TokenType: tokenType,
+		ExpiresAt: expiresAt,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+	}
+}
+
+// TokenRevokedEvent is raised when an authentication token is revoked
+type TokenRevokedEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	TokenType string              `json:"token_type"`
+	Reason    string              `json:"reason"` // user_logout, admin_revoke, expired, etc.
+}
+
+// NewTokenRevokedEvent creates a new TokenRevokedEvent
+func NewTokenRevokedEvent(userID valueobjects.UserID, email valueobjects.Email, tokenType, reason string) *TokenRevokedEvent {
+	return &TokenRevokedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.token_revoked",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		TokenType: tokenType,
+		Reason:    reason,
+	}
+}
+
+// PasswordResetRequestedEvent is raised when a user requests a password reset
+type PasswordResetRequestedEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	IPAddress string              `json:"ip_address,omitempty"`
+	UserAgent string              `json:"user_agent,omitempty"`
+}
+
+// NewPasswordResetRequestedEvent creates a new PasswordResetRequestedEvent
+func NewPasswordResetRequestedEvent(userID valueobjects.UserID, email valueobjects.Email, ipAddress, userAgent string) *PasswordResetRequestedEvent {
+	return &PasswordResetRequestedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.password_reset_requested",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+	}
+}
+
+// PasswordResetCompletedEvent is raised when a password reset is completed
+type PasswordResetCompletedEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	IPAddress string              `json:"ip_address,omitempty"`
+	UserAgent string              `json:"user_agent,omitempty"`
+}
+
+// NewPasswordResetCompletedEvent creates a new PasswordResetCompletedEvent
+func NewPasswordResetCompletedEvent(userID valueobjects.UserID, email valueobjects.Email, ipAddress, userAgent string) *PasswordResetCompletedEvent {
+	return &PasswordResetCompletedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.password_reset_completed",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		IPAddress: ipAddress,
+		UserAgent: userAgent,
+	}
+}
+
+// SessionExpiredEvent is raised when a user session expires
+type SessionExpiredEvent struct {
+	BaseEvent
+	UserID    valueobjects.UserID `json:"user_id"`
+	Email     valueobjects.Email  `json:"email"`
+	SessionID string              `json:"session_id"`
+	ExpiresAt time.Time           `json:"expires_at"`
+}
+
+// NewSessionExpiredEvent creates a new SessionExpiredEvent
+func NewSessionExpiredEvent(userID valueobjects.UserID, email valueobjects.Email, sessionID string, expiresAt time.Time) *SessionExpiredEvent {
+	return &SessionExpiredEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.session_expired",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:    userID,
+		Email:     email,
+		SessionID: sessionID,
+		ExpiresAt: expiresAt,
+	}
+}
+
+// AccountLockedEvent is raised when a user account is locked due to security reasons
+type AccountLockedEvent struct {
+	BaseEvent
+	UserID          valueobjects.UserID `json:"user_id"`
+	Email           valueobjects.Email  `json:"email"`
+	Reason          string              `json:"reason"`
+	FailedAttempts  int                 `json:"failed_attempts"`
+	LockExpiresAt   time.Time           `json:"lock_expires_at,omitempty"`
+}
+
+// NewAccountLockedEvent creates a new AccountLockedEvent
+func NewAccountLockedEvent(userID valueobjects.UserID, email valueobjects.Email, reason string, failedAttempts int, lockExpiresAt time.Time) *AccountLockedEvent {
+	return &AccountLockedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.account_locked",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID:         userID,
+		Email:          email,
+		Reason:         reason,
+		FailedAttempts: failedAttempts,
+		LockExpiresAt:  lockExpiresAt,
+	}
+}
+
+// AccountUnlockedEvent is raised when a user account is unlocked
+type AccountUnlockedEvent struct {
+	BaseEvent
+	UserID valueobjects.UserID `json:"user_id"`
+	Email  valueobjects.Email  `json:"email"`
+	Reason string              `json:"reason"` // manual_unlock, timeout_expired, etc.
+}
+
+// NewAccountUnlockedEvent creates a new AccountUnlockedEvent
+func NewAccountUnlockedEvent(userID valueobjects.UserID, email valueobjects.Email, reason string) *AccountUnlockedEvent {
+	return &AccountUnlockedEvent{
+		BaseEvent: BaseEvent{
+			ID:          generateEventID(),
+			Type:        "auth.account_unlocked",
+			OccurredOn:  time.Now().UTC(),
+			Version:     1,
+			AggregateId: userID.Value(),
+		},
+		UserID: userID,
+		Email:  email,
+		Reason: reason,
+	}
+}
