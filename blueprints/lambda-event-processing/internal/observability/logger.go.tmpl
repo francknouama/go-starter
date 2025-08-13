@@ -1,0 +1,633 @@
+package observability
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+{{- if eq .LoggerType "slog"}}
+	"log/slog"
+{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap"
+{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+{{- end}}
+)
+
+// Logger interface provides a unified logging interface across different implementations
+type Logger interface {
+	Debug(msg string, fields map[string]interface{})
+	Info(msg string, fields map[string]interface{})
+	Warn(msg string, fields map[string]interface{})
+	Error(msg string, fields map[string]interface{})
+	Fatal(msg string, fields map[string]interface{})
+	
+	// Structured logging with context
+	WithContext(ctx context.Context) Logger
+	WithFields(fields map[string]interface{}) Logger
+	WithCorrelationID(correlationID string) Logger
+	WithTraceID(traceID string) Logger
+}
+
+// Configuration for logger initialization
+type LoggerConfig struct {
+	Level       string `yaml:"level" json:"level"`
+	Format      string `yaml:"format" json:"format"` // json, text
+	EnableTrace bool   `yaml:"enable_trace" json:"enable_trace"`
+	ServiceName string `yaml:"service_name" json:"service_name"`
+}
+
+var globalLogger Logger
+
+{{- if eq .LoggerType "slog"}}
+// slogLogger implements Logger interface using Go's standard slog
+type slogLogger struct {
+	logger        *slog.Logger
+	correlationID string
+	traceID       string
+	fields        map[string]interface{}
+}
+
+func initializeSlogLogger(config LoggerConfig) error {
+	level := parseLogLevel(config.Level)
+	
+	var handler slog.Handler
+	if config.Format == "json" {
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+			Level: level,
+			AddSource: config.EnableTrace,
+		})
+	} else {
+		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: level,
+			AddSource: config.EnableTrace,
+		})
+	}
+	
+	logger := slog.New(handler)
+	globalLogger = &slogLogger{
+		logger: logger,
+		fields: make(map[string]interface{}),
+	}
+	
+	return nil
+}
+
+func (l *slogLogger) Debug(msg string, fields map[string]interface{}) {
+	l.log(slog.LevelDebug, msg, fields)
+}
+
+func (l *slogLogger) Info(msg string, fields map[string]interface{}) {
+	l.log(slog.LevelInfo, msg, fields)
+}
+
+func (l *slogLogger) Warn(msg string, fields map[string]interface{}) {
+	l.log(slog.LevelWarn, msg, fields)
+}
+
+func (l *slogLogger) Error(msg string, fields map[string]interface{}) {
+	l.log(slog.LevelError, msg, fields)
+}
+
+func (l *slogLogger) Fatal(msg string, fields map[string]interface{}) {
+	l.log(slog.LevelError, msg, fields)
+	os.Exit(1)
+}
+
+func (l *slogLogger) log(level slog.Level, msg string, fields map[string]interface{}) {
+	attrs := make([]slog.Attr, 0, len(fields)+len(l.fields)+3)
+	
+	// Add correlation and trace IDs
+	if l.correlationID != "" {
+		attrs = append(attrs, slog.String("correlation_id", l.correlationID))
+	}
+	if l.traceID != "" {
+		attrs = append(attrs, slog.String("trace_id", l.traceID))
+	}
+	
+	// Add timestamp
+	attrs = append(attrs, slog.Time("timestamp", time.Now().UTC()))
+	
+	// Add persistent fields
+	for k, v := range l.fields {
+		attrs = append(attrs, slog.Any(k, v))
+	}
+	
+	// Add message-specific fields
+	for k, v := range fields {
+		attrs = append(attrs, slog.Any(k, v))
+	}
+	
+	l.logger.LogAttrs(context.Background(), level, msg, attrs...)
+}
+
+func (l *slogLogger) WithContext(ctx context.Context) Logger {
+	newLogger := *l
+	// Extract correlation ID from context if available
+	if correlationID := GetCorrelationIDFromContext(ctx); correlationID != "" {
+		newLogger.correlationID = correlationID
+	}
+	// Extract trace ID from context if available
+	if traceID := GetTraceIDFromContext(ctx); traceID != "" {
+		newLogger.traceID = traceID
+	}
+	return &newLogger
+}
+
+func (l *slogLogger) WithFields(fields map[string]interface{}) Logger {
+	newLogger := *l
+	newLogger.fields = make(map[string]interface{})
+	for k, v := range l.fields {
+		newLogger.fields[k] = v
+	}
+	for k, v := range fields {
+		newLogger.fields[k] = v
+	}
+	return &newLogger
+}
+
+func (l *slogLogger) WithCorrelationID(correlationID string) Logger {
+	newLogger := *l
+	newLogger.correlationID = correlationID
+	return &newLogger
+}
+
+func (l *slogLogger) WithTraceID(traceID string) Logger {
+	newLogger := *l
+	newLogger.traceID = traceID
+	return &newLogger
+}
+
+func parseLogLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+{{- else if eq .LoggerType "zap"}}
+// zapLogger implements Logger interface using Uber's Zap
+type zapLogger struct {
+	logger        *zap.Logger
+	correlationID string
+	traceID       string
+	fields        []zap.Field
+}
+
+func initializeZapLogger(config LoggerConfig) error {
+	var zapConfig zap.Config
+	
+	if config.Format == "json" {
+		zapConfig = zap.NewProductionConfig()
+	} else {
+		zapConfig = zap.NewDevelopmentConfig()
+	}
+	
+	// Set log level
+	level, err := zap.ParseAtomicLevel(config.Level)
+	if err != nil {
+		level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+	zapConfig.Level = level
+	
+	logger, err := zapConfig.Build()
+	if err != nil {
+		return fmt.Errorf("failed to initialize zap logger: %w", err)
+	}
+	
+	globalLogger = &zapLogger{
+		logger: logger,
+		fields: make([]zap.Field, 0),
+	}
+	
+	return nil
+}
+
+func (l *zapLogger) Debug(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Debug, msg, fields)
+}
+
+func (l *zapLogger) Info(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Info, msg, fields)
+}
+
+func (l *zapLogger) Warn(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Warn, msg, fields)
+}
+
+func (l *zapLogger) Error(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Error, msg, fields)
+}
+
+func (l *zapLogger) Fatal(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Fatal, msg, fields)
+}
+
+func (l *zapLogger) log(logFunc func(string, ...zap.Field), msg string, fields map[string]interface{}) {
+	zapFields := make([]zap.Field, 0, len(fields)+len(l.fields)+3)
+	
+	// Add correlation and trace IDs
+	if l.correlationID != "" {
+		zapFields = append(zapFields, zap.String("correlation_id", l.correlationID))
+	}
+	if l.traceID != "" {
+		zapFields = append(zapFields, zap.String("trace_id", l.traceID))
+	}
+	
+	// Add timestamp
+	zapFields = append(zapFields, zap.Time("timestamp", time.Now().UTC()))
+	
+	// Add persistent fields
+	zapFields = append(zapFields, l.fields...)
+	
+	// Add message-specific fields
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	
+	logFunc(msg, zapFields...)
+}
+
+func (l *zapLogger) WithContext(ctx context.Context) Logger {
+	newLogger := *l
+	// Extract correlation ID from context if available
+	if correlationID := GetCorrelationIDFromContext(ctx); correlationID != "" {
+		newLogger.correlationID = correlationID
+	}
+	// Extract trace ID from context if available
+	if traceID := GetTraceIDFromContext(ctx); traceID != "" {
+		newLogger.traceID = traceID
+	}
+	return &newLogger
+}
+
+func (l *zapLogger) WithFields(fields map[string]interface{}) Logger {
+	newLogger := *l
+	zapFields := make([]zap.Field, 0, len(l.fields)+len(fields))
+	zapFields = append(zapFields, l.fields...)
+	
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	
+	newLogger.fields = zapFields
+	return &newLogger
+}
+
+func (l *zapLogger) WithCorrelationID(correlationID string) Logger {
+	newLogger := *l
+	newLogger.correlationID = correlationID
+	return &newLogger
+}
+
+func (l *zapLogger) WithTraceID(traceID string) Logger {
+	newLogger := *l
+	newLogger.traceID = traceID
+	return &newLogger
+}
+
+{{- else if eq .LoggerType "logrus"}}
+// logrusLogger implements Logger interface using Logrus
+type logrusLogger struct {
+	logger        *logrus.Logger
+	correlationID string
+	traceID       string
+	fields        logrus.Fields
+}
+
+func initializeLogrusLogger(config LoggerConfig) error {
+	logger := logrus.New()
+	
+	// Set format
+	if config.Format == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339,
+		})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: time.RFC3339,
+		})
+	}
+	
+	// Set level
+	level, err := logrus.ParseLevel(config.Level)
+	if err != nil {
+		level = logrus.InfoLevel
+	}
+	logger.SetLevel(level)
+	
+	globalLogger = &logrusLogger{
+		logger: logger,
+		fields: make(logrus.Fields),
+	}
+	
+	return nil
+}
+
+func (l *logrusLogger) Debug(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Debug, msg, fields)
+}
+
+func (l *logrusLogger) Info(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Info, msg, fields)
+}
+
+func (l *logrusLogger) Warn(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Warn, msg, fields)
+}
+
+func (l *logrusLogger) Error(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Error, msg, fields)
+}
+
+func (l *logrusLogger) Fatal(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Fatal, msg, fields)
+}
+
+func (l *logrusLogger) log(logFunc func(...interface{}), msg string, fields map[string]interface{}) {
+	entry := l.logger.WithFields(l.fields)
+	
+	// Add correlation and trace IDs
+	if l.correlationID != "" {
+		entry = entry.WithField("correlation_id", l.correlationID)
+	}
+	if l.traceID != "" {
+		entry = entry.WithField("trace_id", l.traceID)
+	}
+	
+	// Add timestamp
+	entry = entry.WithField("timestamp", time.Now().UTC())
+	
+	// Add message-specific fields
+	for k, v := range fields {
+		entry = entry.WithField(k, v)
+	}
+	
+	entry.Info(msg)
+}
+
+func (l *logrusLogger) WithContext(ctx context.Context) Logger {
+	newLogger := *l
+	// Extract correlation ID from context if available
+	if correlationID := GetCorrelationIDFromContext(ctx); correlationID != "" {
+		newLogger.correlationID = correlationID
+	}
+	// Extract trace ID from context if available
+	if traceID := GetTraceIDFromContext(ctx); traceID != "" {
+		newLogger.traceID = traceID
+	}
+	return &newLogger
+}
+
+func (l *logrusLogger) WithFields(fields map[string]interface{}) Logger {
+	newLogger := *l
+	newLogger.fields = make(logrus.Fields)
+	for k, v := range l.fields {
+		newLogger.fields[k] = v
+	}
+	for k, v := range fields {
+		newLogger.fields[k] = v
+	}
+	return &newLogger
+}
+
+func (l *logrusLogger) WithCorrelationID(correlationID string) Logger {
+	newLogger := *l
+	newLogger.correlationID = correlationID
+	return &newLogger
+}
+
+func (l *logrusLogger) WithTraceID(traceID string) Logger {
+	newLogger := *l
+	newLogger.traceID = traceID
+	return &newLogger
+}
+
+{{- else if eq .LoggerType "zerolog"}}
+// zerologLogger implements Logger interface using zerolog
+type zerologLogger struct {
+	logger        zerolog.Logger
+	correlationID string
+	traceID       string
+	fields        map[string]interface{}
+}
+
+func initializeZerologLogger(config LoggerConfig) error {
+	// Set global log level
+	level, err := zerolog.ParseLevel(config.Level)
+	if err != nil {
+		level = zerolog.InfoLevel
+	}
+	zerolog.SetGlobalLevel(level)
+	
+	// Configure output format
+	var logger zerolog.Logger
+	if config.Format == "json" {
+		logger = zerolog.New(os.Stdout)
+	} else {
+		logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	}
+	
+	// Add timestamp
+	logger = logger.With().Timestamp().Logger()
+	
+	globalLogger = &zerologLogger{
+		logger: logger,
+		fields: make(map[string]interface{}),
+	}
+	
+	return nil
+}
+
+func (l *zerologLogger) Debug(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Debug(), msg, fields)
+}
+
+func (l *zerologLogger) Info(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Info(), msg, fields)
+}
+
+func (l *zerologLogger) Warn(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Warn(), msg, fields)
+}
+
+func (l *zerologLogger) Error(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Error(), msg, fields)
+}
+
+func (l *zerologLogger) Fatal(msg string, fields map[string]interface{}) {
+	l.log(l.logger.Fatal(), msg, fields)
+}
+
+func (l *zerologLogger) log(event *zerolog.Event, msg string, fields map[string]interface{}) {
+	// Add correlation and trace IDs
+	if l.correlationID != "" {
+		event = event.Str("correlation_id", l.correlationID)
+	}
+	if l.traceID != "" {
+		event = event.Str("trace_id", l.traceID)
+	}
+	
+	// Add persistent fields
+	for k, v := range l.fields {
+		event = event.Interface(k, v)
+	}
+	
+	// Add message-specific fields
+	for k, v := range fields {
+		event = event.Interface(k, v)
+	}
+	
+	event.Msg(msg)
+}
+
+func (l *zerologLogger) WithContext(ctx context.Context) Logger {
+	newLogger := *l
+	// Extract correlation ID from context if available
+	if correlationID := GetCorrelationIDFromContext(ctx); correlationID != "" {
+		newLogger.correlationID = correlationID
+	}
+	// Extract trace ID from context if available
+	if traceID := GetTraceIDFromContext(ctx); traceID != "" {
+		newLogger.traceID = traceID
+	}
+	return &newLogger
+}
+
+func (l *zerologLogger) WithFields(fields map[string]interface{}) Logger {
+	newLogger := *l
+	newLogger.fields = make(map[string]interface{})
+	for k, v := range l.fields {
+		newLogger.fields[k] = v
+	}
+	for k, v := range fields {
+		newLogger.fields[k] = v
+	}
+	return &newLogger
+}
+
+func (l *zerologLogger) WithCorrelationID(correlationID string) Logger {
+	newLogger := *l
+	newLogger.correlationID = correlationID
+	return &newLogger
+}
+
+func (l *zerologLogger) WithTraceID(traceID string) Logger {
+	newLogger := *l
+	newLogger.traceID = traceID
+	return &newLogger
+}
+{{- end}}
+
+// Initialize sets up the global logger based on configuration
+func Initialize(config LoggerConfig) error {
+	// Set default values
+	if config.Level == "" {
+		config.Level = "info"
+	}
+	if config.Format == "" {
+		config.Format = "json"
+	}
+	if config.ServiceName == "" {
+		config.ServiceName = "{{.ProjectName}}"
+	}
+
+{{- if eq .LoggerType "slog"}}
+	return initializeSlogLogger(config)
+{{- else if eq .LoggerType "zap"}}
+	return initializeZapLogger(config)
+{{- else if eq .LoggerType "logrus"}}
+	return initializeLogrusLogger(config)
+{{- else if eq .LoggerType "zerolog"}}
+	return initializeZerologLogger(config)
+{{- end}}
+}
+
+// GetLogger returns the global logger instance
+func GetLogger() Logger {
+	if globalLogger == nil {
+		// Fallback to a basic logger if not initialized
+		_ = Initialize(LoggerConfig{
+			Level:  "info",
+			Format: "json",
+		})
+	}
+	return globalLogger
+}
+
+// Context key types for correlation and trace IDs
+type contextKey string
+
+const (
+	correlationIDKey contextKey = "correlation_id"
+	traceIDKey       contextKey = "trace_id"
+)
+
+// GetCorrelationIDFromContext extracts correlation ID from context
+func GetCorrelationIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if correlationID, ok := ctx.Value(correlationIDKey).(string); ok {
+		return correlationID
+	}
+	return ""
+}
+
+// GetTraceIDFromContext extracts trace ID from context
+func GetTraceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if traceID, ok := ctx.Value(traceIDKey).(string); ok {
+		return traceID
+	}
+	return ""
+}
+
+// WithCorrelationID adds correlation ID to context
+func WithCorrelationID(ctx context.Context, correlationID string) context.Context {
+	return context.WithValue(ctx, correlationIDKey, correlationID)
+}
+
+// WithTraceID adds trace ID to context
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceIDKey, traceID)
+}
+
+// LoggerMiddleware provides logging middleware for request processing
+func LoggerMiddleware(next func(ctx context.Context) error) func(ctx context.Context) error {
+	return func(ctx context.Context) error {
+		logger := GetLogger().WithContext(ctx)
+		
+		start := time.Now()
+		err := next(ctx)
+		duration := time.Since(start)
+		
+		if err != nil {
+			logger.Error("Request failed", map[string]interface{}{
+				"duration_ms": duration.Milliseconds(),
+				"error":       err.Error(),
+			})
+		} else {
+			logger.Info("Request completed", map[string]interface{}{
+				"duration_ms": duration.Milliseconds(),
+			})
+		}
+		
+		return err
+	}
+}

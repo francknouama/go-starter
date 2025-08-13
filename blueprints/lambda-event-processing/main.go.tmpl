@@ -1,0 +1,199 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/aws/aws-lambda-go/lambda"
+	"github.com/aws/aws-lambda-go/lambdacontext"
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handler"
+	"{{.ModulePath}}/internal/observability"
+	"{{.ModulePath}}/internal/performance"
+{{- if contains .SecurityFeatures "secrets-manager"}}
+	"{{.ModulePath}}/internal/security"
+{{- end}}
+)
+
+var (
+	// Global dependencies initialized once during cold start
+	eventRouter *handler.EventRouter
+	cfg         *config.Config
+	initTime    time.Time
+)
+
+// init performs one-time initialization during Lambda cold start
+func init() {
+	initTime = time.Now()
+	
+	// Track cold start metrics
+	performance.TrackColdStart()
+	
+	// Load configuration
+	var err error
+	cfg, err = config.Load()
+	if err != nil {
+		fmt.Printf("Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize observability first for proper error tracking
+	if err := observability.Initialize(cfg.Observability); err != nil {
+		fmt.Printf("Failed to initialize observability: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger := observability.GetLogger()
+	logger.Info("Initializing Lambda function", map[string]interface{}{
+		"project":        "{{.ProjectName}}",
+		"logger_type":    "{{.LoggerType}}",
+		"event_sources":  []string{ {{- range $i, $source := .EventSources}}{{if $i}}, {{end}}"{{$source}}"{{end}} },
+		"processing":     "{{.ProcessingPattern}}",
+		"go_version":     "{{.GoVersion}}",
+	})
+
+	// Initialize tracing
+	observability.InitializeTracing(cfg.ServiceName)
+
+	// Initialize metrics
+	if err := observability.InitializeMetrics(); err != nil {
+		logger.Warn("Failed to initialize metrics", map[string]interface{}{
+			"error": err.Error(),
+		})
+	}
+
+{{- if contains .SecurityFeatures "secrets-manager"}}
+	// Initialize secrets manager
+	if err := security.InitializeSecretsManager(); err != nil {
+		logger.Error("Failed to initialize secrets manager", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
+{{- end}}
+
+	// Initialize event router with all configured handlers
+	eventRouter, err = handler.NewEventRouter(cfg)
+	if err != nil {
+		logger.Error("Failed to initialize event router", map[string]interface{}{
+			"error": err.Error(),
+		})
+		os.Exit(1)
+	}
+
+	coldStartDuration := time.Since(initTime)
+	performance.RecordColdStartDuration(coldStartDuration)
+	
+	logger.Info("Lambda function initialized successfully", map[string]interface{}{
+		"cold_start_duration_ms": coldStartDuration.Milliseconds(),
+		"memory_limit_mb":        getLambdaMemoryLimit(),
+	})
+}
+
+// HandleRequest is the main Lambda handler that routes events to appropriate processors
+func HandleRequest(ctx context.Context, event interface{}) (interface{}, error) {
+	startTime := time.Now()
+	logger := observability.GetLogger()
+	
+	// Get Lambda context information
+	lc, _ := lambdacontext.FromContext(ctx)
+	requestID := lc.AwsRequestID
+	
+	// Add correlation ID to context for tracing
+	ctx = observability.WithCorrelationID(ctx, requestID)
+	
+	// Create request context with timeout buffer
+	processingCtx, cancel := createProcessingContext(ctx, lc)
+	defer cancel()
+	
+	// Start tracing for the entire request
+	return observability.TraceSegment(processingCtx, "lambda_event_processing", func(ctx context.Context) (interface{}, error) {
+		// Add trace annotations
+		observability.AddTraceAnnotation(ctx, "request_id", requestID)
+		observability.AddTraceAnnotation(ctx, "function_name", lc.InvokedFunctionArn)
+		observability.AddTraceAnnotation(ctx, "processing_pattern", "{{.ProcessingPattern}}")
+		
+		// Log request start
+		logger.Info("Processing event", map[string]interface{}{
+			"request_id":           requestID,
+			"invoked_function_arn": lc.InvokedFunctionArn,
+			"remaining_time_ms":    lc.RemainingTimeInMillis(),
+		})
+		
+		// Track invocation metrics
+		observability.RecordInvocation()
+		
+		// Route and process the event
+		result, err := eventRouter.RouteEvent(ctx, event)
+		
+		// Calculate processing duration
+		duration := time.Since(startTime)
+		
+		// Record metrics
+		observability.RecordProcessingDuration(duration)
+		if err != nil {
+			observability.RecordError("processing_error")
+			logger.Error("Event processing failed", map[string]interface{}{
+				"request_id":    requestID,
+				"error":         err.Error(),
+				"duration_ms":   duration.Milliseconds(),
+			})
+		} else {
+			observability.RecordSuccess()
+			logger.Info("Event processed successfully", map[string]interface{}{
+				"request_id":  requestID,
+				"duration_ms": duration.Milliseconds(),
+				"result_type": fmt.Sprintf("%T", result),
+			})
+		}
+		
+		// Add processing metadata to trace
+		observability.AddTraceMetadata(ctx, "processing", map[string]interface{}{
+			"duration_ms":     duration.Milliseconds(),
+			"success":         err == nil,
+			"remaining_time":  lc.RemainingTimeInMillis(),
+		})
+		
+		return result, err
+	})
+}
+
+// createProcessingContext creates a context with appropriate timeout for processing
+func createProcessingContext(ctx context.Context, lc *lambdacontext.LambdaContext) (context.Context, context.CancelFunc) {
+	// Reserve 100ms for cleanup and response handling
+	remainingTime := time.Duration(lc.RemainingTimeInMillis()) * time.Millisecond
+	if remainingTime > 200*time.Millisecond {
+		processingTimeout := remainingTime - 100*time.Millisecond
+		return context.WithTimeout(ctx, processingTimeout)
+	}
+	
+	// If we have less than 200ms remaining, use a minimal timeout
+	return context.WithTimeout(ctx, 50*time.Millisecond)
+}
+
+// getLambdaMemoryLimit returns the configured memory limit for the Lambda function
+func getLambdaMemoryLimit() int {
+	if memLimit := os.Getenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE"); memLimit != "" {
+		// Parse memory limit if needed for advanced monitoring
+		return 128 // Default fallback
+	}
+	return 128
+}
+
+// main starts the Lambda runtime
+func main() {
+	// Track startup metrics
+	startupTime := time.Since(initTime)
+	logger := observability.GetLogger()
+	
+	logger.Info("Starting Lambda runtime", map[string]interface{}{
+		"startup_duration_ms": startupTime.Milliseconds(),
+		"go_version":          "{{.GoVersion}}",
+		"runtime":             "aws-lambda-go",
+	})
+	
+	// Start the Lambda runtime
+	lambda.Start(HandleRequest)
+}

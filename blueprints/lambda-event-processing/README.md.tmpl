@@ -1,0 +1,416 @@
+# {{.ProjectName}} - AWS Lambda Event Processing
+
+A production-grade AWS Lambda function built with Go for comprehensive event processing from multiple AWS sources including SQS, SNS, EventBridge, DynamoDB Streams, and Kinesis.
+
+## 🏗️ Architecture
+
+This Lambda function implements advanced event-driven patterns with:
+
+- **Multi-Source Event Processing**: Handles {{range $i, $source := .EventSources}}{{if $i}}, {{end}}{{$source}}{{end}}
+- **{{.ProcessingPattern | title}} Processing**: Optimized for {{.ProcessingPattern}} event processing patterns
+- **Comprehensive Observability**: X-Ray tracing, CloudWatch metrics, structured logging
+- **Production Resilience**: {{range $i, $feature := .ResilienceFeatures}}{{if $i}}, {{end}}{{$feature}}{{end}}
+- **Enterprise Security**: {{range $i, $feature := .SecurityFeatures}}{{if $i}}, {{end}}{{$feature}}{{end}}
+
+## 🚀 Features
+
+### Event Sources
+{{- range .EventSources}}
+- **{{. | upper}}**: Production-ready {{.}} event processing with error handling
+{{- end}}
+
+### Processing Patterns
+- **{{.ProcessingPattern | title}}**: Optimized {{.ProcessingPattern}} processing with configurable concurrency
+- **Intelligent Routing**: Automatic event type detection and routing to appropriate handlers
+- **Error Isolation**: Individual message failures don't affect batch processing
+
+### Observability & Monitoring
+- **Structured Logging**: {{.LoggerType}} with correlation IDs and trace integration
+- **Distributed Tracing**: AWS X-Ray with custom segments and annotations
+- **Custom Metrics**: CloudWatch metrics for business and operational insights
+- **Performance Monitoring**: Cold start optimization and memory usage tracking
+
+### Resilience & Reliability
+{{- if contains .ResilienceFeatures "dlq"}}
+- **Dead Letter Queues**: Automatic DLQ handling for failed messages
+{{- end}}
+{{- if contains .ResilienceFeatures "retry"}}
+- **Exponential Backoff**: Configurable retry logic with jitter
+{{- end}}
+{{- if contains .ResilienceFeatures "circuit-breaker"}}
+- **Circuit Breaker**: Fail-fast pattern for downstream service protection
+{{- end}}
+{{- if contains .ResilienceFeatures "timeout"}}
+- **Timeout Management**: Context-aware processing with cleanup buffers
+{{- end}}
+
+### Security
+{{- if contains .SecurityFeatures "input-validation"}}
+- **Input Validation**: Comprehensive message validation and sanitization
+{{- end}}
+{{- if contains .SecurityFeatures "secrets-manager"}}
+- **Secrets Management**: AWS Secrets Manager integration for sensitive data
+{{- end}}
+- **IAM Least Privilege**: Minimal required permissions with resource-specific access
+
+## 📁 Project Structure
+
+```
+{{.ProjectName}}/
+├── main.go                          # Lambda entry point
+├── go.mod                           # Go module dependencies
+├── README.md                        # This file
+├── Makefile                         # Build and deployment automation
+├── internal/
+│   ├── config/                      # Configuration management
+│   │   ├── config.go               # Main configuration
+│   │   └── validation.go           # Config validation
+│   ├── domain/                      # Domain models and interfaces
+│   │   ├── event.go                # Event domain models
+│   │   ├── message.go              # Message models
+│   │   └── result.go               # Processing result models
+│   ├── handler/                     # Event handlers
+│   │   ├── event_router.go         # Intelligent event routing
+{{- if contains .EventSources "sqs"}}
+│   │   ├── sqs_handler.go          # SQS message processing
+{{- end}}
+{{- if contains .EventSources "sns"}}
+│   │   ├── sns_handler.go          # SNS notification processing
+{{- end}}
+{{- if contains .EventSources "eventbridge"}}
+│   │   ├── eventbridge_handler.go  # EventBridge event processing
+{{- end}}
+{{- if contains .EventSources "dynamodb-streams"}}
+│   │   ├── dynamodb_handler.go     # DynamoDB streams processing
+{{- end}}
+{{- if contains .EventSources "kinesis"}}
+│   │   └── kinesis_handler.go      # Kinesis stream processing
+{{- end}}
+│   ├── observability/              # Observability stack
+│   │   ├── logger.go               # Structured logging ({{.LoggerType}})
+│   │   ├── tracing.go              # X-Ray distributed tracing
+│   │   ├── metrics.go              # CloudWatch custom metrics
+│   │   ├── cloudwatch.go           # CloudWatch integration
+│   │   └── correlation.go          # Request correlation
+{{- if eq .ProcessingPattern "batch"}}
+│   ├── processor/                   # Processing patterns
+│   │   └── batch_processor.go      # Batch processing implementation
+{{- end}}
+{{- if contains .ResilienceFeatures "dlq" "retry" "circuit-breaker" "timeout"}}
+│   ├── resilience/                 # Resilience patterns
+{{- if contains .ResilienceFeatures "retry"}}
+│   │   ├── retry.go                # Exponential backoff retry
+{{- end}}
+{{- if contains .ResilienceFeatures "circuit-breaker"}}
+│   │   ├── circuit_breaker.go      # Circuit breaker pattern
+{{- end}}
+{{- if contains .ResilienceFeatures "dlq"}}
+│   │   ├── dlq_handler.go          # Dead letter queue handling
+{{- end}}
+{{- if contains .ResilienceFeatures "timeout"}}
+│   │   └── timeout.go              # Timeout management
+{{- end}}
+{{- end}}
+{{- if contains .SecurityFeatures "input-validation" "secrets-manager"}}
+│   ├── security/                   # Security components
+{{- if contains .SecurityFeatures "input-validation"}}
+│   │   ├── input_validator.go      # Input validation
+{{- end}}
+{{- if contains .SecurityFeatures "secrets-manager"}}
+│   │   └── secrets_manager.go      # Secrets management
+{{- end}}
+{{- end}}
+│   ├── performance/                # Performance monitoring
+│   │   ├── cold_start.go           # Cold start optimization
+│   │   └── memory_monitor.go       # Memory usage monitoring
+{{- if ne .TestingLevel "basic"}}
+│   └── testing/                    # Testing infrastructure
+│       ├── fixtures.go             # Test fixtures
+{{- if eq .TestingLevel "comprehensive"}}
+│       └── aws_mocks.go            # AWS service mocks
+{{- end}}
+{{- end}}
+├── configs/                        # Environment configurations
+│   ├── development.yaml            # Development settings
+│   ├── production.yaml             # Production settings
+│   └── testing.yaml                # Testing settings
+{{- if contains .DeploymentTargets "sam"}}
+├── sam/                            # AWS SAM deployment
+│   ├── template.yaml               # SAM template
+│   └── parameters.json             # Deployment parameters
+{{- end}}
+{{- if contains .DeploymentTargets "terraform"}}
+├── terraform/                      # Terraform infrastructure
+│   ├── main.tf                     # Main Terraform config
+│   ├── variables.tf                # Variable definitions
+│   └── outputs.tf                  # Output definitions
+{{- end}}
+├── scripts/                        # Automation scripts
+│   ├── deploy.sh                   # Multi-environment deployment
+│   ├── test.sh                     # Comprehensive testing
+│   └── local-dev.sh                # Local development setup
+├── docs/                           # Documentation
+│   ├── ARCHITECTURE.md             # Architecture documentation
+│   └── DEPLOYMENT.md               # Deployment guide
+└── .env.example                    # Environment variables template
+```
+
+## 🛠️ Getting Started
+
+### Prerequisites
+
+- Go {{.GoVersion}}+ installed
+- AWS CLI configured with appropriate permissions
+{{- if contains .DeploymentTargets "sam"}}
+- AWS SAM CLI for deployment
+{{- end}}
+{{- if contains .DeploymentTargets "terraform"}}
+- Terraform for infrastructure management
+{{- end}}
+
+### Local Development
+
+1. **Clone and setup the project:**
+   ```bash
+   git clone <repository-url>
+   cd {{.ProjectName}}
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   go mod tidy
+   ```
+
+3. **Run tests:**
+   ```bash
+   make test
+   # Or run comprehensive test suite
+   ./scripts/test.sh
+   ```
+
+4. **Local testing with SAM:**
+   ```bash
+   ./scripts/local-dev.sh
+   ```
+
+### Configuration
+
+The application uses environment-based configuration with YAML files:
+
+```yaml
+# configs/development.yaml
+service:
+  name: "{{.ProjectName}}"
+  environment: "development"
+
+aws:
+  region: "us-east-1"
+
+processing:
+  pattern: "{{.ProcessingPattern}}"
+  max_concurrency: 10
+  timeout_seconds: 300
+
+observability:
+  level: "{{.ObservabilityLevel}}"
+  tracing_enabled: true
+  metrics_enabled: true
+  log_level: "debug"
+
+{{- if contains .ResilienceFeatures "retry"}}
+resilience:
+  retry:
+    max_attempts: 3
+    backoff_multiplier: 2
+    max_backoff_seconds: 60
+{{- end}}
+
+{{- if contains .SecurityFeatures "input-validation"}}
+security:
+  validation:
+    enabled: true
+    strict_mode: false
+{{- end}}
+```
+
+### Environment Variables
+
+Key environment variables for configuration:
+
+```bash
+# AWS Configuration
+AWS_REGION=us-east-1
+AWS_LAMBDA_FUNCTION_NAME={{.ProjectName}}
+
+# Observability
+LOG_LEVEL=info
+TRACING_ENABLED=true
+METRICS_NAMESPACE={{.ProjectName}}
+
+# Processing
+PROCESSING_PATTERN={{.ProcessingPattern}}
+MAX_CONCURRENCY=10
+
+{{- if contains .SecurityFeatures "secrets-manager"}}
+# Security
+SECRETS_MANAGER_ENABLED=true
+{{- end}}
+
+{{- if contains .ResilienceFeatures "dlq"}}
+# Resilience
+DLQ_ENABLED=true
+DLQ_URL=https://sqs.region.amazonaws.com/account/dlq-name
+{{- end}}
+```
+
+## 🚀 Deployment
+
+### Using AWS SAM
+{{- if contains .DeploymentTargets "sam"}}
+
+```bash
+# Build and deploy
+./scripts/deploy.sh development
+
+# Or manually:
+sam build
+sam deploy --guided
+```
+{{- end}}
+
+### Using Terraform
+{{- if contains .DeploymentTargets "terraform"}}
+
+```bash
+cd terraform
+terraform init
+terraform plan -var-file="environments/development.tfvars"
+terraform apply
+```
+{{- end}}
+
+### CI/CD Pipeline
+
+The project includes GitHub Actions workflows for:
+- **Continuous Integration**: Testing, linting, security scanning
+- **Deployment**: Multi-environment deployment with approval gates
+- **Monitoring**: Performance and security monitoring
+
+## 📊 Monitoring & Observability
+
+### CloudWatch Metrics
+
+The function publishes custom metrics:
+
+- `LambdaInvocations`: Total function invocations
+- `ProcessingDuration`: Event processing time
+- `EventsProcessed`: Number of events processed
+- `ProcessingErrors`: Number of processing failures
+{{- if contains .EventSources "sqs"}}
+- `SQSMessagesProcessed`: SQS-specific message metrics
+{{- end}}
+- `ColdStartDuration`: Lambda cold start performance
+
+### X-Ray Tracing
+
+Distributed tracing includes:
+- Request correlation across all components
+- Performance bottleneck identification
+- Error root cause analysis
+- Dependency mapping
+
+### Logging
+
+Structured logging with:
+- Correlation IDs for request tracking
+- Trace IDs for distributed tracing integration
+- Contextual metadata for debugging
+- CloudWatch Logs integration
+
+## 🔧 Development Commands
+
+```bash
+# Build the Lambda function
+make build
+
+# Run tests
+make test
+
+# Run linting
+make lint
+
+# Generate code coverage
+make coverage
+
+# Deploy to development
+make deploy-dev
+
+# Deploy to production
+make deploy-prod
+
+# Clean build artifacts
+make clean
+```
+
+## 🏗️ Architecture Patterns
+
+### Event Processing Flow
+
+1. **Event Reception**: Lambda receives events from configured sources
+2. **Event Routing**: Intelligent routing based on event type and source
+3. **Validation**: Input validation and security checks
+4. **Processing**: Business logic execution with observability
+5. **Result Handling**: Success/failure handling with metrics
+
+### Error Handling Strategy
+
+{{- if contains .ResilienceFeatures "dlq"}}
+1. **Primary Processing**: Attempt normal event processing
+2. **Retry Logic**: Exponential backoff for transient failures
+3. **Dead Letter Queue**: Failed messages sent to DLQ for analysis
+4. **Alerting**: CloudWatch alarms for failure rate monitoring
+{{- end}}
+
+### Security Considerations
+
+{{- if contains .SecurityFeatures "input-validation"}}
+- **Input Validation**: All event data validated before processing
+{{- end}}
+{{- if contains .SecurityFeatures "secrets-manager"}}
+- **Secrets Management**: No hardcoded secrets, AWS Secrets Manager integration
+{{- end}}
+- **IAM Least Privilege**: Minimal required permissions
+- **VPC Integration**: Optional VPC deployment for network security
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/new-feature`
+3. Make your changes with tests
+4. Run the test suite: `make test`
+5. Commit your changes: `git commit -am 'Add new feature'`
+6. Push to the branch: `git push origin feature/new-feature`
+7. Submit a pull request
+
+## 📝 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- **Documentation**: See `docs/` directory for detailed guides
+- **Issues**: Submit issues via GitHub Issues
+- **Architecture**: See `docs/ARCHITECTURE.md` for detailed design
+- **Deployment**: See `docs/DEPLOYMENT.md` for deployment guides
+
+## 🔗 Related Projects
+
+- [AWS Lambda Go Runtime](https://github.com/aws/aws-lambda-go)
+- [AWS SDK for Go v2](https://github.com/aws/aws-sdk-go-v2)
+- [AWS X-Ray SDK for Go](https://github.com/aws/aws-xray-sdk-go)
+
+---
+
+Generated with ❤️ by [go-starter](https://github.com/reactive-crafters/go-starter)

@@ -1,0 +1,238 @@
+name: "lambda-event-processing"
+displayName: "AWS Lambda Event Processing"
+description: "Production-grade Lambda for SQS, SNS, EventBridge event processing with comprehensive observability and resilience patterns"
+type: "lambda"
+architecture: "event-processing"
+version: "2.0.0"
+category: "serverless"
+complexity: "advanced"
+tags: ["aws", "lambda", "sqs", "sns", "eventbridge", "event-processing", "serverless", "observability", "resilience"]
+
+# Metadata
+metadata:
+  author: "go-starter"
+  license: "MIT"
+  goVersion: "1.21"
+  
+# Enhanced Template Variables
+variables:
+  - name: "ProjectName"
+    type: "string"
+    description: "Name of the Lambda event processing project"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    type: "string"
+    description: "Go module path (e.g., github.com/user/project)"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "GoVersion"
+    type: "string"
+    description: "Go version for the project"
+    default: "1.21"
+    choices: ["1.21", "1.22", "1.23"]
+
+  - name: "LoggerType"
+    type: "select"
+    description: "Logging library optimized for CloudWatch"
+    options: ["slog", "zap", "logrus", "zerolog"]
+    default: "slog"
+
+  - name: "EventSources"
+    type: "multi-select"
+    description: "Event sources to support"
+    options: ["sqs", "sns", "eventbridge", "dynamodb-streams", "kinesis"]
+    default: ["sqs", "sns"]
+
+  - name: "ProcessingPattern"
+    type: "select"
+    description: "Event processing pattern"
+    options: ["batch", "individual", "fanout", "aggregation"]
+    default: "batch"
+
+  - name: "ResilienceFeatures"
+    type: "multi-select"
+    description: "Resilience features to include"
+    options: ["dlq", "retry", "circuit-breaker", "timeout", "backoff"]
+    default: ["dlq", "retry", "timeout"]
+
+  - name: "ObservabilityLevel"
+    type: "select"
+    description: "Observability level"
+    options: ["basic", "standard", "advanced", "enterprise"]
+    default: "advanced"
+
+  - name: "SecurityFeatures"
+    type: "multi-select"
+    description: "Security features to include"
+    options: ["input-validation", "secrets-manager", "iam-least-privilege", "encryption"]
+    default: ["input-validation", "secrets-manager"]
+
+  - name: "TestingLevel"
+    type: "select"
+    description: "Testing infrastructure level"
+    options: ["basic", "standard", "comprehensive"]
+    default: "comprehensive"
+
+  - name: "DeploymentTargets"
+    type: "multi-select"
+    description: "Deployment targets"
+    options: ["sam", "cdk", "terraform", "serverless-framework"]
+    default: ["sam", "terraform"]
+
+# Core File Structure (focusing on implemented files)
+files:
+  # Core Application Files
+  - source: "main.go.tmpl"
+    destination: "main.go"
+    description: "Lambda entry point with multi-trigger support"
+
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+    description: "Go module with AWS SDK v2 and observability dependencies"
+
+  # Event Processing Core
+  - source: "internal/handler/event_router.go.tmpl"
+    destination: "internal/handler/event_router.go"
+    description: "Intelligent event routing based on source type"
+
+  - source: "internal/handler/sqs_handler.go.tmpl"
+    destination: "internal/handler/sqs_handler.go"
+    description: "SQS message processing with batch support"
+
+  # Domain Models and Events
+  - source: "internal/domain/event.go.tmpl"
+    destination: "internal/domain/event.go"
+    description: "Event domain models and interfaces"
+
+  # Enhanced Observability Stack
+  - source: "internal/observability/logger.go.tmpl"
+    destination: "internal/observability/logger.go"
+    description: "Structured logging with correlation IDs"
+
+  # Documentation
+  - source: "README.md.tmpl"
+    destination: "README.md"
+    description: "Comprehensive documentation with examples"
+
+# Enhanced Dependencies with AWS SDK v2
+dependencies:
+  # Core Lambda runtime
+  - module: "github.com/aws/aws-lambda-go"
+    version: "v1.47.0"
+  
+  # AWS SDK v2 Core
+  - module: "github.com/aws/aws-sdk-go-v2"
+    version: "v1.24.0"
+  - module: "github.com/aws/aws-sdk-go-v2/config"
+    version: "v1.26.1"
+  - module: "github.com/aws/aws-sdk-go-v2/service/sqs"
+    version: "v1.29.0"
+    condition: "{{contains .EventSources \"sqs\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/service/sns"
+    version: "v1.26.0"
+    condition: "{{contains .EventSources \"sns\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/service/eventbridge"
+    version: "v1.25.0"
+    condition: "{{contains .EventSources \"eventbridge\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/service/dynamodb"
+    version: "v1.26.0"
+    condition: "{{contains .EventSources \"dynamodb-streams\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/service/kinesis"
+    version: "v1.24.0"
+    condition: "{{contains .EventSources \"kinesis\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+    version: "v1.25.0"
+    condition: "{{contains .SecurityFeatures \"secrets-manager\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+    version: "v1.32.0"
+
+  # Observability
+  - module: "github.com/aws/aws-xray-sdk-go"
+    version: "v1.8.4"
+  
+  # Logging libraries (conditional)
+  - module: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .LoggerType \"zap\"}}"
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .LoggerType \"logrus\"}}"
+  - module: "github.com/rs/zerolog"
+    version: "v1.32.0"
+    condition: "{{eq .LoggerType \"zerolog\"}}"
+
+  # Validation and utilities
+  - module: "github.com/go-playground/validator/v10"
+    version: "v10.16.0"
+    condition: "{{contains .SecurityFeatures \"input-validation\"}}"
+  - module: "github.com/google/uuid"
+    version: "v1.5.0"
+
+  # Testing dependencies
+  - module: "github.com/stretchr/testify"
+    version: "v1.8.4"
+  - module: "github.com/testcontainers/testcontainers-go"
+    version: "v0.27.0"
+    condition: "{{eq .TestingLevel \"comprehensive\"}}"
+  - module: "github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
+    version: "v1.12.0"
+    condition: "{{contains .EventSources \"dynamodb-streams\"}}"
+
+# Post-generation hooks
+post_hooks:
+  - name: "clean_dependencies"
+    command: "go mod tidy"
+    work_dir: "{{.OutputPath}}"
+  
+  - name: "generate_mocks"
+    command: "go generate ./..."
+    work_dir: "{{.OutputPath}}"
+    condition: "{{eq .TestingLevel \"comprehensive\"}}"
+
+# Feature definitions for conditional generation
+features:
+  - name: "comprehensive_observability"
+    description: "Complete AWS observability stack with X-Ray, CloudWatch, and custom metrics"
+    enabled_when: "{{ne .ObservabilityLevel \"basic\"}}"
+    
+  - name: "advanced_security"
+    description: "Enterprise security features with secrets management and input validation"
+    enabled_when: "{{or (contains .SecurityFeatures \"secrets-manager\") (contains .SecurityFeatures \"input-validation\")}}"
+    
+  - name: "resilience_patterns"
+    description: "Production resilience patterns with circuit breakers, retries, and DLQ"
+    enabled_when: "{{gt (len .ResilienceFeatures) 1}}"
+    
+  - name: "multi_event_sources"
+    description: "Support for multiple AWS event sources with intelligent routing"
+    enabled_when: "{{gt (len .EventSources) 1}}"
+    
+  - name: "comprehensive_testing"
+    description: "Full testing infrastructure with AWS service mocking and testcontainers"
+    enabled_when: "{{eq .TestingLevel \"comprehensive\"}}"
+    
+  - name: "infrastructure_as_code"
+    description: "Multiple deployment options with SAM, CDK, and Terraform"
+    enabled_when: "{{gt (len .DeploymentTargets) 0}}"
+
+# Quality gates and validation
+quality_gates:
+  - name: "compilation"
+    description: "Generated code must compile successfully"
+    command: "go build ./..."
+    
+  - name: "linting"
+    description: "Code must pass linting checks"
+    command: "golangci-lint run"
+    
+  - name: "unit_tests"
+    description: "Unit tests must pass"
+    command: "go test ./internal/..."
+    
+  - name: "security_scan"
+    description: "Security vulnerabilities scan"
+    command: "gosec ./..."
+    condition: "{{contains .SecurityFeatures \"input-validation\"}}"

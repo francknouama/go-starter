@@ -1,0 +1,324 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"reflect"
+
+	"github.com/aws/aws-lambda-go/events"
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/observability"
+{{- if contains .ResilienceFeatures "circuit-breaker"}}
+	"{{.ModulePath}}/internal/resilience"
+{{- end}}
+)
+
+// EventRouter intelligently routes incoming events to appropriate handlers based on event type
+type EventRouter struct {
+	cfg      *config.Config
+	handlers map[string]EventHandler
+	logger   observability.Logger
+{{- if contains .ResilienceFeatures "circuit-breaker"}}
+	cb       *resilience.CircuitBreaker
+{{- end}}
+}
+
+// EventHandler defines the interface for processing different types of events
+type EventHandler interface {
+	// HandleEvent processes an event and returns a result
+	HandleEvent(ctx context.Context, event interface{}) (*domain.ProcessingResult, error)
+	
+	// GetEventType returns the type of events this handler can process
+	GetEventType() string
+	
+	// Validate checks if the event is valid for this handler
+	Validate(event interface{}) error
+}
+
+// NewEventRouter creates a new event router with configured handlers
+func NewEventRouter(cfg *config.Config) (*EventRouter, error) {
+	logger := observability.GetLogger()
+	
+	router := &EventRouter{
+		cfg:      cfg,
+		handlers: make(map[string]EventHandler),
+		logger:   logger,
+	}
+
+{{- if contains .ResilienceFeatures "circuit-breaker"}}
+	// Initialize circuit breaker
+	var err error
+	router.cb, err = resilience.NewCircuitBreaker(cfg.Resilience.CircuitBreaker)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize circuit breaker: %w", err)
+	}
+{{- end}}
+
+	// Register handlers based on configured event sources
+{{- if contains .EventSources "sqs"}}
+	if err := router.registerSQSHandler(); err != nil {
+		return nil, fmt.Errorf("failed to register SQS handler: %w", err)
+	}
+{{- end}}
+
+{{- if contains .EventSources "sns"}}
+	if err := router.registerSNSHandler(); err != nil {
+		return nil, fmt.Errorf("failed to register SNS handler: %w", err)
+	}
+{{- end}}
+
+{{- if contains .EventSources "eventbridge"}}
+	if err := router.registerEventBridgeHandler(); err != nil {
+		return nil, fmt.Errorf("failed to register EventBridge handler: %w", err)
+	}
+{{- end}}
+
+{{- if contains .EventSources "dynamodb-streams"}}
+	if err := router.registerDynamoDBHandler(); err != nil {
+		return nil, fmt.Errorf("failed to register DynamoDB handler: %w", err)
+	}
+{{- end}}
+
+{{- if contains .EventSources "kinesis"}}
+	if err := router.registerKinesisHandler(); err != nil {
+		return nil, fmt.Errorf("failed to register Kinesis handler: %w", err)
+	}
+{{- end}}
+
+	logger.Info("Event router initialized", map[string]interface{}{
+		"registered_handlers": getHandlerTypes(router.handlers),
+		"processing_pattern":  "{{.ProcessingPattern}}",
+	})
+
+	return router, nil
+}
+
+// RouteEvent routes an incoming event to the appropriate handler
+func (r *EventRouter) RouteEvent(ctx context.Context, event interface{}) (interface{}, error) {
+	// Determine event type
+	eventType, err := r.detectEventType(event)
+	if err != nil {
+		return nil, fmt.Errorf("failed to detect event type: %w", err)
+	}
+
+	r.logger.Debug("Routing event", map[string]interface{}{
+		"event_type":    eventType,
+		"event_size":    getEventSize(event),
+	})
+
+	// Add event type to trace
+	observability.AddTraceAnnotation(ctx, "event_type", eventType)
+
+	// Find appropriate handler
+	handler, exists := r.handlers[eventType]
+	if !exists {
+		err := fmt.Errorf("no handler registered for event type: %s", eventType)
+		r.logger.Error("Unsupported event type", map[string]interface{}{
+			"event_type":        eventType,
+			"available_handlers": getHandlerTypes(r.handlers),
+		})
+		return nil, err
+	}
+
+	// Validate event before processing
+	if err := handler.Validate(event); err != nil {
+		r.logger.Error("Event validation failed", map[string]interface{}{
+			"event_type": eventType,
+			"error":      err.Error(),
+		})
+		return nil, fmt.Errorf("event validation failed: %w", err)
+	}
+
+	// Process event with observability and resilience patterns
+	return r.processEventWithResilience(ctx, handler, event, eventType)
+}
+
+// processEventWithResilience processes an event with resilience patterns applied
+func (r *EventRouter) processEventWithResilience(ctx context.Context, handler EventHandler, event interface{}, eventType string) (interface{}, error) {
+{{- if contains .ResilienceFeatures "circuit-breaker"}}
+	// Apply circuit breaker pattern
+	return r.cb.Execute(func() (interface{}, error) {
+		return r.processEvent(ctx, handler, event, eventType)
+	})
+{{- else}}
+	return r.processEvent(ctx, handler, event, eventType)
+{{- end}}
+}
+
+// processEvent handles the actual event processing with tracing
+func (r *EventRouter) processEvent(ctx context.Context, handler EventHandler, event interface{}, eventType string) (interface{}, error) {
+	return observability.TraceSubsegment(ctx, fmt.Sprintf("process_%s", eventType), func(ctx context.Context) (interface{}, error) {
+		// Record processing attempt
+		observability.RecordEventProcessingAttempt(eventType)
+		
+		// Process the event
+		result, err := handler.HandleEvent(ctx, event)
+		if err != nil {
+			observability.RecordEventProcessingError(eventType)
+			return nil, err
+		}
+		
+		observability.RecordEventProcessingSuccess(eventType)
+		
+		// Add result metadata to trace
+		if result != nil {
+			observability.AddTraceMetadata(ctx, "result", map[string]interface{}{
+				"processed_count":   result.ProcessedCount,
+				"failed_count":      result.FailedCount,
+				"has_partial_failures": result.HasPartialFailures(),
+			})
+		}
+		
+		return result, nil
+	})
+}
+
+// detectEventType analyzes the event structure to determine its type
+func (r *EventRouter) detectEventType(event interface{}) (string, error) {
+	// Try to marshal and unmarshal to detect AWS event types
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal event: %w", err)
+	}
+
+	// Check for SQS event
+{{- if contains .EventSources "sqs"}}
+	var sqsEvent events.SQSEvent
+	if err := json.Unmarshal(eventBytes, &sqsEvent); err == nil && len(sqsEvent.Records) > 0 && sqsEvent.Records[0].EventSource == "aws:sqs" {
+		return "sqs", nil
+	}
+{{- end}}
+
+	// Check for SNS event
+{{- if contains .EventSources "sns"}}
+	var snsEvent events.SNSEvent
+	if err := json.Unmarshal(eventBytes, &snsEvent); err == nil && len(snsEvent.Records) > 0 && snsEvent.Records[0].EventSource == "aws:sns" {
+		return "sns", nil
+	}
+{{- end}}
+
+	// Check for EventBridge event
+{{- if contains .EventSources "eventbridge"}}
+	var eventBridgeEvent events.CloudWatchEvent
+	if err := json.Unmarshal(eventBytes, &eventBridgeEvent); err == nil && eventBridgeEvent.Source != "" {
+		return "eventbridge", nil
+	}
+{{- end}}
+
+	// Check for DynamoDB Streams event
+{{- if contains .EventSources "dynamodb-streams"}}
+	var dynamoEvent events.DynamoDBEvent
+	if err := json.Unmarshal(eventBytes, &dynamoEvent); err == nil && len(dynamoEvent.Records) > 0 && dynamoEvent.Records[0].EventSource == "aws:dynamodb" {
+		return "dynamodb", nil
+	}
+{{- end}}
+
+	// Check for Kinesis event
+{{- if contains .EventSources "kinesis"}}
+	var kinesisEvent events.KinesisEvent
+	if err := json.Unmarshal(eventBytes, &kinesisEvent); err == nil && len(kinesisEvent.Records) > 0 && kinesisEvent.Records[0].EventSource == "aws:kinesis" {
+		return "kinesis", nil
+	}
+{{- end}}
+
+	// Unknown event type
+	return "", fmt.Errorf("unknown event type: %T", event)
+}
+
+// Handler registration methods
+{{- if contains .EventSources "sqs"}}
+func (r *EventRouter) registerSQSHandler() error {
+	handler, err := NewSQSHandler(r.cfg)
+	if err != nil {
+		return err
+	}
+	r.handlers["sqs"] = handler
+	return nil
+}
+{{- end}}
+
+{{- if contains .EventSources "sns"}}
+func (r *EventRouter) registerSNSHandler() error {
+	handler, err := NewSNSHandler(r.cfg)
+	if err != nil {
+		return err
+	}
+	r.handlers["sns"] = handler
+	return nil
+}
+{{- end}}
+
+{{- if contains .EventSources "eventbridge"}}
+func (r *EventRouter) registerEventBridgeHandler() error {
+	handler, err := NewEventBridgeHandler(r.cfg)
+	if err != nil {
+		return err
+	}
+	r.handlers["eventbridge"] = handler
+	return nil
+}
+{{- end}}
+
+{{- if contains .EventSources "dynamodb-streams"}}
+func (r *EventRouter) registerDynamoDBHandler() error {
+	handler, err := NewDynamoDBHandler(r.cfg)
+	if err != nil {
+		return err
+	}
+	r.handlers["dynamodb"] = handler
+	return nil
+}
+{{- end}}
+
+{{- if contains .EventSources "kinesis"}}
+func (r *EventRouter) registerKinesisHandler() error {
+	handler, err := NewKinesisHandler(r.cfg)
+	if err != nil {
+		return err
+	}
+	r.handlers["kinesis"] = handler
+	return nil
+}
+{{- end}}
+
+// Utility functions
+func getHandlerTypes(handlers map[string]EventHandler) []string {
+	types := make([]string, 0, len(handlers))
+	for handlerType := range handlers {
+		types = append(types, handlerType)
+	}
+	return types
+}
+
+func getEventSize(event interface{}) int {
+	if eventBytes, err := json.Marshal(event); err == nil {
+		return len(eventBytes)
+	}
+	return 0
+}
+
+// GetRegisteredHandlers returns a list of registered handler types
+func (r *EventRouter) GetRegisteredHandlers() []string {
+	return getHandlerTypes(r.handlers)
+}
+
+// GetHandler returns a specific handler by type (useful for testing)
+func (r *EventRouter) GetHandler(eventType string) (EventHandler, bool) {
+	handler, exists := r.handlers[eventType]
+	return handler, exists
+}
+
+// HealthCheck verifies all handlers are functioning correctly
+func (r *EventRouter) HealthCheck(ctx context.Context) error {
+	for handlerType, handler := range r.handlers {
+		// Check if handler has a health check method
+		if healthChecker, ok := handler.(interface{ HealthCheck(context.Context) error }); ok {
+			if err := healthChecker.HealthCheck(ctx); err != nil {
+				return fmt.Errorf("handler %s health check failed: %w", handlerType, err)
+			}
+		}
+	}
+	return nil
+}

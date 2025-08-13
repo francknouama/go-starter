@@ -1,0 +1,343 @@
+package domain
+
+import (
+	"time"
+)
+
+// Event represents a processed event with comprehensive metadata
+type Event struct {
+	// Core event properties
+	ID          string                 `json:"id" validate:"required"`
+	Type        string                 `json:"type" validate:"required"`
+	Source      string                 `json:"source" validate:"required"`
+	Subject     string                 `json:"subject,omitempty"`
+	Data        map[string]interface{} `json:"data" validate:"required"`
+	
+	// Timing information
+	Timestamp   time.Time `json:"timestamp" validate:"required"`
+	ProcessedAt time.Time `json:"processed_at,omitempty"`
+	
+	// Metadata
+	Version     string                 `json:"version,omitempty"`
+	ContentType string                 `json:"content_type,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	
+	// Processing context
+	TraceID       string `json:"trace_id,omitempty"`
+	CorrelationID string `json:"correlation_id,omitempty"`
+	
+	// Quality attributes
+	Priority    EventPriority `json:"priority,omitempty"`
+	TTL         *time.Time    `json:"ttl,omitempty"`
+}
+
+// EventPriority defines the priority levels for event processing
+type EventPriority int
+
+const (
+	PriorityLow EventPriority = iota
+	PriorityNormal
+	PriorityHigh
+	PriorityCritical
+)
+
+// String returns the string representation of EventPriority
+func (p EventPriority) String() string {
+	switch p {
+	case PriorityLow:
+		return "low"
+	case PriorityNormal:
+		return "normal"
+	case PriorityHigh:
+		return "high"
+	case PriorityCritical:
+		return "critical"
+	default:
+		return "unknown"
+	}
+}
+
+// EventProcessor defines the interface for processing events
+type EventProcessor interface {
+	// ProcessEvent processes a single event
+	ProcessEvent(event *Event) (*ProcessingResult, error)
+	
+	// ProcessEventBatch processes multiple events efficiently
+	ProcessEventBatch(events []*Event) (*ProcessingResult, error)
+	
+	// CanProcess determines if this processor can handle the event
+	CanProcess(event *Event) bool
+	
+	// GetSupportedEventTypes returns the event types this processor supports
+	GetSupportedEventTypes() []string
+}
+
+// EventHandler defines the interface for domain-specific event handling
+type EventHandler interface {
+	// Handle processes the event and returns the result
+	Handle(event *Event) error
+	
+	// GetEventType returns the type of events this handler processes
+	GetEventType() string
+	
+	// Validate checks if the event is valid for processing
+	Validate(event *Event) error
+}
+
+// EventRouter defines the interface for routing events to appropriate handlers
+type EventRouter interface {
+	// Route determines which handler should process the event
+	Route(event *Event) (EventHandler, error)
+	
+	// RegisterHandler registers a new event handler
+	RegisterHandler(eventType string, handler EventHandler) error
+	
+	// GetHandler retrieves a handler for a specific event type
+	GetHandler(eventType string) (EventHandler, bool)
+}
+
+// EventFilter defines the interface for filtering events
+type EventFilter interface {
+	// ShouldProcess determines if an event should be processed
+	ShouldProcess(event *Event) bool
+	
+	// GetFilterCriteria returns the criteria used for filtering
+	GetFilterCriteria() map[string]interface{}
+}
+
+// EventTransformer defines the interface for transforming events
+type EventTransformer interface {
+	// Transform modifies an event according to business rules
+	Transform(event *Event) (*Event, error)
+	
+	// CanTransform determines if this transformer can handle the event
+	CanTransform(event *Event) bool
+}
+
+// EventValidator defines the interface for event validation
+type EventValidator interface {
+	// Validate checks if an event is valid
+	Validate(event *Event) error
+	
+	// GetValidationRules returns the validation rules
+	GetValidationRules() map[string]interface{}
+}
+
+// NewEvent creates a new event with default values
+func NewEvent(eventType, source string, data map[string]interface{}) *Event {
+	return &Event{
+		ID:        generateEventID(),
+		Type:      eventType,
+		Source:    source,
+		Data:      data,
+		Timestamp: time.Now().UTC(),
+		Priority:  PriorityNormal,
+		Metadata:  make(map[string]interface{}),
+	}
+}
+
+// IsExpired checks if the event has exceeded its TTL
+func (e *Event) IsExpired() bool {
+	if e.TTL == nil {
+		return false
+	}
+	return time.Now().UTC().After(*e.TTL)
+}
+
+// AddMetadata adds metadata to the event
+func (e *Event) AddMetadata(key string, value interface{}) {
+	if e.Metadata == nil {
+		e.Metadata = make(map[string]interface{})
+	}
+	e.Metadata[key] = value
+}
+
+// GetMetadata retrieves metadata from the event
+func (e *Event) GetMetadata(key string) (interface{}, bool) {
+	if e.Metadata == nil {
+		return nil, false
+	}
+	value, exists := e.Metadata[key]
+	return value, exists
+}
+
+// SetProcessed marks the event as processed
+func (e *Event) SetProcessed() {
+	e.ProcessedAt = time.Now().UTC()
+}
+
+// GetAge returns the age of the event since creation
+func (e *Event) GetAge() time.Duration {
+	return time.Now().UTC().Sub(e.Timestamp)
+}
+
+// GetProcessingDuration returns how long the event took to process
+func (e *Event) GetProcessingDuration() time.Duration {
+	if e.ProcessedAt.IsZero() {
+		return 0
+	}
+	return e.ProcessedAt.Sub(e.Timestamp)
+}
+
+// Clone creates a deep copy of the event
+func (e *Event) Clone() *Event {
+	clone := &Event{
+		ID:            e.ID,
+		Type:          e.Type,
+		Source:        e.Source,
+		Subject:       e.Subject,
+		Timestamp:     e.Timestamp,
+		ProcessedAt:   e.ProcessedAt,
+		Version:       e.Version,
+		ContentType:   e.ContentType,
+		TraceID:       e.TraceID,
+		CorrelationID: e.CorrelationID,
+		Priority:      e.Priority,
+	}
+	
+	// Deep copy TTL
+	if e.TTL != nil {
+		ttl := *e.TTL
+		clone.TTL = &ttl
+	}
+	
+	// Deep copy Data
+	clone.Data = make(map[string]interface{})
+	for k, v := range e.Data {
+		clone.Data[k] = v
+	}
+	
+	// Deep copy Metadata
+	clone.Metadata = make(map[string]interface{})
+	for k, v := range e.Metadata {
+		clone.Metadata[k] = v
+	}
+	
+	return clone
+}
+
+// EventBatch represents a collection of events for batch processing
+type EventBatch struct {
+	Events    []*Event  `json:"events" validate:"required,dive"`
+	BatchID   string    `json:"batch_id" validate:"required"`
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	Size      int       `json:"size" validate:"min=1"`
+	
+	// Processing metadata
+	ProcessingStarted time.Time `json:"processing_started,omitempty"`
+	ProcessingEnded   time.Time `json:"processing_ended,omitempty"`
+}
+
+// NewEventBatch creates a new event batch
+func NewEventBatch(events []*Event) *EventBatch {
+	return &EventBatch{
+		Events:    events,
+		BatchID:   generateBatchID(),
+		CreatedAt: time.Now().UTC(),
+		Size:      len(events),
+	}
+}
+
+// AddEvent adds an event to the batch
+func (eb *EventBatch) AddEvent(event *Event) {
+	eb.Events = append(eb.Events, event)
+	eb.Size = len(eb.Events)
+}
+
+// GetEventsByType returns events of a specific type
+func (eb *EventBatch) GetEventsByType(eventType string) []*Event {
+	var filtered []*Event
+	for _, event := range eb.Events {
+		if event.Type == eventType {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+// GetEventsBySource returns events from a specific source
+func (eb *EventBatch) GetEventsBySource(source string) []*Event {
+	var filtered []*Event
+	for _, event := range eb.Events {
+		if event.Source == source {
+			filtered = append(filtered, event)
+		}
+	}
+	return filtered
+}
+
+// GetProcessingDuration returns the total processing duration for the batch
+func (eb *EventBatch) GetProcessingDuration() time.Duration {
+	if eb.ProcessingEnded.IsZero() || eb.ProcessingStarted.IsZero() {
+		return 0
+	}
+	return eb.ProcessingEnded.Sub(eb.ProcessingStarted)
+}
+
+// MarkProcessingStarted marks the start of batch processing
+func (eb *EventBatch) MarkProcessingStarted() {
+	eb.ProcessingStarted = time.Now().UTC()
+}
+
+// MarkProcessingEnded marks the end of batch processing
+func (eb *EventBatch) MarkProcessingEnded() {
+	eb.ProcessingEnded = time.Now().UTC()
+}
+
+// Utility functions for ID generation
+func generateEventID() string {
+	// In a real implementation, you would use a proper UUID library
+	// For this template, we'll use a simple timestamp-based ID
+	return fmt.Sprintf("event-%d", time.Now().UnixNano())
+}
+
+func generateBatchID() string {
+	// In a real implementation, you would use a proper UUID library
+	// For this template, we'll use a simple timestamp-based ID
+	return fmt.Sprintf("batch-%d", time.Now().UnixNano())
+}
+
+// EventStats provides statistics about event processing
+type EventStats struct {
+	TotalEvents       int           `json:"total_events"`
+	ProcessedEvents   int           `json:"processed_events"`
+	FailedEvents      int           `json:"failed_events"`
+	AverageProcessingTime time.Duration `json:"average_processing_time"`
+	EventsByType      map[string]int `json:"events_by_type"`
+	EventsBySource    map[string]int `json:"events_by_source"`
+}
+
+// CalculateStats calculates statistics for a batch of events
+func CalculateStats(events []*Event) *EventStats {
+	stats := &EventStats{
+		TotalEvents:    len(events),
+		EventsByType:   make(map[string]int),
+		EventsBySource: make(map[string]int),
+	}
+	
+	var totalProcessingTime time.Duration
+	processedCount := 0
+	
+	for _, event := range events {
+		// Count by type
+		stats.EventsByType[event.Type]++
+		
+		// Count by source
+		stats.EventsBySource[event.Source]++
+		
+		// Calculate processing metrics
+		if !event.ProcessedAt.IsZero() {
+			processedCount++
+			totalProcessingTime += event.GetProcessingDuration()
+		}
+	}
+	
+	stats.ProcessedEvents = processedCount
+	stats.FailedEvents = stats.TotalEvents - processedCount
+	
+	if processedCount > 0 {
+		stats.AverageProcessingTime = totalProcessingTime / time.Duration(processedCount)
+	}
+	
+	return stats
+}

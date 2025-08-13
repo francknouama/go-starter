@@ -1,0 +1,107 @@
+package config
+
+// Config holds all configuration for the Lambda function
+type Config struct {
+	ServiceName     string                  `yaml:"service_name" json:"service_name"`
+	Environment     string                  `yaml:"environment" json:"environment"`
+	AWS             AWSConfig              `yaml:"aws" json:"aws"`
+	Processing      ProcessingConfig       `yaml:"processing" json:"processing"`
+	Observability   ObservabilityConfig    `yaml:"observability" json:"observability"`
+	Resilience      ResilienceConfig       `yaml:"resilience" json:"resilience"`
+	Security        SecurityConfig         `yaml:"security" json:"security"`
+}
+
+// AWSConfig holds AWS-specific configuration
+type AWSConfig struct {
+	Region string `yaml:"region" json:"region"`
+}
+
+// ProcessingConfig holds event processing configuration
+type ProcessingConfig struct {
+	MaxConcurrency int                   `yaml:"max_concurrency" json:"max_concurrency"`
+	Timeout        int                   `yaml:"timeout_seconds" json:"timeout_seconds"`
+	Batch          BatchProcessingConfig `yaml:"batch" json:"batch"`
+}
+
+// BatchProcessingConfig holds batch processing specific configuration
+type BatchProcessingConfig struct {
+	Size    int `yaml:"size" json:"size"`
+	Timeout int `yaml:"timeout_seconds" json:"timeout_seconds"`
+}
+
+// ObservabilityConfig holds observability configuration
+type ObservabilityConfig struct {
+	Level           string `yaml:"level" json:"level"`
+	TracingEnabled  bool   `yaml:"tracing_enabled" json:"tracing_enabled"`
+	MetricsEnabled  bool   `yaml:"metrics_enabled" json:"metrics_enabled"`
+	LogLevel        string `yaml:"log_level" json:"log_level"`
+}
+
+// ResilienceConfig holds resilience patterns configuration
+type ResilienceConfig struct {
+	DLQ           DLQConfig           `yaml:"dlq" json:"dlq"`
+	CircuitBreaker CircuitBreakerConfig `yaml:"circuit_breaker" json:"circuit_breaker"`
+}
+
+// DLQConfig holds dead letter queue configuration
+type DLQConfig struct {
+	Enabled bool   `yaml:"enabled" json:"enabled"`
+	URL     string `yaml:"url" json:"url"`
+}
+
+// CircuitBreakerConfig holds circuit breaker configuration
+type CircuitBreakerConfig struct {
+	Enabled   bool `yaml:"enabled" json:"enabled"`
+	Threshold int  `yaml:"threshold" json:"threshold"`
+}
+
+// SecurityConfig holds security configuration
+type SecurityConfig struct {
+	Validation ValidationConfig `yaml:"validation" json:"validation"`
+}
+
+// ValidationConfig holds input validation configuration
+type ValidationConfig struct {
+	Enabled    bool `yaml:"enabled" json:"enabled"`
+	StrictMode bool `yaml:"strict_mode" json:"strict_mode"`
+}
+
+// Load loads configuration from environment and files
+func Load() (*Config, error) {
+	return &Config{
+		ServiceName: "{{.ProjectName}}",
+		Environment: "development",
+		AWS: AWSConfig{
+			Region: "us-east-1",
+		},
+		Processing: ProcessingConfig{
+			MaxConcurrency: 10,
+			Timeout:        300,
+			Batch: BatchProcessingConfig{
+				Size:    10,
+				Timeout: 30,
+			},
+		},
+		Observability: ObservabilityConfig{
+			Level:          "{{.ObservabilityLevel}}",
+			TracingEnabled: true,
+			MetricsEnabled: true,
+			LogLevel:       "info",
+		},
+		Resilience: ResilienceConfig{
+			DLQ: DLQConfig{
+				Enabled: false,
+			},
+			CircuitBreaker: CircuitBreakerConfig{
+				Enabled:   false,
+				Threshold: 5,
+			},
+		},
+		Security: SecurityConfig{
+			Validation: ValidationConfig{
+				Enabled:    true,
+				StrictMode: false,
+			},
+		},
+	}, nil
+}

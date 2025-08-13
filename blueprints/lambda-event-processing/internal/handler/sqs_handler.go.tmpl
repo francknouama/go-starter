@@ -1,0 +1,427 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	
+	appConfig "{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/observability"
+{{- if eq .ProcessingPattern "batch"}}
+	"{{.ModulePath}}/internal/processor"
+{{- end}}
+{{- if contains .ResilienceFeatures "dlq"}}
+	"{{.ModulePath}}/internal/resilience"
+{{- end}}
+{{- if contains .SecurityFeatures "input-validation"}}
+	"{{.ModulePath}}/internal/security"
+{{- end}}
+)
+
+// SQSHandler processes SQS messages with comprehensive error handling and observability
+type SQSHandler struct {
+	cfg       *appConfig.Config
+	sqsClient *sqs.Client
+	logger    observability.Logger
+{{- if eq .ProcessingPattern "batch"}}
+	processor *processor.BatchProcessor
+{{- end}}
+{{- if contains .ResilienceFeatures "dlq"}}
+	dlqHandler *resilience.DLQHandler
+{{- end}}
+{{- if contains .SecurityFeatures "input-validation"}}
+	validator *security.InputValidator
+{{- end}}
+}
+
+// NewSQSHandler creates a new SQS event handler with AWS SDK v2
+func NewSQSHandler(cfg *appConfig.Config) (*SQSHandler, error) {
+	logger := observability.GetLogger()
+	
+	// Initialize AWS config
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(cfg.AWS.Region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	handler := &SQSHandler{
+		cfg:       cfg,
+		sqsClient: sqs.NewFromConfig(awsCfg),
+		logger:    logger,
+	}
+
+{{- if eq .ProcessingPattern "batch"}}
+	// Initialize batch processor
+	handler.processor, err = processor.NewBatchProcessor(cfg.Processing.Batch)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize batch processor: %w", err)
+	}
+{{- end}}
+
+{{- if contains .ResilienceFeatures "dlq"}}
+	// Initialize DLQ handler
+	handler.dlqHandler, err = resilience.NewDLQHandler(cfg.Resilience.DLQ, handler.sqsClient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize DLQ handler: %w", err)
+	}
+{{- end}}
+
+{{- if contains .SecurityFeatures "input-validation"}}
+	// Initialize input validator
+	handler.validator = security.NewInputValidator(cfg.Security.Validation)
+{{- end}}
+
+	logger.Info("SQS handler initialized", map[string]interface{}{
+		"processing_pattern": "{{.ProcessingPattern}}",
+		"region":            cfg.AWS.Region,
+{{- if contains .ResilienceFeatures "dlq"}}
+		"dlq_enabled":       cfg.Resilience.DLQ.Enabled,
+{{- end}}
+{{- if contains .SecurityFeatures "input-validation"}}
+		"validation_enabled": cfg.Security.Validation.Enabled,
+{{- end}}
+	})
+
+	return handler, nil
+}
+
+// HandleEvent processes SQS events with comprehensive error handling
+func (h *SQSHandler) HandleEvent(ctx context.Context, event interface{}) (*domain.ProcessingResult, error) {
+	sqsEvent, ok := event.(events.SQSEvent)
+	if !ok {
+		return nil, fmt.Errorf("invalid event type for SQS handler: %T", event)
+	}
+
+	h.logger.Info("Processing SQS event", map[string]interface{}{
+		"record_count": len(sqsEvent.Records),
+		"processing":   "{{.ProcessingPattern}}",
+	})
+
+	// Track SQS-specific metrics
+	observability.RecordSQSMessageCount(len(sqsEvent.Records))
+
+	// Process based on configured pattern
+{{- if eq .ProcessingPattern "batch"}}
+	return h.processBatch(ctx, sqsEvent.Records)
+{{- else if eq .ProcessingPattern "individual"}}
+	return h.processIndividual(ctx, sqsEvent.Records)
+{{- else}}
+	return h.processDefault(ctx, sqsEvent.Records)
+{{- end}}
+}
+
+{{- if eq .ProcessingPattern "batch"}}
+// processBatch processes multiple SQS messages in parallel batches
+func (h *SQSHandler) processBatch(ctx context.Context, records []events.SQSMessage) (*domain.ProcessingResult, error) {
+	return observability.TraceSubsegment(ctx, "sqs_batch_processing", func(ctx context.Context) (*domain.ProcessingResult, error) {
+		// Convert SQS messages to domain messages
+		messages := make([]*domain.Message, len(records))
+		for i, record := range records {
+			msg, err := h.convertSQSMessage(record)
+			if err != nil {
+				h.logger.Error("Failed to convert SQS message", map[string]interface{}{
+					"message_id": record.MessageId,
+					"error":      err.Error(),
+				})
+				continue
+			}
+			messages[i] = msg
+		}
+
+		// Process batch using the batch processor
+		return h.processor.ProcessBatch(ctx, messages)
+	})
+}
+{{- end}}
+
+{{- if eq .ProcessingPattern "individual"}}
+// processIndividual processes each SQS message individually with error isolation
+func (h *SQSHandler) processIndividual(ctx context.Context, records []events.SQSMessage) (*domain.ProcessingResult, error) {
+	result := &domain.ProcessingResult{
+		ProcessedCount: 0,
+		FailedCount:    0,
+		Errors:         make(map[string]error),
+	}
+
+	for _, record := range records {
+		err := h.processMessage(ctx, record)
+		if err != nil {
+			result.FailedCount++
+			result.Errors[record.MessageId] = err
+			h.logger.Error("Failed to process SQS message", map[string]interface{}{
+				"message_id": record.MessageId,
+				"error":      err.Error(),
+			})
+{{- if contains .ResilienceFeatures "dlq"}}
+			// Send to DLQ if processing fails
+			if dlqErr := h.dlqHandler.SendToDLQ(ctx, record, err); dlqErr != nil {
+				h.logger.Error("Failed to send message to DLQ", map[string]interface{}{
+					"message_id": record.MessageId,
+					"dlq_error":  dlqErr.Error(),
+				})
+			}
+{{- end}}
+		} else {
+			result.ProcessedCount++
+			h.logger.Debug("Successfully processed SQS message", map[string]interface{}{
+				"message_id": record.MessageId,
+			})
+		}
+	}
+
+	return result, nil
+}
+{{- end}}
+
+// processDefault handles standard SQS message processing
+func (h *SQSHandler) processDefault(ctx context.Context, records []events.SQSMessage) (*domain.ProcessingResult, error) {
+	result := &domain.ProcessingResult{
+		ProcessedCount: 0,
+		FailedCount:    0,
+		Errors:         make(map[string]error),
+	}
+
+	// Process messages with controlled concurrency
+	semaphore := make(chan struct{}, h.cfg.Processing.MaxConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, record := range records {
+		wg.Add(1)
+		go func(msg events.SQSMessage) {
+			defer wg.Done()
+			
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			err := h.processMessage(ctx, msg)
+			
+			mu.Lock()
+			if err != nil {
+				result.FailedCount++
+				result.Errors[msg.MessageId] = err
+			} else {
+				result.ProcessedCount++
+			}
+			mu.Unlock()
+		}(record)
+	}
+
+	wg.Wait()
+	return result, nil
+}
+
+// processMessage processes a single SQS message with comprehensive error handling
+func (h *SQSHandler) processMessage(ctx context.Context, record events.SQSMessage) error {
+	return observability.TraceSubsegment(ctx, "process_sqs_message", func(ctx context.Context) error {
+		// Add message metadata to trace
+		observability.AddTraceAnnotation(ctx, "message_id", record.MessageId)
+		observability.AddTraceAnnotation(ctx, "queue_name", record.EventSourceARN)
+		
+		// Parse message body
+		var messageBody map[string]interface{}
+		if err := json.Unmarshal([]byte(record.Body), &messageBody); err != nil {
+			return fmt.Errorf("failed to parse message body: %w", err)
+		}
+
+{{- if contains .SecurityFeatures "input-validation"}}
+		// Validate message input
+		if h.validator != nil {
+			if err := h.validator.ValidateMessage(messageBody); err != nil {
+				return fmt.Errorf("message validation failed: %w", err)
+			}
+		}
+{{- end}}
+
+		// Log message processing start
+		h.logger.Debug("Processing SQS message", map[string]interface{}{
+			"message_id":      record.MessageId,
+			"receipt_handle":  record.ReceiptHandle,
+			"queue_arn":       record.EventSourceARN,
+			"body_size":       len(record.Body),
+		})
+
+		// Add business logic here
+		if err := h.processBusinessLogic(ctx, messageBody, record); err != nil {
+			return fmt.Errorf("business logic processing failed: %w", err)
+		}
+
+		// Record successful processing
+		observability.RecordSQSMessageProcessed()
+		
+		return nil
+	})
+}
+
+// processBusinessLogic contains the actual business logic for processing messages
+func (h *SQSHandler) processBusinessLogic(ctx context.Context, messageBody map[string]interface{}, record events.SQSMessage) error {
+	// Extract message type or routing key
+	messageType, ok := messageBody["type"].(string)
+	if !ok {
+		messageType = "unknown"
+	}
+
+	h.logger.Info("Processing business logic", map[string]interface{}{
+		"message_id":   record.MessageId,
+		"message_type": messageType,
+	})
+
+	// Add your business logic here
+	// This is where you would:
+	// 1. Transform the message data
+	// 2. Call external APIs
+	// 3. Store data in databases
+	// 4. Trigger downstream processes
+	
+	// Example business logic (replace with your actual logic)
+	switch messageType {
+	case "user_created":
+		return h.handleUserCreated(ctx, messageBody)
+	case "order_placed":
+		return h.handleOrderPlaced(ctx, messageBody)
+	case "payment_processed":
+		return h.handlePaymentProcessed(ctx, messageBody)
+	default:
+		h.logger.Warn("Unknown message type", map[string]interface{}{
+			"message_type": messageType,
+			"message_id":   record.MessageId,
+		})
+		// Don't return an error for unknown types to avoid infinite reprocessing
+		return nil
+	}
+}
+
+// Business logic handlers (implement your specific logic)
+func (h *SQSHandler) handleUserCreated(ctx context.Context, messageBody map[string]interface{}) error {
+	// Implement user creation handling
+	h.logger.Info("Handling user created event", map[string]interface{}{
+		"user_id": messageBody["user_id"],
+	})
+	return nil
+}
+
+func (h *SQSHandler) handleOrderPlaced(ctx context.Context, messageBody map[string]interface{}) error {
+	// Implement order placement handling
+	h.logger.Info("Handling order placed event", map[string]interface{}{
+		"order_id": messageBody["order_id"],
+	})
+	return nil
+}
+
+func (h *SQSHandler) handlePaymentProcessed(ctx context.Context, messageBody map[string]interface{}) error {
+	// Implement payment processing handling
+	h.logger.Info("Handling payment processed event", map[string]interface{}{
+		"payment_id": messageBody["payment_id"],
+	})
+	return nil
+}
+
+// convertSQSMessage converts an SQS message to a domain message
+func (h *SQSHandler) convertSQSMessage(record events.SQSMessage) (*domain.Message, error) {
+	msg := &domain.Message{
+		ID:          record.MessageId,
+		Body:        record.Body,
+		Attributes:  make(map[string]interface{}),
+		Timestamp:   time.Now(),
+		Source:      "sqs",
+		SourceARN:   record.EventSourceARN,
+	}
+
+	// Convert message attributes
+	for key, attr := range record.MessageAttributes {
+		if attr.StringValue != nil {
+			msg.Attributes[key] = *attr.StringValue
+		}
+	}
+
+	// Add SQS-specific metadata
+	msg.Metadata = map[string]interface{}{
+		"receipt_handle":      record.ReceiptHandle,
+		"approximate_receive_count": record.Attributes["ApproximateReceiveCount"],
+		"sent_timestamp":      record.Attributes["SentTimestamp"],
+	}
+
+	return msg, nil
+}
+
+// GetEventType returns the event type this handler processes
+func (h *SQSHandler) GetEventType() string {
+	return "sqs"
+}
+
+// Validate checks if the event is a valid SQS event
+func (h *SQSHandler) Validate(event interface{}) error {
+	sqsEvent, ok := event.(events.SQSEvent)
+	if !ok {
+		return fmt.Errorf("event is not an SQS event: %T", event)
+	}
+
+	if len(sqsEvent.Records) == 0 {
+		return fmt.Errorf("SQS event contains no records")
+	}
+
+	// Validate each record
+	for i, record := range sqsEvent.Records {
+		if record.MessageId == "" {
+			return fmt.Errorf("SQS record %d missing message ID", i)
+		}
+		if record.Body == "" {
+			return fmt.Errorf("SQS record %d missing body", i)
+		}
+		if record.EventSource != "aws:sqs" {
+			return fmt.Errorf("SQS record %d has invalid event source: %s", i, record.EventSource)
+		}
+	}
+
+	return nil
+}
+
+// HealthCheck verifies the SQS handler is functioning correctly
+func (h *SQSHandler) HealthCheck(ctx context.Context) error {
+	// Check SQS client connectivity
+	_, err := h.sqsClient.ListQueues(ctx, &sqs.ListQueuesInput{
+		MaxResults: aws.Int32(1),
+	})
+	if err != nil {
+		return fmt.Errorf("SQS health check failed: %w", err)
+	}
+
+{{- if eq .ProcessingPattern "batch"}}
+	// Check batch processor health
+	if err := h.processor.HealthCheck(ctx); err != nil {
+		return fmt.Errorf("batch processor health check failed: %w", err)
+	}
+{{- end}}
+
+	return nil
+}
+
+// GetMetrics returns handler-specific metrics
+func (h *SQSHandler) GetMetrics() map[string]interface{} {
+	metrics := map[string]interface{}{
+		"handler_type": "sqs",
+		"processing_pattern": "{{.ProcessingPattern}}",
+	}
+
+{{- if eq .ProcessingPattern "batch"}}
+	if h.processor != nil {
+		processorMetrics := h.processor.GetMetrics()
+		for key, value := range processorMetrics {
+			metrics["processor_"+key] = value
+		}
+	}
+{{- end}}
+
+	return metrics
+}

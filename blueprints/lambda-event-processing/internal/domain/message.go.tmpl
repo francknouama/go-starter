@@ -1,0 +1,40 @@
+package domain
+
+import (
+	"time"
+)
+
+// Message represents a message from any event source
+type Message struct {
+	ID          string                 `json:"id" validate:"required"`
+	Body        string                 `json:"body" validate:"required"`
+	Source      string                 `json:"source" validate:"required"`
+	SourceARN   string                 `json:"source_arn,omitempty"`
+	Timestamp   time.Time              `json:"timestamp"`
+	Attributes  map[string]interface{} `json:"attributes,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// ProcessingResult represents the result of processing events
+type ProcessingResult struct {
+	ProcessedCount int                `json:"processed_count"`
+	FailedCount    int                `json:"failed_count"`
+	Errors         map[string]error   `json:"errors,omitempty"`
+	Duration       time.Duration      `json:"duration"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// HasPartialFailures returns true if some events failed processing
+func (r *ProcessingResult) HasPartialFailures() bool {
+	return r.FailedCount > 0 && r.ProcessedCount > 0
+}
+
+// HasCompleteFailure returns true if all events failed processing
+func (r *ProcessingResult) HasCompleteFailure() bool {
+	return r.FailedCount > 0 && r.ProcessedCount == 0
+}
+
+// IsSuccess returns true if all events were processed successfully
+func (r *ProcessingResult) IsSuccess() bool {
+	return r.FailedCount == 0 && r.ProcessedCount > 0
+}
