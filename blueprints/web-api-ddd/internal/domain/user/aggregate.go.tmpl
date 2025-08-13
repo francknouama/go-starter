@@ -1,0 +1,588 @@
+package {{.DomainName}}
+
+import (
+	"fmt"
+	"time"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/events"
+	"{{.ModulePath}}/internal/shared/errors"
+)
+
+// AggregateRoot defines the base behavior for all aggregate roots
+type AggregateRoot interface {
+	ID() valueobjects.ID
+	Version() int
+	DomainEvents() []events.DomainEvent
+	ClearDomainEvents()
+	MarkEventsAsCommitted()
+}
+
+// BaseAggregate provides base functionality for aggregate roots
+type BaseAggregate struct {
+	id           valueobjects.ID
+	version      int
+	domainEvents []events.DomainEvent
+	uncommittedEventCount int
+}
+
+// NewBaseAggregate creates a new base aggregate
+func NewBaseAggregate(id valueobjects.ID) BaseAggregate {
+	return BaseAggregate{
+		id:           id,
+		version:      1,
+		domainEvents: make([]events.DomainEvent, 0),
+		uncommittedEventCount: 0,
+	}
+}
+
+// ID returns the aggregate ID
+func (a *BaseAggregate) ID() valueobjects.ID {
+	return a.id
+}
+
+// Version returns the aggregate version for optimistic locking
+func (a *BaseAggregate) Version() int {
+	return a.version
+}
+
+// IncrementVersion increments the version for optimistic locking
+func (a *BaseAggregate) IncrementVersion() {
+	a.version++
+}
+
+// DomainEvents returns uncommitted domain events
+func (a *BaseAggregate) DomainEvents() []events.DomainEvent {
+	return a.domainEvents
+}
+
+// UncommittedEvents returns only uncommitted events
+func (a *BaseAggregate) UncommittedEvents() []events.DomainEvent {
+	if a.uncommittedEventCount == 0 {
+		return make([]events.DomainEvent, 0)
+	}
+	
+	startIndex := len(a.domainEvents) - a.uncommittedEventCount
+	return a.domainEvents[startIndex:]
+}
+
+// ClearDomainEvents clears all domain events
+func (a *BaseAggregate) ClearDomainEvents() {
+	a.domainEvents = make([]events.DomainEvent, 0)
+	a.uncommittedEventCount = 0
+}
+
+// MarkEventsAsCommitted marks current events as committed
+func (a *BaseAggregate) MarkEventsAsCommitted() {
+	a.uncommittedEventCount = 0
+}
+
+// AddDomainEvent adds a domain event to the aggregate
+func (a *BaseAggregate) AddDomainEvent(event events.DomainEvent) {
+	a.domainEvents = append(a.domainEvents, event)
+	a.uncommittedEventCount++
+}
+
+// HasUncommittedEvents returns true if there are uncommitted events
+func (a *BaseAggregate) HasUncommittedEvents() bool {
+	return a.uncommittedEventCount > 0
+}
+
+// GetUncommittedEventCount returns the number of uncommitted events
+func (a *BaseAggregate) GetUncommittedEventCount() int {
+	return a.uncommittedEventCount
+}
+
+// {{.DomainName | title}}Aggregate represents the {{.DomainName}} aggregate root with strict boundaries
+type {{.DomainName | title}}Aggregate struct {
+	BaseAggregate
+	
+	// Core identity and state
+	name         UserName        
+	email        EmailAddress    
+	description  UserDescription 
+	status       Status          
+	
+	// Rich objects with behavior
+	profile      UserProfile     
+	preferences  UserPreferences 
+	
+	// Audit information
+	createdAt    time.Time
+	updatedAt    time.Time
+	lastLoginAt  *time.Time
+	
+	// Business invariants
+	changeHistory *ChangeHistory
+}
+
+// New{{.DomainName | title}}Aggregate creates a new {{.DomainName}} aggregate with business validation
+func New{{.DomainName | title}}Aggregate(nameStr string, emailStr string, descriptionStr string) (*{{.DomainName | title}}Aggregate, error) {
+	// Create aggregate ID first
+	aggregateID := valueobjects.GenerateID()
+	
+	// Create rich value objects with built-in validation
+	name, err := NewUserName(nameStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid name: %w", err)
+	}
+	
+	email, err := NewEmailAddress(emailStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid email: %w", err)
+	}
+	
+	description, err := NewUserDescription(descriptionStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid description: %w", err)
+	}
+	
+	// Business rule: Email must be unique (enforced by repository)
+	// Business rule: Professional emails get different default settings
+	defaultPreferences := NewDefaultUserPreferences()
+	if email.IsBusinessEmail() {
+		defaultPreferences = NewBusinessUserPreferences()
+	}
+	
+	now := time.Now().UTC()
+	
+	aggregate := &{{.DomainName | title}}Aggregate{
+		BaseAggregate: NewBaseAggregate(aggregateID),
+		name:         name,
+		email:        email,
+		description:  description,
+		status:       StatusActive,
+		profile:      NewUserProfile(email.GetProviderType()),
+		preferences:  defaultPreferences,
+		createdAt:    now,
+		updatedAt:    now,
+		lastLoginAt:  nil,
+		changeHistory: NewChangeHistory(),
+	}
+	
+	// Raise domain event with rich information
+	event := New{{.DomainName | title}}CreatedEvent(
+		aggregate.id, 
+		aggregate.name.Value(),
+		aggregate.email.Value(),
+		aggregate.email.GetProviderType(),
+	)
+	aggregate.AddDomainEvent(event)
+	
+	return aggregate, nil
+}
+
+// Reconstruct{{.DomainName | title}}Aggregate reconstructs an aggregate from persistence
+func Reconstruct{{.DomainName | title}}Aggregate(
+	id valueobjects.ID,
+	name string,
+	email string,
+	description string,
+	status Status,
+	createdAt, updatedAt time.Time,
+	lastLoginAt *time.Time,
+	version int,
+) (*{{.DomainName | title}}Aggregate, error) {
+	
+	// Validate and create value objects
+	userName, err := NewUserName(name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid name during reconstruction: %w", err)
+	}
+	
+	userEmail, err := NewEmailAddress(email)
+	if err != nil {
+		return nil, fmt.Errorf("invalid email during reconstruction: %w", err)
+	}
+	
+	userDesc, err := NewUserDescription(description)
+	if err != nil {
+		return nil, fmt.Errorf("invalid description during reconstruction: %w", err)
+	}
+	
+	baseAggregate := NewBaseAggregate(id)
+	baseAggregate.version = version
+	
+	aggregate := &{{.DomainName | title}}Aggregate{
+		BaseAggregate: baseAggregate,
+		name:         userName,
+		email:        userEmail,
+		description:  userDesc,
+		status:       status,
+		profile:      NewUserProfile(userEmail.GetProviderType()),
+		preferences:  NewDefaultUserPreferences(),
+		createdAt:    createdAt,
+		updatedAt:    updatedAt,
+		lastLoginAt:  lastLoginAt,
+		changeHistory: NewChangeHistory(), // Could be loaded from event store
+	}
+	
+	// Apply business preferences based on email type
+	if userEmail.IsBusinessEmail() {
+		aggregate.preferences = NewBusinessUserPreferences()
+	}
+	
+	return aggregate, nil
+}
+
+// Core aggregate methods with business invariants
+
+// Name returns the user name
+func (a *{{.DomainName | title}}Aggregate) Name() UserName {
+	return a.name
+}
+
+// Email returns the user email
+func (a *{{.DomainName | title}}Aggregate) Email() EmailAddress {
+	return a.email
+}
+
+// Description returns the user description
+func (a *{{.DomainName | title}}Aggregate) Description() UserDescription {
+	return a.description
+}
+
+// Profile returns the user profile
+func (a *{{.DomainName | title}}Aggregate) Profile() UserProfile {
+	return a.profile
+}
+
+// Preferences returns the user preferences
+func (a *{{.DomainName | title}}Aggregate) Preferences() UserPreferences {
+	return a.preferences
+}
+
+// Status returns the user status
+func (a *{{.DomainName | title}}Aggregate) Status() Status {
+	return a.status
+}
+
+// CreatedAt returns when the aggregate was created
+func (a *{{.DomainName | title}}Aggregate) CreatedAt() time.Time {
+	return a.createdAt
+}
+
+// UpdatedAt returns when the aggregate was last updated
+func (a *{{.DomainName | title}}Aggregate) UpdatedAt() time.Time {
+	return a.updatedAt
+}
+
+// LastLoginAt returns the last login time
+func (a *{{.DomainName | title}}Aggregate) LastLoginAt() *time.Time {
+	return a.lastLoginAt
+}
+
+// Business behavior methods
+
+// ChangeEmail changes the user's email with strict business rules
+func (a *{{.DomainName | title}}Aggregate) ChangeEmail(newEmailStr string, verificationToken string) error {
+	// Business invariant: Cannot change email if deleted
+	if a.status == StatusDeleted {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot change email of deleted user")
+	}
+	
+	// Business invariant: Cannot change email too frequently  
+	if a.changeHistory.HasRecentEmailChange() {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "email can only be changed once per week")
+	}
+	
+	newEmail, err := NewEmailAddress(newEmailStr)
+	if err != nil {
+		return fmt.Errorf("invalid new email: %w", err)
+	}
+	
+	// Business rule: No change if same email
+	if a.email.Equals(newEmail) {
+		return nil
+	}
+	
+	// Business rule: Verification required for email changes (simplified here)
+	if verificationToken == "" {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "email verification required")
+	}
+	
+	oldEmail := a.email.Value()
+	a.email = newEmail
+	a.updatedAt = time.Now().UTC()
+	a.IncrementVersion()
+	
+	// Update preferences if switching between business/personal
+	oldEmailObj, _ := NewEmailAddress(oldEmail)
+	if oldEmailObj.IsBusinessEmail() != newEmail.IsBusinessEmail() {
+		if newEmail.IsBusinessEmail() {
+			a.preferences = a.preferences.ToBusinessDefaults()
+		} else {
+			a.preferences = a.preferences.ToPersonalDefaults()
+		}
+	}
+	
+	// Record the change
+	a.changeHistory.RecordEmailChange(time.Now().UTC())
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}EmailChangedEvent(a.id, oldEmail, newEmail.Value(), newEmail.GetProviderType())
+	a.AddDomainEvent(event)
+	
+	return nil
+}
+
+// ChangeName changes the user's name with business validation
+func (a *{{.DomainName | title}}Aggregate) ChangeName(newNameStr string) error {
+	// Business invariant: Cannot change name if deleted
+	if a.status == StatusDeleted {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot change name of deleted user")
+	}
+	
+	// Business invariant: Cannot change name too frequently
+	if a.changeHistory.HasRecentNameChange() {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "name can only be changed once per month")
+	}
+	
+	newName, err := NewUserName(newNameStr)
+	if err != nil {
+		return fmt.Errorf("invalid new name: %w", err)
+	}
+	
+	// Business rule: No change if same name
+	if a.name.Equals(newName) {
+		return nil
+	}
+	
+	oldName := a.name.Value()
+	a.name = newName
+	a.updatedAt = time.Now().UTC()
+	a.IncrementVersion()
+	
+	// Update profile with name change
+	a.profile = a.profile.WithNameChange()
+	
+	// Record the change
+	a.changeHistory.RecordNameChange(time.Now().UTC())
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}NameChangedEvent(a.id, oldName, newName.Value())
+	a.AddDomainEvent(event)
+	
+	return nil
+}
+
+// Activate activates the user account
+func (a *{{.DomainName | title}}Aggregate) Activate() error {
+	if a.status == StatusActive {
+		return nil // Already active
+	}
+	
+	if a.status == StatusDeleted {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot activate deleted user")
+	}
+	
+	oldStatus := a.status
+	a.status = StatusActive
+	a.updatedAt = time.Now().UTC()
+	a.IncrementVersion()
+	
+	// Raise domain event
+	event := New{{.DomainName | title}}StatusChangedEvent(a.id, oldStatus, StatusActive)
+	a.AddDomainEvent(event)
+	
+	return nil
+}
+
+// Deactivate deactivates the user account
+func (a *{{.DomainName | title}}Aggregate) Deactivate(reason string) error {
+	if a.status == StatusInactive {
+		return nil // Already inactive
+	}
+	
+	if a.status == StatusDeleted {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "cannot deactivate deleted user")
+	}
+	
+	oldStatus := a.status
+	a.status = StatusInactive
+	a.updatedAt = time.Now().UTC()
+	a.IncrementVersion()
+	
+	// Raise domain event with reason
+	event := New{{.DomainName | title}}DeactivatedEvent(a.id, reason)
+	a.AddDomainEvent(event)
+	
+	return nil
+}
+
+// Delete marks the user as deleted (soft delete)
+func (a *{{.DomainName | title}}Aggregate) Delete(reason string) error {
+	if a.status == StatusDeleted {
+		return nil // Already deleted
+	}
+	
+	oldStatus := a.status
+	a.status = StatusDeleted
+	a.updatedAt = time.Now().UTC()
+	a.IncrementVersion()
+	
+	// Clear sensitive data (GDPR compliance)
+	a.clearSensitiveData()
+	
+	// Raise domain event with reason
+	event := New{{.DomainName | title}}DeletedEvent(a.id, reason)
+	a.AddDomainEvent(event)
+	
+	return nil
+}
+
+// RecordLogin records a successful login with business logic
+func (a *{{.DomainName | title}}Aggregate) RecordLogin(loginContext LoginContext) error {
+	// Business invariant: Cannot login if deleted or inactive
+	if a.status == StatusDeleted {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "deleted user cannot login")
+	}
+	
+	if a.status == StatusInactive {
+		return errors.ErrInvalidEntityState.WithDetails("reason", "inactive user cannot login")
+	}
+	
+	now := time.Now().UTC()
+	a.lastLoginAt = &now
+	a.updatedAt = now
+	
+	// Update profile with login activity
+	a.profile = a.profile.WithLoginActivity()
+	
+	// Raise domain event with context
+	event := New{{.DomainName | title}}LoggedInEvent(a.id, a.email.Value(), now, loginContext)
+	a.AddDomainEvent(event)
+	
+	return nil
+}
+
+// Status check methods
+
+// IsActive checks if the user is active
+func (a *{{.DomainName | title}}Aggregate) IsActive() bool {
+	return a.status == StatusActive
+}
+
+// IsInactive checks if the user is inactive
+func (a *{{.DomainName | title}}Aggregate) IsInactive() bool {
+	return a.status == StatusInactive
+}
+
+// IsDeleted checks if the user is deleted
+func (a *{{.DomainName | title}}Aggregate) IsDeleted() bool {
+	return a.status == StatusDeleted
+}
+
+// Business rule methods
+
+// CanPerformAction checks if user can perform a specific action
+func (a *{{.DomainName | title}}Aggregate) CanPerformAction(action string) bool {
+	if a.status == StatusDeleted {
+		return false
+	}
+	
+	if a.status == StatusInactive {
+		// Inactive users can only perform limited actions
+		allowedActions := []string{"login", "activate", "view_profile"}
+		for _, allowed := range allowedActions {
+			if action == allowed {
+				return true
+			}
+		}
+		return false
+	}
+	
+	return true // Active users can perform most actions
+}
+
+// GetEngagementLevel returns the user's engagement level
+func (a *{{.DomainName | title}}Aggregate) GetEngagementLevel() string {
+	if a.lastLoginAt == nil {
+		return "new"
+	}
+	
+	daysSinceLogin := time.Since(*a.lastLoginAt).Hours() / 24
+	
+	switch {
+	case daysSinceLogin <= 1:
+		return "highly_active"
+	case daysSinceLogin <= 7:
+		return "active"
+	case daysSinceLogin <= 30:
+		return "somewhat_active"
+	case daysSinceLogin <= 90:
+		return "dormant"
+	default:
+		return "inactive"
+	}
+}
+
+// Private helper methods
+
+// clearSensitiveData clears sensitive information for GDPR compliance
+func (a *{{.DomainName | title}}Aggregate) clearSensitiveData() {
+	// In a real implementation, this would anonymize personal data
+	// while preserving necessary business information
+	
+	// For demonstration, we could:
+	// - Replace name with "Anonymous User"
+	// - Hash the email or replace with anonymized version
+	// - Clear description
+	// This is a simplified example - real GDPR compliance is more complex
+}
+
+// LoginContext provides context for login events
+type LoginContext struct {
+	IPAddress string    `json:"ipAddress"`
+	UserAgent string    `json:"userAgent"`
+	Location  string    `json:"location,omitempty"`
+	LoginTime time.Time `json:"loginTime"`
+}
+
+// ChangeHistory tracks changes for business rule enforcement
+type ChangeHistory struct {
+	lastNameChange  *time.Time
+	lastEmailChange *time.Time
+	changeCount     int
+}
+
+// NewChangeHistory creates a new change history
+func NewChangeHistory() *ChangeHistory {
+	return &ChangeHistory{
+		lastNameChange:  nil,
+		lastEmailChange: nil,
+		changeCount:     0,
+	}
+}
+
+// RecordNameChange records a name change
+func (ch *ChangeHistory) RecordNameChange(timestamp time.Time) {
+	ch.lastNameChange = &timestamp
+	ch.changeCount++
+}
+
+// RecordEmailChange records an email change
+func (ch *ChangeHistory) RecordEmailChange(timestamp time.Time) {
+	ch.lastEmailChange = &timestamp
+	ch.changeCount++
+}
+
+// HasRecentNameChange checks if name was changed recently
+func (ch *ChangeHistory) HasRecentNameChange() bool {
+	if ch.lastNameChange == nil {
+		return false
+	}
+	return time.Since(*ch.lastNameChange) < 30*24*time.Hour // 30 days
+}
+
+// HasRecentEmailChange checks if email was changed recently
+func (ch *ChangeHistory) HasRecentEmailChange() bool {
+	if ch.lastEmailChange == nil {
+		return false
+	}
+	return time.Since(*ch.lastEmailChange) < 7*24*time.Hour // 7 days
+}
+
+// GetChangeCount returns the total number of changes
+func (ch *ChangeHistory) GetChangeCount() int {
+	return ch.changeCount
+}

@@ -1,0 +1,628 @@
+package domain
+
+import (
+	"context"
+	"testing"
+	"time"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/mock"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+)
+
+// Mock implementations for testing
+type Mock{{.DomainName | title}}UniquenessChecker struct {
+	mock.Mock
+}
+
+func (m *Mock{{.DomainName | title}}UniquenessChecker) EmailExists(email string) (bool, error) {
+	args := m.Called(email)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *Mock{{.DomainName | title}}UniquenessChecker) UsernameExists(username string) (bool, error) {
+	args := m.Called(username)
+	return args.Bool(0), args.Error(1)
+}
+
+type MockDomainValidator struct {
+	mock.Mock
+}
+
+func (m *MockDomainValidator) ValidateRegistration(data {{.DomainName}}.RegistrationData) error {
+	args := m.Called(data)
+	return args.Error(0)
+}
+
+func (m *MockDomainValidator) ValidateSocialAuth(data {{.DomainName}}.SocialAuthData) error {
+	args := m.Called(data)
+	return args.Error(0)
+}
+
+func (m *MockDomainValidator) ValidateImport(data {{.DomainName}}.ImportData) error {
+	args := m.Called(data)
+	return args.Error(0)
+}
+
+type MockAuditLogger struct {
+	mock.Mock
+}
+
+func (m *MockAuditLogger) LogUserCreation(userID valueobjects.ID, method string, email string) {
+	m.Called(userID, method, email)
+}
+
+func (m *MockAuditLogger) LogUserModification(userID valueobjects.ID, action string, details map[string]interface{}) {
+	m.Called(userID, action, details)
+}
+
+func TestUserFactoryRegistration(t *testing.T) {
+	tests := []struct {
+		name           string
+		registrationData {{.DomainName}}.RegistrationData
+		emailExists    bool
+		emailExistsErr error
+		validationErr  error
+		wantErr        bool
+		errContains    string
+		expectAuditLog bool
+	}{
+		{
+			name: "successful registration with personal email",
+			registrationData: {{.DomainName}}.RegistrationData{
+				Name:        "John Doe",
+				Email:       "john.doe@gmail.com",
+				Description: "Software developer",
+				Password:    "securepassword",
+				IPAddress:   "192.168.1.1",
+				UserAgent:   "Mozilla/5.0...",
+			},
+			emailExists:    false,
+			emailExistsErr: nil,
+			validationErr:  nil,
+			wantErr:        false,
+			expectAuditLog: true,
+		},
+		{
+			name: "successful registration with business email",
+			registrationData: {{.DomainName}}.RegistrationData{
+				Name:        "Jane Smith",
+				Email:       "jane.smith@company.com",
+				Description: "Product manager",
+				Password:    "securepassword",
+				IPAddress:   "192.168.1.2",
+				UserAgent:   "Mozilla/5.0...",
+			},
+			emailExists:    false,
+			emailExistsErr: nil,
+			validationErr:  nil,
+			wantErr:        false,
+			expectAuditLog: true,
+		},
+		{
+			name: "registration fails when email exists",
+			registrationData: {{.DomainName}}.RegistrationData{
+				Name:        "Existing User",
+				Email:       "existing@example.com",
+				Description: "Test user",
+				Password:    "password",
+				IPAddress:   "192.168.1.3",
+				UserAgent:   "Test Agent",
+			},
+			emailExists:    true,
+			emailExistsErr: nil,
+			validationErr:  nil,
+			wantErr:        true,
+			errContains:    "email already exists",
+			expectAuditLog: false,
+		},
+		{
+			name: "registration fails with invalid email",
+			registrationData: {{.DomainName}}.RegistrationData{
+				Name:        "Test User",
+				Email:       "",
+				Description: "Test description",
+				Password:    "password",
+				IPAddress:   "192.168.1.4",
+				UserAgent:   "Test Agent",
+			},
+			emailExists:    false,
+			emailExistsErr: nil,
+			validationErr:  nil,
+			wantErr:        true,
+			errContains:    "invalid registration data",
+			expectAuditLog: false,
+		},
+		{
+			name: "registration fails with invalid name",
+			registrationData: {{.DomainName}}.RegistrationData{
+				Name:        "",
+				Email:       "test@example.com",
+				Description: "Test description",
+				Password:    "password",
+				IPAddress:   "192.168.1.5",
+				UserAgent:   "Test Agent",
+			},
+			emailExists:    false,
+			emailExistsErr: nil,
+			validationErr:  nil,
+			wantErr:        true,
+			errContains:    "invalid registration data",
+			expectAuditLog: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			mockUniqueness := new(Mock{{.DomainName | title}}UniquenessChecker)
+			mockValidator := new(MockDomainValidator)
+			mockAuditLogger := new(MockAuditLogger)
+
+			// Setup expectations
+			if tt.registrationData.Email != "" {
+				mockUniqueness.On("EmailExists", tt.registrationData.Email).Return(tt.emailExists, tt.emailExistsErr)
+			}
+
+			if tt.validationErr != nil {
+				mockValidator.On("ValidateRegistration", tt.registrationData).Return(tt.validationErr)
+			} else if tt.registrationData.Email != "" && tt.registrationData.Name != "" {
+				mockValidator.On("ValidateRegistration", tt.registrationData).Return(nil)
+			}
+
+			if tt.expectAuditLog {
+				mockAuditLogger.On("LogUserCreation", mock.AnythingOfType("valueobjects.ID"), "registration", tt.registrationData.Email).Return()
+			}
+
+			// Create factory
+			factory := {{.DomainName}}.New{{.DomainName | title}}Factory(mockUniqueness, mockValidator, mockAuditLogger)
+
+			// Execute
+			user, err := factory.Create{{.DomainName | title}}FromRegistration(tt.registrationData)
+
+			// Assert
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.Nil(t, user)
+			} else {
+				assert.NoError(t, err)
+				require.NotNil(t, user)
+
+				// Verify user properties
+				assert.Equal(t, tt.registrationData.Name, user.Name().Value())
+				assert.Equal(t, tt.registrationData.Email, user.Email().Value())
+				assert.Equal(t, tt.registrationData.Description, user.Description().Value())
+				assert.Equal(t, {{.DomainName}}.StatusActive, user.Status())
+
+				// Verify business email preferences
+				email, _ := {{.DomainName}}.NewEmailAddress(tt.registrationData.Email)
+				if email.IsBusinessEmail() {
+					// Business users should have different defaults
+					assert.True(t, user.Preferences().GetPrivacyPreferences().ProfilePublic)
+				} else {
+					// Personal users should have private profiles by default
+					assert.False(t, user.Preferences().GetPrivacyPreferences().ProfilePublic)
+				}
+
+				// Verify domain events
+				events := user.DomainEvents()
+				assert.Len(t, events, 1)
+				assert.Equal(t, {{.DomainName}}.{{.DomainName | title}}CreatedEventType, events[0].EventType())
+			}
+
+			// Verify mock calls
+			mockUniqueness.AssertExpectations(t)
+			mockValidator.AssertExpectations(t)
+			mockAuditLogger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserFactorySocialAuth(t *testing.T) {
+	tests := []struct {
+		name         string
+		socialData   {{.DomainName}}.SocialAuthData
+		emailExists  bool
+		wantErr      bool
+		errContains  string
+	}{
+		{
+			name: "successful Google social auth",
+			socialData: {{.DomainName}}.SocialAuthData{
+				Provider:   "google",
+				ProviderID: "google-123456",
+				Name:       "John Doe",
+				Email:      "john.doe@gmail.com",
+				Bio:        "Software developer from California",
+				Avatar:     "https://avatar.url/image.jpg",
+			},
+			emailExists: false,
+			wantErr:     false,
+		},
+		{
+			name: "successful GitHub social auth",
+			socialData: {{.DomainName}}.SocialAuthData{
+				Provider:   "github",
+				ProviderID: "github-789012",
+				Name:       "jane-dev",
+				Email:      "jane@company.com",
+				Bio:        "Full-stack developer",
+				Avatar:     "https://github.com/avatar.jpg",
+			},
+			emailExists: false,
+			wantErr:     false,
+		},
+		{
+			name: "social auth fails when email exists",
+			socialData: {{.DomainName}}.SocialAuthData{
+				Provider:   "google",
+				ProviderID: "google-existing",
+				Name:       "Existing User",
+				Email:      "existing@example.com",
+				Bio:        "Test user",
+			},
+			emailExists: true,
+			wantErr:     true,
+			errContains: "user already exists",
+		},
+		{
+			name: "social auth fails with unsupported provider",
+			socialData: {{.DomainName}}.SocialAuthData{
+				Provider:   "unsupported",
+				ProviderID: "unsupported-123",
+				Name:       "Test User",
+				Email:      "test@example.com",
+				Bio:        "Test user",
+			},
+			emailExists: false,
+			wantErr:     true,
+			errContains: "invalid social auth data",
+		},
+		{
+			name: "social auth with empty name generates from email",
+			socialData: {{.DomainName}}.SocialAuthData{
+				Provider:   "google",
+				ProviderID: "google-noname",
+				Name:       "", // Empty name
+				Email:      "testuser@example.com",
+				Bio:        "Test user with no name",
+			},
+			emailExists: false,
+			wantErr:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			mockUniqueness := new(Mock{{.DomainName | title}}UniquenessChecker)
+			mockValidator := new(MockDomainValidator)
+			mockAuditLogger := new(MockAuditLogger)
+
+			// Setup expectations
+			if tt.socialData.Email != "" && tt.socialData.Provider != "unsupported" {
+				mockUniqueness.On("EmailExists", tt.socialData.Email).Return(tt.emailExists, nil)
+			}
+
+			if !tt.wantErr {
+				expectedMethod := "social_auth_" + tt.socialData.Provider
+				mockAuditLogger.On("LogUserCreation", mock.AnythingOfType("valueobjects.ID"), expectedMethod, tt.socialData.Email).Return()
+			}
+
+			// Create factory
+			factory := {{.DomainName}}.New{{.DomainName | title}}Factory(mockUniqueness, mockValidator, mockAuditLogger)
+
+			// Execute
+			user, err := factory.Create{{.DomainName | title}}FromSocialAuth(tt.socialData)
+
+			// Assert
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.Nil(t, user)
+			} else {
+				assert.NoError(t, err)
+				require.NotNil(t, user)
+
+				// Verify user properties
+				assert.Equal(t, tt.socialData.Email, user.Email().Value())
+				assert.Equal(t, {{.DomainName}}.StatusActive, user.Status())
+
+				// Name should be set (either from social data or generated)
+				if tt.socialData.Name != "" {
+					assert.Equal(t, tt.socialData.Name, user.Name().Value())
+				} else {
+					assert.NotEmpty(t, user.Name().Value())
+				}
+
+				// Description should be set from bio or generated
+				assert.NotEmpty(t, user.Description().Value())
+
+				// Verify domain events
+				events := user.DomainEvents()
+				assert.Len(t, events, 1)
+				assert.Equal(t, {{.DomainName}}.{{.DomainName | title}}CreatedEventType, events[0].EventType())
+			}
+
+			// Verify mock calls
+			mockUniqueness.AssertExpectations(t)
+			mockAuditLogger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserFactoryImport(t *testing.T) {
+	originalTime := time.Now().UTC().Add(-30 * 24 * time.Hour) // 30 days ago
+
+	tests := []struct {
+		name       string
+		importData {{.DomainName}}.ImportData
+		wantErr    bool
+		errContains string
+	}{
+		{
+			name: "successful import with full data",
+			importData: {{.DomainName}}.ImportData{
+				Name:              "Imported User",
+				Email:             "imported@legacy-system.com",
+				Description:       "User imported from legacy system",
+				Source:            "legacy_system_v1",
+				BatchID:           "batch_20240101_001",
+				OriginalCreatedAt: &originalTime,
+				OriginalUpdatedAt: &originalTime,
+			},
+			wantErr: false,
+		},
+		{
+			name: "successful import with minimal data",
+			importData: {{.DomainName}}.ImportData{
+				Name:    "", // Will be generated
+				Email:   "minimal@example.com",
+				Source:  "minimal_import",
+				BatchID: "batch_minimal",
+			},
+			wantErr: false,
+		},
+		{
+			name: "import fails with invalid email",
+			importData: {{.DomainName}}.ImportData{
+				Name:    "Test User",
+				Email:   "", // Invalid
+				Source:  "test_system",
+				BatchID: "batch_test",
+			},
+			wantErr:     true,
+			errContains: "invalid import data",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			mockUniqueness := new(Mock{{.DomainName | title}}UniquenessChecker)
+			mockValidator := new(MockDomainValidator)
+			mockAuditLogger := new(MockAuditLogger)
+
+			// Setup expectations
+			if tt.importData.Email != "" {
+				mockUniqueness.On("EmailExists", tt.importData.Email).Return(false, nil)
+			}
+
+			if !tt.wantErr {
+				mockAuditLogger.On("LogUserCreation", mock.AnythingOfType("valueobjects.ID"), "import", tt.importData.Email).Return()
+			}
+
+			// Create factory
+			factory := {{.DomainName}}.New{{.DomainName | title}}Factory(mockUniqueness, mockValidator, mockAuditLogger)
+
+			// Execute
+			user, err := factory.Create{{.DomainName | title}}FromImport(tt.importData)
+
+			// Assert
+			if tt.wantErr {
+				assert.Error(t, err)
+				if tt.errContains != "" {
+					assert.Contains(t, err.Error(), tt.errContains)
+				}
+				assert.Nil(t, user)
+			} else {
+				assert.NoError(t, err)
+				require.NotNil(t, user)
+
+				// Verify user properties
+				assert.Equal(t, tt.importData.Email, user.Email().Value())
+				assert.Equal(t, {{.DomainName}}.StatusActive, user.Status())
+
+				// Name should be set (either from import data or generated)
+				if tt.importData.Name != "" {
+					assert.Equal(t, tt.importData.Name, user.Name().Value())
+				} else {
+					assert.NotEmpty(t, user.Name().Value())
+				}
+
+				// Description should reference import
+				assert.Contains(t, user.Description().Value(), tt.importData.Source)
+
+				// Verify domain events
+				events := user.DomainEvents()
+				assert.Len(t, events, 1)
+				assert.Equal(t, {{.DomainName}}.{{.DomainName | title}}CreatedEventType, events[0].EventType())
+			}
+
+			// Verify mock calls
+			mockUniqueness.AssertExpectations(t)
+			mockAuditLogger.AssertExpectations(t)
+		})
+	}
+}
+
+func TestUserFactoryTestUser(t *testing.T) {
+	tests := []struct {
+		name      string
+		overrides {{.DomainName}}.TestOverrides
+		wantErr   bool
+	}{
+		{
+			name: "create test user with defaults",
+			overrides: {{.DomainName}}.TestOverrides{
+				SkipUniquenessCheck: true,
+				DisableAudit:        true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "create test user with custom data",
+			overrides: {{.DomainName}}.TestOverrides{
+				Name:                "Custom Test User",
+				Email:               "custom.test@example.com",
+				Description:         "Custom test description",
+				SkipUniquenessCheck: true,
+				DisableAudit:        true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "create test user forced inactive",
+			overrides: {{.DomainName}}.TestOverrides{
+				ForceInactive:       true,
+				SkipUniquenessCheck: true,
+				DisableAudit:        true,
+			},
+			wantErr: false,
+		},
+		{
+			name: "create test user with uniqueness check",
+			overrides: {{.DomainName}}.TestOverrides{
+				Email:               "unique.test@example.com",
+				SkipUniquenessCheck: false,
+				DisableAudit:        true,
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup mocks
+			mockUniqueness := new(Mock{{.DomainName | title}}UniquenessChecker)
+			mockValidator := new(MockDomainValidator)
+			mockAuditLogger := new(MockAuditLogger)
+
+			// Setup expectations
+			if !tt.overrides.SkipUniquenessCheck {
+				expectedEmail := tt.overrides.Email
+				if expectedEmail == "" {
+					// Factory will generate an email
+					mockUniqueness.On("EmailExists", mock.AnythingOfType("string")).Return(false, nil)
+				} else {
+					mockUniqueness.On("EmailExists", expectedEmail).Return(false, nil)
+				}
+			}
+
+			if !tt.overrides.DisableAudit {
+				mockAuditLogger.On("LogUserCreation", mock.AnythingOfType("valueobjects.ID"), "test", mock.AnythingOfType("string")).Return()
+			}
+
+			// Create factory
+			factory := {{.DomainName}}.New{{.DomainName | title}}Factory(mockUniqueness, mockValidator, mockAuditLogger)
+
+			// Execute
+			user, err := factory.CreateTest{{.DomainName | title}}(tt.overrides)
+
+			// Assert
+			if tt.wantErr {
+				assert.Error(t, err)
+				assert.Nil(t, user)
+			} else {
+				assert.NoError(t, err)
+				require.NotNil(t, user)
+
+				// Verify custom data was applied
+				if tt.overrides.Name != "" {
+					assert.Equal(t, tt.overrides.Name, user.Name().Value())
+				} else {
+					assert.NotEmpty(t, user.Name().Value())
+				}
+
+				if tt.overrides.Email != "" {
+					assert.Equal(t, tt.overrides.Email, user.Email().Value())
+				} else {
+					assert.NotEmpty(t, user.Email().Value())
+				}
+
+				if tt.overrides.Description != "" {
+					assert.Equal(t, tt.overrides.Description, user.Description().Value())
+				} else {
+					assert.NotEmpty(t, user.Description().Value())
+				}
+
+				// Verify forced inactive status
+				if tt.overrides.ForceInactive {
+					assert.True(t, user.IsInactive())
+				} else {
+					assert.True(t, user.IsActive())
+				}
+
+				// Verify domain events
+				events := user.DomainEvents()
+				if tt.overrides.ForceInactive {
+					// Should have creation event + deactivation event
+					assert.GreaterOrEqual(t, len(events), 1)
+				} else {
+					assert.Len(t, events, 1)
+					assert.Equal(t, {{.DomainName}}.{{.DomainName | title}}CreatedEventType, events[0].EventType())
+				}
+			}
+
+			// Verify mock calls
+			if !tt.overrides.SkipUniquenessCheck {
+				mockUniqueness.AssertExpectations(t)
+			}
+			if !tt.overrides.DisableAudit {
+				mockAuditLogger.AssertExpectations(t)
+			}
+		})
+	}
+}
+
+func TestFactoryBusinessRuleApplication(t *testing.T) {
+	t.Run("email normalization", func(t *testing.T) {
+		mockUniqueness := new(Mock{{.DomainName | title}}UniquenessChecker)
+		mockValidator := new(MockDomainValidator)
+		mockAuditLogger := new(MockAuditLogger)
+
+		// Setup expectations for normalized email
+		normalizedEmail := "test@example.com"
+		mockUniqueness.On("EmailExists", normalizedEmail).Return(false, nil)
+		mockAuditLogger.On("LogUserCreation", mock.AnythingOfType("valueobjects.ID"), "registration", normalizedEmail).Return()
+		mockValidator.On("ValidateRegistration", mock.AnythingOfType("{{.DomainName}}.RegistrationData")).Return(nil)
+
+		factory := {{.DomainName}}.New{{.DomainName | title}}Factory(mockUniqueness, mockValidator, mockAuditLogger)
+
+		// Test with email that needs normalization
+		registrationData := {{.DomainName}}.RegistrationData{
+			Name:        "Test User",
+			Email:       "  TEST@EXAMPLE.COM  ", // Should be normalized
+			Description: "Test description",
+			Password:    "password",
+		}
+
+		user, err := factory.Create{{.DomainName | title}}FromRegistration(registrationData)
+
+		assert.NoError(t, err)
+		require.NotNil(t, user)
+		
+		// Email should be normalized
+		assert.Equal(t, normalizedEmail, user.Email().Value())
+
+		mockUniqueness.AssertExpectations(t)
+		mockAuditLogger.AssertExpectations(t)
+		mockValidator.AssertExpectations(t)
+	})
+}

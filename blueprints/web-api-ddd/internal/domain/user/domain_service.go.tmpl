@@ -1,0 +1,587 @@
+package {{.DomainName}}
+
+import (
+	"context"
+	"fmt"
+	"time"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/events"
+	"{{.ModulePath}}/internal/shared/errors"
+)
+
+// {{.DomainName | title}}DomainService provides complex business operations that span multiple aggregates
+type {{.DomainName | title}}DomainService interface {
+	// User lifecycle management
+	RegisterNewUser(ctx context.Context, request RegistrationRequest) (*{{.DomainName | title}}Aggregate, error)
+	MergeUserAccounts(ctx context.Context, primaryID, secondaryID valueobjects.ID) error
+	DeactivateInactiveUsers(ctx context.Context, inactiveSince time.Time) (*BulkOperationResult, error)
+	
+	// Email management with verification
+	InitiateEmailChange(ctx context.Context, userID valueobjects.ID, newEmail string) (*EmailChangeProcess, error)
+	CompleteEmailChange(ctx context.Context, processID string, verificationToken string) error
+	
+	// Profile management
+	SuggestProfileCompletions(ctx context.Context, userID valueobjects.ID) (*ProfileSuggestions, error)
+	UpdateProfileFromSocialData(ctx context.Context, userID valueobjects.ID, socialData SocialProfileData) error
+	
+	// Security operations
+	LockSuspiciousAccounts(ctx context.Context, criteria SuspiciousActivityCriteria) (*SecurityOperationResult, error)
+	ResetCompromisedPasswords(ctx context.Context, compromisedEmails []string) (*SecurityOperationResult, error)
+	
+	// Analytics and insights
+	AnalyzeUserBehavior(ctx context.Context, userID valueobjects.ID, period time.Duration) (*UserBehaviorAnalysis, error)
+	DetectDuplicateAccounts(ctx context.Context, similarity float64) ([]*DuplicateAccountGroup, error)
+	
+	// Compliance operations
+	HandleGDPRDeletionRequest(ctx context.Context, userID valueobjects.ID, request GDPRDeletionRequest) error
+	AnonymizeUserData(ctx context.Context, userID valueobjects.ID) error
+	ExportUserData(ctx context.Context, userID valueobjects.ID) (*UserDataExport, error)
+}
+
+// {{.DomainName}}DomainService implements the domain service interface
+type {{.DomainName}}DomainService struct {
+	userRepository    {{.DomainName | title}}Repository
+	userFactory       {{.DomainName | title}}Factory
+	eventDispatcher   events.EventDispatcher
+	emailService      EmailVerificationService
+	securityService   SecurityService
+	analyticsService  AnalyticsService
+	auditLogger       AuditLogger
+}
+
+// New{{.DomainName | title}}DomainService creates a new domain service
+func New{{.DomainName | title}}DomainService(
+	userRepository {{.DomainName | title}}Repository,
+	userFactory {{.DomainName | title}}Factory,
+	eventDispatcher events.EventDispatcher,
+	emailService EmailVerificationService,
+	securityService SecurityService,
+	analyticsService AnalyticsService,
+	auditLogger AuditLogger,
+) *{{.DomainName}}DomainService {
+	return &{{.DomainName}}DomainService{
+		userRepository:   userRepository,
+		userFactory:      userFactory,
+		eventDispatcher:  eventDispatcher,
+		emailService:     emailService,
+		securityService:  securityService,
+		analyticsService: analyticsService,
+		auditLogger:      auditLogger,
+	}
+}
+
+// RegisterNewUser handles the complete user registration process
+func (s *{{.DomainName}}DomainService) RegisterNewUser(ctx context.Context, request RegistrationRequest) (*{{.DomainName | title}}Aggregate, error) {
+	// Validate registration request
+	if err := s.validateRegistrationRequest(request); err != nil {
+		return nil, fmt.Errorf("invalid registration request: %w", err)
+	}
+	
+	// Check for existing user with same email
+	exists, err := s.userRepository.ExistsByEmail(ctx, request.Email)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check email existence: %w", err)
+	}
+	if exists {
+		return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "email already registered")
+	}
+	
+	// Create user through factory with business rules
+	registrationData := RegistrationData{
+		Name:        request.Name,
+		Email:       request.Email,
+		Description: request.Description,
+		Password:    request.Password,
+		IPAddress:   request.IPAddress,
+		UserAgent:   request.UserAgent,
+	}
+	
+	user, err := s.userFactory.Create{{.DomainName | title}}FromRegistration(registrationData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create user: %w", err)
+	}
+	
+	// Apply additional business rules
+	if err := s.applyRegistrationBusinessRules(ctx, user, request); err != nil {
+		return nil, fmt.Errorf("registration business rules failed: %w", err)
+	}
+	
+	// Save user
+	if err := s.userRepository.Save(ctx, user); err != nil {
+		return nil, fmt.Errorf("failed to save user: %w", err)
+	}
+	
+	// Dispatch domain events
+	if err := s.dispatchDomainEvents(ctx, user); err != nil {
+		// Log error but don't fail the operation
+		s.auditLogger.LogUserCreation(user.ID(), "registration_event_dispatch_failed", request.Email)
+	}
+	
+	// Initiate email verification if required
+	if request.RequireEmailVerification {
+		if err := s.emailService.SendVerificationEmail(ctx, user.Email().Value(), user.ID()); err != nil {
+			// Log error but don't fail registration
+			s.auditLogger.LogUserModification(user.ID(), "email_verification_send_failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+		}
+	}
+	
+	return user, nil
+}
+
+// MergeUserAccounts merges two user accounts, combining their data
+func (s *{{.DomainName}}DomainService) MergeUserAccounts(ctx context.Context, primaryID, secondaryID valueobjects.ID) error {
+	// Load both users
+	primaryUser, err := s.userRepository.FindByID(ctx, primaryID)
+	if err != nil {
+		return fmt.Errorf("failed to load primary user: %w", err)
+	}
+	
+	secondaryUser, err := s.userRepository.FindByID(ctx, secondaryID)
+	if err != nil {
+		return fmt.Errorf("failed to load secondary user: %w", err)
+	}
+	
+	// Business rules for account merging
+	if err := s.validateAccountMerge(primaryUser, secondaryUser); err != nil {
+		return fmt.Errorf("account merge validation failed: %w", err)
+	}
+	
+	// Perform the merge within a transaction
+	return s.userRepository.WithinTransaction(ctx, func(repo {{.DomainName | title}}Repository) error {
+		// Merge profile data
+		if err := s.mergeUserProfiles(primaryUser, secondaryUser); err != nil {
+			return fmt.Errorf("failed to merge profiles: %w", err)
+		}
+		
+		// Merge preferences
+		if err := s.mergeUserPreferences(primaryUser, secondaryUser); err != nil {
+			return fmt.Errorf("failed to merge preferences: %w", err)
+		}
+		
+		// Update primary user
+		if err := repo.Update(ctx, primaryUser); err != nil {
+			return fmt.Errorf("failed to update primary user: %w", err)
+		}
+		
+		// Mark secondary user as merged (soft delete with reason)
+		if err := secondaryUser.Delete("merged_into_" + primaryID.String()); err != nil {
+			return fmt.Errorf("failed to mark secondary user as merged: %w", err)
+		}
+		
+		if err := repo.Update(ctx, secondaryUser); err != nil {
+			return fmt.Errorf("failed to update secondary user: %w", err)
+		}
+		
+		// Dispatch merge events
+		s.dispatchDomainEvents(ctx, primaryUser)
+		s.dispatchDomainEvents(ctx, secondaryUser)
+		
+		// Log the merge operation
+		s.auditLogger.LogUserModification(primaryID, "account_merged", map[string]interface{}{
+			"secondary_user_id": secondaryID.String(),
+		})
+		
+		return nil
+	})
+}
+
+// InitiateEmailChange starts the email change process with verification
+func (s *{{.DomainName}}DomainService) InitiateEmailChange(ctx context.Context, userID valueobjects.ID, newEmail string) (*EmailChangeProcess, error) {
+	// Load user
+	user, err := s.userRepository.FindByID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load user: %w", err)
+	}
+	
+	// Validate new email
+	newEmailAddr, err := NewEmailAddress(newEmail)
+	if err != nil {
+		return nil, fmt.Errorf("invalid new email: %w", err)
+	}
+	
+	// Check if email is already taken
+	exists, err := s.userRepository.ExistsByEmail(ctx, newEmail)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check email existence: %w", err)
+	}
+	if exists {
+		return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "email already exists")
+	}
+	
+	// Business rule: Cannot change email too frequently
+	if user.(*{{.DomainName | title}}Aggregate).changeHistory.HasRecentEmailChange() {
+		return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "email changed too recently")
+	}
+	
+	// Create email change process
+	process := &EmailChangeProcess{
+		ProcessID:     generateProcessID(),
+		UserID:        userID,
+		OldEmail:      user.Email().Value(),
+		NewEmail:      newEmail,
+		Status:        EmailChangeStatusPending,
+		InitiatedAt:   time.Now().UTC(),
+		ExpiresAt:     time.Now().UTC().Add(24 * time.Hour),
+	}
+	
+	// Send verification email to new address
+	verificationToken, err := s.emailService.SendEmailChangeVerification(ctx, newEmail, userID, process.ProcessID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send verification email: %w", err)
+	}
+	
+	process.VerificationToken = verificationToken
+	
+	// Store the process (would typically be in a separate process repository)
+	// For simplicity, we'll assume this is handled by the email service
+	
+	// Log the initiation
+	s.auditLogger.LogUserModification(userID, "email_change_initiated", map[string]interface{}{
+		"old_email": user.Email().Value(),
+		"new_email": newEmail,
+		"process_id": process.ProcessID,
+	})
+	
+	return process, nil
+}
+
+// CompleteEmailChange completes the email change process
+func (s *{{.DomainName}}DomainService) CompleteEmailChange(ctx context.Context, processID string, verificationToken string) error {
+	// Load and validate process (simplified - would typically use a process repository)
+	process, err := s.emailService.GetEmailChangeProcess(ctx, processID)
+	if err != nil {
+		return fmt.Errorf("failed to load email change process: %w", err)
+	}
+	
+	if process.Status != EmailChangeStatusPending {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "email change process not pending")
+	}
+	
+	if time.Now().UTC().After(process.ExpiresAt) {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "email change process expired")
+	}
+	
+	// Verify token
+	if !s.emailService.VerifyEmailChangeToken(verificationToken, process.VerificationToken) {
+		return errors.ErrBusinessRuleViolation.WithDetails("reason", "invalid verification token")
+	}
+	
+	// Load user
+	user, err := s.userRepository.FindByIDForUpdate(ctx, process.UserID)
+	if err != nil {
+		return fmt.Errorf("failed to load user for update: %w", err)
+	}
+	
+	// Change email on aggregate
+	if err := user.ChangeEmail(process.NewEmail, verificationToken); err != nil {
+		return fmt.Errorf("failed to change email on user: %w", err)
+	}
+	
+	// Save user
+	if err := s.userRepository.Update(ctx, user); err != nil {
+		return fmt.Errorf("failed to save user with new email: %w", err)
+	}
+	
+	// Mark process as completed
+	process.Status = EmailChangeStatusCompleted
+	process.CompletedAt = &time.Time{}
+	*process.CompletedAt = time.Now().UTC()
+	
+	// Dispatch events
+	if err := s.dispatchDomainEvents(ctx, user); err != nil {
+		// Log error but don't fail the operation
+		s.auditLogger.LogUserModification(process.UserID, "email_change_event_dispatch_failed", map[string]interface{}{
+			"process_id": processID,
+		})
+	}
+	
+	// Log completion
+	s.auditLogger.LogUserModification(process.UserID, "email_change_completed", map[string]interface{}{
+		"old_email": process.OldEmail,
+		"new_email": process.NewEmail,
+		"process_id": processID,
+	})
+	
+	return nil
+}
+
+// HandleGDPRDeletionRequest handles GDPR "right to be forgotten" requests
+func (s *{{.DomainName}}DomainService) HandleGDPRDeletionRequest(ctx context.Context, userID valueobjects.ID, request GDPRDeletionRequest) error {
+	// Load user
+	user, err := s.userRepository.FindByID(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("failed to load user: %w", err)
+	}
+	
+	// Validate GDPR request
+	if err := s.validateGDPRDeletionRequest(request); err != nil {
+		return fmt.Errorf("invalid GDPR deletion request: %w", err)
+	}
+	
+	// Determine deletion strategy based on legal requirements
+	strategy := s.determineGDPRDeletionStrategy(user, request)
+	
+	return s.userRepository.WithinTransaction(ctx, func(repo {{.DomainName | title}}Repository) error {
+		switch strategy {
+		case GDPRDeletionStrategyAnonymize:
+			// Anonymize personal data while preserving necessary business data
+			if err := s.AnonymizeUserData(ctx, userID); err != nil {
+				return fmt.Errorf("failed to anonymize user data: %w", err)
+			}
+			
+		case GDPRDeletionStrategyHardDelete:
+			// Completely remove user data
+			if err := repo.HardDelete(ctx, userID); err != nil {
+				return fmt.Errorf("failed to hard delete user: %w", err)
+			}
+			
+		case GDPRDeletionStrategySoftDelete:
+			// Soft delete with GDPR compliance marking
+			if err := user.Delete("gdpr_deletion_request"); err != nil {
+				return fmt.Errorf("failed to soft delete user: %w", err)
+			}
+			if err := repo.Update(ctx, user); err != nil {
+				return fmt.Errorf("failed to update user: %w", err)
+			}
+		}
+		
+		// Log GDPR deletion
+		s.auditLogger.LogUserModification(userID, "gdpr_deletion_processed", map[string]interface{}{
+			"strategy": string(strategy),
+			"request_id": request.RequestID,
+			"legal_basis": request.LegalBasis,
+		})
+		
+		// Dispatch compliance events
+		if err := s.dispatchDomainEvents(ctx, user); err != nil {
+			// Log error but don't fail GDPR compliance
+			s.auditLogger.LogUserModification(userID, "gdpr_deletion_event_dispatch_failed", map[string]interface{}{
+				"request_id": request.RequestID,
+			})
+		}
+		
+		return nil
+	})
+}
+
+// Private helper methods
+
+func (s *{{.DomainName}}DomainService) validateRegistrationRequest(request RegistrationRequest) error {
+	if request.Email == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "email")
+	}
+	if request.Name == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "name")
+	}
+	if len(request.Password) < 8 {
+		return errors.ErrInvalidInput.WithDetails("field", "password").WithDetails("reason", "too short")
+	}
+	return nil
+}
+
+func (s *{{.DomainName}}DomainService) applyRegistrationBusinessRules(ctx context.Context, user *{{.DomainName | title}}Aggregate, request RegistrationRequest) error {
+	// Apply any additional business rules for registration
+	// This could include risk scoring, geo-blocking, etc.
+	
+	// Example: Check for suspicious registration patterns
+	if s.securityService != nil {
+		riskScore, err := s.securityService.CalculateRegistrationRisk(ctx, request)
+		if err != nil {
+			// Log error but don't fail registration
+			s.auditLogger.LogUserModification(user.ID(), "risk_calculation_failed", map[string]interface{}{
+				"error": err.Error(),
+			})
+		} else if riskScore > 0.8 { // High risk threshold
+			// Mark account for manual review
+			user.Deactivate("high_risk_registration")
+			s.auditLogger.LogUserModification(user.ID(), "flagged_high_risk_registration", map[string]interface{}{
+				"risk_score": riskScore,
+			})
+		}
+	}
+	
+	return nil
+}
+
+func (s *{{.DomainName}}DomainService) dispatchDomainEvents(ctx context.Context, user *{{.DomainName | title}}Aggregate) error {
+	events := user.DomainEvents()
+	if len(events) == 0 {
+		return nil
+	}
+	
+	for _, event := range events {
+		if err := s.eventDispatcher.Dispatch(ctx, event); err != nil {
+			return fmt.Errorf("failed to dispatch event %s: %w", event.EventType(), err)
+		}
+	}
+	
+	// Mark events as dispatched
+	user.ClearDomainEvents()
+	return nil
+}
+
+func generateProcessID() string {
+	// Generate a unique process ID
+	// In production, this would use proper UUID generation
+	return fmt.Sprintf("proc_%d", time.Now().UnixNano())
+}
+
+// Supporting types and interfaces
+
+// RegistrationRequest represents a user registration request
+type RegistrationRequest struct {
+	Name                     string
+	Email                    string
+	Description              string
+	Password                 string
+	IPAddress                string
+	UserAgent                string
+	RequireEmailVerification bool
+}
+
+// EmailChangeProcess represents an ongoing email change process
+type EmailChangeProcess struct {
+	ProcessID         string                `json:"process_id"`
+	UserID           valueobjects.ID       `json:"user_id"`
+	OldEmail         string                `json:"old_email"`
+	NewEmail         string                `json:"new_email"`
+	Status           EmailChangeStatus     `json:"status"`
+	VerificationToken string               `json:"verification_token"`
+	InitiatedAt      time.Time            `json:"initiated_at"`
+	ExpiresAt        time.Time            `json:"expires_at"`
+	CompletedAt      *time.Time           `json:"completed_at,omitempty"`
+}
+
+// EmailChangeStatus represents the status of an email change process
+type EmailChangeStatus string
+
+const (
+	EmailChangeStatusPending   EmailChangeStatus = "pending"
+	EmailChangeStatusCompleted EmailChangeStatus = "completed"
+	EmailChangeStatusExpired   EmailChangeStatus = "expired"
+	EmailChangeStatusCanceled  EmailChangeStatus = "canceled"
+)
+
+// GDPRDeletionRequest represents a GDPR deletion request
+type GDPRDeletionRequest struct {
+	RequestID     string    `json:"request_id"`
+	LegalBasis    string    `json:"legal_basis"`
+	RequestedAt   time.Time `json:"requested_at"`
+	RequesterInfo string    `json:"requester_info"`
+}
+
+// GDPRDeletionStrategy defines how to handle GDPR deletion
+type GDPRDeletionStrategy string
+
+const (
+	GDPRDeletionStrategyAnonymize   GDPRDeletionStrategy = "anonymize"
+	GDPRDeletionStrategyHardDelete  GDPRDeletionStrategy = "hard_delete"
+	GDPRDeletionStrategySoftDelete  GDPRDeletionStrategy = "soft_delete"
+)
+
+// BulkOperationResult represents the result of a bulk operation
+type BulkOperationResult struct {
+	ProcessedCount int64     `json:"processed_count"`
+	SuccessCount   int64     `json:"success_count"`
+	ErrorCount     int64     `json:"error_count"`
+	Errors         []string  `json:"errors,omitempty"`
+	ProcessedAt    time.Time `json:"processed_at"`
+}
+
+// UserDataExport represents exported user data for GDPR compliance
+type UserDataExport struct {
+	UserID       valueobjects.ID            `json:"user_id"`
+	PersonalData map[string]interface{}     `json:"personal_data"`
+	ActivityData map[string]interface{}     `json:"activity_data"`
+	Preferences  map[string]interface{}     `json:"preferences"`
+	ExportedAt   time.Time                 `json:"exported_at"`
+	Format       string                    `json:"format"`
+}
+
+// Supporting service interfaces
+
+// EmailVerificationService handles email verification operations
+type EmailVerificationService interface {
+	SendVerificationEmail(ctx context.Context, email string, userID valueobjects.ID) error
+	SendEmailChangeVerification(ctx context.Context, newEmail string, userID valueobjects.ID, processID string) (string, error)
+	VerifyEmailChangeToken(provided, expected string) bool
+	GetEmailChangeProcess(ctx context.Context, processID string) (*EmailChangeProcess, error)
+}
+
+// SecurityService provides security-related operations
+type SecurityService interface {
+	CalculateRegistrationRisk(ctx context.Context, request RegistrationRequest) (float64, error)
+	DetectSuspiciousActivity(ctx context.Context, userID valueobjects.ID, activities []ActivityLog) (*SuspiciousActivityReport, error)
+	LockAccount(ctx context.Context, userID valueobjects.ID, reason string) error
+}
+
+// AnalyticsService provides analytics and insights
+type AnalyticsService interface {
+	AnalyzeUserBehavior(ctx context.Context, userID valueobjects.ID, period time.Duration) (*UserBehaviorAnalysis, error)
+	DetectDuplicateAccounts(ctx context.Context, similarity float64) ([]*DuplicateAccountGroup, error)
+}
+
+// Additional supporting types
+
+// ProfileSuggestions represents suggestions for profile completion
+type ProfileSuggestions struct {
+	MissingSections []string               `json:"missing_sections"`
+	Suggestions     map[string]interface{} `json:"suggestions"`
+	CompletionScore int                    `json:"completion_score"`
+}
+
+// SocialProfileData represents data from social media profiles
+type SocialProfileData struct {
+	Platform string                 `json:"platform"`
+	Data     map[string]interface{} `json:"data"`
+}
+
+// SuspiciousActivityCriteria defines criteria for detecting suspicious activity
+type SuspiciousActivityCriteria struct {
+	MaxFailedLogins     int           `json:"max_failed_logins"`
+	TimeWindow          time.Duration `json:"time_window"`
+	SuspiciousLocations []string      `json:"suspicious_locations"`
+}
+
+// SecurityOperationResult represents the result of a security operation
+type SecurityOperationResult struct {
+	ProcessedCount int64                  `json:"processed_count"`
+	AffectedUsers  []valueobjects.ID      `json:"affected_users"`
+	Actions        []string               `json:"actions"`
+	Details        map[string]interface{} `json:"details"`
+}
+
+// UserBehaviorAnalysis represents analysis of user behavior
+type UserBehaviorAnalysis struct {
+	UserID          valueobjects.ID        `json:"user_id"`
+	AnalysisPeriod  time.Duration          `json:"analysis_period"`
+	LoginFrequency  float64                `json:"login_frequency"`
+	ActivityPattern map[string]interface{} `json:"activity_pattern"`
+	RiskScore       float64                `json:"risk_score"`
+}
+
+// DuplicateAccountGroup represents a group of potentially duplicate accounts
+type DuplicateAccountGroup struct {
+	GroupID         string            `json:"group_id"`
+	UserIDs         []valueobjects.ID `json:"user_ids"`
+	SimilarityScore float64           `json:"similarity_score"`
+	MatchedFields   []string          `json:"matched_fields"`
+}
+
+// ActivityLog represents a user activity log entry
+type ActivityLog struct {
+	UserID    valueobjects.ID `json:"user_id"`
+	Action    string          `json:"action"`
+	Timestamp time.Time       `json:"timestamp"`
+	Details   map[string]interface{} `json:"details"`
+}
+
+// SuspiciousActivityReport represents a report of suspicious activity
+type SuspiciousActivityReport struct {
+	UserID              valueobjects.ID `json:"user_id"`
+	SuspiciousActivities []ActivityLog   `json:"suspicious_activities"`
+	RiskScore           float64         `json:"risk_score"`
+	RecommendedActions  []string        `json:"recommended_actions"`
+}

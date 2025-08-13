@@ -16,6 +16,10 @@ const (
 	{{.DomainName | title}}DescriptionUpdatedEventType   = "{{.DomainName}}.description_updated"
 	{{.DomainName | title}}LoggedInEventType             = "{{.DomainName}}.logged_in"
 	{{.DomainName | title}}PreferencesUpdatedEventType   = "{{.DomainName}}.preferences_updated"
+	{{.DomainName | title}}DeactivatedEventType          = "{{.DomainName}}.deactivated"
+	{{.DomainName | title}}DeletedEventType              = "{{.DomainName}}.deleted"
+	{{.DomainName | title}}PasswordChangedEventType      = "{{.DomainName}}.password_changed"
+	{{.DomainName | title}}AccountLockedEventType        = "{{.DomainName}}.account_locked"
 )
 
 // {{.DomainName | title}}CreatedEvent represents the event when a {{.DomainName}} is created
@@ -191,10 +195,11 @@ type {{.DomainName | title}}LoggedInEvent struct {
 }
 
 // New{{.DomainName | title}}LoggedInEvent creates a new {{.DomainName}} logged in event
-func New{{.DomainName | title}}LoggedInEvent({{.DomainName}}ID valueobjects.ID, email string, loginTime time.Time) {{.DomainName | title}}LoggedInEvent {
+func New{{.DomainName | title}}LoggedInEvent({{.DomainName}}ID valueobjects.ID, email string, loginTime time.Time, loginContext LoginContext) {{.DomainName | title}}LoggedInEvent {
 	data := map[string]interface{}{
-		"email":      email,
-		"login_time": loginTime,
+		"email":         email,
+		"login_time":    loginTime,
+		"login_context": loginContext,
 	}
 	
 	return {{.DomainName | title}}LoggedInEvent{
@@ -234,3 +239,105 @@ func New{{.DomainName | title}}PreferencesUpdatedEvent({{.DomainName}}ID valueob
 		NewPreferences: newPreferences,
 	}
 }
+
+// {{.DomainName | title}}DeactivatedEvent represents the event when a {{.DomainName}} is deactivated
+type {{.DomainName | title}}DeactivatedEvent struct {
+	events.BaseDomainEvent
+	Reason string
+}
+
+// New{{.DomainName | title}}DeactivatedEvent creates a new {{.DomainName}} deactivated event
+func New{{.DomainName | title}}DeactivatedEvent({{.DomainName}}ID valueobjects.ID, reason string) {{.DomainName | title}}DeactivatedEvent {
+	data := map[string]interface{}{
+		"reason": reason,
+	}
+	
+	return {{.DomainName | title}}DeactivatedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}DeactivatedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		Reason: reason,
+	}
+}
+
+// {{.DomainName | title}}DeletedEvent represents the event when a {{.DomainName}} is deleted
+type {{.DomainName | title}}DeletedEvent struct {
+	events.BaseDomainEvent
+	Reason string
+}
+
+// New{{.DomainName | title}}DeletedEvent creates a new {{.DomainName}} deleted event
+func New{{.DomainName | title}}DeletedEvent({{.DomainName}}ID valueobjects.ID, reason string) {{.DomainName | title}}DeletedEvent {
+	data := map[string]interface{}{
+		"reason": reason,
+	}
+	
+	return {{.DomainName | title}}DeletedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}DeletedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		Reason: reason,
+	}
+}
+
+// {{.DomainName | title}}PasswordChangedEvent represents the event when a {{.DomainName}}'s password is changed
+type {{.DomainName | title}}PasswordChangedEvent struct {
+	events.BaseDomainEvent
+	ChangeReason string
+	IPAddress    string
+}
+
+// New{{.DomainName | title}}PasswordChangedEvent creates a new {{.DomainName}} password changed event
+func New{{.DomainName | title}}PasswordChangedEvent({{.DomainName}}ID valueobjects.ID, changeReason, ipAddress string) {{.DomainName | title}}PasswordChangedEvent {
+	data := map[string]interface{}{
+		"change_reason": changeReason,
+		"ip_address":    ipAddress,
+	}
+	
+	return {{.DomainName | title}}PasswordChangedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}PasswordChangedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		ChangeReason: changeReason,
+		IPAddress:    ipAddress,
+	}
+}
+
+// {{.DomainName | title}}AccountLockedEvent represents the event when a {{.DomainName}}'s account is locked
+type {{.DomainName | title}}AccountLockedEvent struct {
+	events.BaseDomainEvent
+	LockReason   string
+	LockedUntil  *time.Time
+	AttemptCount int
+}
+
+// New{{.DomainName | title}}AccountLockedEvent creates a new {{.DomainName}} account locked event
+func New{{.DomainName | title}}AccountLockedEvent({{.DomainName}}ID valueobjects.ID, lockReason string, lockedUntil *time.Time, attemptCount int) {{.DomainName | title}}AccountLockedEvent {
+	data := map[string]interface{}{
+		"lock_reason":    lockReason,
+		"locked_until":   lockedUntil,
+		"attempt_count":  attemptCount,
+	}
+	
+	return {{.DomainName | title}}AccountLockedEvent{
+		BaseDomainEvent: events.NewBaseDomainEvent(
+			{{.DomainName | title}}AccountLockedEventType,
+			{{.DomainName}}ID,
+			"{{.DomainName}}",
+			data,
+		),
+		LockReason:   lockReason,
+		LockedUntil:  lockedUntil,
+		AttemptCount: attemptCount,
+	}
+}
+

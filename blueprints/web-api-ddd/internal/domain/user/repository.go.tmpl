@@ -2,47 +2,288 @@ package {{.DomainName}}
 
 import (
 	"context"
+	"time"
 	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/errors"
 )
 
-// {{.DomainName | title}}Repository defines the contract for {{.DomainName}} persistence
+// {{.DomainName | title}}Repository defines the contract for {{.DomainName}} persistence with rich domain semantics
 type {{.DomainName | title}}Repository interface {
-	// Save persists a {{.DomainName}} aggregate
-	Save(ctx context.Context, {{.DomainName}} *{{.DomainName | title}}) error
+	// Core CRUD operations with aggregate semantics
 	
-	// FindByID retrieves a {{.DomainName}} by its ID
-	FindByID(ctx context.Context, id valueobjects.ID) (*{{.DomainName | title}}, error)
+	// Save stores a {{.DomainName}} aggregate with full event handling
+	Save(ctx context.Context, {{.DomainName}} *{{.DomainName | title}}Aggregate) error
 	
-	// FindByName retrieves a {{.DomainName}} by name
-	FindByName(ctx context.Context, name string) (*{{.DomainName | title}}, error)
+	// SaveBatch saves multiple {{.DomainName}}s in a single transaction
+	SaveBatch(ctx context.Context, {{.DomainName}}s []*{{.DomainName | title}}Aggregate) error
 	
-	// FindByEmail retrieves a {{.DomainName}} by email
-	FindByEmail(ctx context.Context, email string) (*{{.DomainName | title}}, error)
+	// Update updates an existing {{.DomainName}} with optimistic locking
+	Update(ctx context.Context, {{.DomainName}} *{{.DomainName | title}}Aggregate) error
 	
-	// FindAll retrieves all {{.DomainName}}s with pagination
-	FindAll(ctx context.Context, offset, limit int) ([]*{{.DomainName | title}}, error)
+	// FindByID retrieves a {{.DomainName}} by its unique identifier
+	FindByID(ctx context.Context, id valueobjects.ID) (*{{.DomainName | title}}Aggregate, error)
 	
-	// FindByStatus retrieves {{.DomainName}}s by status
-	FindByStatus(ctx context.Context, status Status, offset, limit int) ([]*{{.DomainName | title}}, error)
+	// FindByIDForUpdate retrieves a {{.DomainName}} with pessimistic lock for updates
+	FindByIDForUpdate(ctx context.Context, id valueobjects.ID) (*{{.DomainName | title}}Aggregate, error)
 	
-	// Count returns the total number of {{.DomainName}}s
-	Count(ctx context.Context) (int, error)
+	// Query operations with business semantics
 	
-	// CountByStatus returns the number of {{.DomainName}}s by status
-	CountByStatus(ctx context.Context, status Status) (int, error)
+	// FindByEmail retrieves a {{.DomainName}} by email address (unique constraint)
+	FindByEmail(ctx context.Context, email string) (*{{.DomainName | title}}Aggregate, error)
 	
-	// Delete removes a {{.DomainName}} (physical delete)
+	// FindBySpecification retrieves {{.DomainName}}s matching a business specification
+	FindBySpecification(ctx context.Context, spec Specification) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// FindActive retrieves all active {{.DomainName}}s with pagination
+	FindActive(ctx context.Context, pagination PaginationSpec) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// FindByEmailProvider retrieves {{.DomainName}}s by email provider (google, microsoft, etc.)
+	FindByEmailProvider(ctx context.Context, provider string, pagination PaginationSpec) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// FindByEngagementLevel retrieves {{.DomainName}}s by engagement level
+	FindByEngagementLevel(ctx context.Context, level string, pagination PaginationSpec) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// FindRecentlyCreated retrieves {{.DomainName}}s created within a time period
+	FindRecentlyCreated(ctx context.Context, since time.Time, limit int) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// FindInactive retrieves {{.DomainName}}s that haven't logged in since a given time
+	FindInactive(ctx context.Context, inactiveSince time.Time, limit int) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// Existence and uniqueness checks
+	
+	// ExistsByEmail checks if a {{.DomainName}} with the given email exists
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
+	
+	// ExistsByID checks if a {{.DomainName}} with the given ID exists
+	ExistsByID(ctx context.Context, id valueobjects.ID) (bool, error)
+	
+	// CountByStatus returns count of {{.DomainName}}s by status
+	CountByStatus(ctx context.Context, status Status) (int64, error)
+	
+	// CountByEmailProvider returns count of {{.DomainName}}s by email provider
+	CountByEmailProvider(ctx context.Context, provider string) (int64, error)
+	
+	// Bulk operations
+	
+	// Count returns the total number of {{.DomainName}}s matching optional criteria
+	Count(ctx context.Context, spec Specification) (int64, error)
+	
+	// FindAll retrieves all {{.DomainName}}s with pagination support
+	FindAll(ctx context.Context, pagination PaginationSpec) ([]*{{.DomainName | title}}Aggregate, error)
+	
+	// BulkUpdateStatus updates status for multiple {{.DomainName}}s matching criteria
+	BulkUpdateStatus(ctx context.Context, spec Specification, newStatus Status, reason string) (int64, error)
+	
+	// BulkDelete soft deletes multiple {{.DomainName}}s matching criteria
+	BulkDelete(ctx context.Context, spec Specification, reason string) (int64, error)
+	
+	// Lifecycle operations
+	
+	// Delete removes a {{.DomainName}} (typically soft delete to maintain referential integrity)
 	Delete(ctx context.Context, id valueobjects.ID) error
 	
-	// Exists checks if a {{.DomainName}} exists by ID
-	Exists(ctx context.Context, id valueobjects.ID) (bool, error)
+	// HardDelete permanently removes a {{.DomainName}} (for GDPR compliance)
+	HardDelete(ctx context.Context, id valueobjects.ID) error
 	
-	// ExistsByName checks if a {{.DomainName}} exists by name
-	ExistsByName(ctx context.Context, name string) (bool, error)
+	// Archive moves old {{.DomainName}}s to archive storage
+	Archive(ctx context.Context, olderThan time.Time) (int64, error)
 	
-	// ExistsByEmail checks if a {{.DomainName}} exists by email
-	ExistsByEmail(ctx context.Context, email string) (bool, error)
+	// Transaction support for complex operations
+	
+	// WithinTransaction executes operations within a database transaction
+	WithinTransaction(ctx context.Context, fn func(repo {{.DomainName | title}}Repository) error) error
+	
+	// Analytics and reporting queries
+	
+	// GetEngagementMetrics returns engagement statistics
+	GetEngagementMetrics(ctx context.Context, since time.Time) (*EngagementMetrics, error)
+	
+	// GetRegistrationMetrics returns registration statistics by time period
+	GetRegistrationMetrics(ctx context.Context, since time.Time, groupBy TimeGrouping) (*RegistrationMetrics, error)
+	
+	// GetRetentionMetrics returns user retention statistics
+	GetRetentionMetrics(ctx context.Context, cohortStart time.Time, periods int) (*RetentionMetrics, error)
 }
+
+// {{.DomainName | title}}ReadRepository defines read-only operations for query optimization
+type {{.DomainName | title}}ReadRepository interface {
+	// Read-only query operations optimized for performance
+	
+	// FindByIDReadOnly retrieves a {{.DomainName}} for read-only access
+	FindByIDReadOnly(ctx context.Context, id valueobjects.ID) (*{{.DomainName | title}}ReadModel, error)
+	
+	// FindByEmailReadOnly retrieves a {{.DomainName}} by email for read-only access
+	FindByEmailReadOnly(ctx context.Context, email string) (*{{.DomainName | title}}ReadModel, error)
+	
+	// SearchByName performs fuzzy name search with pagination
+	SearchByName(ctx context.Context, namePattern string, pagination PaginationSpec) ([]*{{.DomainName | title}}ReadModel, error)
+	
+	// GetContactSummaries retrieves contact summaries for multiple {{.DomainName}}s
+	GetContactSummaries(ctx context.Context, ids []valueobjects.ID) ([]*ContactSummary, error)
+	
+	// GetDashboardMetrics retrieves metrics for admin dashboard
+	GetDashboardMetrics(ctx context.Context) (*DashboardMetrics, error)
+}
+
+// Supporting types for repository operations
+
+// PaginationSpec defines pagination parameters
+type PaginationSpec struct {
+	Limit  int    `json:"limit"`
+	Offset int    `json:"offset"`
+	SortBy string `json:"sort_by,omitempty"`
+	Order  string `json:"order,omitempty"` // ASC or DESC
+}
+
+// NewPaginationSpec creates a new pagination specification
+func NewPaginationSpec(limit, offset int, sortBy, order string) PaginationSpec {
+	// Apply sensible defaults
+	if limit <= 0 || limit > 1000 {
+		limit = 50 // Default page size
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if order != "ASC" && order != "DESC" {
+		order = "DESC" // Default to newest first
+	}
+	if sortBy == "" {
+		sortBy = "created_at"
+	}
+	
+	return PaginationSpec{
+		Limit:  limit,
+		Offset: offset,
+		SortBy: sortBy,
+		Order:  order,
+	}
+}
+
+// TimeGrouping defines how to group time-based metrics
+type TimeGrouping string
+
+const (
+	GroupByDay   TimeGrouping = "day"
+	GroupByWeek  TimeGrouping = "week"
+	GroupByMonth TimeGrouping = "month"
+	GroupByYear  TimeGrouping = "year"
+)
+
+// {{.DomainName | title}}ReadModel represents a read-optimized view of {{.DomainName}} data
+type {{.DomainName | title}}ReadModel struct {
+	ID              valueobjects.ID `json:"id"`
+	Name            string          `json:"name"`
+	Email           string          `json:"email"`
+	EmailProvider   string          `json:"email_provider"`
+	IsBusinessEmail bool            `json:"is_business_email"`
+	Status          Status          `json:"status"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	LastLoginAt     *time.Time      `json:"last_login_at"`
+	EngagementLevel string          `json:"engagement_level"`
+	ProfileComplete bool            `json:"profile_complete"`
+}
+
+// Metrics types for analytics
+
+// EngagementMetrics provides user engagement statistics
+type EngagementMetrics struct {
+	TotalUsers       int64   `json:"total_users"`
+	ActiveUsers      int64   `json:"active_users"`
+	NewUsers         int64   `json:"new_users"`
+	DormantUsers     int64   `json:"dormant_users"`
+	EngagementRate   float64 `json:"engagement_rate"`
+	AverageLoginDays float64 `json:"average_login_days"`
+	CalculatedAt     time.Time `json:"calculated_at"`
+}
+
+// RegistrationMetrics provides registration statistics
+type RegistrationMetrics struct {
+	TotalRegistrations int64                    `json:"total_registrations"`
+	ByProvider        map[string]int64         `json:"by_provider"`
+	ByPeriod          []PeriodRegistrations    `json:"by_period"`
+	BusinessVsPersonal BusinessPersonalSplit   `json:"business_vs_personal"`
+	CalculatedAt      time.Time               `json:"calculated_at"`
+}
+
+// PeriodRegistrations represents registrations in a time period
+type PeriodRegistrations struct {
+	Period string `json:"period"`
+	Count  int64  `json:"count"`
+}
+
+// BusinessPersonalSplit represents the split between business and personal accounts
+type BusinessPersonalSplit struct {
+	BusinessCount int64   `json:"business_count"`
+	PersonalCount int64   `json:"personal_count"`
+	BusinessRate  float64 `json:"business_rate"`
+}
+
+// RetentionMetrics provides user retention statistics
+type RetentionMetrics struct {
+	CohortSize        int64              `json:"cohort_size"`
+	RetentionByPeriod []PeriodRetention  `json:"retention_by_period"`
+	CalculatedAt      time.Time         `json:"calculated_at"`
+}
+
+// PeriodRetention represents retention for a specific period
+type PeriodRetention struct {
+	Period           int     `json:"period"`
+	RetainedUsers    int64   `json:"retained_users"`
+	RetentionRate    float64 `json:"retention_rate"`
+}
+
+// DashboardMetrics provides metrics for admin dashboard
+type DashboardMetrics struct {
+	UserCounts       UserStatusCounts    `json:"user_counts"`
+	RecentActivity   RecentActivityStats `json:"recent_activity"`
+	EngagementStats  EngagementMetrics   `json:"engagement_stats"`
+	SystemHealth     SystemHealthMetrics `json:"system_health"`
+	CalculatedAt     time.Time          `json:"calculated_at"`
+}
+
+// UserStatusCounts provides counts by user status
+type UserStatusCounts struct {
+	Active   int64 `json:"active"`
+	Inactive int64 `json:"inactive"`
+	Deleted  int64 `json:"deleted"`
+	Total    int64 `json:"total"`
+}
+
+// RecentActivityStats provides recent activity statistics
+type RecentActivityStats struct {
+	LoginsLast24Hours     int64 `json:"logins_last_24_hours"`
+	RegistrationsLast24Hours int64 `json:"registrations_last_24_hours"`
+	LoginsTrend           string `json:"logins_trend"` // up, down, stable
+	RegistrationsTrend    string `json:"registrations_trend"`
+}
+
+// SystemHealthMetrics provides system health indicators
+type SystemHealthMetrics struct {
+	DatabaseResponseTime time.Duration `json:"database_response_time"`
+	ActiveConnections    int           `json:"active_connections"`
+	ErrorRate           float64       `json:"error_rate"`
+	Status              string        `json:"status"` // healthy, warning, critical
+}
+
+// Repository error types specific to {{.DomainName}} domain
+
+var (
+	// ErrUserNotFound indicates a {{.DomainName}} was not found
+	ErrUserNotFound = errors.ErrNotFound.WithCode("USER_NOT_FOUND")
+	
+	// ErrUserEmailExists indicates a {{.DomainName}} with the email already exists
+	ErrUserEmailExists = errors.ErrConflict.WithCode("USER_EMAIL_EXISTS")
+	
+	// ErrUserConcurrentUpdate indicates a concurrent update conflict
+	ErrUserConcurrentUpdate = errors.ErrConflict.WithCode("USER_CONCURRENT_UPDATE")
+	
+	// ErrUserRepositoryUnavailable indicates the repository is temporarily unavailable
+	ErrUserRepositoryUnavailable = errors.ErrServiceUnavailable.WithCode("USER_REPOSITORY_UNAVAILABLE")
+	
+	// ErrUserDataCorrupted indicates corrupted data was encountered
+	ErrUserDataCorrupted = errors.ErrDataIntegrity.WithCode("USER_DATA_CORRUPTED")
+)
 
 // Repository is an alias for {{.DomainName | title}}Repository for backward compatibility
 type Repository = {{.DomainName | title}}Repository

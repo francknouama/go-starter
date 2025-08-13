@@ -1,0 +1,551 @@
+package {{.DomainName}}
+
+import (
+	"fmt"
+	"time"
+	"{{.ModulePath}}/internal/shared/valueobjects"
+	"{{.ModulePath}}/internal/shared/errors"
+)
+
+// {{.DomainName | title}}Factory is responsible for creating {{.DomainName}} aggregates with complex business logic
+type {{.DomainName | title}}Factory interface {
+	Create{{.DomainName | title}}FromRegistration(registrationData RegistrationData) (*{{.DomainName | title}}Aggregate, error)
+	Create{{.DomainName | title}}FromSocialAuth(socialData SocialAuthData) (*{{.DomainName | title}}Aggregate, error)
+	Create{{.DomainName | title}}FromImport(importData ImportData) (*{{.DomainName | title}}Aggregate, error)
+	CreateTest{{.DomainName | title}}(overrides TestOverrides) (*{{.DomainName | title}}Aggregate, error)
+}
+
+// {{.DomainName}}Factory implements the factory interface
+type {{.DomainName}}Factory struct {
+	uniquenessChecker {{.DomainName | title}}UniquenessChecker
+	domainValidator   DomainValidator
+	auditLogger       AuditLogger
+}
+
+// New{{.DomainName | title}}Factory creates a new user factory
+func New{{.DomainName | title}}Factory(
+	uniquenessChecker {{.DomainName | title}}UniquenessChecker,
+	domainValidator DomainValidator,
+	auditLogger AuditLogger,
+) *{{.DomainName}}Factory {
+	return &{{.DomainName}}Factory{
+		uniquenessChecker: uniquenessChecker,
+		domainValidator:   domainValidator,
+		auditLogger:       auditLogger,
+	}
+}
+
+// Create{{.DomainName | title}}FromRegistration creates a user from standard registration
+func (f *{{.DomainName}}Factory) Create{{.DomainName | title}}FromRegistration(data RegistrationData) (*{{.DomainName | title}}Aggregate, error) {
+	// Validate registration data
+	if err := f.validateRegistrationData(data); err != nil {
+		return nil, fmt.Errorf("invalid registration data: %w", err)
+	}
+	
+	// Check email uniqueness
+	if exists, err := f.uniquenessChecker.EmailExists(data.Email); err != nil {
+		return nil, fmt.Errorf("failed to check email uniqueness: %w", err)
+	} else if exists {
+		return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "email already exists")
+	}
+	
+	// Apply business rules for registration
+	processedData := f.applyRegistrationBusinessRules(data)
+	
+	// Create the aggregate
+	aggregate, err := New{{.DomainName | title}}Aggregate(
+		processedData.Name,
+		processedData.Email,
+		processedData.Description,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create {{.DomainName}} aggregate: %w", err)
+	}
+	
+	// Apply registration-specific initialization
+	f.initializeRegistrationDefaults(aggregate, processedData)
+	
+	// Log the creation for audit
+	f.auditLogger.LogUserCreation(aggregate.ID(), "registration", data.Email)
+	
+	return aggregate, nil
+}
+
+// Create{{.DomainName | title}}FromSocialAuth creates a user from social authentication
+func (f *{{.DomainName}}Factory) Create{{.DomainName | title}}FromSocialAuth(data SocialAuthData) (*{{.DomainName | title}}Aggregate, error) {
+	// Validate social auth data
+	if err := f.validateSocialAuthData(data); err != nil {
+		return nil, fmt.Errorf("invalid social auth data: %w", err)
+	}
+	
+	// Check if user already exists with this email
+	if exists, err := f.uniquenessChecker.EmailExists(data.Email); err != nil {
+		return nil, fmt.Errorf("failed to check email uniqueness: %w", err)
+	} else if exists {
+		return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "user already exists with this email")
+	}
+	
+	// Apply business rules for social auth
+	processedData := f.applySocialAuthBusinessRules(data)
+	
+	// Create the aggregate with processed data
+	aggregate, err := New{{.DomainName | title}}Aggregate(
+		processedData.Name,
+		processedData.Email,
+		processedData.Description,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create {{.DomainName}} from social auth: %w", err)
+	}
+	
+	// Apply social auth specific initialization
+	f.initializeSocialAuthDefaults(aggregate, processedData)
+	
+	// Log the creation for audit
+	f.auditLogger.LogUserCreation(aggregate.ID(), fmt.Sprintf("social_auth_%s", data.Provider), data.Email)
+	
+	return aggregate, nil
+}
+
+// Create{{.DomainName | title}}FromImport creates a user from data import (e.g., CSV, API migration)
+func (f *{{.DomainName}}Factory) Create{{.DomainName | title}}FromImport(data ImportData) (*{{.DomainName | title}}Aggregate, error) {
+	// Validate import data with relaxed rules
+	if err := f.validateImportData(data); err != nil {
+		return nil, fmt.Errorf("invalid import data: %w", err)
+	}
+	
+	// Check email uniqueness
+	if exists, err := f.uniquenessChecker.EmailExists(data.Email); err != nil {
+		return nil, fmt.Errorf("failed to check email uniqueness: %w", err)
+	} else if exists {
+		return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "user already exists with this email")
+	}
+	
+	// Apply import-specific business rules (may be more lenient)
+	processedData := f.applyImportBusinessRules(data)
+	
+	// Create the aggregate
+	aggregate, err := New{{.DomainName | title}}Aggregate(
+		processedData.Name,
+		processedData.Email,
+		processedData.Description,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create {{.DomainName}} from import: %w", err)
+	}
+	
+	// Apply import-specific initialization
+	f.initializeImportDefaults(aggregate, processedData)
+	
+	// Set historical data if provided
+	if data.OriginalCreatedAt != nil {
+		f.setHistoricalTimestamps(aggregate, *data.OriginalCreatedAt, data.OriginalUpdatedAt)
+	}
+	
+	// Log the creation for audit
+	f.auditLogger.LogUserCreation(aggregate.ID(), "import", data.Email)
+	
+	return aggregate, nil
+}
+
+// CreateTest{{.DomainName | title}} creates a user for testing purposes
+func (f *{{.DomainName}}Factory) CreateTest{{.DomainName | title}}(overrides TestOverrides) (*{{.DomainName | title}}Aggregate, error) {
+	// Generate test data with overrides
+	testData := f.generateTestData(overrides)
+	
+	// Skip uniqueness checks in test mode if specified
+	if !overrides.SkipUniquenessCheck {
+		if exists, err := f.uniquenessChecker.EmailExists(testData.Email); err != nil {
+			return nil, fmt.Errorf("failed to check email uniqueness in test: %w", err)
+		} else if exists {
+			return nil, errors.ErrBusinessRuleViolation.WithDetails("reason", "test user email already exists")
+		}
+	}
+	
+	// Create the aggregate
+	aggregate, err := New{{.DomainName | title}}Aggregate(
+		testData.Name,
+		testData.Email,
+		testData.Description,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create test {{.DomainName}}: %w", err)
+	}
+	
+	// Apply test-specific modifications
+	f.applyTestOverrides(aggregate, overrides)
+	
+	// Log the creation for audit (if not disabled)
+	if !overrides.DisableAudit {
+		f.auditLogger.LogUserCreation(aggregate.ID(), "test", testData.Email)
+	}
+	
+	return aggregate, nil
+}
+
+// Private validation methods
+
+func (f *{{.DomainName}}Factory) validateRegistrationData(data RegistrationData) error {
+	if data.Email == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "email")
+	}
+	
+	if data.Name == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "name")
+	}
+	
+	// Additional business validations
+	if f.domainValidator != nil {
+		if err := f.domainValidator.ValidateRegistration(data); err != nil {
+			return err
+		}
+	}
+	
+	return nil
+}
+
+func (f *{{.DomainName}}Factory) validateSocialAuthData(data SocialAuthData) error {
+	if data.Provider == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "provider")
+	}
+	
+	if data.ProviderID == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "providerID")
+	}
+	
+	if data.Email == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "email")
+	}
+	
+	// Validate provider is supported
+	supportedProviders := []string{"google", "facebook", "github", "linkedin", "microsoft"}
+	isSupported := false
+	for _, provider := range supportedProviders {
+		if data.Provider == provider {
+			isSupported = true
+			break
+		}
+	}
+	
+	if !isSupported {
+		return errors.ErrInvalidInput.WithDetails("field", "provider").WithDetails("value", data.Provider)
+	}
+	
+	return nil
+}
+
+func (f *{{.DomainName}}Factory) validateImportData(data ImportData) error {
+	if data.Email == "" {
+		return errors.ErrInvalidInput.WithDetails("field", "email")
+	}
+	
+	// Import data validation is more lenient
+	// Names can be empty and will be generated
+	// Descriptions can be empty
+	
+	return nil
+}
+
+// Private business rule application methods
+
+func (f *{{.DomainName}}Factory) applyRegistrationBusinessRules(data RegistrationData) ProcessedRegistrationData {
+	processed := ProcessedRegistrationData{
+		Name:        data.Name,
+		Email:       data.Email,
+		Description: data.Description,
+	}
+	
+	// Business rule: Clean and normalize name
+	processed.Name = f.normalizeDisplayName(data.Name)
+	
+	// Business rule: Normalize email to lowercase
+	processed.Email = normalizeEmail(data.Email)
+	
+	// Business rule: Generate description if empty but welcome
+	if processed.Description == "" {
+		processed.Description = f.generateWelcomeDescription(data.Name)
+	}
+	
+	return processed
+}
+
+func (f *{{.DomainName}}Factory) applySocialAuthBusinessRules(data SocialAuthData) ProcessedSocialAuthData {
+	processed := ProcessedSocialAuthData{
+		Name:        data.Name,
+		Email:       data.Email,
+		Description: data.Bio,
+		Provider:    data.Provider,
+		ProviderID:  data.ProviderID,
+		Avatar:      data.Avatar,
+	}
+	
+	// Business rule: Use display name from social provider
+	if processed.Name == "" {
+		processed.Name = f.generateNameFromEmail(data.Email)
+	}
+	
+	// Business rule: Normalize email
+	processed.Email = normalizeEmail(data.Email)
+	
+	// Business rule: Generate description from social bio
+	if processed.Description == "" && data.Bio != "" {
+		processed.Description = f.normalizeBioToDescription(data.Bio)
+	} else if processed.Description == "" {
+		processed.Description = f.generateSocialWelcomeDescription(data.Provider)
+	}
+	
+	return processed
+}
+
+func (f *{{.DomainName}}Factory) applyImportBusinessRules(data ImportData) ProcessedImportData {
+	processed := ProcessedImportData{
+		Name:                data.Name,
+		Email:               data.Email,
+		Description:         data.Description,
+		OriginalCreatedAt:   data.OriginalCreatedAt,
+		OriginalUpdatedAt:   data.OriginalUpdatedAt,
+		ImportSource:        data.Source,
+		ImportBatch:         data.BatchID,
+	}
+	
+	// Business rule: Generate name if missing
+	if processed.Name == "" {
+		processed.Name = f.generateNameFromEmail(data.Email)
+	}
+	
+	// Business rule: Normalize email
+	processed.Email = normalizeEmail(data.Email)
+	
+	// Business rule: Generate description for imported users
+	if processed.Description == "" {
+		processed.Description = f.generateImportDescription(data.Source)
+	}
+	
+	return processed
+}
+
+// Private initialization methods
+
+func (f *{{.DomainName}}Factory) initializeRegistrationDefaults(aggregate *{{.DomainName | title}}Aggregate, data ProcessedRegistrationData) {
+	// Registration users start with basic profile completeness
+	// Additional initialization could be done here
+	
+	// Business rule: Registration users need email verification
+	// This would typically be handled by application services
+}
+
+func (f *{{.DomainName}}Factory) initializeSocialAuthDefaults(aggregate *{{.DomainName | title}}Aggregate, data ProcessedSocialAuthData) {
+	// Social auth users have verified email by default
+	// They might have higher profile completion due to social data
+	
+	// Business rule: Social users get different onboarding flow
+	// This would be handled by application services
+}
+
+func (f *{{.DomainName}}Factory) initializeImportDefaults(aggregate *{{.DomainName | title}}Aggregate, data ProcessedImportData) {
+	// Imported users might need special handling
+	// They could be marked as migrated for different business rules
+	
+	// Business rule: Imported users might need to reset passwords
+	// This would be handled by application services
+}
+
+func (f *{{.DomainName}}Factory) generateTestData(overrides TestOverrides) TestUserData {
+	data := TestUserData{
+		Name:        overrides.Name,
+		Email:       overrides.Email,
+		Description: overrides.Description,
+	}
+	
+	// Generate defaults if not overridden
+	if data.Name == "" {
+		data.Name = "Test User"
+	}
+	
+	if data.Email == "" {
+		data.Email = fmt.Sprintf("test+%d@example.com", time.Now().Unix())
+	}
+	
+	if data.Description == "" {
+		data.Description = "Test user created for testing purposes"
+	}
+	
+	return data
+}
+
+func (f *{{.DomainName}}Factory) applyTestOverrides(aggregate *{{.DomainName | title}}Aggregate, overrides TestOverrides) {
+	// Apply any test-specific modifications
+	// This could include setting specific statuses, timestamps, etc.
+	
+	if overrides.ForceInactive {
+		aggregate.Deactivate("test override")
+	}
+	
+	if overrides.SetLastLogin != nil {
+		// This would require additional methods or field access
+		// In practice, you might use reflection or friend methods
+	}
+}
+
+// Private helper methods
+
+func (f *{{.DomainName}}Factory) normalizeDisplayName(name string) string {
+	// Implement name normalization logic
+	// This could include title case, removing extra spaces, etc.
+	return name // Simplified
+}
+
+func (f *{{.DomainName}}Factory) generateWelcomeDescription(name string) string {
+	return fmt.Sprintf("Welcome %s! Complete your profile to get started.", name)
+}
+
+func (f *{{.DomainName}}Factory) generateNameFromEmail(email string) string {
+	// Extract name from email local part
+	// This is a simplified implementation
+	localPart := email
+	if atIndex := len(email); atIndex > 0 {
+		for i, char := range email {
+			if char == '@' {
+				localPart = email[:i]
+				break
+			}
+		}
+	}
+	
+	// Convert dots/underscores to spaces and title case
+	name := localPart
+	// Simplified name generation
+	return name
+}
+
+func (f *{{.DomainName}}Factory) normalizeBioToDescription(bio string) string {
+	// Convert social media bio to user description
+	// This could include length limits, content filtering, etc.
+	if len(bio) > 500 {
+		return bio[:497] + "..."
+	}
+	return bio
+}
+
+func (f *{{.DomainName}}Factory) generateSocialWelcomeDescription(provider string) string {
+	return fmt.Sprintf("Welcome! You joined through %s.", provider)
+}
+
+func (f *{{.DomainName}}Factory) generateImportDescription(source string) string {
+	return fmt.Sprintf("User imported from %s", source)
+}
+
+func (f *{{.DomainName}}Factory) setHistoricalTimestamps(aggregate *{{.DomainName | title}}Aggregate, createdAt time.Time, updatedAt *time.Time) {
+	// In a real implementation, this would require special access to aggregate internals
+	// or additional methods on the aggregate
+	// This is a simplified example
+}
+
+// Utility functions
+
+func normalizeEmail(email string) string {
+	// Convert to lowercase and trim spaces
+	// In production, this might include more sophisticated normalization
+	return email // Simplified
+}
+
+// Data structures for factory methods
+
+// RegistrationData represents data from user registration
+type RegistrationData struct {
+	Name        string
+	Email       string
+	Description string
+	Password    string // Not stored in aggregate directly
+	IPAddress   string
+	UserAgent   string
+}
+
+// ProcessedRegistrationData represents processed registration data
+type ProcessedRegistrationData struct {
+	Name        string
+	Email       string
+	Description string
+}
+
+// SocialAuthData represents data from social authentication
+type SocialAuthData struct {
+	Provider    string // google, facebook, github, etc.
+	ProviderID  string // Provider's user ID
+	Name        string
+	Email       string
+	Bio         string
+	Avatar      string
+	AccessToken string // Not stored in aggregate
+}
+
+// ProcessedSocialAuthData represents processed social auth data
+type ProcessedSocialAuthData struct {
+	Name        string
+	Email       string
+	Description string
+	Provider    string
+	ProviderID  string
+	Avatar      string
+}
+
+// ImportData represents data from import operations
+type ImportData struct {
+	Name              string
+	Email             string
+	Description       string
+	Source            string     // Source system name
+	BatchID           string     // Import batch identifier
+	OriginalCreatedAt *time.Time // Original creation timestamp
+	OriginalUpdatedAt *time.Time // Original update timestamp
+}
+
+// ProcessedImportData represents processed import data
+type ProcessedImportData struct {
+	Name              string
+	Email             string
+	Description       string
+	ImportSource      string
+	ImportBatch       string
+	OriginalCreatedAt *time.Time
+	OriginalUpdatedAt *time.Time
+}
+
+// TestOverrides represents overrides for test user creation
+type TestOverrides struct {
+	Name                 string
+	Email                string
+	Description          string
+	ForceInactive        bool
+	SetLastLogin         *time.Time
+	SkipUniquenessCheck  bool
+	DisableAudit         bool
+}
+
+// TestUserData represents generated test user data
+type TestUserData struct {
+	Name        string
+	Email       string
+	Description string
+}
+
+// Supporting interfaces
+
+// {{.DomainName | title}}UniquenessChecker checks uniqueness constraints
+type {{.DomainName | title}}UniquenessChecker interface {
+	EmailExists(email string) (bool, error)
+	UsernameExists(username string) (bool, error)
+}
+
+// DomainValidator provides domain-specific validation
+type DomainValidator interface {
+	ValidateRegistration(data RegistrationData) error
+	ValidateSocialAuth(data SocialAuthData) error
+	ValidateImport(data ImportData) error
+}
+
+// AuditLogger provides audit logging capabilities
+type AuditLogger interface {
+	LogUserCreation(userID valueobjects.ID, method string, email string)
+	LogUserModification(userID valueobjects.ID, action string, details map[string]interface{})
+}

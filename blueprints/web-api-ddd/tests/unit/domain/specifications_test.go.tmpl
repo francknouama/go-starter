@@ -1,0 +1,589 @@
+package domain
+
+import (
+	"testing"
+	"time"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"{{.ModulePath}}/internal/domain/{{.DomainName}}"
+)
+
+func TestActiveSpecification(t *testing.T) {
+	spec := {{.DomainName}}.NewActiveSpecification()
+
+	tests := []struct {
+		name           string
+		user           *{{.DomainName}}.{{.DomainName | title}}Aggregate
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name:           "nil user should not satisfy",
+			user:           nil,
+			expectedResult: false,
+			expectError:    true,
+		},
+		{
+			name: "active user should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("John Doe", "john@example.com", "Test user")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "inactive user should not satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Jane Doe", "jane@example.com", "Test user")
+				user.Deactivate("test")
+				return user
+			}(),
+			expectedResult: false,
+			expectError:    true,
+		},
+		{
+			name: "deleted user should not satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Bob Doe", "bob@example.com", "Test user")
+				user.Delete("test")
+				return user
+			}(),
+			expectedResult: false,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := spec.IsSatisfiedBy(tt.user)
+			assert.Equal(t, tt.expectedResult, result)
+
+			err := spec.WhyNotSatisfiedBy(tt.user)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestValidNameSpecification(t *testing.T) {
+	spec := {{.DomainName}}.NewValidNameSpecification()
+
+	tests := []struct {
+		name           string
+		user           *{{.DomainName}}.{{.DomainName | title}}Aggregate
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name:           "nil user should not satisfy",
+			user:           nil,
+			expectedResult: false,
+			expectError:    true,
+		},
+		{
+			name: "user with valid name should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("John Doe", "john@example.com", "Test user")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := spec.IsSatisfiedBy(tt.user)
+			assert.Equal(t, tt.expectedResult, result)
+
+			err := spec.WhyNotSatisfiedBy(tt.user)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestNamePatternSpecification(t *testing.T) {
+	// Test with specific allowed patterns
+	allowedPatterns := []string{"John Doe", "Jane Smith", "Admin User"}
+	spec := {{.DomainName}}.NewNamePatternSpecification(allowedPatterns)
+
+	tests := []struct {
+		name           string
+		user           *{{.DomainName}}.{{.DomainName | title}}Aggregate
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name:           "nil user should not satisfy",
+			user:           nil,
+			expectedResult: false,
+			expectError:    true,
+		},
+		{
+			name: "user with allowed name should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("John Doe", "john@example.com", "Test user")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "user with disallowed name should not satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Bob Wilson", "bob@example.com", "Test user")
+				return user
+			}(),
+			expectedResult: false,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := spec.IsSatisfiedBy(tt.user)
+			assert.Equal(t, tt.expectedResult, result)
+
+			err := spec.WhyNotSatisfiedBy(tt.user)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+
+	// Test with no patterns (should allow any name)
+	t.Run("no patterns should allow any name", func(t *testing.T) {
+		emptySpec := {{.DomainName}}.NewNamePatternSpecification([]string{})
+		user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Any Name", "any@example.com", "Test user")
+
+		result := emptySpec.IsSatisfiedBy(user)
+		assert.True(t, result)
+
+		err := emptySpec.WhyNotSatisfiedBy(user)
+		assert.NoError(t, err)
+	})
+}
+
+func TestCanBeUpdatedSpecification(t *testing.T) {
+	spec := {{.DomainName}}.NewCanBeUpdatedSpecification()
+
+	tests := []struct {
+		name           string
+		user           *{{.DomainName}}.{{.DomainName | title}}Aggregate
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name:           "nil user should not satisfy",
+			user:           nil,
+			expectedResult: false,
+			expectError:    true,
+		},
+		{
+			name: "active user should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("John Doe", "john@example.com", "Test user")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "inactive user should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Jane Doe", "jane@example.com", "Test user")
+				user.Deactivate("test")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "deleted user should not satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Bob Doe", "bob@example.com", "Test user")
+				user.Delete("test")
+				return user
+			}(),
+			expectedResult: false,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := spec.IsSatisfiedBy(tt.user)
+			assert.Equal(t, tt.expectedResult, result)
+
+			err := spec.WhyNotSatisfiedBy(tt.user)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCanBeDeletedSpecification(t *testing.T) {
+	spec := {{.DomainName}}.NewCanBeDeletedSpecification()
+
+	tests := []struct {
+		name           string
+		user           *{{.DomainName}}.{{.DomainName | title}}Aggregate
+		expectedResult bool
+		expectError    bool
+	}{
+		{
+			name:           "nil user should not satisfy",
+			user:           nil,
+			expectedResult: false,
+			expectError:    true,
+		},
+		{
+			name: "active user should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("John Doe", "john@example.com", "Test user")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "inactive user should satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Jane Doe", "jane@example.com", "Test user")
+				user.Deactivate("test")
+				return user
+			}(),
+			expectedResult: true,
+			expectError:    false,
+		},
+		{
+			name: "deleted user should not satisfy",
+			user: func() *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+				user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Bob Doe", "bob@example.com", "Test user")
+				user.Delete("test")
+				return user
+			}(),
+			expectedResult: false,
+			expectError:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := spec.IsSatisfiedBy(tt.user)
+			assert.Equal(t, tt.expectedResult, result)
+
+			err := spec.WhyNotSatisfiedBy(tt.user)
+			if tt.expectError {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestCompositeSpecifications(t *testing.T) {
+	// Create test users
+	activeUser, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("John Doe", "john@example.com", "Test user")
+	
+	inactiveUser, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Jane Doe", "jane@example.com", "Test user")
+	inactiveUser.Deactivate("test")
+	
+	deletedUser, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Bob Doe", "bob@example.com", "Test user")
+	deletedUser.Delete("test")
+
+	// Create specifications
+	activeSpec := {{.DomainName}}.NewActiveSpecification()
+	validNameSpec := {{.DomainName}}.NewValidNameSpecification()
+	canBeUpdatedSpec := {{.DomainName}}.NewCanBeUpdatedSpecification()
+
+	t.Run("AND specification", func(t *testing.T) {
+		// Active AND has valid name
+		andSpec := activeSpec.And(validNameSpec)
+
+		// Active user with valid name should satisfy
+		assert.True(t, andSpec.IsSatisfiedBy(activeUser))
+		assert.NoError(t, andSpec.WhyNotSatisfiedBy(activeUser))
+
+		// Inactive user should not satisfy (fails on first condition)
+		assert.False(t, andSpec.IsSatisfiedBy(inactiveUser))
+		assert.Error(t, andSpec.WhyNotSatisfiedBy(inactiveUser))
+
+		// Deleted user should not satisfy
+		assert.False(t, andSpec.IsSatisfiedBy(deletedUser))
+		assert.Error(t, andSpec.WhyNotSatisfiedBy(deletedUser))
+	})
+
+	t.Run("OR specification", func(t *testing.T) {
+		// Active OR can be updated
+		orSpec := activeSpec.Or(canBeUpdatedSpec)
+
+		// Active user should satisfy (first condition true)
+		assert.True(t, orSpec.IsSatisfiedBy(activeUser))
+		assert.NoError(t, orSpec.WhyNotSatisfiedBy(activeUser))
+
+		// Inactive user should satisfy (second condition true - can be updated)
+		assert.True(t, orSpec.IsSatisfiedBy(inactiveUser))
+		assert.NoError(t, orSpec.WhyNotSatisfiedBy(inactiveUser))
+
+		// Deleted user should not satisfy (both conditions false)
+		assert.False(t, orSpec.IsSatisfiedBy(deletedUser))
+		assert.Error(t, orSpec.WhyNotSatisfiedBy(deletedUser))
+	})
+
+	t.Run("NOT specification", func(t *testing.T) {
+		// NOT active (i.e., inactive or deleted)
+		notActiveSpec := activeSpec.Not()
+
+		// Active user should not satisfy
+		assert.False(t, notActiveSpec.IsSatisfiedBy(activeUser))
+		assert.Error(t, notActiveSpec.WhyNotSatisfiedBy(activeUser))
+
+		// Inactive user should satisfy
+		assert.True(t, notActiveSpec.IsSatisfiedBy(inactiveUser))
+		assert.NoError(t, notActiveSpec.WhyNotSatisfiedBy(inactiveUser))
+
+		// Deleted user should satisfy
+		assert.True(t, notActiveSpec.IsSatisfiedBy(deletedUser))
+		assert.NoError(t, notActiveSpec.WhyNotSatisfiedBy(deletedUser))
+	})
+
+	t.Run("complex composite specification", func(t *testing.T) {
+		// (Active AND ValidName) OR CanBeUpdated
+		complexSpec := activeSpec.And(validNameSpec).Or(canBeUpdatedSpec)
+
+		// Active user with valid name should satisfy
+		assert.True(t, complexSpec.IsSatisfiedBy(activeUser))
+		assert.NoError(t, complexSpec.WhyNotSatisfiedBy(activeUser))
+
+		// Inactive user should satisfy (can be updated)
+		assert.True(t, complexSpec.IsSatisfiedBy(inactiveUser))
+		assert.NoError(t, complexSpec.WhyNotSatisfiedBy(inactiveUser))
+
+		// Deleted user should not satisfy (fails all conditions)
+		assert.False(t, complexSpec.IsSatisfiedBy(deletedUser))
+		assert.Error(t, complexSpec.WhyNotSatisfiedBy(deletedUser))
+	})
+}
+
+func TestCustomBusinessSpecification(t *testing.T) {
+	// Create a custom specification for testing
+	type RecentlyCreatedSpecification struct {
+		{{.DomainName}}.CompositeSpecification
+		withinDays int
+	}
+	
+	satisfiedByFunc := func(s *RecentlyCreatedSpecification) func(*{{.DomainName}}.{{.DomainName | title}}Aggregate) bool {
+		return func(user *{{.DomainName}}.{{.DomainName | title}}Aggregate) bool {
+			if user == nil {
+				return false
+			}
+			daysSinceCreation := time.Since(user.CreatedAt()).Hours() / 24
+			return daysSinceCreation <= float64(s.withinDays)
+		}
+	}
+	
+	whyNotSatisfiedByFunc := func(s *RecentlyCreatedSpecification) func(*{{.DomainName}}.{{.DomainName | title}}Aggregate) error {
+		return func(user *{{.DomainName}}.{{.DomainName | title}}Aggregate) error {
+			if user == nil {
+				return {{.DomainName}}.ErrUserNotFound
+			}
+			if satisfiedByFunc(s)(user) {
+				return nil
+			}
+			return {{.DomainName}}.ErrUserNotFound.WithDetails("reason", "user not created recently enough")
+		}
+	}
+
+	// Create test users
+	recentUser, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Recent User", "recent@example.com", "Recently created")
+	
+	// For testing older user, we'd need to manipulate creation time
+	// In a real scenario, you'd use the reconstruction method or have test data
+	olderUser, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Old User", "old@example.com", "Old user")
+
+	// Test the custom specification
+	recentSpec := &RecentlyCreatedSpecification{withinDays: 7}
+
+	t.Run("recently created user satisfies", func(t *testing.T) {
+		result := satisfiedByFunc(recentSpec)(recentUser)
+		assert.True(t, result)
+
+		err := whyNotSatisfiedByFunc(recentSpec)(recentUser)
+		assert.NoError(t, err)
+	})
+
+	t.Run("nil user does not satisfy", func(t *testing.T) {
+		result := satisfiedByFunc(recentSpec)(nil)
+		assert.False(t, result)
+
+		err := whyNotSatisfiedByFunc(recentSpec)(nil)
+		assert.Error(t, err)
+	})
+
+	t.Run("custom specification concept", func(t *testing.T) {
+		activeSpec := {{.DomainName}}.NewActiveSpecification()
+		
+		// Test that active user satisfies active spec
+		result := activeSpec.IsSatisfiedBy(recentUser)
+		assert.True(t, result)
+		
+		// Test that recent user would satisfy the recent spec
+		result = satisfiedByFunc(recentSpec)(recentUser)
+		assert.True(t, result)
+	})
+}
+
+func TestSpecificationWithNilHandling(t *testing.T) {
+	specifications := []{{.DomainName}}.Specification{
+		{{.DomainName}}.NewActiveSpecification(),
+		{{.DomainName}}.NewValidNameSpecification(),
+		{{.DomainName}}.NewNamePatternSpecification([]string{"Test User"}),
+		{{.DomainName}}.NewCanBeUpdatedSpecification(),
+		{{.DomainName}}.NewCanBeDeletedSpecification(),
+	}
+
+	for i, spec := range specifications {
+		t.Run("specification_handles_nil", func(t *testing.T) {
+			// All specifications should handle nil gracefully
+			result := spec.IsSatisfiedBy(nil)
+			assert.False(t, result)
+
+			err := spec.WhyNotSatisfiedBy(nil)
+			assert.Error(t, err)
+		})
+		_ = i // Use i to avoid unused variable error
+	}
+}
+
+func TestSpecificationErrorMessages(t *testing.T) {
+	activeSpec := {{.DomainName}}.NewActiveSpecification()
+	
+	// Create inactive user
+	user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate("Test User", "test@example.com", "Test description")
+	user.Deactivate("test")
+
+	err := activeSpec.WhyNotSatisfiedBy(user)
+	require.Error(t, err)
+
+	// Error should contain meaningful information
+	assert.Contains(t, err.Error(), "not active")
+}
+
+// Helper function to create users with different states for testing
+func createTestUserWithState(name, email string, state string) *{{.DomainName}}.{{.DomainName | title}}Aggregate {
+	user, _ := {{.DomainName}}.New{{.DomainName | title}}Aggregate(name, email, "Test user")
+	
+	switch state {
+	case "inactive":
+		user.Deactivate("test")
+	case "deleted":
+		user.Delete("test")
+	case "active":
+		// Already active by default
+	}
+	
+	return user
+}
+
+func TestSpecificationChaining(t *testing.T) {
+	// Create test users
+	activeUser := createTestUserWithState("Active User", "active@example.com", "active")
+	inactiveUser := createTestUserWithState("Inactive User", "inactive@example.com", "inactive")
+	deletedUser := createTestUserWithState("Deleted User", "deleted@example.com", "deleted")
+
+	// Create base specifications
+	activeSpec := {{.DomainName}}.NewActiveSpecification()
+	canBeUpdatedSpec := {{.DomainName}}.NewCanBeUpdatedSpecification()
+	canBeDeletedSpec := {{.DomainName}}.NewCanBeDeletedSpecification()
+
+	tests := []struct {
+		name     string
+		spec     {{.DomainName}}.Specification
+		user     *{{.DomainName}}.{{.DomainName | title}}Aggregate
+		expected bool
+	}{
+		{
+			name:     "active user satisfies active spec",
+			spec:     activeSpec,
+			user:     activeUser,
+			expected: true,
+		},
+		{
+			name:     "inactive user does not satisfy active spec",
+			spec:     activeSpec,
+			user:     inactiveUser,
+			expected: false,
+		},
+		{
+			name:     "active AND can be updated - active user",
+			spec:     activeSpec.And(canBeUpdatedSpec),
+			user:     activeUser,
+			expected: true,
+		},
+		{
+			name:     "active AND can be updated - inactive user",
+			spec:     activeSpec.And(canBeUpdatedSpec),
+			user:     inactiveUser,
+			expected: false,
+		},
+		{
+			name:     "active OR can be deleted - active user",
+			spec:     activeSpec.Or(canBeDeletedSpec),
+			user:     activeUser,
+			expected: true,
+		},
+		{
+			name:     "active OR can be deleted - inactive user",
+			spec:     activeSpec.Or(canBeDeletedSpec),
+			user:     inactiveUser,
+			expected: true, // Can be deleted
+		},
+		{
+			name:     "active OR can be deleted - deleted user",
+			spec:     activeSpec.Or(canBeDeletedSpec),
+			user:     deletedUser,
+			expected: false, // Neither active nor can be deleted
+		},
+		{
+			name:     "NOT active - active user",
+			spec:     activeSpec.Not(),
+			user:     activeUser,
+			expected: false,
+		},
+		{
+			name:     "NOT active - inactive user",
+			spec:     activeSpec.Not(),
+			user:     inactiveUser,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.spec.IsSatisfiedBy(tt.user)
+			assert.Equal(t, tt.expected, result)
+
+			err := tt.spec.WhyNotSatisfiedBy(tt.user)
+			if tt.expected {
+				assert.NoError(t, err)
+			} else {
+				assert.Error(t, err)
+			}
+		})
+	}
+}
