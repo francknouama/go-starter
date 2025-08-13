@@ -415,10 +415,8 @@ func TestWebApiHexagonalBlueprintATDD(t *testing.T) {
 					"internal/core/ports/output",
 					"internal/ports/secondary",
 				}
-				foundPortImport := false
 				for _, imp := range portImports {
 					if strings.Contains(adapterStr, imp) {
-						foundPortImport = true
 						t.Logf("Secondary adapter implements port: %s", imp)
 					}
 				}
@@ -1208,10 +1206,8 @@ func analyzeSecondaryAdapterDependencies(t *testing.T, adapterDir string, projec
 				"internal/ports/secondary",
 			}
 
-			foundPortImport := false
 			for _, imp := range portImports {
 				if strings.Contains(contentStr, imp) {
-					foundPortImport = true
 					t.Logf("Secondary adapter implements port: %s", path)
 					break
 				}
@@ -1246,10 +1242,8 @@ func analyzeBusinessLogicPurity(t *testing.T, coreDir string, projectRoot string
 				"business", "validate", "calculate", "process", "rule", "policy",
 			}
 
-			foundBusinessLogic := false
 			for _, pattern := range businessPatterns {
 				if strings.Contains(strings.ToLower(contentStr), pattern) {
-					foundBusinessLogic = true
 					t.Logf("Found business logic in core: %s", path)
 					break
 				}

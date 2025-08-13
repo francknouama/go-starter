@@ -170,7 +170,7 @@ func TestATDD_QualityImprovements(t *testing.T) {
 
 	t.Run("ATDD: Logging System Integration", func(t *testing.T) {
 		// GIVEN: A generator with structured logging
-		gen := generator.NewWithLogger(generator.LogLevelDebug)
+		_ = generator.NewWithLogger(generator.LogLevelDebug)
 		
 		// WHEN: Various operations are performed
 		logger := generator.NewGeneratorLogger(generator.LogLevelInfo)
