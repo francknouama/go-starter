@@ -1,0 +1,438 @@
+{{if .TracingEnabled}}package observability
+
+import (
+	"context"
+	"fmt"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/jaeger"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"google.golang.org/grpc"
+)
+
+// TracingConfig holds configuration for distributed tracing
+type TracingConfig struct {
+	ServiceName     string
+	ServiceVersion  string
+	Environment     string
+	JaegerEndpoint  string
+	SamplingRatio   float64
+	Enabled         bool
+}
+
+// DefaultTracingConfig returns default tracing configuration
+func DefaultTracingConfig() *TracingConfig {
+	return &TracingConfig{
+		ServiceName:    "{{.ProjectName | lower}}",
+		ServiceVersion: "1.0.0",
+		Environment:    "development",
+		JaegerEndpoint: "http://localhost:14268/api/traces",
+		SamplingRatio:  1.0, // 100% sampling for development
+		Enabled:        true,
+	}
+}
+
+// TracingManager manages OpenTelemetry tracing setup and lifecycle
+type TracingManager struct {
+	config       *TracingConfig
+	tracer       oteltrace.Tracer
+	tracerProvider *trace.TracerProvider
+	logger       {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+}
+
+// NewTracingManager creates a new tracing manager instance
+func NewTracingManager(config *TracingConfig, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) (*TracingManager, error) {
+	if config == nil {
+		config = DefaultTracingConfig()
+	}
+	
+	if !config.Enabled {
+		{{if eq .Logger "slog"}}logger.Info("Tracing disabled"){{else if eq .Logger "zap"}}logger.Info("Tracing disabled"){{else if eq .Logger "logrus"}}logger.Info("Tracing disabled"){{else if eq .Logger "zerolog"}}logger.Info().Msg("Tracing disabled"){{end}}
+		return &TracingManager{
+			config: config,
+			logger: logger,
+		}, nil
+	}
+	
+	tm := &TracingManager{
+		config: config,
+		logger: logger,
+	}
+	
+	if err := tm.initializeTracing(); err != nil {
+		return nil, fmt.Errorf("failed to initialize tracing: %w", err)
+	}
+	
+	return tm, nil
+}
+
+// initializeTracing sets up OpenTelemetry tracing
+func (tm *TracingManager) initializeTracing() error {
+	// Create Jaeger exporter
+	exp, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(tm.config.JaegerEndpoint)))
+	if err != nil {
+		return fmt.Errorf("failed to create Jaeger exporter: %w", err)
+	}
+	
+	// Create resource with service information
+	res, err := resource.Merge(
+		resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(tm.config.ServiceName),
+			semconv.ServiceVersion(tm.config.ServiceVersion),
+			semconv.DeploymentEnvironment(tm.config.Environment),
+			attribute.String("service.type", "grpc"),
+		),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create resource: %w", err)
+	}
+	
+	// Create tracer provider
+	tm.tracerProvider = trace.NewTracerProvider(
+		trace.WithBatcher(exp),
+		trace.WithResource(res),
+		trace.WithSampler(trace.TraceIDRatioBased(tm.config.SamplingRatio)),
+	)
+	
+	// Set global tracer provider
+	otel.SetTracerProvider(tm.tracerProvider)
+	
+	// Set global text map propagator for distributed tracing
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+	
+	// Create tracer
+	tm.tracer = otel.Tracer(
+		fmt.Sprintf("%s-tracer", tm.config.ServiceName),
+		oteltrace.WithInstrumentationVersion(tm.config.ServiceVersion),
+	)
+	
+	{{if eq .Logger "slog"}}tm.logger.Info("Tracing initialized", "service", tm.config.ServiceName, "version", tm.config.ServiceVersion, "endpoint", tm.config.JaegerEndpoint){{else if eq .Logger "zap"}}tm.logger.Info("Tracing initialized", zap.String("service", tm.config.ServiceName), zap.String("version", tm.config.ServiceVersion), zap.String("endpoint", tm.config.JaegerEndpoint)){{else if eq .Logger "logrus"}}tm.logger.WithFields(logrus.Fields{"service": tm.config.ServiceName, "version": tm.config.ServiceVersion, "endpoint": tm.config.JaegerEndpoint}).Info("Tracing initialized"){{else if eq .Logger "zerolog"}}tm.logger.Info().Str("service", tm.config.ServiceName).Str("version", tm.config.ServiceVersion).Str("endpoint", tm.config.JaegerEndpoint).Msg("Tracing initialized"){{end}}
+	
+	return nil
+}
+
+// GetGRPCUnaryInterceptor returns a gRPC unary interceptor with tracing
+func (tm *TracingManager) GetGRPCUnaryInterceptor() grpc.UnaryServerInterceptor {
+	if !tm.config.Enabled {
+		return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+			return handler(ctx, req)
+		}
+	}
+	
+	return otelgrpc.UnaryServerInterceptor()
+}
+
+// GetGRPCStreamInterceptor returns a gRPC stream interceptor with tracing
+func (tm *TracingManager) GetGRPCStreamInterceptor() grpc.StreamServerInterceptor {
+	if !tm.config.Enabled {
+		return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+			return handler(srv, stream)
+		}
+	}
+	
+	return otelgrpc.StreamServerInterceptor()
+}
+
+// StartSpan starts a new span with the given name and options
+func (tm *TracingManager) StartSpan(ctx context.Context, name string, opts ...oteltrace.SpanStartOption) (context.Context, oteltrace.Span) {
+	if !tm.config.Enabled || tm.tracer == nil {
+		return ctx, oteltrace.SpanFromContext(ctx)
+	}
+	
+	return tm.tracer.Start(ctx, name, opts...)
+}
+
+// SpanFromContext returns the current span from the context
+func (tm *TracingManager) SpanFromContext(ctx context.Context) oteltrace.Span {
+	return oteltrace.SpanFromContext(ctx)
+}
+
+// RecordError records an error in the current span
+func (tm *TracingManager) RecordError(ctx context.Context, err error, opts ...oteltrace.EventOption) {
+	if !tm.config.Enabled {
+		return
+	}
+	
+	span := oteltrace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		span.RecordError(err, opts...)
+	}
+}
+
+// AddEvent adds an event to the current span
+func (tm *TracingManager) AddEvent(ctx context.Context, name string, opts ...oteltrace.EventOption) {
+	if !tm.config.Enabled {
+		return
+	}
+	
+	span := oteltrace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		span.AddEvent(name, opts...)
+	}
+}
+
+// SetAttribute sets an attribute on the current span
+func (tm *TracingManager) SetAttribute(ctx context.Context, key string, value interface{}) {
+	if !tm.config.Enabled {
+		return
+	}
+	
+	span := oteltrace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		span.SetAttributes(convertToAttribute(key, value))
+	}
+}
+
+// SetAttributes sets multiple attributes on the current span
+func (tm *TracingManager) SetAttributes(ctx context.Context, attrs map[string]interface{}) {
+	if !tm.config.Enabled {
+		return
+	}
+	
+	span := oteltrace.SpanFromContext(ctx)
+	if span.IsRecording() {
+		var otelAttrs []attribute.KeyValue
+		for key, value := range attrs {
+			otelAttrs = append(otelAttrs, convertToAttribute(key, value))
+		}
+		span.SetAttributes(otelAttrs...)
+	}
+}
+
+// TraceBusinessOperation creates a span for business logic operations
+func (tm *TracingManager) TraceBusinessOperation(ctx context.Context, operationName string, fn func(context.Context) error) error {
+	if !tm.config.Enabled {
+		return fn(ctx)
+	}
+	
+	ctx, span := tm.StartSpan(ctx, operationName,
+		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
+		oteltrace.WithAttributes(
+			attribute.String("operation.type", "business"),
+			attribute.String("operation.name", operationName),
+		),
+	)
+	defer span.End()
+	
+	if err := fn(ctx); err != nil {
+		tm.RecordError(ctx, err)
+		span.SetAttributes(attribute.Bool("operation.success", false))
+		return err
+	}
+	
+	span.SetAttributes(attribute.Bool("operation.success", true))
+	return nil
+}
+
+// TraceDatabaseOperation creates a span for database operations
+func (tm *TracingManager) TraceDatabaseOperation(ctx context.Context, operation, table string, fn func(context.Context) error) error {
+	if !tm.config.Enabled {
+		return fn(ctx)
+	}
+	
+	ctx, span := tm.StartSpan(ctx, fmt.Sprintf("db.%s", operation),
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(
+			attribute.String("db.operation", operation),
+			attribute.String("db.sql.table", table),
+			attribute.String("db.system", "{{.DatabaseDriver}}"),
+		),
+	)
+	defer span.End()
+	
+	start := time.Now()
+	err := fn(ctx)
+	duration := time.Since(start)
+	
+	span.SetAttributes(
+		attribute.Int64("db.duration_ms", duration.Milliseconds()),
+		attribute.Bool("db.success", err == nil),
+	)
+	
+	if err != nil {
+		tm.RecordError(ctx, err)
+	}
+	
+	return err
+}
+
+// TraceExternalCall creates a span for external service calls
+func (tm *TracingManager) TraceExternalCall(ctx context.Context, serviceName, operation string, fn func(context.Context) error) error {
+	if !tm.config.Enabled {
+		return fn(ctx)
+	}
+	
+	ctx, span := tm.StartSpan(ctx, fmt.Sprintf("external.%s.%s", serviceName, operation),
+		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
+		oteltrace.WithAttributes(
+			attribute.String("external.service", serviceName),
+			attribute.String("external.operation", operation),
+		),
+	)
+	defer span.End()
+	
+	start := time.Now()
+	err := fn(ctx)
+	duration := time.Since(start)
+	
+	span.SetAttributes(
+		attribute.Int64("external.duration_ms", duration.Milliseconds()),
+		attribute.Bool("external.success", err == nil),
+	)
+	
+	if err != nil {
+		tm.RecordError(ctx, err)
+	}
+	
+	return err
+}
+
+// GetTraceID returns the trace ID from the current context
+func (tm *TracingManager) GetTraceID(ctx context.Context) string {
+	if !tm.config.Enabled {
+		return ""
+	}
+	
+	span := oteltrace.SpanFromContext(ctx)
+	if !span.SpanContext().IsValid() {
+		return ""
+	}
+	
+	return span.SpanContext().TraceID().String()
+}
+
+// GetSpanID returns the span ID from the current context
+func (tm *TracingManager) GetSpanID(ctx context.Context) string {
+	if !tm.config.Enabled {
+		return ""
+	}
+	
+	span := oteltrace.SpanFromContext(ctx)
+	if !span.SpanContext().IsValid() {
+		return ""
+	}
+	
+	return span.SpanContext().SpanID().String()
+}
+
+// InjectTraceContext injects trace context into carriers (for propagation)
+func (tm *TracingManager) InjectTraceContext(ctx context.Context, carrier propagation.TextMapCarrier) {
+	if !tm.config.Enabled {
+		return
+	}
+	
+	otel.GetTextMapPropagator().Inject(ctx, carrier)
+}
+
+// ExtractTraceContext extracts trace context from carriers
+func (tm *TracingManager) ExtractTraceContext(ctx context.Context, carrier propagation.TextMapCarrier) context.Context {
+	if !tm.config.Enabled {
+		return ctx
+	}
+	
+	return otel.GetTextMapPropagator().Extract(ctx, carrier)
+}
+
+// Shutdown gracefully shuts down the tracing system
+func (tm *TracingManager) Shutdown(ctx context.Context) error {
+	if !tm.config.Enabled || tm.tracerProvider == nil {
+		return nil
+	}
+	
+	{{if eq .Logger "slog"}}tm.logger.Info("Shutting down tracing"){{else if eq .Logger "zap"}}tm.logger.Info("Shutting down tracing"){{else if eq .Logger "logrus"}}tm.logger.Info("Shutting down tracing"){{else if eq .Logger "zerolog"}}tm.logger.Info().Msg("Shutting down tracing"){{end}}
+	
+	// Force export of any remaining spans
+	if err := tm.tracerProvider.ForceFlush(ctx); err != nil {
+		{{if eq .Logger "slog"}}tm.logger.Error("Failed to flush traces", "error", err){{else if eq .Logger "zap"}}tm.logger.Error("Failed to flush traces", zap.Error(err)){{else if eq .Logger "logrus"}}tm.logger.WithError(err).Error("Failed to flush traces"){{else if eq .Logger "zerolog"}}tm.logger.Error().Err(err).Msg("Failed to flush traces"){{end}}
+	}
+	
+	// Shutdown tracer provider
+	if err := tm.tracerProvider.Shutdown(ctx); err != nil {
+		{{if eq .Logger "slog"}}tm.logger.Error("Failed to shutdown tracer provider", "error", err){{else if eq .Logger "zap"}}tm.logger.Error("Failed to shutdown tracer provider", zap.Error(err)){{else if eq .Logger "logrus"}}tm.logger.WithError(err).Error("Failed to shutdown tracer provider"){{else if eq .Logger "zerolog"}}tm.logger.Error().Err(err).Msg("Failed to shutdown tracer provider"){{end}}
+		return err
+	}
+	
+	{{if eq .Logger "slog"}}tm.logger.Info("Tracing shutdown completed"){{else if eq .Logger "zap"}}tm.logger.Info("Tracing shutdown completed"){{else if eq .Logger "logrus"}}tm.logger.Info("Tracing shutdown completed"){{else if eq .Logger "zerolog"}}tm.logger.Info().Msg("Tracing shutdown completed"){{end}}
+	return nil
+}
+
+// IsEnabled returns whether tracing is enabled
+func (tm *TracingManager) IsEnabled() bool {
+	return tm.config.Enabled
+}
+
+// GetServiceName returns the service name
+func (tm *TracingManager) GetServiceName() string {
+	return tm.config.ServiceName
+}
+
+// Helper functions
+
+// convertToAttribute converts a value to an OpenTelemetry attribute
+func convertToAttribute(key string, value interface{}) attribute.KeyValue {
+	switch v := value.(type) {
+	case string:
+		return attribute.String(key, v)
+	case int:
+		return attribute.Int(key, v)
+	case int64:
+		return attribute.Int64(key, v)
+	case float64:
+		return attribute.Float64(key, v)
+	case bool:
+		return attribute.Bool(key, v)
+	default:
+		return attribute.String(key, fmt.Sprintf("%v", v))
+	}
+}
+
+// TraceMiddleware provides common tracing functionality
+type TraceMiddleware struct {
+	tracer *TracingManager
+}
+
+// NewTraceMiddleware creates a new trace middleware
+func NewTraceMiddleware(tracer *TracingManager) *TraceMiddleware {
+	return &TraceMiddleware{
+		tracer: tracer,
+	}
+}
+
+// WrapHandler wraps a function with automatic tracing
+func (tm *TraceMiddleware) WrapHandler(name string, handler func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return tm.tracer.TraceBusinessOperation(ctx, name, handler)
+	}
+}
+
+// WrapDatabaseHandler wraps a database operation with tracing
+func (tm *TraceMiddleware) WrapDatabaseHandler(operation, table string, handler func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return tm.tracer.TraceDatabaseOperation(ctx, operation, table, handler)
+	}
+}
+
+// WrapExternalHandler wraps an external service call with tracing
+func (tm *TraceMiddleware) WrapExternalHandler(service, operation string, handler func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return tm.tracer.TraceExternalCall(ctx, service, operation, handler)
+	}
+}
+{{end}}

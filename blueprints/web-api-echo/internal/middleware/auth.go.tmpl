@@ -1,0 +1,197 @@
+package middleware
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+{{- if eq .AuthType "jwt"}}
+	"github.com/labstack/echo-jwt/v4"
+	"github.com/golang-jwt/jwt/v5"
+{{- else if eq .AuthType "session"}}
+	"github.com/gorilla/sessions"
+{{- end}}
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+{{- if eq .AuthType "jwt"}}
+
+// JWTAuth returns a JWT authentication middleware for Echo
+func JWTAuth(secret string) echo.MiddlewareFunc {
+	return echojwt.WithConfig(echojwt.Config{
+		SigningKey: []byte(secret),
+		ErrorHandler: func(c echo.Context, err error) error {
+			logger.Error("JWT authentication failed", "error", err, "uri", c.Request().RequestURI)
+			return c.JSON(http.StatusUnauthorized, map[string]string{
+				"error": "Invalid or expired token",
+			})
+		},
+		Skipper: func(c echo.Context) bool {
+			// Skip JWT validation for health check endpoints
+			path := c.Path()
+			return path == "/health" || path == "/ready"
+		},
+	})
+}
+
+// JWTCustomAuth returns a custom JWT authentication middleware with additional claims validation
+func JWTCustomAuth(secret string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip authentication for certain paths
+			path := c.Path()
+			if path == "/health" || path == "/ready" {
+				return next(c)
+			}
+
+			// Get token from header
+			tokenString := c.Request().Header.Get("Authorization")
+			if tokenString == "" {
+				logger.Warn("Missing authorization header", "uri", c.Request().RequestURI)
+				return c.JSON(http.StatusUnauthorized, map[string]string{
+					"error": "Missing authorization header",
+				})
+			}
+
+			// Remove "Bearer " prefix
+			if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
+				tokenString = tokenString[7:]
+			}
+
+			// Parse and validate token
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				// Validate signing method
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, echo.NewHTTPError(http.StatusUnauthorized, "Invalid signing method")
+				}
+				return []byte(secret), nil
+			})
+
+			if err != nil {
+				logger.Error("JWT parsing failed", "error", err, "uri", c.Request().RequestURI)
+				return c.JSON(http.StatusUnauthorized, map[string]string{
+					"error": "Invalid token",
+				})
+			}
+
+			if !token.Valid {
+				logger.Warn("Invalid JWT token", "uri", c.Request().RequestURI)
+				return c.JSON(http.StatusUnauthorized, map[string]string{
+					"error": "Invalid token",
+				})
+			}
+
+			// Extract claims
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				// Set user info in context
+				c.Set("user_id", claims["user_id"])
+				c.Set("user_email", claims["email"])
+				c.Set("user_role", claims["role"])
+				
+				logger.Info("JWT authentication successful", 
+					"user_id", claims["user_id"],
+					"email", claims["email"],
+					"uri", c.Request().RequestURI,
+				)
+			}
+
+			return next(c)
+		}
+	}
+}
+
+{{- else if eq .AuthType "session"}}
+
+// SessionAuth returns a session-based authentication middleware
+func SessionAuth(store *sessions.CookieStore) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip authentication for certain paths
+			path := c.Path()
+			if path == "/health" || path == "/ready" || path == "/api/v1/auth/login" || path == "/api/v1/auth/register" {
+				return next(c)
+			}
+
+			// Get session
+			session, err := store.Get(c.Request(), "session")
+			if err != nil {
+				logger.Error("Session retrieval failed", "error", err, "uri", c.Request().RequestURI)
+				return c.JSON(http.StatusUnauthorized, map[string]string{
+					"error": "Invalid session",
+				})
+			}
+
+			// Check if user is authenticated
+			userID, ok := session.Values["user_id"]
+			if !ok || userID == nil {
+				logger.Warn("User not authenticated", "uri", c.Request().RequestURI)
+				return c.JSON(http.StatusUnauthorized, map[string]string{
+					"error": "Authentication required",
+				})
+			}
+
+			// Set user info in context
+			c.Set("user_id", userID)
+			if email, ok := session.Values["user_email"]; ok {
+				c.Set("user_email", email)
+			}
+			if role, ok := session.Values["user_role"]; ok {
+				c.Set("user_role", role)
+			}
+
+			logger.Info("Session authentication successful", 
+				"user_id", userID,
+				"uri", c.Request().RequestURI,
+			)
+
+			return next(c)
+		}
+	}
+}
+
+{{- else}}
+
+// BasicAuth returns a basic authentication middleware placeholder
+func BasicAuth() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip authentication for certain paths
+			path := c.Path()
+			if path == "/health" || path == "/ready" {
+				return next(c)
+			}
+
+			// Add your authentication logic here
+			logger.Info("Authentication check", "uri", c.Request().RequestURI)
+			
+			return next(c)
+		}
+	}
+}
+
+{{- end}}
+
+// RequireRole returns a middleware that checks for specific user roles
+func RequireRole(requiredRole string) echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			userRole := c.Get("user_role")
+			if userRole == nil || userRole != requiredRole {
+				logger.Warn("Insufficient permissions", 
+					"required_role", requiredRole,
+					"user_role", userRole,
+					"uri", c.Request().RequestURI,
+				)
+				return c.JSON(http.StatusForbidden, map[string]string{
+					"error": "Insufficient permissions",
+				})
+			}
+			return next(c)
+		}
+	}
+}
+
+// RequireAdmin returns a middleware that requires admin role
+func RequireAdmin() echo.MiddlewareFunc {
+	return RequireRole("admin")
+}

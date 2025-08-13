@@ -1,0 +1,52 @@
+package middleware
+
+import (
+	"time"
+
+	"github.com/labstack/echo/v4"
+	echoMiddleware "github.com/labstack/echo/v4/middleware"
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Logger returns an Echo logger middleware that integrates with our custom logger
+func Logger() echo.MiddlewareFunc {
+	return echoMiddleware.LoggerWithConfig(echoMiddleware.LoggerConfig{
+		Format: `{"time":"${time_rfc3339}","level":"info","method":"${method}","uri":"${uri}","status":${status},"latency_human":"${latency_human}","bytes_in":${bytes_in},"bytes_out":${bytes_out},"user_agent":"${user_agent}","remote_ip":"${remote_ip}","request_id":"${header:x-request-id}"}` + "\n",
+		CustomTimeFormat: time.RFC3339,
+		Output:           logger.GetWriter(),
+	})
+}
+
+// RequestLogger is a more advanced logger middleware that uses our internal logger
+func RequestLogger() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			
+			// Process request
+			err := next(c)
+			
+			// Log request details
+			req := c.Request()
+			res := c.Response()
+			
+			latency := time.Since(start)
+			
+			logger.Info("HTTP request",
+				"method", req.Method,
+				"uri", req.RequestURI,
+				"status", res.Status,
+				"latency", latency.String(),
+				"latency_ms", latency.Milliseconds(),
+				"bytes_in", req.ContentLength,
+				"bytes_out", res.Size,
+				"user_agent", req.UserAgent(),
+				"remote_ip", c.RealIP(),
+				"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+			)
+			
+			return err
+		}
+	}
+}

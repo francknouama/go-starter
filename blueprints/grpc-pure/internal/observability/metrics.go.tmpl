@@ -1,0 +1,501 @@
+{{if .MetricsEnabled}}package observability
+
+import (
+	"context"
+	"sync"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+	"github.com/prometheus/client_golang/prometheus"
+)
+
+// BusinessMetrics provides application-specific metrics collection
+type BusinessMetrics struct {
+	registry *prometheus.Registry
+	logger   {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+	
+	// Business operation metrics
+	operationCounter   *prometheus.CounterVec
+	operationDuration  *prometheus.HistogramVec
+	operationGauge     *prometheus.GaugeVec
+	
+	// Resource metrics
+	resourceUsage      *prometheus.GaugeVec
+	resourceErrors     *prometheus.CounterVec
+	
+	// Cache metrics
+	cacheHits          *prometheus.CounterVec
+	cacheMisses        *prometheus.CounterVec
+	cacheOperations    *prometheus.HistogramVec
+	
+	// Database metrics{{if ne .DatabaseDriver ""}}
+	dbConnections      *prometheus.GaugeVec
+	dbQueries          *prometheus.CounterVec
+	dbQueryDuration    *prometheus.HistogramVec
+	dbTransactions     *prometheus.CounterVec{{end}}
+	
+	// Queue metrics
+	queueSize          *prometheus.GaugeVec
+	queueProcessing    *prometheus.HistogramVec
+	queueErrors        *prometheus.CounterVec
+	
+	// Custom metrics registry
+	mu            sync.RWMutex
+	customMetrics map[string]prometheus.Collector
+}
+
+// NewBusinessMetrics creates a new business metrics collector
+func NewBusinessMetrics(registry *prometheus.Registry, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) *BusinessMetrics {
+	bm := &BusinessMetrics{
+		registry:      registry,
+		logger:        logger,
+		customMetrics: make(map[string]prometheus.Collector),
+	}
+	
+	bm.initializeMetrics()
+	bm.registerMetrics()
+	
+	{{if eq .Logger "slog"}}logger.Info("Business metrics initialized"){{else if eq .Logger "zap"}}logger.Info("Business metrics initialized"){{else if eq .Logger "logrus"}}logger.Info("Business metrics initialized"){{else if eq .Logger "zerolog"}}logger.Info().Msg("Business metrics initialized"){{end}}
+	
+	return bm
+}
+
+// initializeMetrics creates all Prometheus metrics
+func (bm *BusinessMetrics) initializeMetrics() {
+	// Business operation metrics
+	bm.operationCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_operations_total",
+			Help: "Total number of business operations performed",
+		},
+		[]string{"operation", "status", "service"},
+	)
+	
+	bm.operationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "{{.ProjectName | lower}}_operation_duration_seconds",
+			Help:    "Duration of business operations in seconds",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		},
+		[]string{"operation", "service"},
+	)
+	
+	bm.operationGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | lower}}_operation_active",
+			Help: "Number of currently active operations",
+		},
+		[]string{"operation", "service"},
+	)
+	
+	// Resource metrics
+	bm.resourceUsage = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | lower}}_resource_usage",
+			Help: "Current resource usage metrics",
+		},
+		[]string{"resource", "unit"},
+	)
+	
+	bm.resourceErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_resource_errors_total",
+			Help: "Total number of resource-related errors",
+		},
+		[]string{"resource", "error_type"},
+	)
+	
+	// Cache metrics
+	bm.cacheHits = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_cache_hits_total",
+			Help: "Total number of cache hits",
+		},
+		[]string{"cache_name", "operation"},
+	)
+	
+	bm.cacheMisses = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_cache_misses_total",
+			Help: "Total number of cache misses",
+		},
+		[]string{"cache_name", "operation"},
+	)
+	
+	bm.cacheOperations = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "{{.ProjectName | lower}}_cache_operation_duration_seconds",
+			Help:    "Duration of cache operations in seconds",
+			Buckets: []float64{0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1},
+		},
+		[]string{"cache_name", "operation"},
+	)
+	
+	{{if ne .DatabaseDriver ""}}// Database metrics
+	bm.dbConnections = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | lower}}_db_connections",
+			Help: "Current number of database connections",
+		},
+		[]string{"database", "state"},
+	)
+	
+	bm.dbQueries = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_db_queries_total",
+			Help: "Total number of database queries",
+		},
+		[]string{"database", "operation", "table", "status"},
+	)
+	
+	bm.dbQueryDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "{{.ProjectName | lower}}_db_query_duration_seconds",
+			Help:    "Duration of database queries in seconds",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5},
+		},
+		[]string{"database", "operation", "table"},
+	)
+	
+	bm.dbTransactions = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_db_transactions_total",
+			Help: "Total number of database transactions",
+		},
+		[]string{"database", "status"},
+	){{end}}
+	
+	// Queue metrics
+	bm.queueSize = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | lower}}_queue_size",
+			Help: "Current size of queues",
+		},
+		[]string{"queue_name", "state"},
+	)
+	
+	bm.queueProcessing = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "{{.ProjectName | lower}}_queue_processing_duration_seconds",
+			Help:    "Duration of queue item processing in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"queue_name", "operation"},
+	)
+	
+	bm.queueErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "{{.ProjectName | lower}}_queue_errors_total",
+			Help: "Total number of queue processing errors",
+		},
+		[]string{"queue_name", "error_type"},
+	)
+}
+
+// registerMetrics registers all metrics with the Prometheus registry
+func (bm *BusinessMetrics) registerMetrics() {
+	metrics := []prometheus.Collector{
+		bm.operationCounter,
+		bm.operationDuration,
+		bm.operationGauge,
+		bm.resourceUsage,
+		bm.resourceErrors,
+		bm.cacheHits,
+		bm.cacheMisses,
+		bm.cacheOperations,
+		bm.queueSize,
+		bm.queueProcessing,
+		bm.queueErrors,
+	}
+	
+	{{if ne .DatabaseDriver ""}}metrics = append(metrics,
+		bm.dbConnections,
+		bm.dbQueries,
+		bm.dbQueryDuration,
+		bm.dbTransactions,
+	){{end}}
+	
+	for _, metric := range metrics {
+		bm.registry.MustRegister(metric)
+	}
+}
+
+// Business Operation Metrics
+
+// RecordOperation records the completion of a business operation
+func (bm *BusinessMetrics) RecordOperation(operation, service, status string, duration time.Duration) {
+	bm.operationCounter.WithLabelValues(operation, status, service).Inc()
+	bm.operationDuration.WithLabelValues(operation, service).Observe(duration.Seconds())
+	
+	{{if eq .Logger "slog"}}bm.logger.Debug("Operation recorded", "operation", operation, "service", service, "status", status, "duration", duration){{else if eq .Logger "zap"}}bm.logger.Debug("Operation recorded", zap.String("operation", operation), zap.String("service", service), zap.String("status", status), zap.Duration("duration", duration)){{else if eq .Logger "logrus"}}bm.logger.WithFields(logrus.Fields{"operation": operation, "service": service, "status": status, "duration": duration}).Debug("Operation recorded"){{else if eq .Logger "zerolog"}}bm.logger.Debug().Str("operation", operation).Str("service", service).Str("status", status).Dur("duration", duration).Msg("Operation recorded"){{end}}
+}
+
+// IncrementActiveOperations increments the active operations gauge
+func (bm *BusinessMetrics) IncrementActiveOperations(operation, service string) {
+	bm.operationGauge.WithLabelValues(operation, service).Inc()
+}
+
+// DecrementActiveOperations decrements the active operations gauge
+func (bm *BusinessMetrics) DecrementActiveOperations(operation, service string) {
+	bm.operationGauge.WithLabelValues(operation, service).Dec()
+}
+
+// Resource Metrics
+
+// RecordResourceUsage records current resource usage
+func (bm *BusinessMetrics) RecordResourceUsage(resource, unit string, value float64) {
+	bm.resourceUsage.WithLabelValues(resource, unit).Set(value)
+}
+
+// RecordResourceError records a resource-related error
+func (bm *BusinessMetrics) RecordResourceError(resource, errorType string) {
+	bm.resourceErrors.WithLabelValues(resource, errorType).Inc()
+	
+	{{if eq .Logger "slog"}}bm.logger.Warn("Resource error recorded", "resource", resource, "error_type", errorType){{else if eq .Logger "zap"}}bm.logger.Warn("Resource error recorded", zap.String("resource", resource), zap.String("error_type", errorType)){{else if eq .Logger "logrus"}}bm.logger.WithFields(logrus.Fields{"resource": resource, "error_type": errorType}).Warn("Resource error recorded"){{else if eq .Logger "zerolog"}}bm.logger.Warn().Str("resource", resource).Str("error_type", errorType).Msg("Resource error recorded"){{end}}
+}
+
+// Cache Metrics
+
+// RecordCacheHit records a cache hit
+func (bm *BusinessMetrics) RecordCacheHit(cacheName, operation string, duration time.Duration) {
+	bm.cacheHits.WithLabelValues(cacheName, operation).Inc()
+	bm.cacheOperations.WithLabelValues(cacheName, operation).Observe(duration.Seconds())
+}
+
+// RecordCacheMiss records a cache miss
+func (bm *BusinessMetrics) RecordCacheMiss(cacheName, operation string, duration time.Duration) {
+	bm.cacheMisses.WithLabelValues(cacheName, operation).Inc()
+	bm.cacheOperations.WithLabelValues(cacheName, operation).Observe(duration.Seconds())
+}
+
+{{if ne .DatabaseDriver ""}}// Database Metrics
+
+// RecordDatabaseConnections records current database connection counts
+func (bm *BusinessMetrics) RecordDatabaseConnections(database, state string, count int) {
+	bm.dbConnections.WithLabelValues(database, state).Set(float64(count))
+}
+
+// RecordDatabaseQuery records a database query
+func (bm *BusinessMetrics) RecordDatabaseQuery(database, operation, table, status string, duration time.Duration) {
+	bm.dbQueries.WithLabelValues(database, operation, table, status).Inc()
+	bm.dbQueryDuration.WithLabelValues(database, operation, table).Observe(duration.Seconds())
+}
+
+// RecordDatabaseTransaction records a database transaction
+func (bm *BusinessMetrics) RecordDatabaseTransaction(database, status string) {
+	bm.dbTransactions.WithLabelValues(database, status).Inc()
+}{{end}}
+
+// Queue Metrics
+
+// RecordQueueSize records the current queue size
+func (bm *BusinessMetrics) RecordQueueSize(queueName, state string, size int) {
+	bm.queueSize.WithLabelValues(queueName, state).Set(float64(size))
+}
+
+// RecordQueueProcessing records queue item processing
+func (bm *BusinessMetrics) RecordQueueProcessing(queueName, operation string, duration time.Duration) {
+	bm.queueProcessing.WithLabelValues(queueName, operation).Observe(duration.Seconds())
+}
+
+// RecordQueueError records a queue processing error
+func (bm *BusinessMetrics) RecordQueueError(queueName, errorType string) {
+	bm.queueErrors.WithLabelValues(queueName, errorType).Inc()
+	
+	{{if eq .Logger "slog"}}bm.logger.Warn("Queue error recorded", "queue", queueName, "error_type", errorType){{else if eq .Logger "zap"}}bm.logger.Warn("Queue error recorded", zap.String("queue", queueName), zap.String("error_type", errorType)){{else if eq .Logger "logrus"}}bm.logger.WithFields(logrus.Fields{"queue": queueName, "error_type": errorType}).Warn("Queue error recorded"){{else if eq .Logger "zerolog"}}bm.logger.Warn().Str("queue", queueName).Str("error_type", errorType).Msg("Queue error recorded"){{end}}
+}
+
+// Custom Metrics Management
+
+// RegisterCustomCounter creates and registers a custom counter metric
+func (bm *BusinessMetrics) RegisterCustomCounter(name, help string, labels []string) (*prometheus.CounterVec, error) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	
+	if _, exists := bm.customMetrics[name]; exists {
+		return nil, prometheus.ErrAlreadyReg
+	}
+	
+	counter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: name,
+			Help: help,
+		},
+		labels,
+	)
+	
+	if err := bm.registry.Register(counter); err != nil {
+		return nil, err
+	}
+	
+	bm.customMetrics[name] = counter
+	{{if eq .Logger "slog"}}bm.logger.Info("Custom counter registered", "name", name){{else if eq .Logger "zap"}}bm.logger.Info("Custom counter registered", zap.String("name", name)){{else if eq .Logger "logrus"}}bm.logger.WithField("name", name).Info("Custom counter registered"){{else if eq .Logger "zerolog"}}bm.logger.Info().Str("name", name).Msg("Custom counter registered"){{end}}
+	
+	return counter, nil
+}
+
+// RegisterCustomGauge creates and registers a custom gauge metric
+func (bm *BusinessMetrics) RegisterCustomGauge(name, help string, labels []string) (*prometheus.GaugeVec, error) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	
+	if _, exists := bm.customMetrics[name]; exists {
+		return nil, prometheus.ErrAlreadyReg
+	}
+	
+	gauge := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: name,
+			Help: help,
+		},
+		labels,
+	)
+	
+	if err := bm.registry.Register(gauge); err != nil {
+		return nil, err
+	}
+	
+	bm.customMetrics[name] = gauge
+	{{if eq .Logger "slog"}}bm.logger.Info("Custom gauge registered", "name", name){{else if eq .Logger "zap"}}bm.logger.Info("Custom gauge registered", zap.String("name", name)){{else if eq .Logger "logrus"}}bm.logger.WithField("name", name).Info("Custom gauge registered"){{else if eq .Logger "zerolog"}}bm.logger.Info().Str("name", name).Msg("Custom gauge registered"){{end}}
+	
+	return gauge, nil
+}
+
+// RegisterCustomHistogram creates and registers a custom histogram metric
+func (bm *BusinessMetrics) RegisterCustomHistogram(name, help string, labels []string, buckets []float64) (*prometheus.HistogramVec, error) {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	
+	if _, exists := bm.customMetrics[name]; exists {
+		return nil, prometheus.ErrAlreadyReg
+	}
+	
+	if buckets == nil {
+		buckets = prometheus.DefBuckets
+	}
+	
+	histogram := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    name,
+			Help:    help,
+			Buckets: buckets,
+		},
+		labels,
+	)
+	
+	if err := bm.registry.Register(histogram); err != nil {
+		return nil, err
+	}
+	
+	bm.customMetrics[name] = histogram
+	{{if eq .Logger "slog"}}bm.logger.Info("Custom histogram registered", "name", name){{else if eq .Logger "zap"}}bm.logger.Info("Custom histogram registered", zap.String("name", name)){{else if eq .Logger "logrus"}}bm.logger.WithField("name", name).Info("Custom histogram registered"){{else if eq .Logger "zerolog"}}bm.logger.Info().Str("name", name).Msg("Custom histogram registered"){{end}}
+	
+	return histogram, nil
+}
+
+// UnregisterCustomMetric unregisters a custom metric
+func (bm *BusinessMetrics) UnregisterCustomMetric(name string) error {
+	bm.mu.Lock()
+	defer bm.mu.Unlock()
+	
+	collector, exists := bm.customMetrics[name]
+	if !exists {
+		return prometheus.ErrNotReg
+	}
+	
+	if !bm.registry.Unregister(collector) {
+		return prometheus.ErrNotReg
+	}
+	
+	delete(bm.customMetrics, name)
+	{{if eq .Logger "slog"}}bm.logger.Info("Custom metric unregistered", "name", name){{else if eq .Logger "zap"}}bm.logger.Info("Custom metric unregistered", zap.String("name", name)){{else if eq .Logger "logrus"}}bm.logger.WithField("name", name).Info("Custom metric unregistered"){{else if eq .Logger "zerolog"}}bm.logger.Info().Str("name", name).Msg("Custom metric unregistered"){{end}}
+	
+	return nil
+}
+
+// Utility Methods
+
+// TimerFunc returns a function that records operation duration when called
+func (bm *BusinessMetrics) TimerFunc(operation, service string) func(status string) {
+	start := time.Now()
+	bm.IncrementActiveOperations(operation, service)
+	
+	return func(status string) {
+		duration := time.Since(start)
+		bm.DecrementActiveOperations(operation, service)
+		bm.RecordOperation(operation, service, status, duration)
+	}
+}
+
+// WithOperationMetrics wraps a function with automatic operation metrics
+func (bm *BusinessMetrics) WithOperationMetrics(operation, service string, fn func() error) error {
+	timer := bm.TimerFunc(operation, service)
+	
+	err := fn()
+	
+	status := "success"
+	if err != nil {
+		status = "error"
+	}
+	
+	timer(status)
+	return err
+}
+
+// WithOperationMetricsCtx wraps a context function with automatic operation metrics
+func (bm *BusinessMetrics) WithOperationMetricsCtx(operation, service string, fn func(context.Context) error) func(context.Context) error {
+	return func(ctx context.Context) error {
+		return bm.WithOperationMetrics(operation, service, func() error {
+			return fn(ctx)
+		})
+	}
+}
+
+// GetCustomMetric retrieves a custom metric by name
+func (bm *BusinessMetrics) GetCustomMetric(name string) (prometheus.Collector, bool) {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	
+	metric, exists := bm.customMetrics[name]
+	return metric, exists
+}
+
+// ListCustomMetrics returns the names of all registered custom metrics
+func (bm *BusinessMetrics) ListCustomMetrics() []string {
+	bm.mu.RLock()
+	defer bm.mu.RUnlock()
+	
+	var names []string
+	for name := range bm.customMetrics {
+		names = append(names, name)
+	}
+	
+	return names
+}
+
+// Reset resets all metrics (useful for testing)
+func (bm *BusinessMetrics) Reset() {
+	bm.operationCounter.Reset()
+	bm.operationDuration.Reset()
+	bm.operationGauge.Reset()
+	bm.resourceUsage.Reset()
+	bm.resourceErrors.Reset()
+	bm.cacheHits.Reset()
+	bm.cacheMisses.Reset()
+	bm.cacheOperations.Reset()
+	bm.queueSize.Reset()
+	bm.queueProcessing.Reset()
+	bm.queueErrors.Reset()
+	
+	{{if ne .DatabaseDriver ""}}bm.dbConnections.Reset()
+	bm.dbQueries.Reset()
+	bm.dbQueryDuration.Reset()
+	bm.dbTransactions.Reset(){{end}}
+	
+	{{if eq .Logger "slog"}}bm.logger.Info("Business metrics reset"){{else if eq .Logger "zap"}}bm.logger.Info("Business metrics reset"){{else if eq .Logger "logrus"}}bm.logger.Info("Business metrics reset"){{else if eq .Logger "zerolog"}}bm.logger.Info().Msg("Business metrics reset"){{end}}
+}
+{{end}}

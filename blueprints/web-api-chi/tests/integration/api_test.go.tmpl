@@ -1,0 +1,380 @@
+package integration
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+{{- end}}
+)
+
+// TestSuite represents the integration test suite
+type TestSuite struct {
+	server *server.Server
+	logger logger.Logger
+}
+
+// setupTestSuite initializes the test suite
+func setupTestSuite(t *testing.T) *TestSuite {
+	// Load test configuration
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	
+	// Override with test settings
+	cfg.Environment = "test"
+	cfg.Logger.Level = "error" // Reduce log noise in tests
+	
+	// Initialize logger
+	testLogger, err := logger.New(cfg.Logger)
+	require.NoError(t, err)
+
+{{- if ne .DatabaseDriver ""}}
+	// Initialize test database
+	db, err := database.Connect(cfg.Database)
+	require.NoError(t, err)
+	
+	// Run migrations for tests
+	err = database.Migrate(db)
+	require.NoError(t, err)
+	
+	// Initialize server with database
+	srv, err := server.New(cfg, testLogger, db)
+{{- else}}
+	// Initialize server without database
+	srv, err := server.New(cfg, testLogger)
+{{- end}}
+	require.NoError(t, err)
+
+	return &TestSuite{
+		server: srv,
+		logger: testLogger,
+	}
+}
+
+// TestHealthEndpoints tests the health check endpoints
+func TestHealthEndpoints(t *testing.T) {
+	suite := setupTestSuite(t)
+
+	tests := []struct {
+		name           string
+		endpoint       string
+		expectedStatus int
+		expectedFields []string
+	}{
+		{
+			name:           "Health check endpoint",
+			endpoint:       "/health",
+			expectedStatus: http.StatusOK,
+			expectedFields: []string{"status", "timestamp"},
+		},
+		{
+			name:           "Readiness check endpoint",
+			endpoint:       "/ready",
+			expectedStatus: http.StatusOK,
+			expectedFields: []string{"status", "timestamp"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create request
+			req := httptest.NewRequest(http.MethodGet, tt.endpoint, nil)
+			rec := httptest.NewRecorder()
+
+			// Execute request
+			suite.server.Handler().ServeHTTP(rec, req)
+
+			// Assert response
+			assert.Equal(t, tt.expectedStatus, rec.Code)
+			assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+			// Parse response body
+			var response map[string]interface{}
+			err := json.Unmarshal(rec.Body.Bytes(), &response)
+			assert.NoError(t, err)
+
+			// Check required fields
+			for _, field := range tt.expectedFields {
+				assert.Contains(t, response, field)
+			}
+
+			// Check status field value
+			if status, exists := response["status"]; exists {
+				assert.Contains(t, []string{"healthy", "ready"}, status)
+			}
+		})
+	}
+}
+
+{{- if ne .DatabaseDriver ""}}
+// TestUserEndpoints tests the user management endpoints
+func TestUserEndpoints(t *testing.T) {
+	suite := setupTestSuite(t)
+
+	t.Run("Get users with pagination", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/users?page=1&limit=10", nil)
+		rec := httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+		var response map[string]interface{}
+		err := json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+
+		// Check response structure
+		assert.Contains(t, response, "data")
+		assert.Contains(t, response, "pagination")
+
+		// Check pagination structure
+		pagination, ok := response["pagination"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Contains(t, pagination, "page")
+		assert.Contains(t, pagination, "limit")
+		assert.Contains(t, pagination, "total")
+		assert.Contains(t, pagination, "pages")
+	})
+
+	t.Run("Create user", func(t *testing.T) {
+		userData := map[string]interface{}{
+			"name":  "Test User",
+			"email": "test@example.com",
+		}
+
+		jsonData, err := json.Marshal(userData)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewBuffer(jsonData))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusCreated, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+		var response map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+
+		// Check response structure
+		assert.Contains(t, response, "data")
+
+		// Check user data
+		data, ok := response["data"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, userData["name"], data["name"])
+		assert.Equal(t, userData["email"], data["email"])
+		assert.Contains(t, data, "id")
+		assert.Contains(t, data, "created_at")
+	})
+
+	t.Run("Get user by ID", func(t *testing.T) {
+		// First create a user
+		userData := map[string]interface{}{
+			"name":  "Test User 2",
+			"email": "test2@example.com",
+		}
+
+		jsonData, err := json.Marshal(userData)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewBuffer(jsonData))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		var createResponse map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		require.NoError(t, err)
+
+		data := createResponse["data"].(map[string]interface{})
+		userID := data["id"]
+
+		// Now get the user by ID
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/users/"+userID.(string), nil)
+		rec = httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+		var response map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+
+		// Check response structure
+		assert.Contains(t, response, "data")
+
+		// Check user data
+		responseData, ok := response["data"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, userData["name"], responseData["name"])
+		assert.Equal(t, userData["email"], responseData["email"])
+		assert.Equal(t, userID, responseData["id"])
+	})
+
+	t.Run("Update user", func(t *testing.T) {
+		// First create a user
+		userData := map[string]interface{}{
+			"name":  "Test User 3",
+			"email": "test3@example.com",
+		}
+
+		jsonData, err := json.Marshal(userData)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewBuffer(jsonData))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		var createResponse map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		require.NoError(t, err)
+
+		data := createResponse["data"].(map[string]interface{})
+		userID := data["id"]
+
+		// Update the user
+		updateData := map[string]interface{}{
+			"name": "Updated Test User 3",
+		}
+
+		jsonData, err = json.Marshal(updateData)
+		require.NoError(t, err)
+
+		req = httptest.NewRequest(http.MethodPut, "/api/v1/users/"+userID.(string), bytes.NewBuffer(jsonData))
+		req.Header.Set("Content-Type", "application/json")
+		rec = httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+		var response map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &response)
+		assert.NoError(t, err)
+
+		// Check response structure
+		assert.Contains(t, response, "data")
+
+		// Check updated user data
+		responseData, ok := response["data"].(map[string]interface{})
+		assert.True(t, ok)
+		assert.Equal(t, updateData["name"], responseData["name"])
+		assert.Equal(t, userData["email"], responseData["email"]) // Email should remain unchanged
+		assert.Equal(t, userID, responseData["id"])
+	})
+
+	t.Run("Delete user", func(t *testing.T) {
+		// First create a user
+		userData := map[string]interface{}{
+			"name":  "Test User 4",
+			"email": "test4@example.com",
+		}
+
+		jsonData, err := json.Marshal(userData)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewBuffer(jsonData))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code)
+
+		var createResponse map[string]interface{}
+		err = json.Unmarshal(rec.Body.Bytes(), &createResponse)
+		require.NoError(t, err)
+
+		data := createResponse["data"].(map[string]interface{})
+		userID := data["id"]
+
+		// Delete the user
+		req = httptest.NewRequest(http.MethodDelete, "/api/v1/users/"+userID.(string), nil)
+		rec = httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNoContent, rec.Code)
+
+		// Verify user is deleted by trying to get it
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/users/"+userID.(string), nil)
+		rec = httptest.NewRecorder()
+
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusNotFound, rec.Code)
+	})
+}
+{{- end}}
+
+// TestCORSHeaders tests CORS header handling
+func TestCORSHeaders(t *testing.T) {
+	suite := setupTestSuite(t)
+
+	t.Run("OPTIONS request includes CORS headers", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/users", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", "Content-Type")
+
+		rec := httptest.NewRecorder()
+		suite.server.Handler().ServeHTTP(rec, req)
+
+		// Check CORS headers
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Origin"))
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Methods"))
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Headers"))
+	})
+}
+
+// TestSecurityHeaders tests security header middleware
+func TestSecurityHeaders(t *testing.T) {
+	suite := setupTestSuite(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	suite.server.Handler().ServeHTTP(rec, req)
+
+	// Check security headers
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+	assert.Equal(t, "1; mode=block", rec.Header().Get("X-XSS-Protection"))
+	assert.Contains(t, rec.Header().Get("Strict-Transport-Security"), "max-age=31536000")
+}
+
+// TestRequestIDMiddleware tests request ID middleware
+func TestRequestIDMiddleware(t *testing.T) {
+	suite := setupTestSuite(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+
+	suite.server.Handler().ServeHTTP(rec, req)
+
+	// Check that request ID header is present in response
+	requestID := rec.Header().Get("X-Request-ID")
+	assert.NotEmpty(t, requestID)
+	assert.Len(t, requestID, 32) // Should be a 32-character hex string
+}

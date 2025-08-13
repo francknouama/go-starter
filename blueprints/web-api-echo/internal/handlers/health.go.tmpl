@@ -1,0 +1,61 @@
+package handlers
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/labstack/echo/v4"
+)
+
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Timestamp time.Time         `json:"timestamp"`
+	Version   string            `json:"version,omitempty"`
+	Checks    map[string]string `json:"checks,omitempty"`
+}
+
+// HealthCheck handles GET /health
+func HealthCheck(c echo.Context) error {
+	response := HealthResponse{
+		Status:    "healthy",
+		Timestamp: time.Now(),
+		Version:   "1.0.0",
+	}
+	return c.JSON(http.StatusOK, response)
+}
+
+// ReadinessCheck handles GET /ready
+func ReadinessCheck(c echo.Context) error {
+	checks := make(map[string]string)
+	allHealthy := true
+
+{{- if ne .DatabaseDriver ""}}
+	// Database check would go here
+	checks["database"] = "healthy"
+{{- end}}
+
+{{- if .EnableMetrics}}
+	checks["metrics"] = "healthy"
+{{- end}}
+
+{{- if .EnableTracing}}
+	checks["tracing"] = "healthy"
+{{- end}}
+
+	status := "ready"
+	httpStatus := http.StatusOK
+
+	if !allHealthy {
+		status = "not ready"
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now(),
+		Checks:    checks,
+	}
+
+	return c.JSON(httpStatus, response)
+}

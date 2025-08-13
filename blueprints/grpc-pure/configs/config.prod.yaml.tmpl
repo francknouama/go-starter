@@ -1,0 +1,278 @@
+# {{.ProjectName}} - Production Configuration
+# This file contains production-specific settings for the gRPC service
+
+server:
+  grpc:
+    port: {{.GrpcPort}}
+    # Use TLS in production
+    tls:
+      enabled: true
+      cert_file: "/etc/ssl/certs/{{.ProjectName | lower}}.crt"
+      key_file: "/etc/ssl/private/{{.ProjectName | lower}}.key"
+      # Enable mutual TLS for service-to-service communication
+      {{- if eq .AuthType "mtls"}}
+      mtls:
+        enabled: true
+        ca_file: "/etc/ssl/certs/ca.crt"
+        client_cert_required: true
+      {{- end}}
+    
+    # Production timeouts
+    timeouts:
+      read: "30s"
+      write: "30s"
+      idle: "120s"
+    
+    # Connection limits
+    max_connections: 1000
+    max_concurrent_streams: 100
+    
+    # Enable keepalive for production
+    keepalive:
+      time: "30s"
+      timeout: "5s"
+      enforcement_policy:
+        min_time: "10s"
+        permit_without_stream: false
+
+  # Metrics and health endpoints
+  metrics:
+    enabled: {{.MetricsEnabled}}
+    port: {{.MetricsPort}}
+    path: "/metrics"
+    
+  health:
+    enabled: true
+    path: "/health"
+    
+  # Disable reflection in production
+  reflection:
+    enabled: false
+
+# Logging configuration
+logging:
+  level: "info"  # Use info level in production
+  format: "json"  # Structured logging for production
+  output: "stdout"
+  
+  # Structured logging fields
+  fields:
+    service: "{{.ProjectName | lower}}"
+    version: "v1.0.0"
+    environment: "production"
+
+{{- if .TracingEnabled}}
+# Distributed tracing
+tracing:
+  enabled: true
+  provider: "jaeger"
+  endpoint: "http://jaeger-collector:14268/api/traces"
+  service_name: "{{.ProjectName | lower}}"
+  sampling_rate: 0.1  # Sample 10% of traces in production
+  
+  # OTLP configuration
+  otlp:
+    endpoint: "http://otel-collector:4317"
+    insecure: false
+{{- end}}
+
+{{- if .MetricsEnabled}}
+# Metrics collection
+metrics:
+  enabled: true
+  provider: "prometheus"
+  namespace: "{{.ProjectName | lower}}"
+  
+  # Custom metrics
+  custom:
+    histogram_buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+    
+  # Metric collection intervals
+  collection:
+    interval: "15s"
+    timeout: "10s"
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+# Database configuration
+database:
+  driver: "{{.DatabaseDriver}}"
+  
+  {{- if eq .DatabaseDriver "postgres"}}
+  postgres:
+    host: "${DB_HOST}"
+    port: ${DB_PORT:5432}
+    database: "${DB_NAME}"
+    username: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+    sslmode: "require"  # Require SSL in production
+    
+    # Connection pool settings for production
+    pool:
+      max_open_connections: 25
+      max_idle_connections: 5
+      connection_max_lifetime: "1h"
+      connection_max_idle_time: "15m"
+  {{- else if eq .DatabaseDriver "mysql"}}
+  mysql:
+    host: "${DB_HOST}"
+    port: ${DB_PORT:3306}
+    database: "${DB_NAME}"
+    username: "${DB_USER}"
+    password: "${DB_PASSWORD}"
+    charset: "utf8mb4"
+    tls: "true"  # Use TLS in production
+    
+    # Connection pool settings
+    pool:
+      max_open_connections: 25
+      max_idle_connections: 5
+      connection_max_lifetime: "1h"
+      connection_max_idle_time: "15m"
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  sqlite:
+    path: "/data/{{.ProjectName | lower}}.db"
+    # SQLite-specific production settings
+    pragma:
+      journal_mode: "WAL"
+      synchronous: "NORMAL"
+      cache_size: "-64000"  # 64MB cache
+      temp_store: "MEMORY"
+  {{- end}}
+  
+  # Migration settings
+  migrations:
+    enabled: true
+    path: "migrations"
+    auto_migrate: false  # Disable auto-migration in production
+{{- end}}
+
+{{- if ne .AuthType ""}}
+# Authentication configuration
+auth:
+  type: "{{.AuthType}}"
+  
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: "${JWT_SECRET}"  # Must be set via environment variable
+    issuer: "{{.ProjectName | lower}}"
+    audience: "{{.ProjectName | lower}}-api"
+    expiration: "1h"
+    refresh_expiration: "24h"
+    algorithm: "HS256"
+    
+    # JWT validation settings
+    validation:
+      verify_issuer: true
+      verify_audience: true
+      verify_expiration: true
+      clock_skew: "5m"
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    provider: "${OAUTH2_PROVIDER}"
+    client_id: "${OAUTH2_CLIENT_ID}"
+    client_secret: "${OAUTH2_CLIENT_SECRET}"
+    redirect_url: "${OAUTH2_REDIRECT_URL}"
+    scopes: ["openid", "profile", "email"]
+    
+    # OAuth2 endpoint configuration
+    endpoints:
+      auth_url: "${OAUTH2_AUTH_URL}"
+      token_url: "${OAUTH2_TOKEN_URL}"
+      userinfo_url: "${OAUTH2_USERINFO_URL}"
+  {{- else if eq .AuthType "mtls"}}
+  mtls:
+    ca_cert_file: "/etc/ssl/certs/ca.crt"
+    verify_client_cert: true
+    allowed_subjects:
+      - "CN=service-a,O={{.ProjectName}}"
+      - "CN=service-b,O={{.ProjectName}}"
+  {{- end}}
+{{- end}}
+
+{{- if ne .ServiceDiscovery ""}}
+# Service discovery configuration
+discovery:
+  provider: "{{.ServiceDiscovery}}"
+  
+  {{- if eq .ServiceDiscovery "consul"}}
+  consul:
+    address: "${CONSUL_ADDRESS:consul:8500}"
+    datacenter: "${CONSUL_DATACENTER:dc1}"
+    
+    # Service registration
+    service:
+      name: "{{.ProjectName | lower}}"
+      tags: ["grpc", "{{.ProjectName | lower}}", "production"]
+      check:
+        grpc: "${GRPC_ADDRESS}:{{.GrpcPort}}"
+        interval: "10s"
+        timeout: "3s"
+        deregister_critical_service_after: "30s"
+  {{- else if eq .ServiceDiscovery "etcd"}}
+  etcd:
+    endpoints: ["${ETCD_ENDPOINT:etcd:2379}"]
+    username: "${ETCD_USERNAME}"
+    password: "${ETCD_PASSWORD}"
+    
+    # Service registration
+    service:
+      key_prefix: "/services/{{.ProjectName | lower}}"
+      ttl: 30
+      refresh_interval: 10
+  {{- else if eq .ServiceDiscovery "kubernetes"}}
+  kubernetes:
+    namespace: "${K8S_NAMESPACE:default}"
+    service_name: "{{.ProjectName | lower}}"
+    
+    # Kubernetes-specific settings
+    in_cluster: true
+    config_path: ""  # Use in-cluster config in production
+  {{- end}}
+{{- end}}
+
+# Security settings
+security:
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_second: 100
+    burst: 200
+    
+  # Request size limits
+  max_request_size: "4MB"
+  max_response_size: "4MB"
+  
+  # CORS settings (if HTTP gateway is enabled)
+  cors:
+    allowed_origins: ["https://{{.ProjectName | lower}}.example.com"]
+    allowed_methods: ["GET", "POST", "PUT", "DELETE"]
+    allowed_headers: ["Authorization", "Content-Type"]
+    max_age: "86400"
+
+# Operational settings
+operations:
+  # Graceful shutdown
+  shutdown:
+    timeout: "30s"
+    
+  # Health check configuration
+  health:
+    startup_probe:
+      initial_delay: "10s"
+      period: "5s"
+      timeout: "3s"
+      failure_threshold: 3
+      
+    liveness_probe:
+      period: "10s"
+      timeout: "3s"
+      failure_threshold: 3
+      
+    readiness_probe:
+      period: "5s"
+      timeout: "3s"
+      failure_threshold: 1
+
+# Environment-specific overrides
+environment: "production"

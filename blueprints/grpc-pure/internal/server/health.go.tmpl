@@ -1,0 +1,287 @@
+package server
+
+import (
+	"context"
+	"sync"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+)
+
+// HealthStatus represents the health status of a service
+type HealthStatus int32
+
+const (
+	HealthStatusUnknown     HealthStatus = 0
+	HealthStatusServing     HealthStatus = 1
+	HealthStatusNotServing  HealthStatus = 2
+	HealthStatusServiceUnknown HealthStatus = 3
+)
+
+// HealthChecker defines the interface for health checking components
+type HealthChecker interface {
+	Name() string
+	Check(ctx context.Context) error
+}
+
+// HealthServer implements the gRPC health checking service
+type HealthServer struct {
+	grpc_health_v1.UnimplementedHealthServer
+	
+	mu       sync.RWMutex
+	statuses map[string]HealthStatus
+	checkers map[string]HealthChecker
+	logger   {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+}
+
+// NewHealthServer creates a new health server instance
+func NewHealthServer(logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) *HealthServer {
+	return &HealthServer{
+		statuses: make(map[string]HealthStatus),
+		checkers: make(map[string]HealthChecker),
+		logger:   logger,
+	}
+}
+
+// Check implements the gRPC health check method
+func (h *HealthServer) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	service := req.GetService()
+	
+	{{if eq .Logger "slog"}}h.logger.Debug("Health check requested", "service", service){{else if eq .Logger "zap"}}h.logger.Debug("Health check requested", zap.String("service", service)){{else if eq .Logger "logrus"}}h.logger.WithField("service", service).Debug("Health check requested"){{else if eq .Logger "zerolog"}}h.logger.Debug().Str("service", service).Msg("Health check requested"){{end}}
+	
+	h.mu.RLock()
+	status, exists := h.statuses[service]
+	checker, hasChecker := h.checkers[service]
+	h.mu.RUnlock()
+	
+	// If we have a checker, run it
+	if hasChecker {
+		if err := checker.Check(ctx); err != nil {
+			{{if eq .Logger "slog"}}h.logger.Error("Health check failed", "service", service, "error", err){{else if eq .Logger "zap"}}h.logger.Error("Health check failed", zap.String("service", service), zap.Error(err)){{else if eq .Logger "logrus"}}h.logger.WithFields(logrus.Fields{"service": service, "error": err}).Error("Health check failed"){{else if eq .Logger "zerolog"}}h.logger.Error().Str("service", service).Err(err).Msg("Health check failed"){{end}}
+			
+			h.setStatus(service, HealthStatusNotServing)
+			return &grpc_health_v1.HealthCheckResponse{
+				Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
+			}, nil
+		}
+		h.setStatus(service, HealthStatusServing)
+		status = HealthStatusServing
+	}
+	
+	// If service is empty, check overall health
+	if service == "" {
+		return h.checkOverallHealth(ctx)
+	}
+	
+	// Check specific service
+	if !exists && !hasChecker {
+		{{if eq .Logger "slog"}}h.logger.Warn("Unknown service requested", "service", service){{else if eq .Logger "zap"}}h.logger.Warn("Unknown service requested", zap.String("service", service)){{else if eq .Logger "logrus"}}h.logger.WithField("service", service).Warn("Unknown service requested"){{else if eq .Logger "zerolog"}}h.logger.Warn().Str("service", service).Msg("Unknown service requested"){{end}}
+		return nil, status.Errorf(codes.NotFound, "unknown service: %s", service)
+	}
+	
+	grpcStatus := h.convertToGRPCStatus(status)
+	{{if eq .Logger "slog"}}h.logger.Debug("Health check completed", "service", service, "status", grpcStatus.String()){{else if eq .Logger "zap"}}h.logger.Debug("Health check completed", zap.String("service", service), zap.String("status", grpcStatus.String())){{else if eq .Logger "logrus"}}h.logger.WithFields(logrus.Fields{"service": service, "status": grpcStatus.String()}).Debug("Health check completed"){{else if eq .Logger "zerolog"}}h.logger.Debug().Str("service", service).Str("status", grpcStatus.String()).Msg("Health check completed"){{end}}
+	
+	return &grpc_health_v1.HealthCheckResponse{
+		Status: grpcStatus,
+	}, nil
+}
+
+// Watch implements the gRPC health watch method for streaming health status
+func (h *HealthServer) Watch(req *grpc_health_v1.HealthCheckRequest, stream grpc_health_v1.Health_WatchServer) error {
+	service := req.GetService()
+	
+	{{if eq .Logger "slog"}}h.logger.Debug("Health watch started", "service", service){{else if eq .Logger "zap"}}h.logger.Debug("Health watch started", zap.String("service", service)){{else if eq .Logger "logrus"}}h.logger.WithField("service", service).Debug("Health watch started"){{else if eq .Logger "zerolog"}}h.logger.Debug().Str("service", service).Msg("Health watch started"){{end}}
+	
+	// Send initial status
+	h.mu.RLock()
+	status, exists := h.statuses[service]
+	h.mu.RUnlock()
+	
+	if !exists {
+		status = HealthStatusServiceUnknown
+	}
+	
+	grpcStatus := h.convertToGRPCStatus(status)
+	if err := stream.Send(&grpc_health_v1.HealthCheckResponse{
+		Status: grpcStatus,
+	}); err != nil {
+		{{if eq .Logger "slog"}}h.logger.Error("Failed to send initial health status", "service", service, "error", err){{else if eq .Logger "zap"}}h.logger.Error("Failed to send initial health status", zap.String("service", service), zap.Error(err)){{else if eq .Logger "logrus"}}h.logger.WithFields(logrus.Fields{"service": service, "error": err}).Error("Failed to send initial health status"){{else if eq .Logger "zerolog"}}h.logger.Error().Str("service", service).Err(err).Msg("Failed to send initial health status"){{end}}
+		return err
+	}
+	
+	// Keep connection alive and send updates periodically
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	
+	for {
+		select {
+		case <-stream.Context().Done():
+			{{if eq .Logger "slog"}}h.logger.Debug("Health watch stream closed", "service", service){{else if eq .Logger "zap"}}h.logger.Debug("Health watch stream closed", zap.String("service", service)){{else if eq .Logger "logrus"}}h.logger.WithField("service", service).Debug("Health watch stream closed"){{else if eq .Logger "zerolog"}}h.logger.Debug().Str("service", service).Msg("Health watch stream closed"){{end}}
+			return stream.Context().Err()
+			
+		case <-ticker.C:
+			// Re-check health and send update if status changed
+			resp, err := h.Check(stream.Context(), req)
+			if err != nil {
+				return err
+			}
+			
+			if err := stream.Send(resp); err != nil {
+				{{if eq .Logger "slog"}}h.logger.Error("Failed to send health status update", "service", service, "error", err){{else if eq .Logger "zap"}}h.logger.Error("Failed to send health status update", zap.String("service", service), zap.Error(err)){{else if eq .Logger "logrus"}}h.logger.WithFields(logrus.Fields{"service": service, "error": err}).Error("Failed to send health status update"){{else if eq .Logger "zerolog"}}h.logger.Error().Str("service", service).Err(err).Msg("Failed to send health status update"){{end}}
+				return err
+			}
+		}
+	}
+}
+
+// SetStatus sets the health status for a specific service
+func (h *HealthServer) SetStatus(service string, status HealthStatus) {
+	h.setStatus(service, status)
+	{{if eq .Logger "slog"}}h.logger.Info("Health status updated", "service", service, "status", status){{else if eq .Logger "zap"}}h.logger.Info("Health status updated", zap.String("service", service), zap.Int32("status", int32(status))){{else if eq .Logger "logrus"}}h.logger.WithFields(logrus.Fields{"service": service, "status": status}).Info("Health status updated"){{else if eq .Logger "zerolog"}}h.logger.Info().Str("service", service).Int32("status", int32(status)).Msg("Health status updated"){{end}}
+}
+
+// RegisterChecker registers a health checker for a service
+func (h *HealthServer) RegisterChecker(checker HealthChecker) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	
+	h.checkers[checker.Name()] = checker
+	{{if eq .Logger "slog"}}h.logger.Info("Health checker registered", "service", checker.Name()){{else if eq .Logger "zap"}}h.logger.Info("Health checker registered", zap.String("service", checker.Name())){{else if eq .Logger "logrus"}}h.logger.WithField("service", checker.Name()).Info("Health checker registered"){{else if eq .Logger "zerolog"}}h.logger.Info().Str("service", checker.Name()).Msg("Health checker registered"){{end}}
+}
+
+// SetServing marks a service as serving
+func (h *HealthServer) SetServing(service string) {
+	h.SetStatus(service, HealthStatusServing)
+}
+
+// SetNotServing marks a service as not serving
+func (h *HealthServer) SetNotServing(service string) {
+	h.SetStatus(service, HealthStatusNotServing)
+}
+
+// Shutdown gracefully shuts down all services
+func (h *HealthServer) Shutdown() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	
+	for service := range h.statuses {
+		h.statuses[service] = HealthStatusNotServing
+	}
+	
+	{{if eq .Logger "slog"}}h.logger.Info("Health server shutdown completed"){{else if eq .Logger "zap"}}h.logger.Info("Health server shutdown completed"){{else if eq .Logger "logrus"}}h.logger.Info("Health server shutdown completed"){{else if eq .Logger "zerolog"}}h.logger.Info().Msg("Health server shutdown completed"){{end}}
+}
+
+// setStatus is the internal method to set status with proper locking
+func (h *HealthServer) setStatus(service string, status HealthStatus) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.statuses[service] = status
+}
+
+// checkOverallHealth checks the health of all registered services
+func (h *HealthServer) checkOverallHealth(ctx context.Context) (*grpc_health_v1.HealthCheckResponse, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	
+	// If no services registered, we're serving
+	if len(h.statuses) == 0 && len(h.checkers) == 0 {
+		return &grpc_health_v1.HealthCheckResponse{
+			Status: grpc_health_v1.HealthCheckResponse_SERVING,
+		}, nil
+	}
+	
+	// Run all checkers
+	for name, checker := range h.checkers {
+		if err := checker.Check(ctx); err != nil {
+			{{if eq .Logger "slog"}}h.logger.Error("Overall health check failed", "service", name, "error", err){{else if eq .Logger "zap"}}h.logger.Error("Overall health check failed", zap.String("service", name), zap.Error(err)){{else if eq .Logger "logrus"}}h.logger.WithFields(logrus.Fields{"service": name, "error": err}).Error("Overall health check failed"){{else if eq .Logger "zerolog"}}h.logger.Error().Str("service", name).Err(err).Msg("Overall health check failed"){{end}}
+			return &grpc_health_v1.HealthCheckResponse{
+				Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
+			}, nil
+		}
+	}
+	
+	// Check all status values
+	for _, status := range h.statuses {
+		if status != HealthStatusServing {
+			return &grpc_health_v1.HealthCheckResponse{
+				Status: grpc_health_v1.HealthCheckResponse_NOT_SERVING,
+			}, nil
+		}
+	}
+	
+	return &grpc_health_v1.HealthCheckResponse{
+		Status: grpc_health_v1.HealthCheckResponse_SERVING,
+	}, nil
+}
+
+// convertToGRPCStatus converts internal status to gRPC status
+func (h *HealthServer) convertToGRPCStatus(status HealthStatus) grpc_health_v1.HealthCheckResponse_ServingStatus {
+	switch status {
+	case HealthStatusServing:
+		return grpc_health_v1.HealthCheckResponse_SERVING
+	case HealthStatusNotServing:
+		return grpc_health_v1.HealthCheckResponse_NOT_SERVING
+	case HealthStatusServiceUnknown:
+		return grpc_health_v1.HealthCheckResponse_SERVICE_UNKNOWN
+	default:
+		return grpc_health_v1.HealthCheckResponse_UNKNOWN
+	}
+}
+
+// Common health checkers
+
+// DatabaseHealthChecker implements health checking for database connections
+type DatabaseHealthChecker struct {
+	name string
+	ping func(ctx context.Context) error
+}
+
+// NewDatabaseHealthChecker creates a new database health checker
+func NewDatabaseHealthChecker(name string, ping func(ctx context.Context) error) *DatabaseHealthChecker {
+	return &DatabaseHealthChecker{
+		name: name,
+		ping: ping,
+	}
+}
+
+// Name returns the name of the health checker
+func (d *DatabaseHealthChecker) Name() string {
+	return d.name
+}
+
+// Check performs the database health check
+func (d *DatabaseHealthChecker) Check(ctx context.Context) error {
+	return d.ping(ctx)
+}
+
+// ExternalServiceHealthChecker implements health checking for external services
+type ExternalServiceHealthChecker struct {
+	name string
+	check func(ctx context.Context) error
+}
+
+// NewExternalServiceHealthChecker creates a new external service health checker
+func NewExternalServiceHealthChecker(name string, check func(ctx context.Context) error) *ExternalServiceHealthChecker {
+	return &ExternalServiceHealthChecker{
+		name: name,
+		check: check,
+	}
+}
+
+// Name returns the name of the health checker
+func (e *ExternalServiceHealthChecker) Name() string {
+	return e.name
+}
+
+// Check performs the external service health check
+func (e *ExternalServiceHealthChecker) Check(ctx context.Context) error {
+	return e.check(ctx)
+}

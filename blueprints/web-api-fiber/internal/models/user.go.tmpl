@@ -1,0 +1,36 @@
+package models
+
+import (
+	"golang.org/x/crypto/bcrypt"
+)
+
+// User represents a user in the system
+type User struct {
+	BaseModel
+	Email    string `json:"email" {{if eq .DatabaseORM "gorm"}}gorm:"uniqueIndex;not null"{{end}} validate:"required,email"`
+	Password string `json:"-" {{if eq .DatabaseORM "gorm"}}gorm:"not null"{{end}} validate:"required,min=8"`
+	Name     string `json:"name" {{if eq .DatabaseORM "gorm"}}gorm:"not null"{{end}} validate:"required,min=2"`
+}
+
+// HashPassword hashes the user's password
+func (u *User) HashPassword() error {
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(u.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	u.Password = string(hashedPassword)
+	return nil
+}
+
+// CheckPassword verifies the password
+func (u *User) CheckPassword(password string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(u.Password), []byte(password))
+	return err == nil
+}
+
+// TableName returns the table name for GORM
+{{- if eq .DatabaseORM "gorm"}}
+func (User) TableName() string {
+	return "users"
+}
+{{- end}}

@@ -1,0 +1,195 @@
+package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"time"
+
+	"golang.org/x/oauth2"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"github.com/spf13/viper"
+)
+
+// OAuth2Authenticator implements OAuth2 authentication for gRPC services
+type OAuth2Authenticator struct {
+	config      *oauth2.Config
+	provider    string
+	userInfoURL string
+	httpClient  *http.Client
+}
+
+// OAuth2Config represents OAuth2 configuration
+type OAuth2Config struct {
+	Provider     string   `yaml:"provider"`
+	ClientID     string   `yaml:"client_id"`
+	ClientSecret string   `yaml:"client_secret"`
+	RedirectURL  string   `yaml:"redirect_url"`
+	Scopes       []string `yaml:"scopes"`
+	Endpoints    struct {
+		AuthURL     string `yaml:"auth_url"`
+		TokenURL    string `yaml:"token_url"`
+		UserInfoURL string `yaml:"userinfo_url"`
+	} `yaml:"endpoints"`
+}
+
+// OAuth2UserInfo represents user information from OAuth2 provider
+type OAuth2UserInfo struct {
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	Name     string `json:"name"`
+	Username string `json:"username"`
+	Picture  string `json:"picture"`
+}
+
+// NewOAuth2Authenticator creates a new OAuth2 authenticator
+func NewOAuth2Authenticator() (*OAuth2Authenticator, error) {
+	config := &OAuth2Config{}
+	if err := viper.UnmarshalKey("auth.oauth2", config); err != nil {
+		return nil, fmt.Errorf("failed to parse OAuth2 config: %w", err)
+	}
+
+	oauth2Config := &oauth2.Config{
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		RedirectURL:  config.RedirectURL,
+		Scopes:       config.Scopes,
+		Endpoint: oauth2.Endpoint{
+			AuthURL:  config.Endpoints.AuthURL,
+			TokenURL: config.Endpoints.TokenURL,
+		},
+	}
+
+	return &OAuth2Authenticator{
+		config:      oauth2Config,
+		provider:    config.Provider,
+		userInfoURL: config.Endpoints.UserInfoURL,
+		httpClient:  &http.Client{Timeout: 30 * time.Second},
+	}, nil
+}
+
+// Authenticate validates an OAuth2 access token and returns user information
+func (a *OAuth2Authenticator) Authenticate(ctx context.Context, token string) (*User, error) {
+	if token == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing access token")
+	}
+
+	// Create OAuth2 token
+	oauth2Token := &oauth2.Token{
+		AccessToken: token,
+		TokenType:   "Bearer",
+	}
+
+	// Validate token by fetching user info
+	userInfo, err := a.fetchUserInfo(ctx, oauth2Token)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid access token: %v", err)
+	}
+
+	// Convert to internal User representation
+	user := &User{
+		ID:       userInfo.ID,
+		Email:    userInfo.Email,
+		Username: userInfo.Username,
+		Name:     userInfo.Name,
+		Provider: a.provider,
+		Metadata: map[string]interface{}{
+			"picture":  userInfo.Picture,
+			"provider": a.provider,
+		},
+	}
+
+	return user, nil
+}
+
+// GenerateAuthURL generates an OAuth2 authorization URL with state parameter
+func (a *OAuth2Authenticator) GenerateAuthURL(state string) string {
+	if state == "" {
+		state = a.generateState()
+	}
+	return a.config.AuthCodeURL(state, oauth2.AccessTypeOffline)
+}
+
+// ExchangeCodeForToken exchanges an authorization code for an access token
+func (a *OAuth2Authenticator) ExchangeCodeForToken(ctx context.Context, code string) (*oauth2.Token, error) {
+	token, err := a.config.Exchange(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
+	}
+	return token, nil
+}
+
+// RefreshToken refreshes an OAuth2 access token
+func (a *OAuth2Authenticator) RefreshToken(ctx context.Context, refreshToken string) (*oauth2.Token, error) {
+	token := &oauth2.Token{
+		RefreshToken: refreshToken,
+	}
+
+	tokenSource := a.config.TokenSource(ctx, token)
+	newToken, err := tokenSource.Token()
+	if err != nil {
+		return nil, fmt.Errorf("failed to refresh token: %w", err)
+	}
+
+	return newToken, nil
+}
+
+// ValidateState validates the OAuth2 state parameter
+func (a *OAuth2Authenticator) ValidateState(expected, actual string) error {
+	if expected != actual {
+		return status.Error(codes.InvalidArgument, "invalid state parameter")
+	}
+	return nil
+}
+
+// fetchUserInfo fetches user information from the OAuth2 provider
+func (a *OAuth2Authenticator) fetchUserInfo(ctx context.Context, token *oauth2.Token) (*OAuth2UserInfo, error) {
+	client := a.config.Client(ctx, token)
+	
+	resp, err := client.Get(a.userInfoURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch user info: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("user info request failed with status: %d", resp.StatusCode)
+	}
+
+	var userInfo OAuth2UserInfo
+	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
+		return nil, fmt.Errorf("failed to decode user info: %w", err)
+	}
+
+	return &userInfo, nil
+}
+
+// generateState generates a random state parameter for OAuth2 flow
+func (a *OAuth2Authenticator) generateState() string {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based state
+		return fmt.Sprintf("state_%d", time.Now().UnixNano())
+	}
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+// GetProviderName returns the OAuth2 provider name
+func (a *OAuth2Authenticator) GetProviderName() string {
+	return a.provider
+}
+
+// IsTokenExpired checks if an OAuth2 token is expired
+func (a *OAuth2Authenticator) IsTokenExpired(token *oauth2.Token) bool {
+	if token.Expiry.IsZero() {
+		return false // No expiry time set
+	}
+	return time.Now().After(token.Expiry.Add(-30 * time.Second)) // 30 second buffer
+}
+
+// Compile-time check to ensure OAuth2Authenticator implements Authenticator
+var _ Authenticator = (*OAuth2Authenticator)(nil)

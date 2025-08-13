@@ -1,0 +1,160 @@
+package interceptors
+
+import (
+	"context"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// LoggingInterceptor provides gRPC request/response logging
+type LoggingInterceptor struct {
+	logger logger.Logger
+}
+
+// NewLoggingInterceptor creates a new logging interceptor
+func NewLoggingInterceptor(log logger.Logger) *LoggingInterceptor {
+	return &LoggingInterceptor{
+		logger: log,
+	}
+}
+
+// UnaryServerInterceptor returns a unary server interceptor for logging
+func (l *LoggingInterceptor) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		start := time.Now()
+
+		// Extract request metadata
+		requestLogger := l.logger.With(
+			"method", info.FullMethod,
+			"start_time", start,
+		)
+
+		requestLogger.Info("gRPC request started")
+
+		// Call the handler
+		resp, err := handler(ctx, req)
+
+		// Calculate duration
+		duration := time.Since(start)
+
+		// Log the response
+		logLevel := "info"
+		grpcCode := codes.OK
+		if err != nil {
+			grpcCode = status.Code(err)
+			if grpcCode != codes.OK {
+				logLevel = "error"
+			}
+		}
+
+		responseLogger := requestLogger.With(
+			"duration_ms", duration.Milliseconds(),
+			"grpc_code", grpcCode.String(),
+			"grpc_code_int", int(grpcCode),
+		)
+
+		if err != nil {
+			responseLogger = responseLogger.With("error", err.Error())
+		}
+
+		switch logLevel {
+		case "error":
+			responseLogger.Error("gRPC request completed with error")
+		default:
+			responseLogger.Info("gRPC request completed")
+		}
+
+		return resp, err
+	}
+}
+
+// StreamServerInterceptor returns a stream server interceptor for logging
+func (l *LoggingInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor {
+	return func(
+		srv interface{},
+		stream grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		start := time.Now()
+
+		// Extract request metadata
+		requestLogger := l.logger.With(
+			"method", info.FullMethod,
+			"start_time", start,
+			"is_client_stream", info.IsClientStream,
+			"is_server_stream", info.IsServerStream,
+		)
+
+		requestLogger.Info("gRPC stream started")
+
+		// Create a wrapped stream for logging
+		wrappedStream := &loggingServerStream{
+			ServerStream: stream,
+			logger:       requestLogger,
+		}
+
+		// Call the handler
+		err := handler(srv, wrappedStream)
+
+		// Calculate duration
+		duration := time.Since(start)
+
+		// Log the completion
+		logLevel := "info"
+		grpcCode := codes.OK
+		if err != nil {
+			grpcCode = status.Code(err)
+			if grpcCode != codes.OK {
+				logLevel = "error"
+			}
+		}
+
+		responseLogger := requestLogger.With(
+			"duration_ms", duration.Milliseconds(),
+			"grpc_code", grpcCode.String(),
+			"grpc_code_int", int(grpcCode),
+		)
+
+		if err != nil {
+			responseLogger = responseLogger.With("error", err.Error())
+		}
+
+		switch logLevel {
+		case "error":
+			responseLogger.Error("gRPC stream completed with error")
+		default:
+			responseLogger.Info("gRPC stream completed")
+		}
+
+		return err
+	}
+}
+
+// loggingServerStream wraps a gRPC server stream for logging
+type loggingServerStream struct {
+	grpc.ServerStream
+	logger logger.Logger
+}
+
+// SendMsg logs outgoing messages
+func (s *loggingServerStream) SendMsg(m interface{}) error {
+	s.logger.Debug("gRPC stream sending message")
+	return s.ServerStream.SendMsg(m)
+}
+
+// RecvMsg logs incoming messages
+func (s *loggingServerStream) RecvMsg(m interface{}) error {
+	s.logger.Debug("gRPC stream receiving message")
+	return s.ServerStream.RecvMsg(m)
+}

@@ -1,0 +1,113 @@
+package database
+
+import (
+	"embed"
+	"fmt"
+
+{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	"{{.ModulePath}}/internal/models"
+{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	"io/fs"
+	"path/filepath"
+	"sort"
+	"strings"
+{{- end}}
+)
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+{{- if eq .DatabaseORM "gorm"}}
+// Migrate runs database migrations using GORM AutoMigrate
+func Migrate(db DB) error {
+	gormDB, ok := db.(*gormDB)
+	if !ok {
+		return fmt.Errorf("invalid database type for GORM migrations")
+	}
+
+	// Auto-migrate all models
+	err := gormDB.db.AutoMigrate(
+		&models.User{},
+		// Add more models here as needed
+	)
+	if err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	return nil
+}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+// Migrate runs database migrations using SQL files
+func Migrate(db DB) error {
+	sqlxDB, ok := db.(*sqlx.DB)
+	if !ok {
+		return fmt.Errorf("invalid database type for SQL migrations")
+	}
+
+	// Get all migration files
+	files, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		return fmt.Errorf("failed to read migration files: %w", err)
+	}
+
+	// Filter and sort .up.sql files
+	var upFiles []string
+	for _, file := range files {
+		if strings.HasSuffix(file.Name(), ".up.sql") {
+			upFiles = append(upFiles, file.Name())
+		}
+	}
+	sort.Strings(upFiles)
+
+	// Create migrations table if it doesn't exist
+	createMigrationsTable := `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+			version VARCHAR(255) PRIMARY KEY,
+			applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+		)
+	`
+	if _, err := sqlxDB.Exec(createMigrationsTable); err != nil {
+		return fmt.Errorf("failed to create migrations table: %w", err)
+	}
+
+	// Run each migration
+	for _, filename := range upFiles {
+		// Extract version from filename (e.g., "001_create_users.up.sql" -> "001")
+		version := strings.Split(filename, "_")[0]
+
+		// Check if migration already applied
+		var count int
+		err := sqlxDB.Get(&count, "SELECT COUNT(*) FROM schema_migrations WHERE version = $1", version)
+		if err != nil {
+			return fmt.Errorf("failed to check migration status: %w", err)
+		}
+
+		if count > 0 {
+			continue // Migration already applied
+		}
+
+		// Read migration file
+		migrationSQL, err := migrationFiles.ReadFile(filepath.Join("migrations", filename))
+		if err != nil {
+			return fmt.Errorf("failed to read migration file %s: %w", filename, err)
+		}
+
+		// Execute migration
+		if _, err := sqlxDB.Exec(string(migrationSQL)); err != nil {
+			return fmt.Errorf("failed to execute migration %s: %w", filename, err)
+		}
+
+		// Record migration as applied
+		if _, err := sqlxDB.Exec("INSERT INTO schema_migrations (version) VALUES ($1)", version); err != nil {
+			return fmt.Errorf("failed to record migration %s: %w", filename, err)
+		}
+
+		fmt.Printf("Applied migration: %s\n", filename)
+	}
+
+	return nil
+}
+{{- end}}

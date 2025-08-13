@@ -1,0 +1,64 @@
+environment: test
+
+server:
+  port: 8081
+  host: ""
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 30s
+  tls:
+    enabled: false
+
+{{- if ne .DatabaseDriver ""}}
+database:
+{{- if eq .DatabaseDriver "postgres"}}
+  host: localhost
+  port: 5432
+  name: {{.ProjectName}}_test
+  user: {{.ProjectName}}
+  password: password
+  ssl_mode: disable
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: localhost
+  port: 3306
+  name: {{.ProjectName}}_test
+  user: {{.ProjectName}}
+  password: password
+  charset: utf8mb4
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: ":memory:"
+{{- end}}
+  max_idle_conns: 5
+  max_open_conns: 25
+  conn_max_lifetime: 30m
+  log_level: error
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+jwt:
+  secret: "test-secret-key-for-testing-only"
+  expiration: 1h
+  issuer: {{.ProjectName}}-test
+  algorithm: HS256
+{{- end}}
+
+logging:
+  level: error
+  format: json
+  structured: true
+  output: stdout
+
+{{- if .EnableMetrics}}
+metrics:
+  enabled: false
+  port: 9091
+  path: /metrics
+{{- end}}
+
+{{- if .EnableTracing}}
+tracing:
+  enabled: false
+  service_name: {{.ProjectName}}-test
+  endpoint: ""
+  sample_rate: 0.0
+{{- end}}

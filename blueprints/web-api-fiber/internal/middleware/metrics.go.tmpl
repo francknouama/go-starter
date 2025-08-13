@@ -1,0 +1,80 @@
+package middleware
+
+import (
+	"strconv"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/adaptor/v2"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	httpRequestsTotal = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total number of HTTP requests",
+		},
+		[]string{"method", "path", "status"},
+	)
+
+	httpRequestDuration = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_duration_seconds",
+			Help:    "HTTP request duration in seconds",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "path", "status"},
+	)
+
+	httpRequestSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_size_bytes",
+			Help:    "HTTP request size in bytes",
+			Buckets: prometheus.ExponentialBuckets(100, 10, 7),
+		},
+		[]string{"method", "path"},
+	)
+
+	httpResponseSize = promauto.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_response_size_bytes",
+			Help:    "HTTP response size in bytes",
+			Buckets: prometheus.ExponentialBuckets(100, 10, 7),
+		},
+		[]string{"method", "path", "status"},
+	)
+)
+
+// Metrics returns a Prometheus metrics middleware
+func Metrics() fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		start := time.Now()
+		path := c.Path()
+		method := c.Method()
+
+		// Record request size
+		httpRequestSize.WithLabelValues(method, path).Observe(float64(len(c.Body())))
+
+		// Process request
+		err := c.Next()
+
+		// Calculate duration
+		duration := time.Since(start).Seconds()
+		status := strconv.Itoa(c.Response().StatusCode())
+
+		// Record metrics
+		httpRequestsTotal.WithLabelValues(method, path, status).Inc()
+		httpRequestDuration.WithLabelValues(method, path, status).Observe(duration)
+		httpResponseSize.WithLabelValues(method, path, status).Observe(float64(len(c.Response().Body())))
+
+		return err
+	}
+}
+
+// PrometheusHandler returns a Fiber handler for Prometheus metrics endpoint
+func PrometheusHandler() fiber.Handler {
+	return adaptor.HTTPHandler(promhttp.Handler())
+}

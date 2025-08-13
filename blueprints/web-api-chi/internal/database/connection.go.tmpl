@@ -1,0 +1,189 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+{{- if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+{{- end}}
+{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+{{- end}}
+{{- else}}
+{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+{{- end}}
+{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+)
+
+{{- if eq .DatabaseORM "gorm"}}
+var db *gorm.DB
+{{- else if eq .DatabaseORM "sqlx"}}
+var db *sqlx.DB
+{{- else}}
+var db *sql.DB
+{{- end}}
+
+// Connect establishes a connection to the database
+{{- if eq .DatabaseORM "gorm"}}
+func Connect(cfg config.Database) (*gorm.DB, error) {
+{{- else if eq .DatabaseORM "sqlx"}}
+func Connect(cfg config.Database) (*sqlx.DB, error) {
+{{- else}}
+func Connect(cfg config.Database) (*sql.DB, error) {
+{{- end}}
+	var err error
+	dsn := buildDSN(cfg)
+
+{{- if eq .DatabaseORM "gorm"}}
+	// GORM connection
+{{- if eq .DatabaseDriver "postgres"}}
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{})
+{{- else if eq .DatabaseDriver "mysql"}}
+	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{})
+{{- else if eq .DatabaseDriver "sqlite"}}
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{})
+{{- end}}
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying sql.DB to configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+	// SQLX connection
+	db, err = sqlx.Connect("{{.DatabaseDriver}}", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+{{- else}}
+	// Standard database/sql connection
+	db, err = sql.Open("{{.DatabaseDriver}}", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+{{- end}}
+
+	return db, nil
+}
+
+// Close closes the database connection
+{{- if eq .DatabaseORM "gorm"}}
+func Close(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close()
+}
+{{- else if eq .DatabaseORM "sqlx"}}
+func Close(db *sqlx.DB) error {
+	return db.Close()
+}
+{{- else}}
+func Close(db *sql.DB) error {
+	return db.Close()
+}
+{{- end}}
+
+// GetDB returns the database instance
+{{- if eq .DatabaseORM "gorm"}}
+func GetDB() *gorm.DB {
+{{- else if eq .DatabaseORM "sqlx"}}
+func GetDB() *sqlx.DB {
+{{- else}}
+func GetDB() *sql.DB {
+{{- end}}
+	return db
+}
+
+// buildDSN constructs the database connection string
+func buildDSN(cfg config.Database) string {
+{{- if eq .DatabaseDriver "postgres"}}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		cfg.Host, cfg.Port, cfg.Username, cfg.Password, cfg.Database, cfg.SSLMode)
+{{- else if eq .DatabaseDriver "mysql"}}
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		cfg.Username, cfg.Password, cfg.Host, cfg.Port, cfg.Database)
+{{- else if eq .DatabaseDriver "sqlite"}}
+	return cfg.Database
+{{- else}}
+	return ""
+{{- end}}
+}
+
+// Health checks the database connection health
+{{- if eq .DatabaseORM "gorm"}}
+func Health(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping()
+}
+{{- else if eq .DatabaseORM "sqlx"}}
+func Health(db *sqlx.DB) error {
+	return db.Ping()
+}
+{{- else}}
+func Health(db *sql.DB) error {
+	return db.Ping()
+}
+{{- end}}
+{{- end}}

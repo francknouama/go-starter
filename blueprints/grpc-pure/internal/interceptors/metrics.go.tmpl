@@ -1,0 +1,249 @@
+package interceptors
+
+import (
+	"context"
+	"strconv"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+// MetricsInterceptor provides Prometheus metrics for gRPC requests
+type MetricsInterceptor struct {
+	requestsTotal     *prometheus.CounterVec
+	requestDuration   *prometheus.HistogramVec
+	requestsInFlight  prometheus.Gauge
+	streamMessagesTotal *prometheus.CounterVec
+	streamDuration    *prometheus.HistogramVec
+}
+
+// NewMetricsInterceptor creates a new metrics interceptor
+func NewMetricsInterceptor() *MetricsInterceptor {
+	interceptor := &MetricsInterceptor{
+		requestsTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "grpc_server_requests_total",
+				Help: "Total number of gRPC requests processed",
+			},
+			[]string{"method", "code"},
+		),
+		requestDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "grpc_server_request_duration_seconds",
+				Help:    "Histogram of gRPC request durations",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"method", "code"},
+		),
+		requestsInFlight: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "grpc_server_requests_in_flight",
+				Help: "Number of gRPC requests currently being processed",
+			},
+		),
+		streamMessagesTotal: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "grpc_server_stream_messages_total",
+				Help: "Total number of stream messages processed",
+			},
+			[]string{"method", "direction"}, // direction: sent, received
+		),
+		streamDuration: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "grpc_server_stream_duration_seconds",
+				Help:    "Histogram of gRPC stream durations",
+				Buckets: prometheus.DefBuckets,
+			},
+			[]string{"method", "code"},
+		),
+	}
+
+	// Register metrics with Prometheus
+	prometheus.MustRegister(
+		interceptor.requestsTotal,
+		interceptor.requestDuration,
+		interceptor.requestsInFlight,
+		interceptor.streamMessagesTotal,
+		interceptor.streamDuration,
+	)
+
+	return interceptor
+}
+
+// UnaryServerInterceptor returns a unary server interceptor for metrics collection
+func (m *MetricsInterceptor) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		start := time.Now()
+		
+		// Increment in-flight requests
+		m.requestsInFlight.Inc()
+		defer m.requestsInFlight.Dec()
+
+		// Call the handler
+		resp, err := handler(ctx, req)
+
+		// Calculate duration
+		duration := time.Since(start)
+
+		// Get gRPC status code
+		grpcCode := codes.OK
+		if err != nil {
+			grpcCode = status.Code(err)
+		}
+
+		// Update metrics
+		labels := prometheus.Labels{
+			"method": info.FullMethod,
+			"code":   grpcCode.String(),
+		}
+
+		m.requestsTotal.With(labels).Inc()
+		m.requestDuration.With(labels).Observe(duration.Seconds())
+
+		return resp, err
+	}
+}
+
+// StreamServerInterceptor returns a stream server interceptor for metrics collection
+func (m *MetricsInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor {
+	return func(
+		srv interface{},
+		stream grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		start := time.Now()
+
+		// Increment in-flight requests
+		m.requestsInFlight.Inc()
+		defer m.requestsInFlight.Dec()
+
+		// Create a wrapped stream for message counting
+		wrappedStream := &metricsServerStream{
+			ServerStream: stream,
+			metrics:      m,
+			method:       info.FullMethod,
+		}
+
+		// Call the handler
+		err := handler(srv, wrappedStream)
+
+		// Calculate duration
+		duration := time.Since(start)
+
+		// Get gRPC status code
+		grpcCode := codes.OK
+		if err != nil {
+			grpcCode = status.Code(err)
+		}
+
+		// Update stream duration metric
+		labels := prometheus.Labels{
+			"method": info.FullMethod,
+			"code":   grpcCode.String(),
+		}
+		m.streamDuration.With(labels).Observe(duration.Seconds())
+
+		return err
+	}
+}
+
+// metricsServerStream wraps a gRPC server stream for metrics collection
+type metricsServerStream struct {
+	grpc.ServerStream
+	metrics *MetricsInterceptor
+	method  string
+}
+
+// SendMsg counts outgoing messages
+func (s *metricsServerStream) SendMsg(m interface{}) error {
+	err := s.ServerStream.SendMsg(m)
+	if err == nil {
+		s.metrics.streamMessagesTotal.With(prometheus.Labels{
+			"method":    s.method,
+			"direction": "sent",
+		}).Inc()
+	}
+	return err
+}
+
+// RecvMsg counts incoming messages
+func (s *metricsServerStream) RecvMsg(m interface{}) error {
+	err := s.ServerStream.RecvMsg(m)
+	if err == nil {
+		s.metrics.streamMessagesTotal.With(prometheus.Labels{
+			"method":    s.method,
+			"direction": "received",
+		}).Inc()
+	}
+	return err
+}
+
+// GetMetrics returns current metric values (useful for health checks)
+func (m *MetricsInterceptor) GetMetrics() map[string]interface{} {
+	// Get current in-flight requests
+	dto := &prometheus.metric.Metric{}
+	m.requestsInFlight.Write(dto)
+	inFlight := dto.GetGauge().GetValue()
+
+	return map[string]interface{}{
+		"requests_in_flight": inFlight,
+	}
+}
+
+// RegisterCustomMetrics allows registration of additional custom metrics
+func (m *MetricsInterceptor) RegisterCustomMetrics(collectors ...prometheus.Collector) {
+	prometheus.MustRegister(collectors...)
+}
+
+// CreateCustomCounter creates a custom counter metric
+func (m *MetricsInterceptor) CreateCustomCounter(name, help string, labels []string) *prometheus.CounterVec {
+	counter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: name,
+			Help: help,
+		},
+		labels,
+	)
+	prometheus.MustRegister(counter)
+	return counter
+}
+
+// CreateCustomHistogram creates a custom histogram metric
+func (m *MetricsInterceptor) CreateCustomHistogram(name, help string, labels []string, buckets []float64) *prometheus.HistogramVec {
+	if buckets == nil {
+		buckets = prometheus.DefBuckets
+	}
+	
+	histogram := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    name,
+			Help:    help,
+			Buckets: buckets,
+		},
+		labels,
+	)
+	prometheus.MustRegister(histogram)
+	return histogram
+}
+
+// CreateCustomGauge creates a custom gauge metric
+func (m *MetricsInterceptor) CreateCustomGauge(name, help string, labels []string) *prometheus.GaugeVec {
+	gauge := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: name,
+			Help: help,
+		},
+		labels,
+	)
+	prometheus.MustRegister(gauge)
+	return gauge
+}

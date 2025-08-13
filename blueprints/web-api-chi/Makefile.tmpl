@@ -1,0 +1,103 @@
+# {{.ProjectName}} Makefile
+
+.PHONY: help build run test clean deps dev docker
+
+# Default target
+help: ## Show this help message
+	@echo "Available commands:"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+build: ## Build the application
+	@echo "Building {{.ProjectName}}..."
+	@go build -o bin/{{.ProjectName}} cmd/server/main.go
+
+run: ## Run the application
+	@echo "Running {{.ProjectName}}..."
+	@go run cmd/server/main.go
+
+dev: ## Run the application in development mode with hot reload
+	@echo "Running {{.ProjectName}} in development mode..."
+	@air || go run cmd/server/main.go
+
+test: ## Run all tests
+	@echo "Running tests..."
+	@go test -v ./...
+
+test-coverage: ## Run tests with coverage
+	@echo "Running tests with coverage..."
+	@go test -v -race -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+
+test-integration: ## Run integration tests
+	@echo "Running integration tests..."
+	@go test -v -tags=integration ./tests/integration/...
+
+deps: ## Download dependencies
+	@echo "Downloading dependencies..."
+	@go mod download
+	@go mod tidy
+
+clean: ## Clean build artifacts
+	@echo "Cleaning build artifacts..."
+	@rm -rf bin/
+	@rm -f coverage.out coverage.html
+
+lint: ## Run linters
+	@echo "Running linters..."
+	@golangci-lint run
+
+fmt: ## Format code
+	@echo "Formatting code..."
+	@go fmt ./...
+
+vet: ## Run go vet
+	@echo "Running go vet..."
+	@go vet ./...
+
+{{- if ne .DatabaseDriver ""}}
+migrate-up: ## Run database migrations up
+	@echo "Running database migrations up..."
+	@go run cmd/server/main.go migrate up
+
+migrate-down: ## Run database migrations down
+	@echo "Running database migrations down..."
+	@go run cmd/server/main.go migrate down
+
+migrate-status: ## Check migration status
+	@echo "Checking migration status..."
+	@go run cmd/server/main.go migrate status
+{{- end}}
+
+docker-build: ## Build Docker image
+	@echo "Building Docker image..."
+	@docker build -t {{.ProjectName}}:latest .
+
+docker-run: ## Run Docker container
+	@echo "Running Docker container..."
+	@docker run -p 8080:8080 {{.ProjectName}}:latest
+
+docker-compose-up: ## Start services with docker-compose
+	@echo "Starting services with docker-compose..."
+	@docker-compose up -d
+
+docker-compose-down: ## Stop services with docker-compose
+	@echo "Stopping services with docker-compose..."
+	@docker-compose down
+
+install-tools: ## Install development tools
+	@echo "Installing development tools..."
+	@go install github.com/cosmtrek/air@latest
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Development environment setup
+setup: deps install-tools ## Setup development environment
+	@echo "Development environment setup complete!"
+
+# CI/CD targets
+ci: deps test lint vet ## Run CI pipeline
+	@echo "CI pipeline completed successfully!"
+
+# Production build
+build-prod: ## Build for production
+	@echo "Building for production..."
+	@CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o bin/{{.ProjectName}} cmd/server/main.go

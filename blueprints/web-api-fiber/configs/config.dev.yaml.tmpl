@@ -1,0 +1,89 @@
+environment: development
+
+app:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: 10
+  write_timeout: 10
+  idle_timeout: 120
+  max_request_size: 10485760  # 10MB
+  concurrency: 262144
+  trusted_proxies: []
+  
+  rate_limit:
+    enabled: true
+    max: 1000  # Higher limit for development
+    expiration: 60s
+    limiter_type: "sliding"
+    skip_successful: false
+    skip_failed: false
+  
+  cache:
+    enabled: true
+    expiration: 1h
+    max_size: 1000
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+{{- if eq .DatabaseDriver "postgres"}}
+  host: "localhost"
+  port: 5432
+  name: "{{.ProjectName}}_dev"
+  user: "postgres"
+  password: "postgres"
+  ssl_mode: "disable"
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: "localhost"
+  port: 3306
+  name: "{{.ProjectName}}_dev"
+  user: "root"
+  password: "root"
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: "{{.ProjectName}}_dev.db"
+{{- end}}
+  max_connections: 25
+  max_idle_conns: 5
+  conn_max_lifetime: 5
+  auto_migrate: true
+{{- end}}
+
+log:
+  level: "debug"
+  format: "text"  # Use text format for development
+
+{{- if ne .AuthType ""}}
+auth:
+  type: "{{.AuthType}}"
+  secret: "your-super-secret-key-change-this-in-production"
+{{- if eq .AuthType "jwt"}}
+  token_expiry: 24h
+  refresh_expiry: 168h  # 7 days
+{{- else if eq .AuthType "session"}}
+  session:
+    name: "{{.ProjectName}}_session"
+    max_age: 86400  # 24 hours
+    secure: false   # Set to true in production with HTTPS
+    http_only: true
+    same_site: "lax"
+    domain: ""
+    path: "/"
+{{- else if eq .AuthType "oauth2"}}
+  oauth:
+    providers:
+      google:
+        client_id: "your-google-client-id"
+        client_secret: "your-google-client-secret"
+        redirect_url: "http://localhost:8080/api/v1/auth/oauth/google/callback"
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: "your-github-client-id"
+        client_secret: "your-github-client-secret"
+        redirect_url: "http://localhost:8080/api/v1/auth/oauth/github/callback"
+        scopes: ["user:email"]
+{{- end}}
+{{- end}}

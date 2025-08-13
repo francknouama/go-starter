@@ -1,0 +1,42 @@
+package middleware
+
+import (
+	"fmt"
+	"runtime/debug"
+
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Recovery returns a panic recovery middleware
+func Recovery(log logger.Logger) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Defer recovery
+		defer func() {
+			if r := recover(); r != nil {
+				// Get stack trace
+				stack := debug.Stack()
+
+				// Log the panic
+				log.Error("Panic recovered",
+					"error", fmt.Sprintf("%v", r),
+					"stack", string(stack),
+					"path", c.Path(),
+					"method", c.Method(),
+					"ip", c.IP(),
+				)
+
+				// Return error response
+				_ = c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+					"error": fiber.Map{
+						"code":    fiber.StatusInternalServerError,
+						"message": "Internal server error",
+					},
+				})
+			}
+		}()
+
+		// Process request
+		return c.Next()
+	}
+}

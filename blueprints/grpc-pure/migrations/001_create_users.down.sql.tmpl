@@ -1,0 +1,51 @@
+-- Migration: Rollback users table creation
+-- Description: Remove users table and related objects
+-- Version: 001
+-- Direction: DOWN
+
+{{- if eq .DatabaseDriver "postgres"}}
+-- PostgreSQL rollback for users table
+
+-- Drop trigger first
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+
+-- Drop function
+DROP FUNCTION IF EXISTS update_updated_at_column();
+
+-- Drop indexes (they will be dropped automatically with the table, but explicit for clarity)
+DROP INDEX IF EXISTS idx_users_username;
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_active;
+DROP INDEX IF EXISTS idx_users_created_at;
+
+-- Drop the users table
+DROP TABLE IF EXISTS users;
+
+{{- else if eq .DatabaseDriver "mysql"}}
+-- MySQL rollback for users table
+
+-- Drop indexes (they will be dropped automatically with the table, but explicit for clarity)
+DROP INDEX IF EXISTS idx_users_username ON users;
+DROP INDEX IF EXISTS idx_users_email ON users;
+DROP INDEX IF EXISTS idx_users_active ON users;
+DROP INDEX IF EXISTS idx_users_created_at ON users;
+
+-- Drop the users table
+DROP TABLE IF EXISTS users;
+
+{{- else if eq .DatabaseDriver "sqlite"}}
+-- SQLite rollback for users table
+
+-- Drop trigger first
+DROP TRIGGER IF EXISTS update_users_updated_at;
+
+-- Drop indexes (they will be dropped automatically with the table, but explicit for clarity)
+DROP INDEX IF EXISTS idx_users_username;
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_active;
+DROP INDEX IF EXISTS idx_users_created_at;
+
+-- Drop the users table
+DROP TABLE IF EXISTS users;
+
+{{- end}}

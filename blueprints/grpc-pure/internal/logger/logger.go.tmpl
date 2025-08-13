@@ -1,0 +1,347 @@
+package logger
+
+import (
+	"fmt"
+	"os"
+
+	"{{.ModulePath}}/internal/config"
+
+	{{- if eq .Logger "slog"}}
+	"log/slog"
+	{{- else if eq .Logger "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	{{- else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+	{{- else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+	{{- end}}
+)
+
+{{- if eq .Logger "slog"}}
+// slogLogger wraps the standard library slog logger
+type slogLogger struct {
+	logger *slog.Logger
+}
+
+// New creates a new logger instance based on configuration
+func New(cfg config.LoggerConfig) (Logger, error) {
+	level := parseLogLevel(cfg.Level)
+	
+	var handler slog.Handler
+	opts := &slog.HandlerOptions{
+		Level: level,
+		AddSource: cfg.EnableCaller,
+	}
+
+	switch cfg.Format {
+	case "json":
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	default:
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	}
+
+	logger := slog.New(handler)
+	return &slogLogger{logger: logger}, nil
+}
+
+func (l *slogLogger) Debug(msg string, keysAndValues ...interface{}) {
+	l.logger.Debug(msg, keysAndValues...)
+}
+
+func (l *slogLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.logger.Info(msg, keysAndValues...)
+}
+
+func (l *slogLogger) Warn(msg string, keysAndValues ...interface{}) {
+	l.logger.Warn(msg, keysAndValues...)
+}
+
+func (l *slogLogger) Error(msg string, keysAndValues ...interface{}) {
+	l.logger.Error(msg, keysAndValues...)
+}
+
+func (l *slogLogger) With(keysAndValues ...interface{}) Logger {
+	return &slogLogger{logger: l.logger.With(keysAndValues...)}
+}
+
+func parseLogLevel(level string) slog.Level {
+	switch level {
+	case "debug":
+		return slog.LevelDebug
+	case "info":
+		return slog.LevelInfo
+	case "warn":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
+{{- else if eq .Logger "zap"}}
+// zapLogger wraps the Zap logger
+type zapLogger struct {
+	logger *zap.SugaredLogger
+}
+
+// New creates a new logger instance based on configuration
+func New(cfg config.LoggerConfig) (Logger, error) {
+	level := parseLogLevel(cfg.Level)
+	
+	config := zap.Config{
+		Level:       zap.NewAtomicLevelAt(level),
+		Development: cfg.Development,
+		Sampling: &zap.SamplingConfig{
+			Initial:    100,
+			Thereafter: 100,
+		},
+		Encoding: cfg.Format,
+		EncoderConfig: zapcore.EncoderConfig{
+			TimeKey:        "timestamp",
+			LevelKey:       "level",
+			NameKey:        "logger",
+			CallerKey:      "caller",
+			FunctionKey:    zapcore.OmitKey,
+			MessageKey:     "message",
+			StacktraceKey:  "stacktrace",
+			LineEnding:     zapcore.DefaultLineEnding,
+			EncodeLevel:    zapcore.LowercaseLevelEncoder,
+			EncodeTime:     zapcore.ISO8601TimeEncoder,
+			EncodeDuration: zapcore.SecondsDurationEncoder,
+			EncodeCaller:   zapcore.ShortCallerEncoder,
+		},
+		OutputPaths:      []string{"stdout"},
+		ErrorOutputPaths: []string{"stderr"},
+		DisableCaller:    !cfg.EnableCaller,
+		DisableStacktrace: !cfg.EnableStacktrace,
+	}
+
+	if cfg.Format == "console" {
+		config.Encoding = "console"
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else if cfg.Format == "text" {
+		config.Encoding = "console"
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
+	}
+
+	logger, err := config.Build()
+	if err != nil {
+		return nil, err
+	}
+
+	return &zapLogger{logger: logger.Sugar()}, nil
+}
+
+func (l *zapLogger) Debug(msg string, keysAndValues ...interface{}) {
+	l.logger.Debugw(msg, keysAndValues...)
+}
+
+func (l *zapLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.logger.Infow(msg, keysAndValues...)
+}
+
+func (l *zapLogger) Warn(msg string, keysAndValues ...interface{}) {
+	l.logger.Warnw(msg, keysAndValues...)
+}
+
+func (l *zapLogger) Error(msg string, keysAndValues ...interface{}) {
+	l.logger.Errorw(msg, keysAndValues...)
+}
+
+func (l *zapLogger) With(keysAndValues ...interface{}) Logger {
+	return &zapLogger{logger: l.logger.With(keysAndValues...)}
+}
+
+func (l *zapLogger) Close() error {
+	return l.logger.Sync()
+}
+
+func parseLogLevel(level string) zapcore.Level {
+	switch level {
+	case "debug":
+		return zapcore.DebugLevel
+	case "info":
+		return zapcore.InfoLevel
+	case "warn":
+		return zapcore.WarnLevel
+	case "error":
+		return zapcore.ErrorLevel
+	default:
+		return zapcore.InfoLevel
+	}
+}
+
+{{- else if eq .Logger "logrus"}}
+// logrusLogger wraps the Logrus logger
+type logrusLogger struct {
+	logger *logrus.Entry
+}
+
+// New creates a new logger instance based on configuration
+func New(cfg config.LoggerConfig) (Logger, error) {
+	logger := logrus.New()
+	
+	level := parseLogLevel(cfg.Level)
+	logger.SetLevel(level)
+
+	switch cfg.Format {
+	case "json":
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
+	case "text":
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
+	default:
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: "2006-01-02T15:04:05.000Z07:00",
+		})
+	}
+
+	logger.SetReportCaller(cfg.EnableCaller)
+	logger.SetOutput(os.Stdout)
+
+	return &logrusLogger{logger: logrus.NewEntry(logger)}, nil
+}
+
+func (l *logrusLogger) Debug(msg string, keysAndValues ...interface{}) {
+	l.logger.WithFields(convertToFields(keysAndValues...)).Debug(msg)
+}
+
+func (l *logrusLogger) Info(msg string, keysAndValues ...interface{}) {
+	l.logger.WithFields(convertToFields(keysAndValues...)).Info(msg)
+}
+
+func (l *logrusLogger) Warn(msg string, keysAndValues ...interface{}) {
+	l.logger.WithFields(convertToFields(keysAndValues...)).Warn(msg)
+}
+
+func (l *logrusLogger) Error(msg string, keysAndValues ...interface{}) {
+	l.logger.WithFields(convertToFields(keysAndValues...)).Error(msg)
+}
+
+func (l *logrusLogger) With(keysAndValues ...interface{}) Logger {
+	return &logrusLogger{logger: l.logger.WithFields(convertToFields(keysAndValues...))}
+}
+
+func convertToFields(keysAndValues ...interface{}) logrus.Fields {
+	fields := logrus.Fields{}
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key := fmt.Sprintf("%v", keysAndValues[i])
+			fields[key] = keysAndValues[i+1]
+		}
+	}
+	return fields
+}
+
+func parseLogLevel(level string) logrus.Level {
+	switch level {
+	case "debug":
+		return logrus.DebugLevel
+	case "info":
+		return logrus.InfoLevel
+	case "warn":
+		return logrus.WarnLevel
+	case "error":
+		return logrus.ErrorLevel
+	default:
+		return logrus.InfoLevel
+	}
+}
+
+{{- else if eq .Logger "zerolog"}}
+// zerologLogger wraps the Zerolog logger
+type zerologLogger struct {
+	logger zerolog.Logger
+}
+
+// New creates a new logger instance based on configuration
+func New(cfg config.LoggerConfig) (Logger, error) {
+	level := parseLogLevel(cfg.Level)
+	zerolog.SetGlobalLevel(level)
+
+	var logger zerolog.Logger
+	if cfg.Format == "console" {
+		logger = zerolog.New(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "15:04:05"}).
+			With().
+			Timestamp().
+			Logger()
+	} else {
+		logger = zerolog.New(os.Stdout).
+			With().
+			Timestamp().
+			Logger()
+	}
+
+	if cfg.EnableCaller {
+		logger = logger.With().Caller().Logger()
+	}
+
+	return &zerologLogger{logger: logger}, nil
+}
+
+func (l *zerologLogger) Debug(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Debug()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+func (l *zerologLogger) Info(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Info()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+func (l *zerologLogger) Warn(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Warn()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+func (l *zerologLogger) Error(msg string, keysAndValues ...interface{}) {
+	event := l.logger.Error()
+	l.addFields(event, keysAndValues...)
+	event.Msg(msg)
+}
+
+func (l *zerologLogger) With(keysAndValues ...interface{}) Logger {
+	ctx := l.logger.With()
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key := fmt.Sprintf("%v", keysAndValues[i])
+			ctx = ctx.Interface(key, keysAndValues[i+1])
+		}
+	}
+	return &zerologLogger{logger: ctx.Logger()}
+}
+
+func (l *zerologLogger) addFields(event *zerolog.Event, keysAndValues ...interface{}) {
+	for i := 0; i < len(keysAndValues); i += 2 {
+		if i+1 < len(keysAndValues) {
+			key := fmt.Sprintf("%v", keysAndValues[i])
+			event.Interface(key, keysAndValues[i+1])
+		}
+	}
+}
+
+func parseLogLevel(level string) zerolog.Level {
+	switch level {
+	case "debug":
+		return zerolog.DebugLevel
+	case "info":
+		return zerolog.InfoLevel
+	case "warn":
+		return zerolog.WarnLevel
+	case "error":
+		return zerolog.ErrorLevel
+	default:
+		return zerolog.InfoLevel
+	}
+}
+{{- end}}

@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# {{.ProjectName}} - Protocol Buffer Generation Script
+# This script generates Go code from protocol buffer definitions
+
+set -e
+
+echo "🔄 Generating protocol buffer and gRPC code..."
+
+# Check if buf is installed
+if ! command -v buf &> /dev/null; then
+    echo "❌ buf is not installed. Please install buf CLI:"
+    echo "   https://docs.buf.build/installation"
+    exit 1
+fi
+
+# Ensure the generated directory exists
+mkdir -p pkg/proto
+
+# Generate code using buf
+echo "📦 Running buf generate..."
+buf generate
+
+# Check if generation was successful
+if [ $? -eq 0 ]; then
+    echo "✅ Protocol buffer generation completed successfully!"
+    echo "📁 Generated files are in pkg/proto/"
+else
+    echo "❌ Protocol buffer generation failed!"
+    exit 1
+fi
+
+# Format generated Go code
+echo "🎨 Formatting generated Go code..."
+go fmt ./pkg/proto/...
+
+echo "🎉 Code generation complete!"

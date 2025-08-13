@@ -1,0 +1,171 @@
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+package middleware
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"strings"
+
+{{- if eq .AuthType "jwt"}}
+	"github.com/golang-jwt/jwt/v5"
+{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Auth creates a Chi-compatible authentication middleware
+func Auth(cfg *config.Config) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+{{- if eq .AuthType "jwt"}}
+			// Extract JWT token from Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				writeAuthError(w, "Missing authorization header", "MISSING_AUTH_HEADER")
+				return
+			}
+
+			// Check for Bearer token format
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				writeAuthError(w, "Invalid authorization header format", "INVALID_AUTH_FORMAT")
+				return
+			}
+
+			tokenString := tokenParts[1]
+
+			// Parse and validate JWT token
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				// Validate the signing method
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, jwt.ErrSignatureInvalid
+				}
+				return []byte(cfg.JWT.Secret), nil
+			})
+
+			if err != nil || !token.Valid {
+				writeAuthError(w, "Invalid or expired token", "INVALID_TOKEN")
+				return
+			}
+
+			// Extract claims
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				// Add user information to context
+				if userID, exists := claims["user_id"]; exists {
+					ctx := context.WithValue(r.Context(), "userID", uint(userID.(float64)))
+					r = r.WithContext(ctx)
+				}
+				if email, exists := claims["email"]; exists {
+					ctx := context.WithValue(r.Context(), "email", email.(string))
+					r = r.WithContext(ctx)
+				}
+			}
+{{- else if eq .AuthType "session"}}
+			// Session-based authentication would be implemented here
+			// This is a placeholder for session-based auth
+			writeAuthError(w, "Session authentication not implemented", "NOT_IMPLEMENTED")
+			return
+{{- else if eq .AuthType "oauth2"}}
+			// OAuth2 authentication would be implemented here
+			// This is a placeholder for OAuth2 auth
+			writeAuthError(w, "OAuth2 authentication not implemented", "NOT_IMPLEMENTED")
+			return
+{{- end}}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// AuthWithLogger creates a Chi-compatible authentication middleware with logging
+func AuthWithLogger(cfg *config.Config, log logger.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			log.Debug("Authentication check", "path", r.URL.Path, "method", r.Method)
+
+{{- if eq .AuthType "jwt"}}
+			// Extract JWT token from Authorization header
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				log.Warn("Missing authorization header", "path", r.URL.Path)
+				writeAuthError(w, "Missing authorization header", "MISSING_AUTH_HEADER")
+				return
+			}
+
+			// Check for Bearer token format
+			tokenParts := strings.Split(authHeader, " ")
+			if len(tokenParts) != 2 || tokenParts[0] != "Bearer" {
+				log.Warn("Invalid authorization header format", "path", r.URL.Path)
+				writeAuthError(w, "Invalid authorization header format", "INVALID_AUTH_FORMAT")
+				return
+			}
+
+			tokenString := tokenParts[1]
+
+			// Parse and validate JWT token
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+				// Validate the signing method
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, jwt.ErrSignatureInvalid
+				}
+				return []byte(cfg.JWT.Secret), nil
+			})
+
+			if err != nil || !token.Valid {
+				log.Warn("Invalid or expired token", "path", r.URL.Path, "error", err)
+				writeAuthError(w, "Invalid or expired token", "INVALID_TOKEN")
+				return
+			}
+
+			// Extract claims
+			if claims, ok := token.Claims.(jwt.MapClaims); ok {
+				// Add user information to context
+				if userID, exists := claims["user_id"]; exists {
+					ctx := context.WithValue(r.Context(), "userID", uint(userID.(float64)))
+					r = r.WithContext(ctx)
+					log.Debug("User authenticated", "userID", uint(userID.(float64)), "path", r.URL.Path)
+				}
+				if email, exists := claims["email"]; exists {
+					ctx := context.WithValue(r.Context(), "email", email.(string))
+					r = r.WithContext(ctx)
+				}
+			}
+{{- else}}
+			// Other authentication methods would be implemented here
+			log.Warn("Authentication method not implemented", "method", "{{.AuthType}}")
+			writeAuthError(w, "Authentication not implemented", "NOT_IMPLEMENTED")
+			return
+{{- end}}
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// writeAuthError writes a consistent authentication error response
+func writeAuthError(w http.ResponseWriter, message, code string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusUnauthorized)
+	
+	response := map[string]interface{}{
+		"error": message,
+		"code":  code,
+	}
+	
+	json.NewEncoder(w).Encode(response)
+}
+
+// GetUserID extracts the user ID from the request context
+func GetUserID(ctx context.Context) (uint, bool) {
+	userID, ok := ctx.Value("userID").(uint)
+	return userID, ok
+}
+
+// GetUserEmail extracts the user email from the request context
+func GetUserEmail(ctx context.Context) (string, bool) {
+	email, ok := ctx.Value("email").(string)
+	return email, ok
+}
+{{- end}}

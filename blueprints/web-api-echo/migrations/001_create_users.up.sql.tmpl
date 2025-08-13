@@ -1,0 +1,79 @@
+{{- if ne .DatabaseDriver ""}}
+-- Create users table
+{{- if eq .DatabaseDriver "postgres"}}
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+-- Create indexes
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+
+-- Create updated_at trigger
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE
+    ON users FOR EACH ROW EXECUTE PROCEDURE 
+    update_updated_at_column();
+
+{{- else if eq .DatabaseDriver "mysql"}}
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    email VARCHAR(255) UNIQUE NOT NULL,
+    password VARCHAR(255) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP NULL,
+    INDEX idx_email (email),
+    INDEX idx_deleted_at (deleted_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+{{- else if eq .DatabaseDriver "sqlite"}}
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    password TEXT NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at DATETIME
+);
+
+-- Create indexes
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_deleted_at ON users(deleted_at);
+
+-- Create trigger for updated_at
+CREATE TRIGGER update_users_updated_at 
+AFTER UPDATE ON users
+BEGIN
+    UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+END;
+{{- end}}
+
+-- Insert default admin user (optional, remove in production)
+{{- if eq .DatabaseDriver "postgres"}}
+INSERT INTO users (name, email, password) 
+VALUES ('Admin User', 'admin@example.com', '$2a$10$YourHashedPasswordHere')
+ON CONFLICT (email) DO NOTHING;
+{{- else if eq .DatabaseDriver "mysql"}}
+INSERT IGNORE INTO users (name, email, password) 
+VALUES ('Admin User', 'admin@example.com', '$2a$10$YourHashedPasswordHere');
+{{- else if eq .DatabaseDriver "sqlite"}}
+INSERT OR IGNORE INTO users (name, email, password) 
+VALUES ('Admin User', 'admin@example.com', '$2a$10$YourHashedPasswordHere');
+{{- end}}
+{{- end}}

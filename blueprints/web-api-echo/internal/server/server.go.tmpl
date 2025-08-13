@@ -1,0 +1,141 @@
+package server
+
+import (
+	"context"
+	"fmt"
+{{- if ne .DatabaseDriver ""}}
+	"database/sql"
+{{- end}}
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/logger"
+	customMiddleware "{{.ModulePath}}/internal/middleware"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/services"
+{{- end}}
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	"{{.ModulePath}}/internal/services"
+{{- end}}
+)
+
+// Server represents the Echo server
+type Server struct {
+	echo   *echo.Echo
+	config *config.Config
+{{- if ne .DatabaseDriver ""}}
+	db     *sql.DB
+{{- end}}
+}
+
+// New creates a new Echo server instance
+func New(cfg *config.Config{{- if ne .DatabaseDriver ""}}, db *sql.DB{{- end}}) *Server {
+	e := echo.New()
+	
+	// Configure Echo
+	e.HideBanner = true
+	e.HidePort = true
+
+	server := &Server{
+		echo:   e,
+		config: cfg,
+{{- if ne .DatabaseDriver ""}}
+		db:     db,
+{{- end}}
+	}
+
+	server.setupMiddleware()
+	server.setupRoutes()
+
+	return server
+}
+
+// setupMiddleware configures Echo middleware
+func (s *Server) setupMiddleware() {
+	// Core middleware
+	s.echo.Use(middleware.RequestID())
+	s.echo.Use(customMiddleware.Logger())
+	s.echo.Use(middleware.Recover())
+	s.echo.Use(customMiddleware.CORS())
+	s.echo.Use(customMiddleware.Security())
+
+{{- if .EnableMetrics}}
+	// Metrics middleware
+	s.echo.Use(customMiddleware.Metrics())
+{{- end}}
+
+{{- if .EnableTracing}}
+	// Tracing middleware  
+	s.echo.Use(customMiddleware.Tracing())
+{{- end}}
+}
+
+// setupRoutes configures Echo routes
+func (s *Server) setupRoutes() {
+	// Health check routes
+	s.echo.GET("/health", handlers.HealthCheck)
+	s.echo.GET("/ready", handlers.ReadinessCheck)
+
+{{- if or (ne .DatabaseDriver "") (and (ne .AuthType "") (ne .AuthType "none"))}}
+	// Initialize services
+{{- if ne .DatabaseDriver ""}}
+	userRepo := repository.NewUserRepository(s.db)
+	userService := services.NewUserService(userRepo)
+{{- end}}
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	authService := services.NewAuthService({{- if ne .DatabaseDriver ""}}userService{{- else}}nil{{- end}}, s.config.JWT.Secret, s.config.JWT.Expiration)
+{{- end}}
+
+	// API routes
+	api := s.echo.Group("/api/v1")
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	// Public routes
+	public := api.Group("")
+	authHandler := handlers.NewAuthHandler(authService)
+	public.POST("/auth/login", authHandler.Login)
+	public.POST("/auth/register", authHandler.Register)
+
+	// Protected routes
+	protected := api.Group("")
+{{- if eq .AuthType "jwt"}}
+	protected.Use(customMiddleware.JWTAuth(s.config.JWT.Secret))
+{{- else}}
+	// Add auth middleware here for other auth types
+{{- end}}
+{{- if ne .DatabaseDriver ""}}
+	userHandler := handlers.NewUserHandler(userService)
+	protected.GET("/users", userHandler.GetUsers)
+	protected.GET("/users/:id", userHandler.GetUser)
+	protected.PUT("/users/:id", userHandler.UpdateUser)
+	protected.DELETE("/users/:id", userHandler.DeleteUser)
+{{- end}}
+{{- else}}
+{{- if ne .DatabaseDriver ""}}
+	// Public API routes (no authentication)
+	userHandler := handlers.NewUserHandler(userService)
+	api.GET("/users", userHandler.GetUsers)
+	api.GET("/users/:id", userHandler.GetUser)
+	api.POST("/users", userHandler.CreateUser)
+	api.PUT("/users/:id", userHandler.UpdateUser)
+	api.DELETE("/users/:id", userHandler.DeleteUser)
+{{- end}}
+{{- end}}
+{{- end}}
+}
+
+// Start starts the Echo server
+func (s *Server) Start(port int) error {
+	addr := fmt.Sprintf(":%d", port)
+	logger.Info("Starting Echo server", "address", addr, "environment", s.config.Environment)
+	return s.echo.Start(addr)
+}
+
+// Shutdown gracefully shuts down the Echo server
+func (s *Server) Shutdown(ctx context.Context) error {
+	return s.echo.Shutdown(ctx)
+}

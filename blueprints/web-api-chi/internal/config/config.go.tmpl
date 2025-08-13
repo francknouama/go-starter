@@ -1,0 +1,278 @@
+package config
+
+import (
+{{- if ne .DatabaseDriver ""}}
+	"fmt"
+{{- end}}
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/viper"
+)
+
+// Config represents the application configuration
+type Config struct {
+	Environment string `mapstructure:"environment" json:"environment"`
+	Server      Server `mapstructure:"server" json:"server"`
+	Logger      Logger `mapstructure:"logger" json:"logger"`
+{{- if ne .DatabaseDriver ""}}
+	Database    Database `mapstructure:"database" json:"database"`
+{{- end}}
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	JWT         JWT    `mapstructure:"jwt" json:"jwt"`
+{{- end}}
+	CORS        CORS   `mapstructure:"cors" json:"cors"`
+{{- if .EnableMetrics}}
+	Metrics     Metrics `mapstructure:"metrics" json:"metrics"`
+{{- end}}
+{{- if .EnableTracing}}
+	Tracing     Tracing `mapstructure:"tracing" json:"tracing"`
+{{- end}}
+}
+
+// Server represents server configuration
+type Server struct {
+	Address      string `mapstructure:"address" json:"address"`
+	Port         int    `mapstructure:"port" json:"port"`
+	Timeout      int    `mapstructure:"timeout" json:"timeout"`
+	ReadTimeout  int    `mapstructure:"read_timeout" json:"read_timeout"`
+	WriteTimeout int    `mapstructure:"write_timeout" json:"write_timeout"`
+	IdleTimeout  int    `mapstructure:"idle_timeout" json:"idle_timeout"`
+}
+
+// Logger represents logging configuration
+type Logger struct {
+	Level  string `mapstructure:"level" json:"level"`
+	Format string `mapstructure:"format" json:"format"`
+}
+
+{{- if ne .DatabaseDriver ""}}
+// Database represents database configuration
+type Database struct {
+	Driver          string `mapstructure:"driver" json:"driver"`
+	Host            string `mapstructure:"host" json:"host"`
+	Port            int    `mapstructure:"port" json:"port"`
+	Username        string `mapstructure:"username" json:"username"`
+	Password        string `mapstructure:"password" json:"password"`
+	Database        string `mapstructure:"database" json:"database"`
+	SSLMode         string `mapstructure:"ssl_mode" json:"ssl_mode"`
+	MaxOpenConns    int    `mapstructure:"max_open_conns" json:"max_open_conns"`
+	MaxIdleConns    int    `mapstructure:"max_idle_conns" json:"max_idle_conns"`
+	ConnMaxLifetime int    `mapstructure:"conn_max_lifetime" json:"conn_max_lifetime"`
+}
+{{- end}}
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+// JWT represents JWT configuration
+type JWT struct {
+	Secret           string `mapstructure:"secret" json:"secret"`
+	AccessTokenTTL   int    `mapstructure:"access_token_ttl" json:"access_token_ttl"`
+	RefreshTokenTTL  int    `mapstructure:"refresh_token_ttl" json:"refresh_token_ttl"`
+	Issuer           string `mapstructure:"issuer" json:"issuer"`
+}
+{{- end}}
+
+// CORS represents CORS configuration
+type CORS struct {
+	AllowedOrigins   []string `mapstructure:"allowed_origins" json:"allowed_origins"`
+	AllowedMethods   []string `mapstructure:"allowed_methods" json:"allowed_methods"`
+	AllowedHeaders   []string `mapstructure:"allowed_headers" json:"allowed_headers"`
+	ExposedHeaders   []string `mapstructure:"exposed_headers" json:"exposed_headers"`
+	AllowCredentials bool     `mapstructure:"allow_credentials" json:"allow_credentials"`
+	MaxAge          int      `mapstructure:"max_age" json:"max_age"`
+}
+
+{{- if .EnableMetrics}}
+// Metrics represents metrics configuration
+type Metrics struct {
+	Enabled bool   `mapstructure:"enabled" json:"enabled"`
+	Path    string `mapstructure:"path" json:"path"`
+	Port    int    `mapstructure:"port" json:"port"`
+}
+{{- end}}
+
+{{- if .EnableTracing}}
+// Tracing represents tracing configuration
+type Tracing struct {
+	Enabled     bool    `mapstructure:"enabled" json:"enabled"`
+	ServiceName string  `mapstructure:"service_name" json:"service_name"`
+	Endpoint    string  `mapstructure:"endpoint" json:"endpoint"`
+	SampleRate  float64 `mapstructure:"sample_rate" json:"sample_rate"`
+}
+{{- end}}
+
+// Load loads configuration from various sources
+func Load() (*Config, error) {
+	// Set default values
+	setDefaults()
+
+	// Configure viper
+	viper.SetConfigName("config")
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath("./configs")
+	viper.AddConfigPath(".")
+
+	// Enable environment variable support
+	viper.AutomaticEnv()
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+
+	// Read configuration file (optional)
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, err
+		}
+		// Config file not found; using defaults and environment variables
+	}
+
+	// Override with environment variables
+	overrideWithEnv()
+
+	var config Config
+	if err := viper.Unmarshal(&config); err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults() {
+	// Server defaults
+	viper.SetDefault("environment", "development")
+	viper.SetDefault("server.address", "")
+	viper.SetDefault("server.port", 8080)
+	viper.SetDefault("server.timeout", 30)
+	viper.SetDefault("server.read_timeout", 15)
+	viper.SetDefault("server.write_timeout", 15)
+	viper.SetDefault("server.idle_timeout", 60)
+
+	// Logger defaults
+	viper.SetDefault("logger.level", "info")
+	viper.SetDefault("logger.format", "json")
+
+{{- if ne .DatabaseDriver ""}}
+	// Database defaults
+	viper.SetDefault("database.driver", "{{.DatabaseDriver}}")
+	viper.SetDefault("database.host", "localhost")
+{{- if eq .DatabaseDriver "postgres"}}
+	viper.SetDefault("database.port", 5432)
+	viper.SetDefault("database.ssl_mode", "disable")
+{{- else if eq .DatabaseDriver "mysql"}}
+	viper.SetDefault("database.port", 3306)
+{{- else if eq .DatabaseDriver "sqlite"}}
+	viper.SetDefault("database.database", "app.db")
+{{- end}}
+	viper.SetDefault("database.username", "{{.ProjectName}}")
+	viper.SetDefault("database.password", "password")
+	viper.SetDefault("database.database", "{{.ProjectName}}")
+	viper.SetDefault("database.max_open_conns", 25)
+	viper.SetDefault("database.max_idle_conns", 25)
+	viper.SetDefault("database.conn_max_lifetime", 300)
+{{- end}}
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	// JWT defaults
+	viper.SetDefault("jwt.secret", "your-secret-key-change-this-in-production")
+	viper.SetDefault("jwt.access_token_ttl", 3600)   // 1 hour
+	viper.SetDefault("jwt.refresh_token_ttl", 604800) // 7 days
+	viper.SetDefault("jwt.issuer", "{{.ProjectName}}")
+{{- end}}
+
+	// CORS defaults
+	viper.SetDefault("cors.allowed_origins", []string{"*"})
+	viper.SetDefault("cors.allowed_methods", []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"})
+	viper.SetDefault("cors.allowed_headers", []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"})
+	viper.SetDefault("cors.exposed_headers", []string{"Link"})
+	viper.SetDefault("cors.allow_credentials", false)
+	viper.SetDefault("cors.max_age", 300)
+
+{{- if .EnableMetrics}}
+	// Metrics defaults
+	viper.SetDefault("metrics.enabled", true)
+	viper.SetDefault("metrics.path", "/metrics")
+	viper.SetDefault("metrics.port", 9090)
+{{- end}}
+
+{{- if .EnableTracing}}
+	// Tracing defaults
+	viper.SetDefault("tracing.enabled", false)
+	viper.SetDefault("tracing.service_name", "{{.ProjectName}}")
+	viper.SetDefault("tracing.endpoint", "http://localhost:14268/api/traces")
+	viper.SetDefault("tracing.sample_rate", 0.1)
+{{- end}}
+}
+
+// overrideWithEnv overrides configuration with environment variables
+func overrideWithEnv() {
+	// Server
+	if port := os.Getenv("PORT"); port != "" {
+		if p, err := strconv.Atoi(port); err == nil {
+			viper.Set("server.port", p)
+		}
+	}
+
+{{- if ne .DatabaseDriver ""}}
+	// Database
+	if dbURL := os.Getenv("DATABASE_URL"); dbURL != "" {
+		// Parse DATABASE_URL if provided (common in cloud deployments)
+		// This is a simplified parser, you might want to use a proper URL parser
+		viper.Set("database.url", dbURL)
+	}
+	
+	if dbHost := os.Getenv("DB_HOST"); dbHost != "" {
+		viper.Set("database.host", dbHost)
+	}
+	
+	if dbPort := os.Getenv("DB_PORT"); dbPort != "" {
+		if p, err := strconv.Atoi(dbPort); err == nil {
+			viper.Set("database.port", p)
+		}
+	}
+	
+	if dbUser := os.Getenv("DB_USER"); dbUser != "" {
+		viper.Set("database.username", dbUser)
+	}
+	
+	if dbPass := os.Getenv("DB_PASSWORD"); dbPass != "" {
+		viper.Set("database.password", dbPass)
+	}
+	
+	if dbName := os.Getenv("DB_NAME"); dbName != "" {
+		viper.Set("database.database", dbName)
+	}
+{{- end}}
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	// JWT
+	if jwtSecret := os.Getenv("JWT_SECRET"); jwtSecret != "" {
+		viper.Set("jwt.secret", jwtSecret)
+	}
+{{- end}}
+
+	// Logging
+	if logLevel := os.Getenv("LOG_LEVEL"); logLevel != "" {
+		viper.Set("logger.level", logLevel)
+	}
+}
+
+// GetDSN returns the database connection string
+{{- if ne .DatabaseDriver ""}}
+func (c *Config) GetDSN() string {
+{{- if eq .DatabaseDriver "postgres"}}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		c.Database.Host, c.Database.Port, c.Database.Username, c.Database.Password, c.Database.Database, c.Database.SSLMode)
+{{- else if eq .DatabaseDriver "mysql"}}
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		c.Database.Username, c.Database.Password, c.Database.Host, c.Database.Port, c.Database.Database)
+{{- else if eq .DatabaseDriver "sqlite"}}
+	return c.Database.Database
+{{- else}}
+	return ""
+{{- end}}
+}
+{{- else}}
+func (c *Config) GetDSN() string {
+	return ""
+}
+{{- end}}

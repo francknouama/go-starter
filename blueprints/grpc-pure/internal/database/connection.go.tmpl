@@ -1,0 +1,464 @@
+{{if ne .DatabaseDriver ""}}package database
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"sync"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+{{if eq .DatabaseORM "gorm"}}	"gorm.io/gorm"
+	"gorm.io/gorm/logger"{{if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"{{else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"{{else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"{{end}}{{else if eq .DatabaseORM "sqlx"}}	"github.com/jmoiron/sqlx"{{if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"{{else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"{{else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"{{end}}{{else}}{{if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"{{else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"{{else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"{{end}}{{end}}
+)
+
+// DatabaseConfig holds database connection configuration
+type DatabaseConfig struct {
+	Driver          string        `yaml:"driver" mapstructure:"driver"`
+	Host            string        `yaml:"host" mapstructure:"host"`
+	Port            int           `yaml:"port" mapstructure:"port"`
+	Database        string        `yaml:"database" mapstructure:"database"`
+	Username        string        `yaml:"username" mapstructure:"username"`
+	Password        string        `yaml:"password" mapstructure:"password"`
+	SSLMode         string        `yaml:"ssl_mode" mapstructure:"ssl_mode"`
+	MaxOpenConns    int           `yaml:"max_open_conns" mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `yaml:"max_idle_conns" mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime" mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `yaml:"conn_max_idle_time" mapstructure:"conn_max_idle_time"`
+	LogLevel        string        `yaml:"log_level" mapstructure:"log_level"`
+}
+
+// DefaultDatabaseConfig returns default database configuration
+func DefaultDatabaseConfig() *DatabaseConfig {
+	return &DatabaseConfig{
+		Driver:          "{{.DatabaseDriver}}",
+		Host:            "localhost",
+		Port:            {{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{else if eq .DatabaseDriver "sqlite"}}0{{end}},
+		Database:        "{{.ProjectName | lower}}",
+		Username:        "{{.ProjectName | lower}}",
+		Password:        "",
+		SSLMode:         {{if eq .DatabaseDriver "postgres"}}"prefer"{{else if eq .DatabaseDriver "mysql"}}"false"{{else}}"false"{{end}},
+		MaxOpenConns:    25,
+		MaxIdleConns:    10,
+		ConnMaxLifetime: 5 * time.Minute,
+		ConnMaxIdleTime: 5 * time.Minute,
+		LogLevel:        "warn",
+	}
+}
+
+// Database manages database connections and operations
+type Database struct {
+	config *DatabaseConfig
+	logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+	
+{{if eq .DatabaseORM "gorm"}}	db *gorm.DB{{else if eq .DatabaseORM "sqlx"}}	db *sqlx.DB{{else}}	db *sql.DB{{end}}
+}
+
+// NewDatabase creates a new database connection manager
+func NewDatabase(config *DatabaseConfig, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) (*Database, error) {
+	if config == nil {
+		config = DefaultDatabaseConfig()
+	}
+	
+	db := &Database{
+		config: config,
+		logger: logger,
+	}
+	
+	if err := db.Connect(); err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+	
+	return db, nil
+}
+
+// Connect establishes a connection to the database
+func (d *Database) Connect() error {
+	dsn := d.buildDSN()
+	
+	{{if eq .Logger "slog"}}d.logger.Info("Connecting to database", "driver", d.config.Driver, "host", d.config.Host, "database", d.config.Database){{else if eq .Logger "zap"}}d.logger.Info("Connecting to database", zap.String("driver", d.config.Driver), zap.String("host", d.config.Host), zap.String("database", d.config.Database)){{else if eq .Logger "logrus"}}d.logger.WithFields(logrus.Fields{"driver": d.config.Driver, "host": d.config.Host, "database": d.config.Database}).Info("Connecting to database"){{else if eq .Logger "zerolog"}}d.logger.Info().Str("driver", d.config.Driver).Str("host", d.config.Host).Str("database", d.config.Database).Msg("Connecting to database"){{end}}
+	
+{{if eq .DatabaseORM "gorm"}}	var err error
+	var dialector gorm.Dialector
+	
+	switch d.config.Driver {
+{{if eq .DatabaseDriver "postgres"}}	case "postgres":
+		dialector = postgres.Open(dsn){{else if eq .DatabaseDriver "mysql"}}	case "mysql":
+		dialector = mysql.Open(dsn){{else if eq .DatabaseDriver "sqlite"}}	case "sqlite":
+		dialector = sqlite.Open(dsn){{end}}
+	default:
+		return fmt.Errorf("unsupported database driver: %s", d.config.Driver)
+	}
+	
+	gormConfig := &gorm.Config{
+		Logger: d.createGormLogger(),
+	}
+	
+	d.db, err = gorm.Open(dialector, gormConfig)
+	if err != nil {
+		return fmt.Errorf("failed to open GORM connection: %w", err)
+	}
+	
+	// Get underlying sql.DB for connection pool configuration
+	sqlDB, err := d.db.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+	
+	d.configureConnectionPool(sqlDB){{else if eq .DatabaseORM "sqlx"}}	var err error
+	d.db, err = sqlx.Connect(d.config.Driver, dsn)
+	if err != nil {
+		return fmt.Errorf("failed to connect with sqlx: %w", err)
+	}
+	
+	d.configureConnectionPool(d.db.DB){{else}}	var err error
+	d.db, err = sql.Open(d.config.Driver, dsn)
+	if err != nil {
+		return fmt.Errorf("failed to open database connection: %w", err)
+	}
+	
+	d.configureConnectionPool(d.db){{end}}
+	
+	// Test the connection
+	if err := d.Ping(); err != nil {
+		return fmt.Errorf("failed to ping database: %w", err)
+	}
+	
+	{{if eq .Logger "slog"}}d.logger.Info("Database connection established successfully"){{else if eq .Logger "zap"}}d.logger.Info("Database connection established successfully"){{else if eq .Logger "logrus"}}d.logger.Info("Database connection established successfully"){{else if eq .Logger "zerolog"}}d.logger.Info().Msg("Database connection established successfully"){{end}}
+	
+	return nil
+}
+
+// buildDSN constructs the database connection string
+func (d *Database) buildDSN() string {
+	switch d.config.Driver {
+{{if eq .DatabaseDriver "postgres"}}	case "postgres":
+		return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			d.config.Host,
+			d.config.Port,
+			d.config.Username,
+			d.config.Password,
+			d.config.Database,
+			d.config.SSLMode,
+		){{else if eq .DatabaseDriver "mysql"}}	case "mysql":
+		return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local&tls=%s",
+			d.config.Username,
+			d.config.Password,
+			d.config.Host,
+			d.config.Port,
+			d.config.Database,
+			d.config.SSLMode,
+		){{else if eq .DatabaseDriver "sqlite"}}	case "sqlite":
+		return d.config.Database{{end}}
+	default:
+		return ""
+	}
+}
+
+// configureConnectionPool sets up database connection pool parameters
+func (d *Database) configureConnectionPool(sqlDB *sql.DB) {
+	sqlDB.SetMaxOpenConns(d.config.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(d.config.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(d.config.ConnMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(d.config.ConnMaxIdleTime)
+	
+	{{if eq .Logger "slog"}}d.logger.Info("Database connection pool configured", 
+		"max_open_conns", d.config.MaxOpenConns,
+		"max_idle_conns", d.config.MaxIdleConns,
+		"conn_max_lifetime", d.config.ConnMaxLifetime,
+		"conn_max_idle_time", d.config.ConnMaxIdleTime){{else if eq .Logger "zap"}}d.logger.Info("Database connection pool configured",
+		zap.Int("max_open_conns", d.config.MaxOpenConns),
+		zap.Int("max_idle_conns", d.config.MaxIdleConns),
+		zap.Duration("conn_max_lifetime", d.config.ConnMaxLifetime),
+		zap.Duration("conn_max_idle_time", d.config.ConnMaxIdleTime)){{else if eq .Logger "logrus"}}d.logger.WithFields(logrus.Fields{
+		"max_open_conns": d.config.MaxOpenConns,
+		"max_idle_conns": d.config.MaxIdleConns,
+		"conn_max_lifetime": d.config.ConnMaxLifetime,
+		"conn_max_idle_time": d.config.ConnMaxIdleTime,
+	}).Info("Database connection pool configured"){{else if eq .Logger "zerolog"}}d.logger.Info().
+		Int("max_open_conns", d.config.MaxOpenConns).
+		Int("max_idle_conns", d.config.MaxIdleConns).
+		Dur("conn_max_lifetime", d.config.ConnMaxLifetime).
+		Dur("conn_max_idle_time", d.config.ConnMaxIdleTime).
+		Msg("Database connection pool configured"){{end}}
+}
+
+{{if eq .DatabaseORM "gorm"}}// createGormLogger creates a GORM logger instance
+func (d *Database) createGormLogger() logger.Interface {
+	var logLevel logger.LogLevel
+	
+	switch d.config.LogLevel {
+	case "debug":
+		logLevel = logger.Info
+	case "info":
+		logLevel = logger.Info
+	case "warn":
+		logLevel = logger.Warn
+	case "error":
+		logLevel = logger.Error
+	default:
+		logLevel = logger.Warn
+	}
+	
+	return logger.New(
+		&gormLogWriter{logger: d.logger},
+		logger.Config{
+			SlowThreshold:             200 * time.Millisecond,
+			LogLevel:                  logLevel,
+			IgnoreRecordNotFoundError: true,
+			Colorful:                  false,
+		},
+	)
+}
+
+// gormLogWriter implements GORM's log writer interface
+type gormLogWriter struct {
+	logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+}
+
+func (w *gormLogWriter) Printf(format string, args ...interface{}) {
+	{{if eq .Logger "slog"}}w.logger.Info(fmt.Sprintf(format, args...)){{else if eq .Logger "zap"}}w.logger.Info(fmt.Sprintf(format, args...)){{else if eq .Logger "logrus"}}w.logger.Info(fmt.Sprintf(format, args...)){{else if eq .Logger "zerolog"}}w.logger.Info().Msg(fmt.Sprintf(format, args...)){{end}}
+}{{end}}
+
+// GetDB returns the database connection
+func (d *Database) GetDB() {{if eq .DatabaseORM "gorm"}}*gorm.DB{{else if eq .DatabaseORM "sqlx"}}*sqlx.DB{{else}}*sql.DB{{end}} {
+	return d.db
+}
+
+// Ping tests the database connection
+func (d *Database) Ping() error {
+{{if eq .DatabaseORM "gorm"}}	sqlDB, err := d.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Ping(){{else if eq .DatabaseORM "sqlx"}}	return d.db.Ping(){{else}}	return d.db.Ping(){{end}}
+}
+
+// PingContext tests the database connection with context
+func (d *Database) PingContext(ctx context.Context) error {
+{{if eq .DatabaseORM "gorm"}}	sqlDB, err := d.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.PingContext(ctx){{else if eq .DatabaseORM "sqlx"}}	return d.db.PingContext(ctx){{else}}	return d.db.PingContext(ctx){{end}}
+}
+
+// Close closes the database connection
+func (d *Database) Close() error {
+	{{if eq .Logger "slog"}}d.logger.Info("Closing database connection"){{else if eq .Logger "zap"}}d.logger.Info("Closing database connection"){{else if eq .Logger "logrus"}}d.logger.Info("Closing database connection"){{else if eq .Logger "zerolog"}}d.logger.Info().Msg("Closing database connection"){{end}}
+	
+{{if eq .DatabaseORM "gorm"}}	sqlDB, err := d.db.DB()
+	if err != nil {
+		return err
+	}
+	return sqlDB.Close(){{else if eq .DatabaseORM "sqlx"}}	return d.db.Close(){{else}}	return d.db.Close(){{end}}
+}
+
+// Stats returns database connection statistics
+func (d *Database) Stats() sql.DBStats {
+{{if eq .DatabaseORM "gorm"}}	sqlDB, err := d.db.DB()
+	if err != nil {
+		return sql.DBStats{}
+	}
+	return sqlDB.Stats(){{else if eq .DatabaseORM "sqlx"}}	return d.db.Stats(){{else}}	return d.db.Stats(){{end}}
+}
+
+// HealthCheck performs a health check on the database
+func (d *Database) HealthCheck(ctx context.Context) error {
+	// Check connection
+	if err := d.PingContext(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+	
+	// Check connection pool stats
+	stats := d.Stats()
+	if stats.OpenConnections >= d.config.MaxOpenConns {
+		{{if eq .Logger "slog"}}d.logger.Warn("Database connection pool at maximum capacity", "open_connections", stats.OpenConnections, "max_open_conns", d.config.MaxOpenConns){{else if eq .Logger "zap"}}d.logger.Warn("Database connection pool at maximum capacity", zap.Int("open_connections", stats.OpenConnections), zap.Int("max_open_conns", d.config.MaxOpenConns)){{else if eq .Logger "logrus"}}d.logger.WithFields(logrus.Fields{"open_connections": stats.OpenConnections, "max_open_conns": d.config.MaxOpenConns}).Warn("Database connection pool at maximum capacity"){{else if eq .Logger "zerolog"}}d.logger.Warn().Int("open_connections", stats.OpenConnections).Int("max_open_conns", d.config.MaxOpenConns).Msg("Database connection pool at maximum capacity"){{end}}
+	}
+	
+	return nil
+}
+
+{{if eq .DatabaseORM "gorm"}}// Transaction operations for GORM
+
+// Transaction executes a function within a database transaction
+func (d *Database) Transaction(fn func(*gorm.DB) error) error {
+	return d.db.Transaction(fn)
+}
+
+// TransactionContext executes a function within a database transaction with context
+func (d *Database) TransactionContext(ctx context.Context, fn func(*gorm.DB) error) error {
+	return d.db.WithContext(ctx).Transaction(fn)
+}{{else if eq .DatabaseORM "sqlx"}}// Transaction operations for sqlx
+
+// Transaction executes a function within a database transaction
+func (d *Database) Transaction(fn func(*sqlx.Tx) error) error {
+	tx, err := d.db.Beginx()
+	if err != nil {
+		return err
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	err = fn(tx)
+	return err
+}
+
+// TransactionContext executes a function within a database transaction with context
+func (d *Database) TransactionContext(ctx context.Context, fn func(*sqlx.Tx) error) error {
+	tx, err := d.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	err = fn(tx)
+	return err
+}{{else}}// Transaction operations for standard sql
+
+// Transaction executes a function within a database transaction
+func (d *Database) Transaction(fn func(*sql.Tx) error) error {
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	err = fn(tx)
+	return err
+}
+
+// TransactionContext executes a function within a database transaction with context
+func (d *Database) TransactionContext(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := d.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	err = fn(tx)
+	return err
+}{{end}}
+
+// GetConnectionPool returns connection pool statistics as a map
+func (d *Database) GetConnectionPool() map[string]interface{} {
+	stats := d.Stats()
+	return map[string]interface{}{
+		"max_open_connections":     stats.MaxOpenConnections,
+		"open_connections":         stats.OpenConnections,
+		"in_use":                  stats.InUse,
+		"idle":                    stats.Idle,
+		"wait_count":              stats.WaitCount,
+		"wait_duration":           stats.WaitDuration,
+		"max_idle_closed":         stats.MaxIdleClosed,
+		"max_idle_time_closed":    stats.MaxIdleTimeClosed,
+		"max_lifetime_closed":     stats.MaxLifetimeClosed,
+	}
+}
+
+// IsConnected checks if the database connection is active
+func (d *Database) IsConnected() bool {
+	return d.Ping() == nil
+}
+
+// GetConfig returns the database configuration
+func (d *Database) GetConfig() *DatabaseConfig {
+	return d.config
+}
+
+// SetLogLevel updates the database log level
+func (d *Database) SetLogLevel(level string) {
+	d.config.LogLevel = level
+	{{if eq .Logger "slog"}}d.logger.Info("Database log level updated", "level", level){{else if eq .Logger "zap"}}d.logger.Info("Database log level updated", zap.String("level", level)){{else if eq .Logger "logrus"}}d.logger.WithField("level", level).Info("Database log level updated"){{else if eq .Logger "zerolog"}}d.logger.Info().Str("level", level).Msg("Database log level updated"){{end}}
+}
+
+// DatabaseManager provides singleton access to database connection
+type DatabaseManager struct {
+	instance *Database
+	once     sync.Once
+}
+
+var dbManager *DatabaseManager
+
+// GetDatabaseManager returns the singleton database manager
+func GetDatabaseManager() *DatabaseManager {
+	if dbManager == nil {
+		dbManager = &DatabaseManager{}
+	}
+	return dbManager
+}
+
+// Initialize sets up the database connection
+func (dm *DatabaseManager) Initialize(config *DatabaseConfig, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) error {
+	var err error
+	dm.once.Do(func() {
+		dm.instance, err = NewDatabase(config, logger)
+	})
+	return err
+}
+
+// GetDatabase returns the database instance
+func (dm *DatabaseManager) GetDatabase() *Database {
+	return dm.instance
+}
+
+// Close closes the database connection
+func (dm *DatabaseManager) Close() error {
+	if dm.instance != nil {
+		return dm.instance.Close()
+	}
+	return nil
+}
+{{end}}

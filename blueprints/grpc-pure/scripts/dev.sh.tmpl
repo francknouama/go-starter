@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# {{.ProjectName}} - Development Server Script
+# This script starts the gRPC server in development mode with live reloading
+
+set -e
+
+echo "🚀 Starting {{.ProjectName}} gRPC server in development mode..."
+
+# Load development environment variables
+if [ -f .env.dev ]; then
+    echo "📋 Loading development environment from .env.dev"
+    set -a
+    source .env.dev
+    set +a
+fi
+
+# Set default development configuration
+export ENVIRONMENT=development
+export GRPC_PORT=${GRPC_PORT:-{{.GrpcPort}}}
+export METRICS_PORT=${METRICS_PORT:-{{.MetricsPort}}}
+export LOG_LEVEL=${LOG_LEVEL:-debug}{{if .TracingEnabled}}
+export TRACING_ENABLED=${TRACING_ENABLED:-true}{{end}}{{if .MetricsEnabled}}
+export METRICS_ENABLED=${METRICS_ENABLED:-true}{{end}}{{if .ReflectionEnabled}}
+export GRPC_REFLECTION_ENABLED=${GRPC_REFLECTION_ENABLED:-true}{{end}}
+
+# Check if air is installed for live reloading
+if command -v air &> /dev/null; then
+    echo "🔄 Starting with live reloading (air)..."
+    air -c .air.toml
+else
+    echo "ℹ️  Install 'air' for live reloading: go install github.com/cosmtrek/air@latest"
+    echo "🏃 Starting server without live reloading..."
+    
+    # Generate protobuf code if needed
+    if [ ! -d "pkg/proto" ] || [ -z "$(find pkg/proto -name '*.pb.go' 2>/dev/null)" ]; then
+        echo "📦 Generating protocol buffer code..."
+        make generate
+    fi
+    
+    # Build and run
+    go build -o bin/server cmd/server/main.go
+    ./bin/server
+fi

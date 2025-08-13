@@ -1,0 +1,76 @@
+package main
+
+import (
+	"context"
+	"log"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+{{- end}}
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Initialize logger with configured level
+	logger.SetLevel(cfg.Logging.Level)
+	
+	// Log application startup
+	logger.Info("Echo server starting", "environment", cfg.Environment, "logger", "{{.Logger}}")
+
+{{- if ne .DatabaseDriver ""}}
+	// Initialize database
+	db, err := database.Connect(cfg.Database, logger.GetLogger())
+	if err != nil {
+		logger.Error("Failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+
+	// Run migrations
+	if err := database.Migrate(db, logger.GetLogger()); err != nil {
+		logger.Error("Failed to run migrations", "error", err)
+		os.Exit(1)
+	}
+
+	logger.Info("Database connected and migrations completed")
+{{- end}}
+
+	// Initialize server with dependencies
+	srv := server.New(cfg{{- if ne .DatabaseDriver ""}}, db{{- end}})
+
+	// Start server in a goroutine
+	go func() {
+		if err := srv.Start(cfg.Server.Port); err != nil {
+			logger.Error("Failed to start server", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info("Shutting down server...")
+
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error("Server forced to shutdown", "error", err)
+	}
+
+	logger.Info("Server exited")
+}

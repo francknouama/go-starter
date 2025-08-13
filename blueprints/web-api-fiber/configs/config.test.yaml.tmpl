@@ -1,0 +1,89 @@
+environment: test
+
+app:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+
+server:
+  host: "127.0.0.1"
+  port: 0  # Use random port for testing
+  read_timeout: 5
+  write_timeout: 5
+  idle_timeout: 30
+  max_request_size: 1048576  # 1MB
+  concurrency: 1024
+  trusted_proxies: []
+  
+  rate_limit:
+    enabled: false  # Disable rate limiting for tests
+    max: 1000
+    expiration: 60s
+    limiter_type: "sliding"
+    skip_successful: false
+    skip_failed: false
+  
+  cache:
+    enabled: false  # Disable cache for tests
+    expiration: 1m
+    max_size: 100
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+{{- if eq .DatabaseDriver "postgres"}}
+  host: "localhost"
+  port: 5432
+  name: "{{.ProjectName}}_test"
+  user: "postgres"
+  password: "postgres"
+  ssl_mode: "disable"
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: "localhost"
+  port: 3306
+  name: "{{.ProjectName}}_test"
+  user: "root"
+  password: "root"
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: ":memory:"  # Use in-memory database for tests
+{{- end}}
+  max_connections: 5
+  max_idle_conns: 2
+  conn_max_lifetime: 1
+  auto_migrate: true
+{{- end}}
+
+log:
+  level: "error"  # Only log errors during tests
+  format: "text"
+
+{{- if ne .AuthType ""}}
+auth:
+  type: "{{.AuthType}}"
+  secret: "test-secret-key-not-for-production"
+{{- if eq .AuthType "jwt"}}
+  token_expiry: 1h
+  refresh_expiry: 24h
+{{- else if eq .AuthType "session"}}
+  session:
+    name: "{{.ProjectName}}_test_session"
+    max_age: 3600
+    secure: false
+    http_only: true
+    same_site: "lax"
+    domain: ""
+    path: "/"
+{{- else if eq .AuthType "oauth2"}}
+  oauth:
+    providers:
+      google:
+        client_id: "test-google-client-id"
+        client_secret: "test-google-client-secret"
+        redirect_url: "http://localhost:8080/api/v1/auth/oauth/google/callback"
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: "test-github-client-id"
+        client_secret: "test-github-client-secret"
+        redirect_url: "http://localhost:8080/api/v1/auth/oauth/github/callback"
+        scopes: ["user:email"]
+{{- end}}
+{{- end}}

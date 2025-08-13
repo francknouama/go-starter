@@ -1,0 +1,258 @@
+{{- if ne .DatabaseDriver ""}}
+package database
+
+import (
+	{{- if eq .DatabaseORM "gorm"}}
+	"fmt"
+	"time"
+
+	"gorm.io/gorm"
+	gormLogger "gorm.io/gorm/logger"
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	"gorm.io/driver/postgres"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{- else}}
+	"gorm.io/driver/sqlite"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	appLogger "{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+	{{- else}}
+	"database/sql"
+	"fmt"
+	"time"
+
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	_ "github.com/lib/pq"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- else}}
+	_ "github.com/mattn/go-sqlite3"
+	{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	appLogger "{{.ModulePath}}/internal/logger"
+	{{- end}}
+)
+
+{{- if eq .DatabaseORM "gorm"}}
+// DB is the global database connection
+var DB *gorm.DB
+
+// Connect establishes a database connection using GORM
+func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*gorm.DB, error) {
+	dsn := cfg.DSN()
+	{{- if eq .DatabaseDriver "sqlite"}}
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- else if eq .DatabaseDriver ""}}
+	// Fallback to SQLite when no database driver is specified
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- end}}
+	
+	var db *gorm.DB
+	var err error
+
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	db, err = gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- else if eq .DatabaseDriver "mysql"}}
+	db, err = gorm.Open(mysql.Open(dsn), &gorm.Config{
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- else}}
+	// Fallback to SQLite when no database driver is specified
+	db, err = gorm.Open(sqlite.Open(dsn), &gorm.Config{
+		Logger: gormLogger.Default.LogMode(getLogLevel(cfg.LogLevel)),
+	})
+	{{- end}}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	DB = db
+	logger.Info("Database connected successfully")
+	return db, nil
+}
+
+// Migrate runs database migrations
+func Migrate(db *gorm.DB, logger appLogger.Logger) error {
+	logger.Info("Running database migrations...")
+	
+	err := db.AutoMigrate(
+		&models.User{},
+		// Add other models here as needed
+	)
+	if err != nil {
+		return fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	logger.Info("Database migrations completed successfully")
+	return nil
+}
+
+// getLogLevel converts string log level to GORM log level
+func getLogLevel(level string) gormLogger.LogLevel {
+	switch level {
+	case "error":
+		return gormLogger.Error
+	case "warn":
+		return gormLogger.Warn
+	case "info":
+		return gormLogger.Info
+	default:
+		return gormLogger.Silent
+	}
+}
+
+{{- else}}
+// DB is the global database connection
+var DB *sql.DB
+
+// Connect establishes a database connection using database/sql
+func Connect(cfg config.DatabaseConfig, logger appLogger.Logger) (*sql.DB, error) {
+	dsn := cfg.DSN()
+	var driverName string
+
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	driverName = "postgres"
+	{{- else if eq .DatabaseDriver "mysql"}}
+	driverName = "mysql"
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	driverName = "sqlite3"
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- else}}
+	// Fallback to SQLite when no database driver is specified
+	driverName = "sqlite3"
+	if dsn == "" {
+		dsn = "app.db"
+	}
+	{{- end}}
+
+	db, err := sql.Open(driverName, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetMaxOpenConns(cfg.MaxOpenConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Second)
+
+	// Test the connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	DB = db
+	logger.Info("Database connected successfully")
+	return db, nil
+}
+
+// Migrate runs database migrations
+func Migrate(db *sql.DB, logger appLogger.Logger) error {
+	logger.Info("Running database migrations...")
+	
+	// Create users table
+	{{- if or (eq .DatabaseDriver "postgres") (eq .DatabaseDriver "postgresql")}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id SERIAL PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		email VARCHAR(255) UNIQUE NOT NULL,
+		password VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- else if eq .DatabaseDriver "mysql"}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INT AUTO_INCREMENT PRIMARY KEY,
+		name VARCHAR(100) NOT NULL,
+		email VARCHAR(255) UNIQUE NOT NULL,
+		password VARCHAR(255) NOT NULL,
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+	)`
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		email TEXT UNIQUE NOT NULL,
+		password TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- else}}
+	// Fallback to SQLite when no database driver is specified
+	userTable := `
+	CREATE TABLE IF NOT EXISTS users (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL,
+		email TEXT UNIQUE NOT NULL,
+		password TEXT NOT NULL,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	)`
+	{{- end}}
+
+	if _, err := db.Exec(userTable); err != nil {
+		return fmt.Errorf("failed to create users table: %w", err)
+	}
+
+	logger.Info("Database migrations completed successfully")
+	return nil
+}
+{{- end}}
+
+// Close closes the database connection
+func Close() error {
+	{{- if eq .DatabaseORM "gorm"}}
+	if DB != nil {
+		sqlDB, err := DB.DB()
+		if err != nil {
+			return err
+		}
+		return sqlDB.Close()
+	}
+	{{- else}}
+	if DB != nil {
+		return DB.Close()
+	}
+	{{- end}}
+	return nil
+}
+{{- end}}

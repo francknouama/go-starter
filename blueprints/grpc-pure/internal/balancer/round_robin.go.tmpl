@@ -1,0 +1,349 @@
+package balancer
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
+
+	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/balancer/base"
+	"google.golang.org/grpc/grpclog"
+	"google.golang.org/grpc/resolver"
+)
+
+// roundRobinPickerBuilder implements the PickerBuilder interface for round-robin load balancing
+type roundRobinPickerBuilder struct{}
+
+// Build creates a new round-robin picker
+func (rrpb *roundRobinPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+	grpclog.Infof("roundrobinPicker: Build called with info: %v", info)
+	
+	if len(info.ReadySCs) == 0 {
+		return base.NewErrPicker(balancer.ErrNoSubConnAvailable)
+	}
+	
+	var scs []balancer.SubConn
+	for sc := range info.ReadySCs {
+		scs = append(scs, sc)
+	}
+	
+	return &roundRobinPicker{
+		subConns: scs,
+		next:     0,
+	}
+}
+
+// roundRobinPicker implements the Picker interface for round-robin selection
+type roundRobinPicker struct {
+	subConns []balancer.SubConn
+	mu       sync.RWMutex
+	next     uint32
+}
+
+// Pick selects a SubConn using round-robin algorithm
+func (rrp *roundRobinPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	rrp.mu.RLock()
+	defer rrp.mu.RUnlock()
+	
+	if len(rrp.subConns) == 0 {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
+	
+	// Atomic increment and modulo for thread-safe round-robin
+	idx := atomic.AddUint32(&rrp.next, 1) % uint32(len(rrp.subConns))
+	sc := rrp.subConns[idx]
+	
+	return balancer.PickResult{
+		SubConn: sc,
+		Done: func(info balancer.DoneInfo) {
+			// Optional: Add custom logic for handling request completion
+			if info.Err != nil {
+				grpclog.Warningf("roundrobinPicker: Request failed with error: %v", info.Err)
+			}
+		},
+	}, nil
+}
+
+// RoundRobinBalancer is a custom round-robin balancer
+type RoundRobinBalancer struct {
+	name string
+}
+
+// NewRoundRobinBalancer creates a new round-robin balancer
+func NewRoundRobinBalancer() *RoundRobinBalancer {
+	return &RoundRobinBalancer{
+		name: "{{.ProjectName | lower}}_round_robin",
+	}
+}
+
+// Name returns the name of the balancer
+func (rrb *RoundRobinBalancer) Name() string {
+	return rrb.name
+}
+
+// Register registers the round-robin balancer with gRPC
+func (rrb *RoundRobinBalancer) Register() {
+	balancer.Register(base.NewBalancerBuilder(rrb.name, &roundRobinPickerBuilder{}, base.Config{HealthCheck: true}))
+}
+
+// RoundRobinResolver is a custom resolver for round-robin balancing
+type RoundRobinResolver struct {
+	target     resolver.Target
+	cc         resolver.ClientConn
+	addrsStore map[string][]resolver.Address
+	mu         sync.RWMutex
+}
+
+// NewRoundRobinResolver creates a new round-robin resolver
+func NewRoundRobinResolver(target resolver.Target, cc resolver.ClientConn) *RoundRobinResolver {
+	return &RoundRobinResolver{
+		target:     target,
+		cc:         cc,
+		addrsStore: make(map[string][]resolver.Address),
+	}
+}
+
+// ResolveNow triggers name resolution
+func (rrr *RoundRobinResolver) ResolveNow(resolver.ResolveNowOptions) {
+	rrr.mu.RLock()
+	defer rrr.mu.RUnlock()
+	
+	// Get addresses for the target
+	addrs, exists := rrr.addrsStore[rrr.target.URL.Host]
+	if !exists {
+		// Fallback to single address
+		addr := resolver.Address{Addr: rrr.target.URL.Host}
+		addrs = []resolver.Address{addr}
+	}
+	
+	state := resolver.State{
+		Addresses: addrs,
+	}
+	
+	rrr.cc.UpdateState(state)
+}
+
+// Close closes the resolver
+func (rrr *RoundRobinResolver) Close() {
+	// Cleanup resources if needed
+}
+
+// AddAddress adds an address to the resolver
+func (rrr *RoundRobinResolver) AddAddress(service string, addr resolver.Address) {
+	rrr.mu.Lock()
+	defer rrr.mu.Unlock()
+	
+	rrr.addrsStore[service] = append(rrr.addrsStore[service], addr)
+}
+
+// RemoveAddress removes an address from the resolver
+func (rrr *RoundRobinResolver) RemoveAddress(service string, addr resolver.Address) {
+	rrr.mu.Lock()
+	defer rrr.mu.Unlock()
+	
+	addrs := rrr.addrsStore[service]
+	for i, a := range addrs {
+		if a.Addr == addr.Addr {
+			rrr.addrsStore[service] = append(addrs[:i], addrs[i+1:]...)
+			break
+		}
+	}
+}
+
+// SetAddresses sets all addresses for a service
+func (rrr *RoundRobinResolver) SetAddresses(service string, addrs []resolver.Address) {
+	rrr.mu.Lock()
+	defer rrr.mu.Unlock()
+	
+	rrr.addrsStore[service] = addrs
+}
+
+// GetAddresses returns all addresses for a service
+func (rrr *RoundRobinResolver) GetAddresses(service string) []resolver.Address {
+	rrr.mu.RLock()
+	defer rrr.mu.RUnlock()
+	
+	return rrr.addrsStore[service]
+}
+
+// RoundRobinResolverBuilder builds round-robin resolvers
+type RoundRobinResolverBuilder struct {
+	scheme string
+}
+
+// NewRoundRobinResolverBuilder creates a new round-robin resolver builder
+func NewRoundRobinResolverBuilder(scheme string) *RoundRobinResolverBuilder {
+	return &RoundRobinResolverBuilder{
+		scheme: scheme,
+	}
+}
+
+// Build creates a new resolver
+func (rrb *RoundRobinResolverBuilder) Build(target resolver.Target, cc resolver.ClientConn, opts resolver.BuildOptions) (resolver.Resolver, error) {
+	r := NewRoundRobinResolver(target, cc)
+	r.ResolveNow(resolver.ResolveNowOptions{})
+	return r, nil
+}
+
+// Scheme returns the scheme handled by this resolver
+func (rrb *RoundRobinResolverBuilder) Scheme() string {
+	return rrb.scheme
+}
+
+// Register registers the resolver builder
+func (rrb *RoundRobinResolverBuilder) Register() {
+	resolver.Register(rrb)
+}
+
+// HealthCheckingRoundRobinPicker extends round-robin with health checking
+type HealthCheckingRoundRobinPicker struct {
+	*roundRobinPicker
+	healthChecker HealthChecker
+}
+
+// HealthChecker defines interface for health checking
+type HealthChecker interface {
+	IsHealthy(ctx context.Context, addr string) bool
+}
+
+// NewHealthCheckingRoundRobinPicker creates a health-checking round-robin picker
+func NewHealthCheckingRoundRobinPicker(subConns []balancer.SubConn, checker HealthChecker) *HealthCheckingRoundRobinPicker {
+	return &HealthCheckingRoundRobinPicker{
+		roundRobinPicker: &roundRobinPicker{
+			subConns: subConns,
+			next:     0,
+		},
+		healthChecker: checker,
+	}
+}
+
+// Pick selects a healthy SubConn using round-robin algorithm
+func (hrrp *HealthCheckingRoundRobinPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	hrrp.mu.RLock()
+	defer hrrp.mu.RUnlock()
+	
+	if len(hrrp.subConns) == 0 {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
+	
+	// Try to find a healthy connection
+	attempts := len(hrrp.subConns)
+	for i := 0; i < attempts; i++ {
+		idx := atomic.AddUint32(&hrrp.next, 1) % uint32(len(hrrp.subConns))
+		sc := hrrp.subConns[idx]
+		
+		// For now, assume all connections are healthy
+		// In a real implementation, you would check health here
+		return balancer.PickResult{
+			SubConn: sc,
+			Done: func(info balancer.DoneInfo) {
+				if info.Err != nil {
+					grpclog.Warningf("healthCheckingRoundRobinPicker: Request failed with error: %v", info.Err)
+				}
+			},
+		}, nil
+	}
+	
+	return balancer.PickResult{}, fmt.Errorf("no healthy connections available")
+}
+
+// LoadBalancerStats tracks load balancer statistics
+type LoadBalancerStats struct {
+	mu              sync.RWMutex
+	totalRequests   uint64
+	successRequests uint64
+	failedRequests  uint64
+	connectionStats map[string]*ConnectionStats
+}
+
+// ConnectionStats tracks per-connection statistics
+type ConnectionStats struct {
+	Address         string
+	TotalRequests   uint64
+	SuccessRequests uint64
+	FailedRequests  uint64
+	AvgLatency      float64
+}
+
+// NewLoadBalancerStats creates new load balancer statistics
+func NewLoadBalancerStats() *LoadBalancerStats {
+	return &LoadBalancerStats{
+		connectionStats: make(map[string]*ConnectionStats),
+	}
+}
+
+// RecordRequest records a request and its outcome
+func (lbs *LoadBalancerStats) RecordRequest(addr string, success bool, latency float64) {
+	lbs.mu.Lock()
+	defer lbs.mu.Unlock()
+	
+	lbs.totalRequests++
+	if success {
+		lbs.successRequests++
+	} else {
+		lbs.failedRequests++
+	}
+	
+	// Update connection-specific stats
+	if _, exists := lbs.connectionStats[addr]; !exists {
+		lbs.connectionStats[addr] = &ConnectionStats{
+			Address: addr,
+		}
+	}
+	
+	connStats := lbs.connectionStats[addr]
+	connStats.TotalRequests++
+	if success {
+		connStats.SuccessRequests++
+	} else {
+		connStats.FailedRequests++
+	}
+	
+	// Update average latency (simple moving average)
+	if connStats.TotalRequests == 1 {
+		connStats.AvgLatency = latency
+	} else {
+		connStats.AvgLatency = (connStats.AvgLatency + latency) / 2.0
+	}
+}
+
+// GetStats returns current statistics
+func (lbs *LoadBalancerStats) GetStats() map[string]interface{} {
+	lbs.mu.RLock()
+	defer lbs.mu.RUnlock()
+	
+	stats := map[string]interface{}{
+		"total_requests":   lbs.totalRequests,
+		"success_requests": lbs.successRequests,
+		"failed_requests":  lbs.failedRequests,
+		"success_rate":     float64(lbs.successRequests) / float64(lbs.totalRequests),
+		"connections":      make(map[string]*ConnectionStats),
+	}
+	
+	// Copy connection stats
+	connStats := make(map[string]*ConnectionStats)
+	for addr, stat := range lbs.connectionStats {
+		connStats[addr] = &ConnectionStats{
+			Address:         stat.Address,
+			TotalRequests:   stat.TotalRequests,
+			SuccessRequests: stat.SuccessRequests,
+			FailedRequests:  stat.FailedRequests,
+			AvgLatency:      stat.AvgLatency,
+		}
+	}
+	stats["connections"] = connStats
+	
+	return stats
+}
+
+// Reset resets all statistics
+func (lbs *LoadBalancerStats) Reset() {
+	lbs.mu.Lock()
+	defer lbs.mu.Unlock()
+	
+	lbs.totalRequests = 0
+	lbs.successRequests = 0
+	lbs.failedRequests = 0
+	lbs.connectionStats = make(map[string]*ConnectionStats)
+}

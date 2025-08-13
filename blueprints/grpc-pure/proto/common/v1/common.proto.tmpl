@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package common.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "{{.ModulePath}}/proto/common/v1;commonv1";
+
+// Common pagination request
+message PaginationRequest {
+  // Page size (default: 50, max: 1000)
+  int32 page_size = 1;
+  
+  // Page token for next page
+  string page_token = 2;
+  
+  // Offset-based pagination (alternative to token)
+  int32 offset = 3;
+}
+
+// Common pagination response
+message PaginationResponse {
+  // Token for next page (empty if no more pages)
+  string next_page_token = 1;
+  
+  // Token for previous page
+  string prev_page_token = 2;
+  
+  // Total pages available
+  int32 total_pages = 3;
+  
+  // Current page number (1-based)
+  int32 current_page = 4;
+}
+
+// Sort direction enumeration
+enum SortDirection {
+  SORT_DIRECTION_UNSPECIFIED = 0;
+  SORT_DIRECTION_ASC = 1;
+  SORT_DIRECTION_DESC = 2;
+}
+
+// Health status enumeration
+enum HealthStatus {
+  HEALTH_STATUS_UNSPECIFIED = 0;
+  HEALTH_STATUS_HEALTHY = 1;
+  HEALTH_STATUS_DEGRADED = 2;
+  HEALTH_STATUS_UNHEALTHY = 3;
+  HEALTH_STATUS_UNKNOWN = 4;
+}
+
+// Component health details
+message ComponentHealth {
+  // Component health status
+  HealthStatus status = 1;
+  
+  // Human-readable status message
+  string message = 2;
+  
+  // Last check timestamp
+  google.protobuf.Timestamp last_check = 3;
+  
+  // Response time in milliseconds
+  int64 response_time_ms = 4;
+  
+  // Additional component metadata
+  map<string, string> metadata = 5;
+}
+
+// Common error structure
+message Error {
+  // Error code (application-specific)
+  string code = 1;
+  
+  // Human-readable error message
+  string message = 2;
+  
+  // Additional error details
+  map<string, string> details = 3;
+  
+  // Error timestamp
+  google.protobuf.Timestamp timestamp = 4;
+  
+  // Request ID for tracing
+  string request_id = 5;
+}
+
+// Request metadata for all operations
+message RequestMetadata {
+  // Unique request identifier
+  string request_id = 1;
+  
+  // Client information
+  ClientInfo client = 2;
+  
+  // Trace information
+  TraceInfo trace = 3;
+  
+  // Request timestamp
+  google.protobuf.Timestamp timestamp = 4;
+}
+
+// Client information
+message ClientInfo {
+  // Client identifier
+  string client_id = 1;
+  
+  // Client version
+  string version = 2;
+  
+  // User agent string
+  string user_agent = 3;
+  
+  // Client IP address
+  string ip_address = 4;
+}
+
+// Distributed tracing information
+message TraceInfo {
+  // Trace ID
+  string trace_id = 1;
+  
+  // Span ID
+  string span_id = 2;
+  
+  // Parent span ID
+  string parent_span_id = 3;
+  
+  // Trace flags
+  int32 flags = 4;
+}

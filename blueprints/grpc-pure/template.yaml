@@ -1,0 +1,517 @@
+name: "grpc-pure"
+description: "Pure gRPC service with advanced features for high-performance microservices"
+type: "grpc-pure"
+architecture: "microservice"
+version: "1.0.0"
+author: "Go-Starter Team"
+license: "MIT"
+
+variables:
+  - name: "ProjectName"
+    description: "Name of the gRPC service"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9_-]+$"
+
+  - name: "ModulePath"
+    description: "Go module path (e.g., github.com/user/grpc-service)"
+    type: "string"
+    required: true
+    validation: "^[a-zA-Z0-9._/-]+$"
+
+  - name: "GoVersion"
+    description: "Go version to use"
+    type: "string"
+    required: false
+    default: "1.21"
+
+  - name: "Logger"
+    description: "Logging library"
+    type: "string"
+    required: false
+    default: "slog"
+    choices:
+      - "slog"
+      - "zap"
+      - "logrus"
+      - "zerolog"
+
+  - name: "GrpcPort"
+    description: "Port for the gRPC server"
+    type: "int"
+    required: false
+    default: 50051
+
+  - name: "MetricsPort"
+    description: "Port for metrics and health endpoints"
+    type: "int"
+    required: false
+    default: 8080
+
+  - name: "DatabaseDriver"
+    description: "Database driver (optional)"
+    type: "string"
+    required: false
+    default: ""
+    choices:
+      - ""
+      - "postgres"
+      - "mysql"
+      - "sqlite"
+
+  - name: "DatabaseORM"
+    description: "Database ORM/query builder"
+    type: "string"
+    required: false
+    default: ""
+    choices:
+      - ""
+      - "gorm"
+      - "sqlx"
+
+  - name: "AuthType"
+    description: "Authentication type"
+    type: "string"
+    required: false
+    default: "jwt"
+    choices:
+      - ""
+      - "jwt"
+      - "mtls"
+      - "oauth2"
+
+  - name: "ServiceDiscovery"
+    description: "Service discovery backend"
+    type: "string"
+    required: false
+    default: ""
+    choices:
+      - ""
+      - "consul"
+      - "etcd"
+      - "kubernetes"
+
+  - name: "TracingEnabled"
+    description: "Enable OpenTelemetry distributed tracing"
+    type: "bool"
+    required: false
+    default: true
+
+  - name: "MetricsEnabled"
+    description: "Enable Prometheus metrics"
+    type: "bool"
+    required: false
+    default: true
+
+  - name: "ReflectionEnabled"
+    description: "Enable gRPC reflection for development"
+    type: "bool"
+    required: false
+    default: false
+
+  - name: "License"
+    description: "Project license type"
+    type: "string"
+    required: false
+    default: "MIT"
+
+  - name: "Framework"
+    description: "Framework used (for template compatibility)"
+    type: "string"
+    required: false
+    default: "grpc-pure"
+
+dependencies:
+  # Core gRPC dependencies - Latest stable versions
+  - module: "google.golang.org/grpc"
+    version: "v1.63.2"
+    
+  - module: "google.golang.org/protobuf"
+    version: "v1.34.1"
+    
+  - module: "google.golang.org/genproto/googleapis/rpc"
+    version: "v0.0.0-20240515191416-fc5f0ca64291"
+
+  # gRPC middleware and interceptors
+  - module: "github.com/grpc-ecosystem/go-grpc-middleware/v2"
+    version: "v2.1.0"
+
+  # gRPC health checking
+  - module: "google.golang.org/grpc/health/grpc_health_v1"
+    version: "v1.63.2"
+
+  # Configuration management
+  - module: "github.com/spf13/viper"
+    version: "v1.18.2"
+    
+  - module: "github.com/spf13/cobra"
+    version: "v1.8.0"
+
+  # OpenTelemetry for distributed tracing (conditional)
+  - module: "go.opentelemetry.io/otel"
+    version: "v1.27.0"
+    condition: "{{.TracingEnabled}}"
+    
+  - module: "go.opentelemetry.io/otel/trace"
+    version: "v1.27.0"
+    condition: "{{.TracingEnabled}}"
+    
+  - module: "go.opentelemetry.io/otel/sdk"
+    version: "v1.27.0"
+    condition: "{{.TracingEnabled}}"
+    
+  - module: "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+    version: "v0.52.0"
+    condition: "{{.TracingEnabled}}"
+
+  # Prometheus metrics (conditional)
+  - module: "github.com/prometheus/client_golang"
+    version: "v1.19.1"
+    condition: "{{.MetricsEnabled}}"
+    
+  - module: "github.com/grpc-ecosystem/go-grpc-prometheus"
+    version: "v1.2.0"
+    condition: "{{.MetricsEnabled}}"
+
+  # Service discovery dependencies (conditional)
+  - module: "github.com/hashicorp/consul/api"
+    version: "v1.29.1"
+    condition: "{{eq .ServiceDiscovery \"consul\"}}"
+    
+  - module: "go.etcd.io/etcd/client/v3"
+    version: "v3.5.14"
+    condition: "{{eq .ServiceDiscovery \"etcd\"}}"
+    
+  - module: "k8s.io/client-go"
+    version: "v0.30.1"
+    condition: "{{eq .ServiceDiscovery \"kubernetes\"}}"
+
+  # Database dependencies (conditional)
+  - module: "gorm.io/gorm"
+    version: "v1.25.4"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "gorm.io/driver/postgres"
+    version: "v1.5.2"
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "gorm.io/driver/mysql"
+    version: "v1.5.2"
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "gorm.io/driver/sqlite"
+    version: "v1.5.4"
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (eq .DatabaseORM \"gorm\")}}"
+    
+  - module: "github.com/jmoiron/sqlx"
+    version: "v1.3.5"
+    condition: "{{and (ne .DatabaseDriver \"\") (eq .DatabaseORM \"sqlx\")}}"
+
+  # Database drivers (conditional)
+  - module: "github.com/lib/pq"
+    version: "v1.10.9"
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (ne .DatabaseORM \"gorm\")}}"
+    
+  - module: "github.com/go-sql-driver/mysql"
+    version: "v1.7.1"
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (ne .DatabaseORM \"gorm\")}}"
+    
+  - module: "github.com/mattn/go-sqlite3"
+    version: "v1.14.17"
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (ne .DatabaseORM \"gorm\")}}"
+
+  # Authentication dependencies (conditional)
+  - module: "github.com/golang-jwt/jwt/v5"
+    version: "v5.2.1"
+    condition: "{{eq .AuthType \"jwt\"}}"
+    
+  - module: "golang.org/x/oauth2"
+    version: "v0.20.0"
+    condition: "{{eq .AuthType \"oauth2\"}}"
+    
+  - module: "golang.org/x/crypto"
+    version: "v0.23.0"
+    condition: "{{ne .AuthType \"\"}}"
+
+  # Logger dependencies (conditional)
+  - module: "go.uber.org/zap"
+    version: "v1.27.0"
+    condition: "{{eq .Logger \"zap\"}}"
+    
+  - module: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .Logger \"logrus\"}}"
+    
+  - module: "github.com/rs/zerolog"
+    version: "v1.33.0"
+    condition: "{{eq .Logger \"zerolog\"}}"
+
+  # Testing dependencies
+  - module: "github.com/stretchr/testify"
+    version: "v1.9.0"
+    
+  # UUID generation
+  - module: "github.com/google/uuid"
+    version: "v1.6.0"
+
+  # Rate limiting
+  - module: "golang.org/x/time"
+    version: "v0.5.0"
+
+files:
+  # Main application
+  - source: "cmd/server/main.go.tmpl"
+    destination: "cmd/server/main.go"
+    
+  # Go module and build files
+  - source: "go.mod.tmpl"
+    destination: "go.mod"
+    
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+    
+  - source: "README.md.tmpl"
+    destination: "README.md"
+    
+  # Buf configuration for protobuf generation
+  - source: "buf.yaml.tmpl"
+    destination: "buf.yaml"
+    
+  - source: "buf.gen.yaml.tmpl"
+    destination: "buf.gen.yaml"
+    
+  # Docker files
+  - source: "Dockerfile.tmpl"
+    destination: "Dockerfile"
+    
+  - source: "docker-compose.yml.tmpl"
+    destination: "docker-compose.yml"
+    
+  # Protocol buffer definitions
+  - source: "proto/projectname/v1/service.proto.tmpl"
+    destination: "proto/{{.ProjectName | lower}}/v1/service.proto"
+    
+  - source: "proto/health/v1/health.proto.tmpl"
+    destination: "proto/health/v1/health.proto"
+    
+  - source: "proto/common/v1/common.proto.tmpl"
+    destination: "proto/common/v1/common.proto"
+    
+  # Generated code build script
+  - source: "scripts/generate.sh.tmpl"
+    destination: "scripts/generate.sh"
+    
+  - source: "scripts/dev.sh.tmpl"
+    destination: "scripts/dev.sh"
+    
+  - source: "scripts/test.sh.tmpl"
+    destination: "scripts/test.sh"
+    
+  # Configuration
+  - source: "configs/config.dev.yaml.tmpl"
+    destination: "configs/config.dev.yaml"
+    
+  - source: "configs/config.prod.yaml.tmpl"
+    destination: "configs/config.prod.yaml"
+    
+  - source: "configs/config.test.yaml.tmpl"
+    destination: "configs/config.test.yaml"
+    
+  # Internal packages
+  - source: "internal/config/config.go.tmpl"
+    destination: "internal/config/config.go"
+    
+  # Logger factory (simplified system)
+  - source: "internal/logger/interface.go.tmpl"
+    destination: "internal/logger/interface.go"
+    
+  - source: "internal/logger/logger.go.tmpl"
+    destination: "internal/logger/logger.go"
+    
+  # gRPC server implementation
+  - source: "internal/server/grpc.go.tmpl"
+    destination: "internal/server/grpc.go"
+    
+  - source: "internal/server/health.go.tmpl"
+    destination: "internal/server/health.go"
+    
+  - source: "internal/server/metrics.go.tmpl"
+    destination: "internal/server/metrics.go"
+    condition: "{{.MetricsEnabled}}"
+    
+  # Interceptors
+  - source: "internal/interceptors/auth.go.tmpl"
+    destination: "internal/interceptors/auth.go"
+    condition: "{{ne .AuthType \"\"}}"
+    
+  - source: "internal/interceptors/logging.go.tmpl"
+    destination: "internal/interceptors/logging.go"
+    
+  - source: "internal/interceptors/recovery.go.tmpl"
+    destination: "internal/interceptors/recovery.go"
+    
+  - source: "internal/interceptors/metrics.go.tmpl"
+    destination: "internal/interceptors/metrics.go"
+    condition: "{{.MetricsEnabled}}"
+    
+  - source: "internal/interceptors/tracing.go.tmpl"
+    destination: "internal/interceptors/tracing.go"
+    condition: "{{.TracingEnabled}}"
+    
+  - source: "internal/interceptors/ratelimit.go.tmpl"
+    destination: "internal/interceptors/ratelimit.go"
+    
+  # Service implementations
+  - source: "internal/services/projectname.go.tmpl"
+    destination: "internal/services/{{.ProjectName | lower}}.go"
+    
+  - source: "internal/services/health.go.tmpl"
+    destination: "internal/services/health.go"
+    
+  # Service discovery (conditional)
+  - source: "internal/discovery/consul.go.tmpl"
+    destination: "internal/discovery/consul.go"
+    condition: "{{eq .ServiceDiscovery \"consul\"}}"
+    
+  - source: "internal/discovery/etcd.go.tmpl"
+    destination: "internal/discovery/etcd.go"
+    condition: "{{eq .ServiceDiscovery \"etcd\"}}"
+    
+  - source: "internal/discovery/kubernetes.go.tmpl"
+    destination: "internal/discovery/kubernetes.go"
+    condition: "{{eq .ServiceDiscovery \"kubernetes\"}}"
+    
+  - source: "internal/discovery/interface.go.tmpl"
+    destination: "internal/discovery/interface.go"
+    condition: "{{ne .ServiceDiscovery \"\"}}"
+    
+  # Observability
+  - source: "internal/observability/tracing.go.tmpl"
+    destination: "internal/observability/tracing.go"
+    condition: "{{.TracingEnabled}}"
+    
+  - source: "internal/observability/metrics.go.tmpl"
+    destination: "internal/observability/metrics.go"
+    condition: "{{.MetricsEnabled}}"
+    
+  # Database (conditional)
+  - source: "internal/database/connection.go.tmpl"
+    destination: "internal/database/connection.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "internal/database/migrations.go.tmpl"
+    destination: "internal/database/migrations.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Models (conditional)
+  - source: "internal/models/user.go.tmpl"
+    destination: "internal/models/user.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Repository (conditional)
+  - source: "internal/repository/user.go.tmpl"
+    destination: "internal/repository/user.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "internal/repository/interface.go.tmpl"
+    destination: "internal/repository/interface.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Authentication and security
+  - source: "internal/auth/jwt.go.tmpl"
+    destination: "internal/auth/jwt.go"
+    condition: "{{eq .AuthType \"jwt\"}}"
+    
+  - source: "internal/auth/mtls.go.tmpl"
+    destination: "internal/auth/mtls.go"
+    condition: "{{eq .AuthType \"mtls\"}}"
+    
+  - source: "internal/auth/oauth.go.tmpl"
+    destination: "internal/auth/oauth.go"
+    condition: "{{eq .AuthType \"oauth2\"}}"
+    
+  - source: "internal/auth/interface.go.tmpl"
+    destination: "internal/auth/interface.go"
+    condition: "{{ne .AuthType \"\"}}"
+    
+  # TLS configuration
+  - source: "internal/tls/config.go.tmpl"
+    destination: "internal/tls/config.go"
+    
+  # Load balancing
+  - source: "internal/balancer/round_robin.go.tmpl"
+    destination: "internal/balancer/round_robin.go"
+    
+  - source: "internal/balancer/weighted.go.tmpl"
+    destination: "internal/balancer/weighted.go"
+    
+  # Database migrations (conditional)
+  - source: "migrations/001_create_users.up.sql.tmpl"
+    destination: "migrations/001_create_users.up.sql"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "migrations/001_create_users.down.sql.tmpl"
+    destination: "migrations/001_create_users.down.sql"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  - source: "migrations/embed.go.tmpl"
+    destination: "migrations/embed.go"
+    condition: "{{ne .DatabaseDriver \"\"}}"
+    
+  # Tests
+  - source: "tests/integration/grpc_test.go.tmpl"
+    destination: "tests/integration/grpc_test.go"
+    
+  - source: "tests/integration/health_test.go.tmpl"
+    destination: "tests/integration/health_test.go"
+    
+  - source: "tests/integration/interceptors_test.go.tmpl"
+    destination: "tests/integration/interceptors_test.go"
+    
+  - source: "tests/unit/services_test.go.tmpl"
+    destination: "tests/unit/services_test.go"
+    
+  - source: "tests/load/grpc_load_test.go.tmpl"
+    destination: "tests/load/grpc_load_test.go"
+    
+  # Documentation
+  - source: "docs/ARCHITECTURE.md.tmpl"
+    destination: "docs/ARCHITECTURE.md"
+    
+  - source: "docs/API.md.tmpl"
+    destination: "docs/API.md"
+    
+  - source: "docs/DEPLOYMENT.md.tmpl"
+    destination: "docs/DEPLOYMENT.md"
+    
+  # Environment files
+  - source: ".env.example.tmpl"
+    destination: ".env.example"
+    
+  - source: ".gitignore.tmpl"
+    destination: ".gitignore"
+
+  # CI/CD
+  - source: ".github/workflows/ci.yml.tmpl"
+    destination: ".github/workflows/ci.yml"
+    
+  - source: ".github/workflows/security.yml.tmpl"
+    destination: ".github/workflows/security.yml"
+
+hooks:
+  post_generation:
+    - name: "make_scripts_executable"
+      command: "chmod +x scripts/*.sh"
+      description: "Make shell scripts executable"
+    - name: "generate_protobuf"
+      command: "make generate"
+      description: "Generate protobuf and gRPC code"
+    - name: "format_code"
+      command: "go fmt ./..."
+      description: "Format generated Go code"
+    - name: "clean_dependencies" 
+      command: "go mod tidy"
+      description: "Clean up go.mod dependencies"
+    - name: "run_tests"
+      command: "make test"
+      description: "Run initial test suite"

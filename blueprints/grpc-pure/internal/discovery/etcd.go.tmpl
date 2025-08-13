@@ -1,0 +1,454 @@
+package discovery
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"path"
+	"strings"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+
+	clientv3 "go.etcd.io/etcd/client/v3"
+)
+
+// EtcdServiceDiscovery implements ServiceDiscovery using etcd
+type EtcdServiceDiscovery struct {
+	client         *clientv3.Client
+	config         config.DiscoveryConfig
+	serviceKey     string
+	serviceInstance ServiceInstance
+	leaseTTL       int64
+	leaseID        clientv3.LeaseID
+	mu             sync.RWMutex
+	healthStatus   HealthStatus
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
+}
+
+const (
+	etcdServicePrefix = "/services"
+	etcdHealthPrefix  = "/health"
+	defaultLeaseTTL   = 30 // seconds
+)
+
+// NewEtcdServiceDiscovery creates a new etcd service discovery client
+func NewEtcdServiceDiscovery(cfg config.DiscoveryConfig) (ServiceDiscovery, error) {
+	// Create etcd client configuration
+	etcdConfig := clientv3.Config{
+		Endpoints:   []string{cfg.Address},
+		DialTimeout: 5 * time.Second,
+	}
+
+	// Create etcd client
+	client, err := clientv3.New(etcdConfig)
+	if err != nil {
+		return nil, NewDiscoveryError("ETCD_CLIENT_ERROR", "failed to create etcd client", err)
+	}
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	
+	_, err = client.Status(ctx, cfg.Address)
+	if err != nil {
+		return nil, NewDiscoveryError("ETCD_CONNECTION_ERROR", "failed to connect to etcd", err)
+	}
+
+	sd := &EtcdServiceDiscovery{
+		client:       client,
+		config:       cfg,
+		leaseTTL:     defaultLeaseTTL,
+		healthStatus: HealthStatusUnknown,
+		stopCh:       make(chan struct{}),
+	}
+
+	return sd, nil
+}
+
+// Register registers a service instance with etcd
+func (e *EtcdServiceDiscovery) Register(instance ServiceInstance) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.serviceInstance = instance
+	e.serviceKey = e.buildServiceKey(instance.Name, instance.ID)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Create lease
+	lease, err := e.client.Grant(ctx, e.leaseTTL)
+	if err != nil {
+		return NewDiscoveryError("ETCD_LEASE_ERROR", "failed to create lease", err)
+	}
+	e.leaseID = lease.ID
+
+	// Serialize service instance
+	data, err := json.Marshal(instance)
+	if err != nil {
+		return NewDiscoveryError("ETCD_MARSHAL_ERROR", "failed to marshal service instance", err)
+	}
+
+	// Put service instance with lease
+	_, err = e.client.Put(ctx, e.serviceKey, string(data), clientv3.WithLease(e.leaseID))
+	if err != nil {
+		return NewDiscoveryError("ETCD_PUT_ERROR", "failed to put service instance", err)
+	}
+
+	// Start lease renewal
+	e.wg.Add(1)
+	go e.renewLease()
+
+	// Start health check if enabled
+	if e.config.HealthCheck.Enabled {
+		e.wg.Add(1)
+		go e.healthCheckRoutine()
+	}
+
+	e.healthStatus = HealthStatusHealthy
+
+	return nil
+}
+
+// Deregister removes the service instance from etcd
+func (e *EtcdServiceDiscovery) Deregister() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.serviceKey == "" {
+		return nil // Not registered
+	}
+
+	// Stop background routines
+	close(e.stopCh)
+	e.wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Revoke lease (this will remove the service key)
+	if e.leaseID != 0 {
+		_, err := e.client.Revoke(ctx, e.leaseID)
+		if err != nil {
+			return NewDiscoveryError("ETCD_REVOKE_ERROR", "failed to revoke lease", err)
+		}
+	}
+
+	// Remove health key if it exists
+	healthKey := e.buildHealthKey(e.serviceInstance.Name, e.serviceInstance.ID)
+	_, err := e.client.Delete(ctx, healthKey)
+	if err != nil {
+		// Log error but don't fail deregistration
+	}
+
+	e.serviceKey = ""
+	e.leaseID = 0
+	e.healthStatus = HealthStatusUnknown
+
+	return nil
+}
+
+// Discover returns healthy instances of a service from etcd
+func (e *EtcdServiceDiscovery) Discover(serviceName string) ([]ServiceInstance, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Get all instances of the service
+	prefix := e.buildServicePrefix(serviceName)
+	resp, err := e.client.Get(ctx, prefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, NewDiscoveryError("ETCD_GET_ERROR", "failed to get service instances", err)
+	}
+
+	instances := make([]ServiceInstance, 0, len(resp.Kvs))
+	for _, kv := range resp.Kvs {
+		var instance ServiceInstance
+		err := json.Unmarshal(kv.Value, &instance)
+		if err != nil {
+			continue // Skip invalid entries
+		}
+
+		// Check health status
+		health, err := e.getInstanceHealth(serviceName, instance.ID)
+		if err == nil {
+			instance.Health = health
+		} else {
+			instance.Health = HealthStatusUnknown
+		}
+
+		// Only return healthy instances
+		if instance.Health == HealthStatusHealthy || instance.Health == HealthStatusWarning {
+			instances = append(instances, instance)
+		}
+	}
+
+	return instances, nil
+}
+
+// Watch watches for changes to a service in etcd
+func (e *EtcdServiceDiscovery) Watch(ctx context.Context, serviceName string) (<-chan []ServiceInstance, error) {
+	ch := make(chan []ServiceInstance, 10)
+
+	e.wg.Add(1)
+	go func() {
+		defer e.wg.Done()
+		defer close(ch)
+
+		prefix := e.buildServicePrefix(serviceName)
+		watchCh := e.client.Watch(ctx, prefix, clientv3.WithPrefix())
+
+		// Send initial state
+		instances, err := e.Discover(serviceName)
+		if err == nil {
+			select {
+			case ch <- instances:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		// Watch for changes
+		for {
+			select {
+			case wresp := <-watchCh:
+				if wresp.Err() != nil {
+					return
+				}
+
+				// Get updated instances
+				instances, err := e.Discover(serviceName)
+				if err != nil {
+					continue
+				}
+
+				select {
+				case ch <- instances:
+				case <-ctx.Done():
+					return
+				}
+
+			case <-ctx.Done():
+				return
+			case <-e.stopCh:
+				return
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+// UpdateHealth updates the health status of this service instance
+func (e *EtcdServiceDiscovery) UpdateHealth(status HealthStatus) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.serviceKey == "" {
+		return NewDiscoveryError("SERVICE_NOT_REGISTERED", "service not registered", nil)
+	}
+
+	e.healthStatus = status
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// Update health status in etcd
+	healthKey := e.buildHealthKey(e.serviceInstance.Name, e.serviceInstance.ID)
+	healthData := map[string]interface{}{
+		"status":    string(status),
+		"timestamp": time.Now().Unix(),
+		"ttl":       e.leaseTTL,
+	}
+
+	data, err := json.Marshal(healthData)
+	if err != nil {
+		return NewDiscoveryError("ETCD_MARSHAL_ERROR", "failed to marshal health data", err)
+	}
+
+	_, err = e.client.Put(ctx, healthKey, string(data), clientv3.WithLease(e.leaseID))
+	if err != nil {
+		return NewDiscoveryError("ETCD_HEALTH_UPDATE_ERROR", "failed to update health status", err)
+	}
+
+	return nil
+}
+
+// GetHealth returns the current health status
+func (e *EtcdServiceDiscovery) GetHealth() (HealthStatus, error) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.healthStatus, nil
+}
+
+// Close closes the etcd client
+func (e *EtcdServiceDiscovery) Close() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Stop all goroutines
+	close(e.stopCh)
+	e.wg.Wait()
+
+	// Close etcd client
+	return e.client.Close()
+}
+
+// renewLease periodically renews the lease to keep the service registered
+func (e *EtcdServiceDiscovery) renewLease() {
+	defer e.wg.Done()
+
+	// Create keep alive channel
+	ch, kaerr := e.client.KeepAlive(context.Background(), e.leaseID)
+	if kaerr != nil {
+		return
+	}
+
+	for {
+		select {
+		case ka := <-ch:
+			if ka == nil {
+				// Lease expired, try to re-register
+				e.mu.Lock()
+				instance := e.serviceInstance
+				e.mu.Unlock()
+				
+				if instance.ID != "" {
+					e.Register(instance)
+				}
+				return
+			}
+		case <-e.stopCh:
+			return
+		}
+	}
+}
+
+// healthCheckRoutine periodically updates health status
+func (e *EtcdServiceDiscovery) healthCheckRoutine() {
+	defer e.wg.Done()
+
+	ticker := time.NewTicker(e.config.HealthCheck.Interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			e.mu.RLock()
+			status := e.healthStatus
+			e.mu.RUnlock()
+
+			if status != HealthStatusUnknown {
+				e.UpdateHealth(status)
+			}
+
+		case <-e.stopCh:
+			return
+		}
+	}
+}
+
+// getInstanceHealth gets the health status of a specific instance
+func (e *EtcdServiceDiscovery) getInstanceHealth(serviceName, instanceID string) (HealthStatus, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	healthKey := e.buildHealthKey(serviceName, instanceID)
+	resp, err := e.client.Get(ctx, healthKey)
+	if err != nil {
+		return HealthStatusUnknown, err
+	}
+
+	if len(resp.Kvs) == 0 {
+		return HealthStatusUnknown, nil
+	}
+
+	var healthData map[string]interface{}
+	err = json.Unmarshal(resp.Kvs[0].Value, &healthData)
+	if err != nil {
+		return HealthStatusUnknown, err
+	}
+
+	statusStr, ok := healthData["status"].(string)
+	if !ok {
+		return HealthStatusUnknown, nil
+	}
+
+	return HealthStatus(statusStr), nil
+}
+
+// buildServiceKey builds the etcd key for a service instance
+func (e *EtcdServiceDiscovery) buildServiceKey(serviceName, instanceID string) string {
+	return path.Join(etcdServicePrefix, serviceName, instanceID)
+}
+
+// buildServicePrefix builds the etcd prefix for all instances of a service
+func (e *EtcdServiceDiscovery) buildServicePrefix(serviceName string) string {
+	return path.Join(etcdServicePrefix, serviceName) + "/"
+}
+
+// buildHealthKey builds the etcd key for health information
+func (e *EtcdServiceDiscovery) buildHealthKey(serviceName, instanceID string) string {
+	return path.Join(etcdHealthPrefix, serviceName, instanceID)
+}
+
+// GetAllServices returns all registered services
+func (e *EtcdServiceDiscovery) GetAllServices() (map[string][]ServiceInstance, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := e.client.Get(ctx, etcdServicePrefix, clientv3.WithPrefix())
+	if err != nil {
+		return nil, NewDiscoveryError("ETCD_GET_ERROR", "failed to get all services", err)
+	}
+
+	services := make(map[string][]ServiceInstance)
+	
+	for _, kv := range resp.Kvs {
+		var instance ServiceInstance
+		err := json.Unmarshal(kv.Value, &instance)
+		if err != nil {
+			continue
+		}
+
+		serviceName := instance.Name
+		if services[serviceName] == nil {
+			services[serviceName] = make([]ServiceInstance, 0)
+		}
+		
+		services[serviceName] = append(services[serviceName], instance)
+	}
+
+	return services, nil
+}
+
+// GetServiceNames returns all service names
+func (e *EtcdServiceDiscovery) GetServiceNames() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := e.client.Get(ctx, etcdServicePrefix, clientv3.WithPrefix(), clientv3.WithKeysOnly())
+	if err != nil {
+		return nil, NewDiscoveryError("ETCD_GET_ERROR", "failed to get service names", err)
+	}
+
+	serviceNames := make(map[string]bool)
+	
+	for _, kv := range resp.Kvs {
+		key := string(kv.Key)
+		// Extract service name from key: /services/serviceName/instanceID
+		parts := strings.Split(strings.TrimPrefix(key, etcdServicePrefix+"/"), "/")
+		if len(parts) >= 1 {
+			serviceNames[parts[0]] = true
+		}
+	}
+
+	names := make([]string, 0, len(serviceNames))
+	for name := range serviceNames {
+		names = append(names, name)
+	}
+
+	return names, nil
+}

@@ -1,0 +1,222 @@
+#!/bin/bash
+{{- if ne .DatabaseDriver ""}}
+
+# Migration script for {{.ProjectName}}
+# This script helps manage database migrations
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Default values
+ENVIRONMENT="${ENVIRONMENT:-development}"
+CONFIG_DIR="${CONFIG_DIR:-./configs}"
+MIGRATION_DIR="${MIGRATION_DIR:-./migrations}"
+COMMAND="${1:-up}"
+
+# Print usage
+usage() {
+    echo "Usage: $0 [command] [options]"
+    echo ""
+    echo "Commands:"
+    echo "  up          Run all pending migrations (default)"
+    echo "  down        Rollback the last migration"
+    echo "  create      Create a new migration file"
+    echo "  status      Show migration status"
+    echo "  reset       Reset database (rollback all, then migrate)"
+    echo ""
+    echo "Options:"
+    echo "  -e, --env   Environment (development, test, production)"
+    echo "  -c, --config Config directory path"
+    echo "  -m, --migrations Migrations directory path"
+    echo ""
+    echo "Environment variables:"
+    echo "  ENVIRONMENT    Set the environment (default: development)"
+    echo "  CONFIG_DIR     Set config directory (default: ./configs)"
+    echo "  MIGRATION_DIR  Set migrations directory (default: ./migrations)"
+    exit 1
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -e|--env)
+            ENVIRONMENT="$2"
+            shift 2
+            ;;
+        -c|--config)
+            CONFIG_DIR="$2"
+            shift 2
+            ;;
+        -m|--migrations)
+            MIGRATION_DIR="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            COMMAND="$1"
+            shift
+            ;;
+    esac
+done
+
+# Load environment configuration
+CONFIG_FILE="${CONFIG_DIR}/config.${ENVIRONMENT}.yaml"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo -e "${RED}Error: Configuration file not found: $CONFIG_FILE${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}Using configuration: $CONFIG_FILE${NC}"
+
+# Extract database configuration using a simple approach
+# In production, you might want to use a proper YAML parser
+{{- if eq .DatabaseDriver "postgres"}}
+DB_HOST=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "host:" | awk '{print $2}')
+DB_PORT=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "port:" | awk '{print $2}')
+DB_NAME=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "name:" | awk '{print $2}')
+DB_USER=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "user:" | awk '{print $2}')
+DB_PASS=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "password:" | awk '{print $2}')
+
+# Build connection string
+export DATABASE_URL="postgres://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}?sslmode=disable"
+
+{{- else if eq .DatabaseDriver "mysql"}}
+DB_HOST=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "host:" | awk '{print $2}')
+DB_PORT=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "port:" | awk '{print $2}')
+DB_NAME=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "name:" | awk '{print $2}')
+DB_USER=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "user:" | awk '{print $2}')
+DB_PASS=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "password:" | awk '{print $2}')
+
+# Build connection string
+export DATABASE_URL="mysql://${DB_USER}:${DB_PASS}@tcp(${DB_HOST}:${DB_PORT})/${DB_NAME}"
+
+{{- else if eq .DatabaseDriver "sqlite"}}
+DB_NAME=$(grep -A5 "^database:" "$CONFIG_FILE" | grep "name:" | awk '{print $2}')
+
+# Build connection string
+export DATABASE_URL="sqlite3://${DB_NAME}"
+{{- end}}
+
+# Check if migrate tool is installed
+if ! command -v migrate &> /dev/null; then
+    echo -e "${YELLOW}Warning: 'migrate' tool not found. Installing...${NC}"
+    
+    # Detect OS and architecture
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+    
+    case "$ARCH" in
+        x86_64) ARCH="amd64" ;;
+        aarch64|arm64) ARCH="arm64" ;;
+    esac
+    
+    # Download migrate
+    MIGRATE_VERSION="v4.16.2"
+    MIGRATE_URL="https://github.com/golang-migrate/migrate/releases/download/${MIGRATE_VERSION}/migrate.${OS}-${ARCH}.tar.gz"
+    
+    echo "Downloading migrate from: $MIGRATE_URL"
+    curl -L "$MIGRATE_URL" | tar xvz
+    
+    # Move to local bin or use from current directory
+    if [ -w "/usr/local/bin" ]; then
+        sudo mv migrate /usr/local/bin/
+    else
+        mkdir -p ./bin
+        mv migrate ./bin/
+        export PATH="./bin:$PATH"
+    fi
+fi
+
+# Execute migration command
+case "$COMMAND" in
+    up)
+        echo -e "${GREEN}Running migrations...${NC}"
+        migrate -path "$MIGRATION_DIR" -database "$DATABASE_URL" up
+        echo -e "${GREEN}Migrations completed successfully!${NC}"
+        ;;
+        
+    down)
+        echo -e "${YELLOW}Rolling back last migration...${NC}"
+        migrate -path "$MIGRATION_DIR" -database "$DATABASE_URL" down 1
+        echo -e "${GREEN}Rollback completed successfully!${NC}"
+        ;;
+        
+    create)
+        if [ -z "$2" ]; then
+            echo -e "${RED}Error: Migration name required${NC}"
+            echo "Usage: $0 create <migration_name>"
+            exit 1
+        fi
+        
+        MIGRATION_NAME="$2"
+        TIMESTAMP=$(date +%Y%m%d%H%M%S)
+        
+        echo -e "${GREEN}Creating migration: ${MIGRATION_NAME}${NC}"
+        
+        # Create up migration
+        cat > "${MIGRATION_DIR}/${TIMESTAMP}_${MIGRATION_NAME}.up.sql" << EOF
+-- Migration: ${MIGRATION_NAME}
+-- Created: $(date)
+
+-- Add your UP migration SQL here
+
+EOF
+        
+        # Create down migration
+        cat > "${MIGRATION_DIR}/${TIMESTAMP}_${MIGRATION_NAME}.down.sql" << EOF
+-- Rollback: ${MIGRATION_NAME}
+-- Created: $(date)
+
+-- Add your DOWN migration SQL here
+
+EOF
+        
+        echo -e "${GREEN}Created migration files:${NC}"
+        echo "  - ${MIGRATION_DIR}/${TIMESTAMP}_${MIGRATION_NAME}.up.sql"
+        echo "  - ${MIGRATION_DIR}/${TIMESTAMP}_${MIGRATION_NAME}.down.sql"
+        ;;
+        
+    status)
+        echo -e "${GREEN}Migration status:${NC}"
+        migrate -path "$MIGRATION_DIR" -database "$DATABASE_URL" version
+        ;;
+        
+    reset)
+        echo -e "${YELLOW}Warning: This will reset your database!${NC}"
+        read -p "Are you sure? (y/N) " -n 1 -r
+        echo
+        
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}Rolling back all migrations...${NC}"
+            migrate -path "$MIGRATION_DIR" -database "$DATABASE_URL" down -all
+            
+            echo -e "${GREEN}Running all migrations...${NC}"
+            migrate -path "$MIGRATION_DIR" -database "$DATABASE_URL" up
+            
+            echo -e "${GREEN}Database reset completed!${NC}"
+        else
+            echo -e "${YELLOW}Reset cancelled.${NC}"
+        fi
+        ;;
+        
+    *)
+        echo -e "${RED}Error: Unknown command: $COMMAND${NC}"
+        usage
+        ;;
+esac
+
+{{- else}}
+#!/bin/bash
+
+# No database configured for this project
+echo "This project does not have a database configured."
+echo "Database migrations are not applicable."
+exit 0
+{{- end}}

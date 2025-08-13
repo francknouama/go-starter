@@ -1,0 +1,401 @@
+{{if .MetricsEnabled}}package server
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
+)
+
+// MetricsServer provides HTTP endpoints for metrics and health checks
+type MetricsServer struct {
+	server   *http.Server
+	registry *prometheus.Registry
+	logger   {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+	
+	// gRPC metrics
+	grpcRequestsTotal    *prometheus.CounterVec
+	grpcRequestDuration  *prometheus.HistogramVec
+	grpcRequestsInflight *prometheus.GaugeVec
+	
+	// Application metrics
+	appInfo              *prometheus.GaugeVec
+	uptime               prometheus.Gauge
+	startTime            time.Time
+	
+	// Custom metrics registry
+	customMetrics map[string]prometheus.Collector
+}
+
+// MetricsConfig holds configuration for the metrics server
+type MetricsConfig struct {
+	Port         int
+	Path         string
+	HealthPath   string
+	ReadTimeout  time.Duration
+	WriteTimeout time.Duration
+}
+
+// DefaultMetricsConfig returns default metrics configuration
+func DefaultMetricsConfig() *MetricsConfig {
+	return &MetricsConfig{
+		Port:         {{.MetricsPort}},
+		Path:         "/metrics",
+		HealthPath:   "/health",
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 10 * time.Second,
+	}
+}
+
+// NewMetricsServer creates a new metrics server instance
+func NewMetricsServer(config *MetricsConfig, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) *MetricsServer {
+	if config == nil {
+		config = DefaultMetricsConfig()
+	}
+	
+	registry := prometheus.NewRegistry()
+	
+	// Create gRPC metrics
+	grpcRequestsTotal := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "grpc_server_handled_total",
+			Help: "Total number of gRPC requests handled by the server",
+		},
+		[]string{"grpc_service", "grpc_method", "grpc_code"},
+	)
+	
+	grpcRequestDuration := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "grpc_server_handling_seconds",
+			Help:    "Histogram of response latency (seconds) of gRPC requests",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"grpc_service", "grpc_method"},
+	)
+	
+	grpcRequestsInflight := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "grpc_server_requests_inflight",
+			Help: "Number of gRPC requests currently being handled",
+		},
+		[]string{"grpc_service", "grpc_method"},
+	)
+	
+	// Application info metric
+	appInfo := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | lower}}_info",
+			Help: "Information about the {{.ProjectName}} service",
+		},
+		[]string{"version", "service", "environment"},
+	)
+	
+	// Uptime metric
+	uptime := prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "{{.ProjectName | lower}}_uptime_seconds",
+			Help: "Time since the service started in seconds",
+		},
+	)
+	
+	// Register metrics
+	registry.MustRegister(grpcRequestsTotal)
+	registry.MustRegister(grpcRequestDuration)
+	registry.MustRegister(grpcRequestsInflight)
+	registry.MustRegister(appInfo)
+	registry.MustRegister(uptime)
+	
+	// Add Go runtime metrics
+	registry.MustRegister(prometheus.NewGoCollector())
+	registry.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
+	
+	ms := &MetricsServer{
+		registry:             registry,
+		logger:               logger,
+		grpcRequestsTotal:    grpcRequestsTotal,
+		grpcRequestDuration:  grpcRequestDuration,
+		grpcRequestsInflight: grpcRequestsInflight,
+		appInfo:              appInfo,
+		uptime:               uptime,
+		startTime:            time.Now(),
+		customMetrics:        make(map[string]prometheus.Collector),
+	}
+	
+	// Setup HTTP server
+	mux := http.NewServeMux()
+	mux.Handle(config.Path, promhttp.HandlerFor(registry, promhttp.HandlerOpts{
+		EnableOpenMetrics: true,
+	}))
+	mux.HandleFunc(config.HealthPath, ms.healthHandler)
+	
+	ms.server = &http.Server{
+		Addr:         fmt.Sprintf(":%d", config.Port),
+		Handler:      mux,
+		ReadTimeout:  config.ReadTimeout,
+		WriteTimeout: config.WriteTimeout,
+	}
+	
+	// Set application info
+	ms.appInfo.WithLabelValues("{{.ProjectName}}", "{{.ProjectName | lower}}", "development").Set(1)
+	
+	{{if eq .Logger "slog"}}logger.Info("Metrics server configured", "port", config.Port, "metrics_path", config.Path, "health_path", config.HealthPath){{else if eq .Logger "zap"}}logger.Info("Metrics server configured", zap.Int("port", config.Port), zap.String("metrics_path", config.Path), zap.String("health_path", config.HealthPath)){{else if eq .Logger "logrus"}}logger.WithFields(logrus.Fields{"port": config.Port, "metrics_path": config.Path, "health_path": config.HealthPath}).Info("Metrics server configured"){{else if eq .Logger "zerolog"}}logger.Info().Int("port", config.Port).Str("metrics_path", config.Path).Str("health_path", config.HealthPath).Msg("Metrics server configured"){{end}}
+	
+	return ms
+}
+
+// Start starts the metrics HTTP server
+func (ms *MetricsServer) Start() error {
+	go ms.updateUptime()
+	
+	{{if eq .Logger "slog"}}ms.logger.Info("Starting metrics server", "address", ms.server.Addr){{else if eq .Logger "zap"}}ms.logger.Info("Starting metrics server", zap.String("address", ms.server.Addr)){{else if eq .Logger "logrus"}}ms.logger.WithField("address", ms.server.Addr).Info("Starting metrics server"){{else if eq .Logger "zerolog"}}ms.logger.Info().Str("address", ms.server.Addr).Msg("Starting metrics server"){{end}}
+	
+	if err := ms.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		{{if eq .Logger "slog"}}ms.logger.Error("Failed to start metrics server", "error", err){{else if eq .Logger "zap"}}ms.logger.Error("Failed to start metrics server", zap.Error(err)){{else if eq .Logger "logrus"}}ms.logger.WithError(err).Error("Failed to start metrics server"){{else if eq .Logger "zerolog"}}ms.logger.Error().Err(err).Msg("Failed to start metrics server"){{end}}
+		return err
+	}
+	
+	return nil
+}
+
+// Stop gracefully stops the metrics server
+func (ms *MetricsServer) Stop(ctx context.Context) error {
+	{{if eq .Logger "slog"}}ms.logger.Info("Stopping metrics server"){{else if eq .Logger "zap"}}ms.logger.Info("Stopping metrics server"){{else if eq .Logger "logrus"}}ms.logger.Info("Stopping metrics server"){{else if eq .Logger "zerolog"}}ms.logger.Info().Msg("Stopping metrics server"){{end}}
+	
+	return ms.server.Shutdown(ctx)
+}
+
+// GetGRPCUnaryInterceptor returns a gRPC unary interceptor for metrics collection
+func (ms *MetricsServer) GetGRPCUnaryInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		start := time.Now()
+		
+		// Extract service and method
+		service, method := splitFullMethodName(info.FullMethod)
+		
+		// Increment inflight requests
+		ms.grpcRequestsInflight.WithLabelValues(service, method).Inc()
+		defer ms.grpcRequestsInflight.WithLabelValues(service, method).Dec()
+		
+		// Handle request
+		resp, err := handler(ctx, req)
+		
+		// Record metrics
+		duration := time.Since(start).Seconds()
+		code := status.Code(err).String()
+		
+		ms.grpcRequestsTotal.WithLabelValues(service, method, code).Inc()
+		ms.grpcRequestDuration.WithLabelValues(service, method).Observe(duration)
+		
+		return resp, err
+	}
+}
+
+// GetGRPCStreamInterceptor returns a gRPC stream interceptor for metrics collection
+func (ms *MetricsServer) GetGRPCStreamInterceptor() grpc.StreamServerInterceptor {
+	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		start := time.Now()
+		
+		// Extract service and method
+		service, method := splitFullMethodName(info.FullMethod)
+		
+		// Increment inflight requests
+		ms.grpcRequestsInflight.WithLabelValues(service, method).Inc()
+		defer ms.grpcRequestsInflight.WithLabelValues(service, method).Dec()
+		
+		// Handle stream
+		err := handler(srv, stream)
+		
+		// Record metrics
+		duration := time.Since(start).Seconds()
+		code := status.Code(err).String()
+		
+		ms.grpcRequestsTotal.WithLabelValues(service, method, code).Inc()
+		ms.grpcRequestDuration.WithLabelValues(service, method).Observe(duration)
+		
+		return err
+	}
+}
+
+// RegisterCustomMetric registers a custom Prometheus metric
+func (ms *MetricsServer) RegisterCustomMetric(name string, collector prometheus.Collector) error {
+	if _, exists := ms.customMetrics[name]; exists {
+		return fmt.Errorf("metric %s already registered", name)
+	}
+	
+	if err := ms.registry.Register(collector); err != nil {
+		return fmt.Errorf("failed to register metric %s: %w", name, err)
+	}
+	
+	ms.customMetrics[name] = collector
+	{{if eq .Logger "slog"}}ms.logger.Info("Custom metric registered", "name", name){{else if eq .Logger "zap"}}ms.logger.Info("Custom metric registered", zap.String("name", name)){{else if eq .Logger "logrus"}}ms.logger.WithField("name", name).Info("Custom metric registered"){{else if eq .Logger "zerolog"}}ms.logger.Info().Str("name", name).Msg("Custom metric registered"){{end}}
+	
+	return nil
+}
+
+// UnregisterCustomMetric unregisters a custom Prometheus metric
+func (ms *MetricsServer) UnregisterCustomMetric(name string) error {
+	collector, exists := ms.customMetrics[name]
+	if !exists {
+		return fmt.Errorf("metric %s not found", name)
+	}
+	
+	if !ms.registry.Unregister(collector) {
+		return fmt.Errorf("failed to unregister metric %s", name)
+	}
+	
+	delete(ms.customMetrics, name)
+	{{if eq .Logger "slog"}}ms.logger.Info("Custom metric unregistered", "name", name){{else if eq .Logger "zap"}}ms.logger.Info("Custom metric unregistered", zap.String("name", name)){{else if eq .Logger "logrus"}}ms.logger.WithField("name", name).Info("Custom metric unregistered"){{else if eq .Logger "zerolog"}}ms.logger.Info().Str("name", name).Msg("Custom metric unregistered"){{end}}
+	
+	return nil
+}
+
+// SetApplicationInfo sets application metadata
+func (ms *MetricsServer) SetApplicationInfo(version, environment string) {
+	ms.appInfo.Reset()
+	ms.appInfo.WithLabelValues(version, "{{.ProjectName | lower}}", environment).Set(1)
+	{{if eq .Logger "slog"}}ms.logger.Info("Application info updated", "version", version, "environment", environment){{else if eq .Logger "zap"}}ms.logger.Info("Application info updated", zap.String("version", version), zap.String("environment", environment)){{else if eq .Logger "logrus"}}ms.logger.WithFields(logrus.Fields{"version": version, "environment": environment}).Info("Application info updated"){{else if eq .Logger "zerolog"}}ms.logger.Info().Str("version", version).Str("environment", environment).Msg("Application info updated"){{end}}
+}
+
+// healthHandler handles HTTP health check requests
+func (ms *MetricsServer) healthHandler(w http.ResponseWriter, r *http.Request) {
+	// Simple health check - can be extended with more sophisticated checks
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte(`{"status":"healthy","timestamp":"` + time.Now().UTC().Format(time.RFC3339) + `"}`))
+}
+
+// updateUptime periodically updates the uptime metric
+func (ms *MetricsServer) updateUptime() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		uptime := time.Since(ms.startTime).Seconds()
+		ms.uptime.Set(uptime)
+	}
+}
+
+// splitFullMethodName splits a gRPC full method name into service and method
+func splitFullMethodName(fullMethod string) (string, string) {
+	// fullMethod format: /package.service/method
+	if len(fullMethod) == 0 || fullMethod[0] != '/' {
+		return "unknown", "unknown"
+	}
+	
+	// Remove leading slash
+	fullMethod = fullMethod[1:]
+	
+	// Find the last slash
+	lastSlash := -1
+	for i := len(fullMethod) - 1; i >= 0; i-- {
+		if fullMethod[i] == '/' {
+			lastSlash = i
+			break
+		}
+	}
+	
+	if lastSlash == -1 {
+		return "unknown", fullMethod
+	}
+	
+	service := fullMethod[:lastSlash]
+	method := fullMethod[lastSlash+1:]
+	
+	// Extract just the service name (remove package)
+	lastDot := -1
+	for i := len(service) - 1; i >= 0; i-- {
+		if service[i] == '.' {
+			lastDot = i
+			break
+		}
+	}
+	
+	if lastDot != -1 {
+		service = service[lastDot+1:]
+	}
+	
+	return service, method
+}
+
+// Custom metric helpers
+
+// NewCounterMetric creates a new counter metric
+func (ms *MetricsServer) NewCounterMetric(name, help string, labels []string) (*prometheus.CounterVec, error) {
+	counter := prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: name,
+			Help: help,
+		},
+		labels,
+	)
+	
+	err := ms.RegisterCustomMetric(name, counter)
+	if err != nil {
+		return nil, err
+	}
+	
+	return counter, nil
+}
+
+// NewGaugeMetric creates a new gauge metric
+func (ms *MetricsServer) NewGaugeMetric(name, help string, labels []string) (*prometheus.GaugeVec, error) {
+	gauge := prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: name,
+			Help: help,
+		},
+		labels,
+	)
+	
+	err := ms.RegisterCustomMetric(name, gauge)
+	if err != nil {
+		return nil, err
+	}
+	
+	return gauge, nil
+}
+
+// NewHistogramMetric creates a new histogram metric
+func (ms *MetricsServer) NewHistogramMetric(name, help string, labels []string, buckets []float64) (*prometheus.HistogramVec, error) {
+	if buckets == nil {
+		buckets = prometheus.DefBuckets
+	}
+	
+	histogram := prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    name,
+			Help:    help,
+			Buckets: buckets,
+		},
+		labels,
+	)
+	
+	err := ms.RegisterCustomMetric(name, histogram)
+	if err != nil {
+		return nil, err
+	}
+	
+	return histogram, nil
+}
+
+// GetMetricsEndpoint returns the metrics endpoint URL
+func (ms *MetricsServer) GetMetricsEndpoint() string {
+	return "http://" + ms.server.Addr + "/metrics"
+}
+
+// GetHealthEndpoint returns the health endpoint URL
+func (ms *MetricsServer) GetHealthEndpoint() string {
+	return "http://" + ms.server.Addr + "/health"
+}
+{{end}}

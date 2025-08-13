@@ -1,0 +1,174 @@
+package discovery
+
+import (
+	"context"
+	"time"
+)
+
+// ServiceInstance represents a service instance in the discovery system
+type ServiceInstance struct {
+	ID       string            `json:"id"`
+	Name     string            `json:"name"`
+	Address  string            `json:"address"`
+	Port     int               `json:"port"`
+	Tags     []string          `json:"tags"`
+	Meta     map[string]string `json:"meta"`
+	Health   HealthStatus      `json:"health"`
+	Version  string            `json:"version"`
+}
+
+// HealthStatus represents the health status of a service instance
+type HealthStatus string
+
+const (
+	HealthStatusUnknown  HealthStatus = "unknown"
+	HealthStatusHealthy  HealthStatus = "healthy"
+	HealthStatusUnhealthy HealthStatus = "unhealthy"
+	HealthStatusWarning  HealthStatus = "warning"
+)
+
+// ServiceDiscovery defines the interface for service discovery operations
+type ServiceDiscovery interface {
+	// Register registers a service instance
+	Register(instance ServiceInstance) error
+
+	// Deregister removes a service instance from discovery
+	Deregister() error
+
+	// Discover returns healthy instances of a service
+	Discover(serviceName string) ([]ServiceInstance, error)
+
+	// Watch watches for changes to a service
+	Watch(ctx context.Context, serviceName string) (<-chan []ServiceInstance, error)
+
+	// UpdateHealth updates the health status of this service instance
+	UpdateHealth(status HealthStatus) error
+
+	// GetHealth returns the current health status
+	GetHealth() (HealthStatus, error)
+
+	// Close closes the service discovery client
+	Close() error
+}
+
+// DiscoveryEvent represents a service discovery event
+type DiscoveryEvent struct {
+	Type      EventType         `json:"type"`
+	Service   string            `json:"service"`
+	Instance  ServiceInstance   `json:"instance"`
+	Instances []ServiceInstance `json:"instances"`
+	Timestamp time.Time         `json:"timestamp"`
+}
+
+// EventType represents the type of discovery event
+type EventType string
+
+const (
+	EventTypeRegister   EventType = "register"
+	EventTypeDeregister EventType = "deregister"
+	EventTypeUpdate     EventType = "update"
+	EventTypeHealthy    EventType = "healthy"
+	EventTypeUnhealthy  EventType = "unhealthy"
+)
+
+// LoadBalancer defines interface for load balancing strategies
+type LoadBalancer interface {
+	// Select chooses an instance from the available instances
+	Select(instances []ServiceInstance) (*ServiceInstance, error)
+
+	// UpdateInstances updates the list of available instances
+	UpdateInstances(instances []ServiceInstance)
+
+	// GetStrategy returns the load balancing strategy name
+	GetStrategy() string
+}
+
+// HealthChecker defines interface for health checking
+type HealthChecker interface {
+	// Check performs a health check on the given instance
+	Check(ctx context.Context, instance ServiceInstance) (HealthStatus, error)
+
+	// GetCheckInterval returns the health check interval
+	GetCheckInterval() time.Duration
+
+	// Start starts the health checker
+	Start(ctx context.Context) error
+
+	// Stop stops the health checker
+	Stop() error
+}
+
+// ServiceRegistry provides a higher-level interface combining discovery and load balancing
+type ServiceRegistry interface {
+	ServiceDiscovery
+	LoadBalancer
+
+	// GetInstance returns a single instance using load balancing
+	GetInstance(serviceName string) (*ServiceInstance, error)
+
+	// GetAllInstances returns all instances of a service
+	GetAllInstances(serviceName string) ([]ServiceInstance, error)
+
+	// Subscribe subscribes to service discovery events
+	Subscribe(ctx context.Context) (<-chan DiscoveryEvent, error)
+}
+
+// DiscoveryConfig holds common configuration for service discovery
+type DiscoveryConfig struct {
+	Type            string        `mapstructure:"type"`
+	Address         string        `mapstructure:"address"`
+	Timeout         time.Duration `mapstructure:"timeout"`
+	RetryInterval   time.Duration `mapstructure:"retry_interval"`
+	MaxRetries      int           `mapstructure:"max_retries"`
+	HealthCheck     HealthCheckConfig `mapstructure:"health_check"`
+}
+
+// HealthCheckConfig holds health check configuration
+type HealthCheckConfig struct {
+	Enabled   bool          `mapstructure:"enabled"`
+	Interval  time.Duration `mapstructure:"interval"`
+	Timeout   time.Duration `mapstructure:"timeout"`
+	HTTP      string        `mapstructure:"http"`
+	GRPC      string        `mapstructure:"grpc"`
+	TCP       string        `mapstructure:"tcp"`
+	DeregisterCriticalServiceAfter time.Duration `mapstructure:"deregister_critical_service_after"`
+}
+
+// Error types for service discovery
+var (
+	ErrServiceNotFound    = &DiscoveryError{Code: "SERVICE_NOT_FOUND", Message: "service not found"}
+	ErrInstanceNotFound   = &DiscoveryError{Code: "INSTANCE_NOT_FOUND", Message: "instance not found"}
+	ErrRegistrationFailed = &DiscoveryError{Code: "REGISTRATION_FAILED", Message: "service registration failed"}
+	ErrDeregistrationFailed = &DiscoveryError{Code: "DEREGISTRATION_FAILED", Message: "service deregistration failed"}
+	ErrConnectionFailed   = &DiscoveryError{Code: "CONNECTION_FAILED", Message: "connection to discovery service failed"}
+	ErrInvalidConfig      = &DiscoveryError{Code: "INVALID_CONFIG", Message: "invalid configuration"}
+)
+
+// DiscoveryError represents a service discovery error
+type DiscoveryError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Cause   error  `json:"cause,omitempty"`
+}
+
+// Error implements the error interface
+func (e *DiscoveryError) Error() string {
+	if e.Cause != nil {
+		return e.Message + ": " + e.Cause.Error()
+	}
+	return e.Message
+}
+
+// Unwrap returns the underlying error
+func (e *DiscoveryError) Unwrap() error {
+	return e.Cause
+}
+
+// NewDiscoveryError creates a new discovery error
+func NewDiscoveryError(code, message string, cause error) *DiscoveryError {
+	return &DiscoveryError{
+		Code:    code,
+		Message: message,
+		Cause:   cause,
+	}
+}

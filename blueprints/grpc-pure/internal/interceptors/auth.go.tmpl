@@ -1,0 +1,250 @@
+package interceptors
+
+import (
+	"context"
+	"strings"
+
+	"{{.ModulePath}}/internal/auth"
+	"{{.ModulePath}}/internal/logger"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
+
+// AuthInterceptor provides authentication for gRPC requests
+type AuthInterceptor struct {
+	authProvider auth.Provider
+	logger       logger.Logger
+	skipMethods  map[string]bool
+}
+
+// NewAuthInterceptor creates a new authentication interceptor
+func NewAuthInterceptor(provider auth.Provider, log logger.Logger) *AuthInterceptor {
+	// Define methods that skip authentication
+	skipMethods := map[string]bool{
+		"/grpc.health.v1.Health/Check":      true,
+		"/grpc.health.v1.Health/Watch":      true,
+		"/health.v1.HealthService/Check":    true,
+		"/health.v1.HealthService/Watch":    true,
+		"/health.v1.HealthService/GetHealth": true,
+		"/health.v1.HealthService/CheckReadiness": true,
+		"/health.v1.HealthService/CheckLiveness":  true,
+	}
+
+	return &AuthInterceptor{
+		authProvider: provider,
+		logger:       log,
+		skipMethods:  skipMethods,
+	}
+}
+
+// UnaryServerInterceptor returns a unary server interceptor for authentication
+func (a *AuthInterceptor) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	return func(
+		ctx context.Context,
+		req interface{},
+		info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		// Skip authentication for certain methods
+		if a.skipMethods[info.FullMethod] {
+			return handler(ctx, req)
+		}
+
+		// Authenticate the request
+		newCtx, err := a.authenticate(ctx, info.FullMethod)
+		if err != nil {
+			a.logger.Warn("Authentication failed",
+				"method", info.FullMethod,
+				"error", err.Error(),
+			)
+			return nil, err
+		}
+
+		return handler(newCtx, req)
+	}
+}
+
+// StreamServerInterceptor returns a stream server interceptor for authentication
+func (a *AuthInterceptor) StreamServerInterceptor() grpc.StreamServerInterceptor {
+	return func(
+		srv interface{},
+		stream grpc.ServerStream,
+		info *grpc.StreamServerInfo,
+		handler grpc.StreamHandler,
+	) error {
+		// Skip authentication for certain methods
+		if a.skipMethods[info.FullMethod] {
+			return handler(srv, stream)
+		}
+
+		// Authenticate the request
+		newCtx, err := a.authenticate(stream.Context(), info.FullMethod)
+		if err != nil {
+			a.logger.Warn("Stream authentication failed",
+				"method", info.FullMethod,
+				"error", err.Error(),
+			)
+			return err
+		}
+
+		// Create a wrapped stream with the new context
+		wrappedStream := &authServerStream{
+			ServerStream: stream,
+			ctx:          newCtx,
+		}
+
+		return handler(srv, wrappedStream)
+	}
+}
+
+// authenticate performs the actual authentication
+func (a *AuthInterceptor) authenticate(ctx context.Context, method string) (context.Context, error) {
+	// Extract metadata from context
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, status.Errorf(codes.Unauthenticated, "missing metadata")
+	}
+
+	// Extract authorization header
+	authHeader, err := a.extractAuthHeader(md)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate the token/credentials using the auth provider
+	claims, err := a.authProvider.ValidateToken(ctx, authHeader)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "invalid credentials: %v", err)
+	}
+
+	// Add user information to context
+	newCtx := context.WithValue(ctx, auth.UserClaimsKey, claims)
+	
+	a.logger.Debug("Authentication successful",
+		"method", method,
+		"user_id", claims.UserID,
+		"subject", claims.Subject,
+	)
+
+	return newCtx, nil
+}
+
+// extractAuthHeader extracts the authorization header from metadata
+func (a *AuthInterceptor) extractAuthHeader(md metadata.MD) (string, error) {
+	// Try "authorization" header first
+	if authHeaders := md.Get("authorization"); len(authHeaders) > 0 {
+		return authHeaders[0], nil
+	}
+
+	// Try "Authorization" header (case-sensitive fallback)
+	if authHeaders := md.Get("Authorization"); len(authHeaders) > 0 {
+		return authHeaders[0], nil
+	}
+
+	// Try custom headers for different auth types
+	{{- if eq .AuthType "jwt"}}
+	if tokenHeaders := md.Get("x-auth-token"); len(tokenHeaders) > 0 {
+		return "Bearer " + tokenHeaders[0], nil
+	}
+	{{- end}}
+
+	{{- if eq .AuthType "mtls"}}
+	// For mTLS, we don't need a header - the cert is in the connection
+	// But we can check for a client certificate header if present
+	if certHeaders := md.Get("x-client-cert"); len(certHeaders) > 0 {
+		return certHeaders[0], nil
+	}
+	{{- end}}
+
+	return "", status.Errorf(codes.Unauthenticated, "missing authorization header")
+}
+
+// authServerStream wraps a gRPC server stream with an authenticated context
+type authServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+// Context returns the authenticated context
+func (s *authServerStream) Context() context.Context {
+	return s.ctx
+}
+
+// AddSkipMethod adds a method to skip authentication
+func (a *AuthInterceptor) AddSkipMethod(method string) {
+	a.skipMethods[method] = true
+}
+
+// RemoveSkipMethod removes a method from the skip list
+func (a *AuthInterceptor) RemoveSkipMethod(method string) {
+	delete(a.skipMethods, method)
+}
+
+// GetSkipMethods returns the list of methods that skip authentication
+func (a *AuthInterceptor) GetSkipMethods() []string {
+	methods := make([]string, 0, len(a.skipMethods))
+	for method := range a.skipMethods {
+		methods = append(methods, method)
+	}
+	return methods
+}
+
+// SetCustomAuthExtractor allows setting a custom function to extract auth info
+func (a *AuthInterceptor) SetCustomAuthExtractor(extractor func(metadata.MD) (string, error)) {
+	// This could be implemented to allow custom auth extraction logic
+	// For now, we'll keep the default implementation
+}
+
+// ContextWithUser adds user information to the context (utility function)
+func ContextWithUser(ctx context.Context, userID, subject string, roles []string) context.Context {
+	claims := &auth.Claims{
+		UserID:  userID,
+		Subject: subject,
+		Roles:   roles,
+	}
+	return context.WithValue(ctx, auth.UserClaimsKey, claims)
+}
+
+// UserFromContext extracts user information from the context (utility function)
+func UserFromContext(ctx context.Context) (*auth.Claims, bool) {
+	claims, ok := ctx.Value(auth.UserClaimsKey).(*auth.Claims)
+	return claims, ok
+}
+
+// RequireRole checks if the user has the required role
+func RequireRole(ctx context.Context, requiredRole string) error {
+	claims, ok := UserFromContext(ctx)
+	if !ok {
+		return status.Errorf(codes.Unauthenticated, "no user information in context")
+	}
+
+	for _, role := range claims.Roles {
+		if role == requiredRole {
+			return nil
+		}
+	}
+
+	return status.Errorf(codes.PermissionDenied, "insufficient privileges: required role '%s'", requiredRole)
+}
+
+// RequireAnyRole checks if the user has any of the required roles
+func RequireAnyRole(ctx context.Context, requiredRoles ...string) error {
+	claims, ok := UserFromContext(ctx)
+	if !ok {
+		return status.Errorf(codes.Unauthenticated, "no user information in context")
+	}
+
+	for _, userRole := range claims.Roles {
+		for _, requiredRole := range requiredRoles {
+			if userRole == requiredRole {
+				return nil
+			}
+		}
+	}
+
+	return status.Errorf(codes.PermissionDenied, 
+		"insufficient privileges: required one of roles %v", requiredRoles)
+}

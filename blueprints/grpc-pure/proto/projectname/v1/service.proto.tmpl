@@ -1,0 +1,283 @@
+syntax = "proto3";
+
+package {{.ProjectName | lower}}.service.v1;
+
+import "google/api/annotations.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "proto/common/v1/common.proto";
+
+option go_package = "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1;{{.ProjectName | lower}}v1";
+
+// {{.ProjectName}} service provides core business functionality
+// with comprehensive gRPC features including interceptors, health checks,
+// and distributed tracing support
+service {{.ProjectName}}Service {
+  // Create a new resource with validation and authorization
+  rpc CreateResource(CreateResourceRequest) returns (Resource) {
+    option (google.api.http) = {
+      post: "/v1/resources"
+      body: "*"
+    };
+  }
+  
+  // Get a resource by ID with caching and performance optimization
+  rpc GetResource(GetResourceRequest) returns (Resource) {
+    option (google.api.http) = {
+      get: "/v1/resources/{id}"
+    };
+  }
+  
+  // Update an existing resource with conflict resolution
+  rpc UpdateResource(UpdateResourceRequest) returns (Resource) {
+    option (google.api.http) = {
+      put: "/v1/resources/{resource.id}"
+      body: "resource"
+    };
+  }
+  
+  // Delete a resource with soft delete support
+  rpc DeleteResource(DeleteResourceRequest) returns (google.protobuf.Empty) {
+    option (google.api.http) = {
+      delete: "/v1/resources/{id}"
+    };
+  }
+  
+  // List resources with pagination and filtering
+  rpc ListResources(ListResourcesRequest) returns (ListResourcesResponse) {
+    option (google.api.http) = {
+      get: "/v1/resources"
+    };
+  }
+  
+  // Stream resources for real-time updates
+  rpc StreamResources(StreamResourcesRequest) returns (stream Resource) {
+    option (google.api.http) = {
+      get: "/v1/resources/stream"
+    };
+  }
+  
+  // Batch operations for efficiency
+  rpc BatchCreateResources(BatchCreateResourcesRequest) returns (BatchCreateResourcesResponse) {
+    option (google.api.http) = {
+      post: "/v1/resources/batch"
+      body: "*"
+    };
+  }
+  
+  // Health check endpoint
+  rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse) {
+    option (google.api.http) = {
+      get: "/v1/health"
+    };
+  }
+}
+
+// Core resource entity with comprehensive metadata
+message Resource {
+  // Unique identifier for the resource
+  string id = 1;
+  
+  // Human-readable name
+  string name = 2;
+  
+  // Detailed description
+  string description = 3;
+  
+  // Resource status
+  ResourceStatus status = 4;
+  
+  // Creation timestamp
+  google.protobuf.Timestamp created_at = 5;
+  
+  // Last update timestamp  
+  google.protobuf.Timestamp updated_at = 6;
+  
+  // Version for optimistic locking
+  int64 version = 7;
+  
+  // Resource metadata and tags
+  map<string, string> metadata = 8;
+  
+  // Owner information
+  string owner_id = 9;
+  
+  // Resource configuration
+  ResourceConfig config = 10;
+}
+
+// Resource status enumeration
+enum ResourceStatus {
+  RESOURCE_STATUS_UNSPECIFIED = 0;
+  RESOURCE_STATUS_PENDING = 1;
+  RESOURCE_STATUS_ACTIVE = 2;
+  RESOURCE_STATUS_INACTIVE = 3;
+  RESOURCE_STATUS_DELETED = 4;
+  RESOURCE_STATUS_ERROR = 5;
+}
+
+// Resource configuration
+message ResourceConfig {
+  // Configuration settings
+  map<string, string> settings = 1;
+  
+  // Feature flags
+  repeated string enabled_features = 2;
+  
+  // Resource limits
+  ResourceLimits limits = 3;
+}
+
+// Resource limits and quotas
+message ResourceLimits {
+  int32 max_connections = 1;
+  int32 max_requests_per_second = 2;
+  int64 max_storage_bytes = 3;
+}
+
+// Request messages
+message CreateResourceRequest {
+  // Resource to create (without ID, timestamps, version)
+  Resource resource = 1;
+  
+  // Idempotency key for safe retries
+  string idempotency_key = 2;
+}
+
+message GetResourceRequest {
+  // Resource ID to retrieve
+  string id = 1;
+  
+  // Include soft-deleted resources
+  bool include_deleted = 2;
+}
+
+message UpdateResourceRequest {
+  // Resource to update (must include ID and version)
+  Resource resource = 1;
+  
+  // Update mask for partial updates
+  repeated string update_mask = 2;
+}
+
+message DeleteResourceRequest {
+  // Resource ID to delete
+  string id = 1;
+  
+  // Force delete (permanent)
+  bool force = 2;
+}
+
+message ListResourcesRequest {
+  // Pagination parameters
+  common.v1.PaginationRequest pagination = 1;
+  
+  // Filtering options
+  ResourceFilter filter = 2;
+  
+  // Sorting options
+  repeated ResourceSort sort = 3;
+}
+
+message ListResourcesResponse {
+  // List of resources
+  repeated Resource resources = 1;
+  
+  // Pagination information
+  common.v1.PaginationResponse pagination = 2;
+  
+  // Total count (before pagination)
+  int64 total_count = 3;
+}
+
+// Streaming requests
+message StreamResourcesRequest {
+  // Filter for streaming
+  ResourceFilter filter = 1;
+  
+  // Include historical data
+  bool include_history = 2;
+}
+
+// Batch operations
+message BatchCreateResourcesRequest {
+  // Resources to create in batch
+  repeated Resource resources = 1;
+  
+  // Batch processing options
+  BatchOptions options = 2;
+}
+
+message BatchCreateResourcesResponse {
+  // Created resources with assigned IDs
+  repeated Resource resources = 1;
+  
+  // Any errors that occurred
+  repeated common.v1.Error errors = 2;
+  
+  // Batch processing summary
+  BatchSummary summary = 3;
+}
+
+// Filtering options
+message ResourceFilter {
+  // Filter by status
+  repeated ResourceStatus statuses = 1;
+  
+  // Filter by owner
+  string owner_id = 2;
+  
+  // Date range filter
+  google.protobuf.Timestamp created_after = 3;
+  google.protobuf.Timestamp created_before = 4;
+  
+  // Metadata filters
+  map<string, string> metadata_filters = 5;
+  
+  // Text search
+  string search_query = 6;
+}
+
+// Sorting options  
+message ResourceSort {
+  // Field to sort by
+  string field = 1;
+  
+  // Sort direction
+  common.v1.SortDirection direction = 2;
+}
+
+// Batch processing options
+message BatchOptions {
+  // Continue on error
+  bool continue_on_error = 1;
+  
+  // Maximum batch size
+  int32 max_batch_size = 2;
+  
+  // Parallel processing
+  bool parallel = 3;
+}
+
+// Batch processing summary
+message BatchSummary {
+  int32 total_requested = 1;
+  int32 successful = 2;
+  int32 failed = 3;
+  google.protobuf.Timestamp processed_at = 4;
+}
+
+// Health check response
+message HealthCheckResponse {
+  // Overall service status
+  common.v1.HealthStatus status = 1;
+  
+  // Service version
+  string version = 2;
+  
+  // Service uptime
+  google.protobuf.Timestamp started_at = 3;
+  
+  // Component health details
+  map<string, common.v1.ComponentHealth> components = 4;
+}

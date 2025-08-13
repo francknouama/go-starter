@@ -1,0 +1,96 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+{{- end}}
+)
+
+func main() {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		log.Fatalf("Failed to load configuration: %v", err)
+	}
+
+	// Initialize logger
+	appLogger, err := logger.New(cfg.Logger)
+	if err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+
+	appLogger.Info("Starting {{.ProjectName}} server", "port", cfg.Server.Port, "env", cfg.Environment)
+
+{{- if ne .DatabaseDriver ""}}
+	// Initialize database
+	db, err := database.Connect(cfg.Database)
+	if err != nil {
+		appLogger.Error("Failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close(db)
+
+	// Run migrations
+	if err := database.Migrate(db); err != nil {
+		appLogger.Error("Failed to run database migrations", "error", err)
+		os.Exit(1)
+	}
+	appLogger.Info("Database migrations completed successfully")
+{{- end}}
+
+	// Initialize server
+{{- if ne .DatabaseDriver ""}}
+	srv, err := server.New(cfg, appLogger, db)
+{{- else}}
+	srv, err := server.New(cfg, appLogger)
+{{- end}}
+	if err != nil {
+		appLogger.Error("Failed to initialize server", "error", err)
+		os.Exit(1)
+	}
+
+	// Start server in a goroutine
+	serverErr := make(chan error, 1)
+	go func() {
+		appLogger.Info("Server listening", "address", fmt.Sprintf(":%d", cfg.Server.Port))
+		if err := srv.Start(fmt.Sprintf(":%d", cfg.Server.Port)); err != nil && err != http.ErrServerClosed {
+			serverErr <- err
+		}
+	}()
+
+	// Wait for interrupt signal or server error
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case err := <-serverErr:
+		appLogger.Error("Server error", "error", err)
+		os.Exit(1)
+	case sig := <-quit:
+		appLogger.Info("Received shutdown signal", "signal", sig.String())
+	}
+
+	// Graceful shutdown
+	appLogger.Info("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		appLogger.Error("Server forced to shutdown", "error", err)
+		os.Exit(1)
+	}
+
+	appLogger.Info("Server exited gracefully")
+}

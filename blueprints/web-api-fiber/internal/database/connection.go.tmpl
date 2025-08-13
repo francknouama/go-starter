@@ -1,0 +1,137 @@
+package database
+
+import (
+	"database/sql"
+	"fmt"
+	"time"
+
+{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+{{- if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+{{- else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+{{- end}}
+{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+{{- if eq .DatabaseDriver "postgres"}}
+	_ "github.com/lib/pq"
+{{- else if eq .DatabaseDriver "mysql"}}
+	_ "github.com/go-sql-driver/mysql"
+{{- else if eq .DatabaseDriver "sqlite"}}
+	_ "github.com/mattn/go-sqlite3"
+{{- end}}
+{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+)
+
+// DB interface abstracts the database connection
+type DB interface {
+	Ping() error
+	Close() error
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+// Connect establishes a database connection using GORM
+func Connect(cfg config.DatabaseConfig) (DB, error) {
+	var dialector gorm.Dialector
+
+	switch cfg.Driver {
+{{- if eq .DatabaseDriver "postgres"}}
+	case "postgres":
+		dialector = postgres.Open(cfg.GetDSN())
+{{- else if eq .DatabaseDriver "mysql"}}
+	case "mysql":
+		dialector = mysql.Open(cfg.GetDSN())
+{{- else if eq .DatabaseDriver "sqlite"}}
+	case "sqlite":
+		dialector = sqlite.Open(cfg.GetDSN())
+{{- end}}
+	default:
+		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Driver)
+	}
+
+	// Configure GORM
+	gormConfig := &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+		NowFunc: func() time.Time {
+			return time.Now().UTC()
+		},
+	}
+
+	db, err := gorm.Open(dialector, gormConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Get underlying sql.DB for connection pooling
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get underlying sql.DB: %w", err)
+	}
+
+	// Configure connection pool
+	sqlDB.SetMaxOpenConns(cfg.MaxConnections)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Minute)
+
+	// Test connection
+	if err := sqlDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	return &gormDB{db: db, sqlDB: sqlDB}, nil
+}
+
+// gormDB wraps GORM database
+type gormDB struct {
+	db    *gorm.DB
+	sqlDB *sql.DB
+}
+
+func (g *gormDB) Ping() error {
+	return g.sqlDB.Ping()
+}
+
+func (g *gormDB) Close() error {
+	return g.sqlDB.Close()
+}
+
+// Ensure gormDB implements gorm.DB interface methods
+func (g *gormDB) DB() *gorm.DB {
+	return g.db
+}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+// Connect establishes a database connection using sqlx
+func Connect(cfg config.DatabaseConfig) (DB, error) {
+	db, err := sqlx.Connect(cfg.Driver, cfg.GetDSN())
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to database: %w", err)
+	}
+
+	// Configure connection pool
+	db.SetMaxOpenConns(cfg.MaxConnections)
+	db.SetMaxIdleConns(cfg.MaxIdleConns)
+	db.SetConnMaxLifetime(time.Duration(cfg.ConnMaxLifetime) * time.Minute)
+
+	// Test connection
+	if err := db.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping database: %w", err)
+	}
+
+	return db, nil
+}
+{{- end}}
+
+// Close closes the database connection
+func Close(db DB) error {
+	if db == nil {
+		return nil
+	}
+	return db.Close()
+}

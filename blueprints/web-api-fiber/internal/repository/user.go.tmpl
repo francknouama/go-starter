@@ -1,0 +1,286 @@
+package repository
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+
+{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+{{- end}}
+	"{{.ModulePath}}/internal/database"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+)
+
+{{- if eq .DatabaseORM "gorm"}}
+// userRepository implements UserRepository using GORM
+type userRepository struct {
+	db  *gorm.DB
+	log logger.Logger
+}
+
+// NewUserRepository creates a new user repository
+func NewUserRepository(db database.DB, log logger.Logger) UserRepository {
+	gormDB, ok := db.(*gorm.DB)
+	if !ok {
+		panic("invalid database type for GORM repository")
+	}
+	return &userRepository{
+		db:  gormDB,
+		log: log,
+	}
+}
+
+// Create creates a new user
+func (r *userRepository) Create(ctx context.Context, user *models.User) error {
+	if err := user.HashPassword(); err != nil {
+		return err
+	}
+	
+	result := r.db.WithContext(ctx).Create(user)
+	if result.Error != nil {
+		r.log.Error("Failed to create user", "error", result.Error)
+		return result.Error
+	}
+	
+	r.log.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+	return nil
+}
+
+// GetByID retrieves a user by ID
+func (r *userRepository) GetByID(ctx context.Context, id uint) (*models.User, error) {
+	var user models.User
+	result := r.db.WithContext(ctx).First(&user, id)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, sql.ErrNoRows
+		}
+		r.log.Error("Failed to get user by ID", "error", result.Error, "id", id)
+		return nil, result.Error
+	}
+	
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	var user models.User
+	result := r.db.WithContext(ctx).Where("email = ?", email).First(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return nil, sql.ErrNoRows
+		}
+		r.log.Error("Failed to get user by email", "error", result.Error, "email", email)
+		return nil, result.Error
+	}
+	
+	return &user, nil
+}
+
+// Update updates an existing user
+func (r *userRepository) Update(ctx context.Context, user *models.User) error {
+	result := r.db.WithContext(ctx).Save(user)
+	if result.Error != nil {
+		r.log.Error("Failed to update user", "error", result.Error, "user_id", user.ID)
+		return result.Error
+	}
+	
+	r.log.Info("User updated successfully", "user_id", user.ID)
+	return nil
+}
+
+// Delete deletes a user by ID
+func (r *userRepository) Delete(ctx context.Context, id uint) error {
+	result := r.db.WithContext(ctx).Delete(&models.User{}, id)
+	if result.Error != nil {
+		r.log.Error("Failed to delete user", "error", result.Error, "id", id)
+		return result.Error
+	}
+	
+	if result.RowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	
+	r.log.Info("User deleted successfully", "user_id", id)
+	return nil
+}
+
+// List retrieves users with pagination
+func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*models.User, error) {
+	var users []*models.User
+	result := r.db.WithContext(ctx).Limit(limit).Offset(offset).Find(&users)
+	if result.Error != nil {
+		r.log.Error("Failed to list users", "error", result.Error)
+		return nil, result.Error
+	}
+	
+	return users, nil
+}
+
+// Count returns the total number of users
+func (r *userRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	result := r.db.WithContext(ctx).Model(&models.User{}).Count(&count)
+	if result.Error != nil {
+		r.log.Error("Failed to count users", "error", result.Error)
+		return 0, result.Error
+	}
+	
+	return count, nil
+}
+
+{{- else if eq .DatabaseORM "sqlx"}}
+// userRepository implements UserRepository using sqlx
+type userRepository struct {
+	db  *sqlx.DB
+	log logger.Logger
+}
+
+// NewUserRepository creates a new user repository
+func NewUserRepository(db database.DB, log logger.Logger) UserRepository {
+	sqlxDB, ok := db.(*sqlx.DB)
+	if !ok {
+		panic("invalid database type for sqlx repository")
+	}
+	return &userRepository{
+		db:  sqlxDB,
+		log: log,
+	}
+}
+
+// Create creates a new user
+func (r *userRepository) Create(ctx context.Context, user *models.User) error {
+	if err := user.HashPassword(); err != nil {
+		return err
+	}
+	
+	query := `
+		INSERT INTO users (email, password, name, created_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		RETURNING id, created_at, updated_at
+	`
+	
+	err := r.db.QueryRowContext(ctx, query, user.Email, user.Password, user.Name).
+		Scan(&user.ID, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
+		r.log.Error("Failed to create user", "error", err)
+		return err
+	}
+	
+	r.log.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+	return nil
+}
+
+// GetByID retrieves a user by ID
+func (r *userRepository) GetByID(ctx context.Context, id uint) (*models.User, error) {
+	var user models.User
+	query := `SELECT id, email, password, name, created_at, updated_at FROM users WHERE id = $1`
+	
+	err := r.db.GetContext(ctx, &user, query, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		r.log.Error("Failed to get user by ID", "error", err, "id", id)
+		return nil, err
+	}
+	
+	return &user, nil
+}
+
+// GetByEmail retrieves a user by email
+func (r *userRepository) GetByEmail(ctx context.Context, email string) (*models.User, error) {
+	var user models.User
+	query := `SELECT id, email, password, name, created_at, updated_at FROM users WHERE email = $1`
+	
+	err := r.db.GetContext(ctx, &user, query, email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		r.log.Error("Failed to get user by email", "error", err, "email", email)
+		return nil, err
+	}
+	
+	return &user, nil
+}
+
+// Update updates an existing user
+func (r *userRepository) Update(ctx context.Context, user *models.User) error {
+	query := `
+		UPDATE users 
+		SET email = $1, name = $2, updated_at = NOW()
+		WHERE id = $3
+		RETURNING updated_at
+	`
+	
+	err := r.db.QueryRowContext(ctx, query, user.Email, user.Name, user.ID).
+		Scan(&user.UpdatedAt)
+	if err != nil {
+		r.log.Error("Failed to update user", "error", err, "user_id", user.ID)
+		return err
+	}
+	
+	r.log.Info("User updated successfully", "user_id", user.ID)
+	return nil
+}
+
+// Delete deletes a user by ID
+func (r *userRepository) Delete(ctx context.Context, id uint) error {
+	query := `DELETE FROM users WHERE id = $1`
+	
+	result, err := r.db.ExecContext(ctx, query, id)
+	if err != nil {
+		r.log.Error("Failed to delete user", "error", err, "id", id)
+		return err
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	
+	r.log.Info("User deleted successfully", "user_id", id)
+	return nil
+}
+
+// List retrieves users with pagination
+func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*models.User, error) {
+	var users []*models.User
+	query := `
+		SELECT id, email, password, name, created_at, updated_at 
+		FROM users 
+		ORDER BY id 
+		LIMIT $1 OFFSET $2
+	`
+	
+	err := r.db.SelectContext(ctx, &users, query, limit, offset)
+	if err != nil {
+		r.log.Error("Failed to list users", "error", err)
+		return nil, err
+	}
+	
+	return users, nil
+}
+
+// Count returns the total number of users
+func (r *userRepository) Count(ctx context.Context) (int64, error) {
+	var count int64
+	query := `SELECT COUNT(*) FROM users`
+	
+	err := r.db.GetContext(ctx, &count, query)
+	if err != nil {
+		r.log.Error("Failed to count users", "error", err)
+		return 0, err
+	}
+	
+	return count, nil
+}
+{{- end}}

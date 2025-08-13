@@ -1,0 +1,73 @@
+package middleware
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5/middleware"
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Logger creates a Chi-compatible logging middleware
+func Logger(log logger.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+
+			// Get request ID from Chi middleware
+			reqID := middleware.GetReqID(r.Context())
+			if reqID == "" {
+				reqID = "unknown"
+			}
+
+			// Create a wrapped response writer to capture status code
+			ww := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+			// Log the incoming request
+			log.Info("Request started",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"remote_addr", r.RemoteAddr,
+				"user_agent", r.UserAgent(),
+				"request_id", reqID,
+			)
+
+			// Call the next handler
+			next.ServeHTTP(ww, r)
+
+			// Calculate duration
+			duration := time.Since(start)
+
+			// Log the completed request
+			log.Info("Request completed",
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", ww.statusCode,
+				"duration", duration.String(),
+				"duration_ms", duration.Milliseconds(),
+				"request_id", reqID,
+			)
+		})
+	}
+}
+
+// responseWriter wraps http.ResponseWriter to capture status code
+type responseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+// WriteHeader captures the status code
+func (rw *responseWriter) WriteHeader(code int) {
+	rw.statusCode = code
+	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Write ensures status code is captured even if WriteHeader is not called
+func (rw *responseWriter) Write(b []byte) (int, error) {
+	if rw.statusCode == 0 {
+		rw.statusCode = http.StatusOK
+	}
+	return rw.ResponseWriter.Write(b)
+}

@@ -1,0 +1,163 @@
+# Variables
+BINARY_NAME={{.ProjectName}}
+DOCKER_IMAGE={{.ProjectName}}:latest
+MAIN_PATH=./cmd/server
+
+# Go parameters
+GOCMD=go
+GOBUILD=$(GOCMD) build
+GOCLEAN=$(GOCMD) clean
+GOTEST=$(GOCMD) test
+GOGET=$(GOCMD) get
+GOMOD=$(GOCMD) mod
+
+# Build flags
+LDFLAGS=-ldflags "-s -w"
+BUILD_FLAGS=-a -installsuffix cgo $(LDFLAGS)
+
+.PHONY: all build clean test coverage run docker-build docker-run help
+
+# Default target
+all: test build
+
+# Build the application
+build:
+	$(GOBUILD) $(BUILD_FLAGS) -o bin/$(BINARY_NAME) $(MAIN_PATH)
+
+# Build for production (optimized)
+build-prod:
+	CGO_ENABLED={{if eq .DatabaseDriver "sqlite"}}1{{else}}0{{end}} GOOS=linux $(GOBUILD) $(BUILD_FLAGS) -o bin/$(BINARY_NAME) $(MAIN_PATH)
+
+# Clean build artifacts
+clean:
+	$(GOCLEAN)
+	rm -rf bin/
+	rm -rf coverage/
+
+# Run tests
+test:
+	$(GOTEST) -v ./...
+
+# Run tests with coverage
+coverage:
+	mkdir -p coverage
+	$(GOTEST) -v -coverprofile=coverage/coverage.out ./...
+	$(GOCMD) tool cover -html=coverage/coverage.out -o coverage/coverage.html
+
+# Run tests with race detection
+test-race:
+	$(GOTEST) -v -race ./...
+
+# Run benchmarks
+bench:
+	$(GOTEST) -v -bench=. -benchmem ./...
+
+# Run the application
+run:
+	$(GOBUILD) -o bin/$(BINARY_NAME) $(MAIN_PATH)
+	./bin/$(BINARY_NAME)
+
+# Run in development mode (with auto-reload if you have air installed)
+dev:
+	@if command -v air > /dev/null; then \
+		air; \
+	else \
+		echo "Air not found. Install with: go install github.com/cosmtrek/air@latest"; \
+		$(MAKE) run; \
+	fi
+
+# Install dependencies
+deps:
+	$(GOMOD) download
+	$(GOMOD) tidy
+
+# Update dependencies
+deps-update:
+	$(GOGET) -u ./...
+	$(GOMOD) tidy
+
+# Format code
+fmt:
+	$(GOCMD) fmt ./...
+
+# Lint code (requires golangci-lint)
+lint:
+	@if command -v golangci-lint > /dev/null; then \
+		golangci-lint run; \
+	else \
+		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
+	fi
+
+# Security check (requires gosec)
+security:
+	@if command -v gosec > /dev/null; then \
+		gosec ./...; \
+	else \
+		echo "gosec not found. Install with: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest"; \
+	fi
+
+# Build Docker image
+docker-build:
+	docker build -t $(DOCKER_IMAGE) .
+
+# Run Docker container
+docker-run:
+	docker run -p 8080:8080 --rm $(DOCKER_IMAGE)
+
+# Run Docker container with environment file
+docker-run-env:
+	docker run -p 8080:8080 --env-file .env --rm $(DOCKER_IMAGE)
+
+{{- if ne .DatabaseDriver ""}}
+# Database migrations (if using a migration tool)
+migrate-up:
+	@echo "Run database migrations up"
+	# Add your migration command here
+
+migrate-down:
+	@echo "Run database migrations down"
+	# Add your migration command here
+
+migrate-create:
+	@echo "Create new migration file"
+	# Add your migration creation command here
+{{- end}}
+
+# Generate code (if using code generation)
+generate:
+	$(GOCMD) generate ./...
+
+# Cross-platform builds
+build-all: build-linux build-windows build-darwin
+
+build-linux:
+	CGO_ENABLED={{if eq .DatabaseDriver "sqlite"}}1{{else}}0{{end}} GOOS=linux GOARCH=amd64 $(GOBUILD) $(BUILD_FLAGS) -o bin/$(BINARY_NAME)-linux-amd64 $(MAIN_PATH)
+
+build-windows:
+	CGO_ENABLED={{if eq .DatabaseDriver "sqlite"}}1{{else}}0{{end}} GOOS=windows GOARCH=amd64 $(GOBUILD) $(BUILD_FLAGS) -o bin/$(BINARY_NAME)-windows-amd64.exe $(MAIN_PATH)
+
+build-darwin:
+	CGO_ENABLED={{if eq .DatabaseDriver "sqlite"}}1{{else}}0{{end}} GOOS=darwin GOARCH=amd64 $(GOBUILD) $(BUILD_FLAGS) -o bin/$(BINARY_NAME)-darwin-amd64 $(MAIN_PATH)
+
+# Help
+help:
+	@echo "Available targets:"
+	@echo "  build        - Build the application"
+	@echo "  build-prod   - Build for production"
+	@echo "  clean        - Clean build artifacts"
+	@echo "  test         - Run tests"
+	@echo "  coverage     - Run tests with coverage"
+	@echo "  test-race    - Run tests with race detection"
+	@echo "  bench        - Run benchmarks"
+	@echo "  run          - Build and run the application"
+	@echo "  dev          - Run in development mode"
+	@echo "  deps         - Install dependencies"
+	@echo "  deps-update  - Update dependencies"
+	@echo "  fmt          - Format code"
+	@echo "  lint         - Lint code"
+	@echo "  security     - Run security checks"
+	@echo "  docker-build - Build Docker image"
+	@echo "  docker-run   - Run Docker container"
+	@echo "  generate     - Generate code"
+	@echo "  build-all    - Build for all platforms"
+	@echo "  help         - Show this help"

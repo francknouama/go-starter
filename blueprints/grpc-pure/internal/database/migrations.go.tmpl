@@ -1,0 +1,574 @@
+{{if ne .DatabaseDriver ""}}package database
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"fmt"
+	"io/fs"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+{{if eq .DatabaseORM "gorm"}}	"gorm.io/gorm"{{else if eq .DatabaseORM "sqlx"}}	"github.com/jmoiron/sqlx"{{end}}
+)
+
+//go:embed migrations/*.sql
+var migrationFiles embed.FS
+
+// Migration represents a database migration
+type Migration struct {
+	Version   int       `json:"version"`
+	Name      string    `json:"name"`
+	UpSQL     string    `json:"up_sql"`
+	DownSQL   string    `json:"down_sql"`
+	Applied   bool      `json:"applied"`
+	AppliedAt time.Time `json:"applied_at"`
+}
+
+// MigrationRecord represents a migration record in the database
+type MigrationRecord struct {
+	Version   int       `{{if eq .DatabaseORM "gorm"}}gorm:"primaryKey;autoIncrement:false"{{end}} json:"version"`
+	Name      string    `{{if eq .DatabaseORM "gorm"}}gorm:"size:255;not null"{{end}} json:"name"`
+	AppliedAt time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"not null"{{end}} json:"applied_at"`
+	Checksum  string    `{{if eq .DatabaseORM "gorm"}}gorm:"size:64"{{end}} json:"checksum"`
+}
+
+{{if eq .DatabaseORM "gorm"}}// TableName specifies the table name for GORM
+func (MigrationRecord) TableName() string {
+	return "{{.ProjectName | lower}}_migrations"
+}{{end}}
+
+// MigrationManager handles database migrations
+type MigrationManager struct {
+	db     {{if eq .DatabaseORM "gorm"}}*gorm.DB{{else if eq .DatabaseORM "sqlx"}}*sqlx.DB{{else}}*sql.DB{{end}}
+	logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+	
+	migrations []Migration
+	tableName  string
+}
+
+// NewMigrationManager creates a new migration manager
+func NewMigrationManager(db {{if eq .DatabaseORM "gorm"}}*gorm.DB{{else if eq .DatabaseORM "sqlx"}}*sqlx.DB{{else}}*sql.DB{{end}}, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) (*MigrationManager, error) {
+	mm := &MigrationManager{
+		db:        db,
+		logger:    logger,
+		tableName: "{{.ProjectName | lower}}_migrations",
+	}
+	
+	if err := mm.loadMigrations(); err != nil {
+		return nil, fmt.Errorf("failed to load migrations: %w", err)
+	}
+	
+	if err := mm.ensureMigrationTable(); err != nil {
+		return nil, fmt.Errorf("failed to create migration table: %w", err)
+	}
+	
+	return mm, nil
+}
+
+// loadMigrations loads migration files from the embedded filesystem
+func (mm *MigrationManager) loadMigrations() error {
+	{{if eq .Logger "slog"}}mm.logger.Info("Loading migration files"){{else if eq .Logger "zap"}}mm.logger.Info("Loading migration files"){{else if eq .Logger "logrus"}}mm.logger.Info("Loading migration files"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("Loading migration files"){{end}}
+	
+	entries, err := fs.ReadDir(migrationFiles, "migrations")
+	if err != nil {
+		return fmt.Errorf("failed to read migrations directory: %w", err)
+	}
+	
+	migrationMap := make(map[int]*Migration)
+	
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		
+		filename := entry.Name()
+		if !strings.HasSuffix(filename, ".sql") {
+			continue
+		}
+		
+		migration, err := mm.parseMigrationFile(filename)
+		if err != nil {
+			{{if eq .Logger "slog"}}mm.logger.Warn("Failed to parse migration file", "filename", filename, "error", err){{else if eq .Logger "zap"}}mm.logger.Warn("Failed to parse migration file", zap.String("filename", filename), zap.Error(err)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"filename": filename, "error": err}).Warn("Failed to parse migration file"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Str("filename", filename).Err(err).Msg("Failed to parse migration file"){{end}}
+			continue
+		}
+		
+		if existing, exists := migrationMap[migration.Version]; exists {
+			if strings.Contains(filename, ".down.") {
+				existing.DownSQL = migration.UpSQL
+			}
+		} else {
+			migrationMap[migration.Version] = migration
+		}
+	}
+	
+	// Convert map to sorted slice
+	versions := make([]int, 0, len(migrationMap))
+	for version := range migrationMap {
+		versions = append(versions, version)
+	}
+	sort.Ints(versions)
+	
+	mm.migrations = make([]Migration, 0, len(versions))
+	for _, version := range versions {
+		mm.migrations = append(mm.migrations, *migrationMap[version])
+	}
+	
+	{{if eq .Logger "slog"}}mm.logger.Info("Loaded migrations", "count", len(mm.migrations)){{else if eq .Logger "zap"}}mm.logger.Info("Loaded migrations", zap.Int("count", len(mm.migrations))){{else if eq .Logger "logrus"}}mm.logger.WithField("count", len(mm.migrations)).Info("Loaded migrations"){{else if eq .Logger "zerolog"}}mm.logger.Info().Int("count", len(mm.migrations)).Msg("Loaded migrations"){{end}}
+	
+	return nil
+}
+
+// parseMigrationFile parses a migration file and extracts version and content
+func (mm *MigrationManager) parseMigrationFile(filename string) (*Migration, error) {
+	// Expected format: 001_migration_name.up.sql or 001_migration_name.down.sql
+	parts := strings.Split(filename, "_")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid migration filename format: %s", filename)
+	}
+	
+	versionStr := parts[0]
+	version, err := strconv.Atoi(versionStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid version in filename %s: %w", filename, err)
+	}
+	
+	// Extract migration name (everything between version and .up/.down.sql)
+	nameEnd := strings.LastIndex(filename, ".up.sql")
+	if nameEnd == -1 {
+		nameEnd = strings.LastIndex(filename, ".down.sql")
+	}
+	if nameEnd == -1 {
+		return nil, fmt.Errorf("migration file must end with .up.sql or .down.sql: %s", filename)
+	}
+	
+	name := strings.Join(strings.Split(filename[len(versionStr)+1:nameEnd], "_"), " ")
+	
+	// Read file content
+	content, err := fs.ReadFile(migrationFiles, filepath.Join("migrations", filename))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read migration file %s: %w", filename, err)
+	}
+	
+	migration := &Migration{
+		Version: version,
+		Name:    name,
+		UpSQL:   string(content),
+	}
+	
+	return migration, nil
+}
+
+// ensureMigrationTable creates the migration tracking table if it doesn't exist
+func (mm *MigrationManager) ensureMigrationTable() error {
+	{{if eq .Logger "slog"}}mm.logger.Info("Ensuring migration table exists", "table", mm.tableName){{else if eq .Logger "zap"}}mm.logger.Info("Ensuring migration table exists", zap.String("table", mm.tableName)){{else if eq .Logger "logrus"}}mm.logger.WithField("table", mm.tableName).Info("Ensuring migration table exists"){{else if eq .Logger "zerolog"}}mm.logger.Info().Str("table", mm.tableName).Msg("Ensuring migration table exists"){{end}}
+	
+{{if eq .DatabaseORM "gorm"}}	// Use GORM auto-migration for the migration table
+	if err := mm.db.AutoMigrate(&MigrationRecord{}); err != nil {
+		return fmt.Errorf("failed to create migration table: %w", err)
+	}{{else}}	var createTableSQL string
+	
+	switch "{{.DatabaseDriver}}" {
+{{if eq .DatabaseDriver "postgres"}}	case "postgres":
+		createTableSQL = fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s (
+				version INTEGER PRIMARY KEY,
+				name VARCHAR(255) NOT NULL,
+				applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				checksum VARCHAR(64) NOT NULL
+			)`, mm.tableName){{else if eq .DatabaseDriver "mysql"}}	case "mysql":
+		createTableSQL = fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s (
+				version INT PRIMARY KEY,
+				name VARCHAR(255) NOT NULL,
+				applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				checksum VARCHAR(64) NOT NULL
+			)`, mm.tableName){{else if eq .DatabaseDriver "sqlite"}}	case "sqlite":
+		createTableSQL = fmt.Sprintf(`
+			CREATE TABLE IF NOT EXISTS %s (
+				version INTEGER PRIMARY KEY,
+				name TEXT NOT NULL,
+				applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				checksum TEXT NOT NULL
+			)`, mm.tableName){{end}}
+	default:
+		return fmt.Errorf("unsupported database driver: {{.DatabaseDriver}}")
+	}
+	
+{{if eq .DatabaseORM "sqlx"}}	_, err := mm.db.Exec(createTableSQL){{else}}	_, err := mm.db.Exec(createTableSQL){{end}}
+	if err != nil {
+		return fmt.Errorf("failed to create migration table: %w", err)
+	}{{end}}
+	
+	return nil
+}
+
+// Migrate runs all pending migrations
+func (mm *MigrationManager) Migrate(ctx context.Context) error {
+	{{if eq .Logger "slog"}}mm.logger.Info("Starting database migration"){{else if eq .Logger "zap"}}mm.logger.Info("Starting database migration"){{else if eq .Logger "logrus"}}mm.logger.Info("Starting database migration"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("Starting database migration"){{end}}
+	
+	appliedMigrations, err := mm.getAppliedMigrations(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+	
+	appliedVersions := make(map[int]bool)
+	for _, migration := range appliedMigrations {
+		appliedVersions[migration.Version] = true
+	}
+	
+	var pendingMigrations []Migration
+	for _, migration := range mm.migrations {
+		if !appliedVersions[migration.Version] {
+			pendingMigrations = append(pendingMigrations, migration)
+		}
+	}
+	
+	if len(pendingMigrations) == 0 {
+		{{if eq .Logger "slog"}}mm.logger.Info("No pending migrations"){{else if eq .Logger "zap"}}mm.logger.Info("No pending migrations"){{else if eq .Logger "logrus"}}mm.logger.Info("No pending migrations"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("No pending migrations"){{end}}
+		return nil
+	}
+	
+	{{if eq .Logger "slog"}}mm.logger.Info("Applying pending migrations", "count", len(pendingMigrations)){{else if eq .Logger "zap"}}mm.logger.Info("Applying pending migrations", zap.Int("count", len(pendingMigrations))){{else if eq .Logger "logrus"}}mm.logger.WithField("count", len(pendingMigrations)).Info("Applying pending migrations"){{else if eq .Logger "zerolog"}}mm.logger.Info().Int("count", len(pendingMigrations)).Msg("Applying pending migrations"){{end}}
+	
+	for _, migration := range pendingMigrations {
+		if err := mm.applyMigration(ctx, migration); err != nil {
+			return fmt.Errorf("failed to apply migration %d (%s): %w", migration.Version, migration.Name, err)
+		}
+		
+		{{if eq .Logger "slog"}}mm.logger.Info("Applied migration", "version", migration.Version, "name", migration.Name){{else if eq .Logger "zap"}}mm.logger.Info("Applied migration", zap.Int("version", migration.Version), zap.String("name", migration.Name)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"version": migration.Version, "name": migration.Name}).Info("Applied migration"){{else if eq .Logger "zerolog"}}mm.logger.Info().Int("version", migration.Version).Str("name", migration.Name).Msg("Applied migration"){{end}}
+	}
+	
+	{{if eq .Logger "slog"}}mm.logger.Info("Database migration completed successfully"){{else if eq .Logger "zap"}}mm.logger.Info("Database migration completed successfully"){{else if eq .Logger "logrus"}}mm.logger.Info("Database migration completed successfully"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("Database migration completed successfully"){{end}}
+	
+	return nil
+}
+
+// Rollback rolls back the last applied migration
+func (mm *MigrationManager) Rollback(ctx context.Context) error {
+	{{if eq .Logger "slog"}}mm.logger.Info("Starting migration rollback"){{else if eq .Logger "zap"}}mm.logger.Info("Starting migration rollback"){{else if eq .Logger "logrus"}}mm.logger.Info("Starting migration rollback"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("Starting migration rollback"){{end}}
+	
+	appliedMigrations, err := mm.getAppliedMigrations(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+	
+	if len(appliedMigrations) == 0 {
+		{{if eq .Logger "slog"}}mm.logger.Info("No migrations to rollback"){{else if eq .Logger "zap"}}mm.logger.Info("No migrations to rollback"){{else if eq .Logger "logrus"}}mm.logger.Info("No migrations to rollback"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("No migrations to rollback"){{end}}
+		return nil
+	}
+	
+	// Find the last applied migration
+	lastApplied := appliedMigrations[len(appliedMigrations)-1]
+	
+	// Find the corresponding migration with down SQL
+	var migrationToRollback *Migration
+	for _, migration := range mm.migrations {
+		if migration.Version == lastApplied.Version {
+			migrationToRollback = &migration
+			break
+		}
+	}
+	
+	if migrationToRollback == nil {
+		return fmt.Errorf("migration %d not found", lastApplied.Version)
+	}
+	
+	if migrationToRollback.DownSQL == "" {
+		return fmt.Errorf("migration %d (%s) has no down SQL", migrationToRollback.Version, migrationToRollback.Name)
+	}
+	
+	if err := mm.rollbackMigration(ctx, *migrationToRollback); err != nil {
+		return fmt.Errorf("failed to rollback migration %d (%s): %w", migrationToRollback.Version, migrationToRollback.Name, err)
+	}
+	
+	{{if eq .Logger "slog"}}mm.logger.Info("Migration rollback completed", "version", migrationToRollback.Version, "name", migrationToRollback.Name){{else if eq .Logger "zap"}}mm.logger.Info("Migration rollback completed", zap.Int("version", migrationToRollback.Version), zap.String("name", migrationToRollback.Name)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"version": migrationToRollback.Version, "name": migrationToRollback.Name}).Info("Migration rollback completed"){{else if eq .Logger "zerolog"}}mm.logger.Info().Int("version", migrationToRollback.Version).Str("name", migrationToRollback.Name).Msg("Migration rollback completed"){{end}}
+	
+	return nil
+}
+
+// applyMigration applies a single migration
+func (mm *MigrationManager) applyMigration(ctx context.Context, migration Migration) error {
+{{if eq .DatabaseORM "gorm"}}	return mm.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Execute the migration SQL
+		if err := tx.Exec(migration.UpSQL).Error; err != nil {
+			return fmt.Errorf("failed to execute migration SQL: %w", err)
+		}
+		
+		// Record the migration
+		record := MigrationRecord{
+			Version:   migration.Version,
+			Name:      migration.Name,
+			AppliedAt: time.Now(),
+			Checksum:  mm.calculateChecksum(migration.UpSQL),
+		}
+		
+		if err := tx.Create(&record).Error; err != nil {
+			return fmt.Errorf("failed to record migration: %w", err)
+		}
+		
+		return nil
+	}){{else if eq .DatabaseORM "sqlx"}}	tx, err := mm.db.BeginTxx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	// Execute the migration SQL
+	_, err = tx.ExecContext(ctx, migration.UpSQL)
+	if err != nil {
+		return fmt.Errorf("failed to execute migration SQL: %w", err)
+	}
+	
+	// Record the migration
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (version, name, applied_at, checksum) 
+		VALUES ($1, $2, $3, $4)
+	`, mm.tableName), migration.Version, migration.Name, time.Now(), mm.calculateChecksum(migration.UpSQL))
+	
+	if err != nil {
+		return fmt.Errorf("failed to record migration: %w", err)
+	}
+	
+	return nil{{else}}	tx, err := mm.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	// Execute the migration SQL
+	_, err = tx.ExecContext(ctx, migration.UpSQL)
+	if err != nil {
+		return fmt.Errorf("failed to execute migration SQL: %w", err)
+	}
+	
+	// Record the migration  
+	var placeholder string
+	switch "{{.DatabaseDriver}}" {
+	case "postgres":
+		placeholder = "$1, $2, $3, $4"
+	case "mysql":
+		placeholder = "?, ?, ?, ?"
+	case "sqlite":
+		placeholder = "?, ?, ?, ?"
+	}
+	
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		INSERT INTO %s (version, name, applied_at, checksum) 
+		VALUES (%s)
+	`, mm.tableName, placeholder), migration.Version, migration.Name, time.Now(), mm.calculateChecksum(migration.UpSQL))
+	
+	if err != nil {
+		return fmt.Errorf("failed to record migration: %w", err)
+	}
+	
+	return nil{{end}}
+}
+
+// rollbackMigration rolls back a single migration
+func (mm *MigrationManager) rollbackMigration(ctx context.Context, migration Migration) error {
+{{if eq .DatabaseORM "gorm"}}	return mm.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// Execute the rollback SQL
+		if err := tx.Exec(migration.DownSQL).Error; err != nil {
+			return fmt.Errorf("failed to execute rollback SQL: %w", err)
+		}
+		
+		// Remove the migration record
+		if err := tx.Delete(&MigrationRecord{}, "version = ?", migration.Version).Error; err != nil {
+			return fmt.Errorf("failed to remove migration record: %w", err)
+		}
+		
+		return nil
+	}){{else}}	var err error
+{{if eq .DatabaseORM "sqlx"}}	tx, err := mm.db.BeginTxx(ctx, nil){{else}}	tx, err := mm.db.BeginTx(ctx, nil){{end}}
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	
+	defer func() {
+		if p := recover(); p != nil {
+			tx.Rollback()
+			panic(p)
+		} else if err != nil {
+			tx.Rollback()
+		} else {
+			err = tx.Commit()
+		}
+	}()
+	
+	// Execute the rollback SQL
+	_, err = tx.ExecContext(ctx, migration.DownSQL)
+	if err != nil {
+		return fmt.Errorf("failed to execute rollback SQL: %w", err)
+	}
+	
+	// Remove the migration record
+	var placeholder string
+	switch "{{.DatabaseDriver}}" {
+	case "postgres":
+		placeholder = "$1"
+	case "mysql", "sqlite":
+		placeholder = "?"
+	}
+	
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`
+		DELETE FROM %s WHERE version = %s
+	`, mm.tableName, placeholder), migration.Version)
+	
+	if err != nil {
+		return fmt.Errorf("failed to remove migration record: %w", err)
+	}
+	
+	return nil{{end}}
+}
+
+// getAppliedMigrations retrieves all applied migrations from the database
+func (mm *MigrationManager) getAppliedMigrations(ctx context.Context) ([]MigrationRecord, error) {
+{{if eq .DatabaseORM "gorm"}}	var records []MigrationRecord
+	if err := mm.db.WithContext(ctx).Order("version ASC").Find(&records).Error; err != nil {
+		return nil, err
+	}
+	return records, nil{{else}}	var records []MigrationRecord
+	
+{{if eq .DatabaseORM "sqlx"}}	err := mm.db.SelectContext(ctx, &records, fmt.Sprintf(`
+		SELECT version, name, applied_at, checksum 
+		FROM %s 
+		ORDER BY version ASC
+	`, mm.tableName)){{else}}	rows, err := mm.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT version, name, applied_at, checksum 
+		FROM %s 
+		ORDER BY version ASC
+	`, mm.tableName))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	
+	for rows.Next() {
+		var record MigrationRecord
+		err := rows.Scan(&record.Version, &record.Name, &record.AppliedAt, &record.Checksum)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	
+	err = rows.Err(){{end}}
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	return records, nil{{end}}
+}
+
+// GetStatus returns the current migration status
+func (mm *MigrationManager) GetStatus(ctx context.Context) ([]Migration, error) {
+	appliedMigrations, err := mm.getAppliedMigrations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+	
+	appliedVersions := make(map[int]MigrationRecord)
+	for _, migration := range appliedMigrations {
+		appliedVersions[migration.Version] = migration
+	}
+	
+	var status []Migration
+	for _, migration := range mm.migrations {
+		if applied, exists := appliedVersions[migration.Version]; exists {
+			migration.Applied = true
+			migration.AppliedAt = applied.AppliedAt
+		}
+		status = append(status, migration)
+	}
+	
+	return status, nil
+}
+
+// calculateChecksum calculates a simple checksum for migration content
+func (mm *MigrationManager) calculateChecksum(content string) string {
+	// Simple checksum - in production you might want to use a proper hash
+	hash := 0
+	for _, char := range content {
+		hash = hash*31 + int(char)
+	}
+	return fmt.Sprintf("%x", hash)
+}
+
+// GetMigrationCount returns the total number of migrations
+func (mm *MigrationManager) GetMigrationCount() int {
+	return len(mm.migrations)
+}
+
+// GetAppliedCount returns the number of applied migrations
+func (mm *MigrationManager) GetAppliedCount(ctx context.Context) (int, error) {
+	appliedMigrations, err := mm.getAppliedMigrations(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return len(appliedMigrations), nil
+}
+
+// Reset drops all tables and reapplies all migrations (dangerous!)
+func (mm *MigrationManager) Reset(ctx context.Context) error {
+	{{if eq .Logger "slog"}}mm.logger.Warn("Resetting database - this will drop all data!"){{else if eq .Logger "zap"}}mm.logger.Warn("Resetting database - this will drop all data!"){{else if eq .Logger "logrus"}}mm.logger.Warn("Resetting database - this will drop all data!"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Msg("Resetting database - this will drop all data!"){{end}}
+	
+	// Get all applied migrations in reverse order
+	appliedMigrations, err := mm.getAppliedMigrations(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get applied migrations: %w", err)
+	}
+	
+	// Rollback all migrations
+	for i := len(appliedMigrations) - 1; i >= 0; i-- {
+		migration := appliedMigrations[i]
+		
+		// Find the migration with down SQL
+		var migrationToRollback *Migration
+		for _, m := range mm.migrations {
+			if m.Version == migration.Version {
+				migrationToRollback = &m
+				break
+			}
+		}
+		
+		if migrationToRollback != nil && migrationToRollback.DownSQL != "" {
+			if err := mm.rollbackMigration(ctx, *migrationToRollback); err != nil {
+				{{if eq .Logger "slog"}}mm.logger.Error("Failed to rollback migration during reset", "version", migration.Version, "error", err){{else if eq .Logger "zap"}}mm.logger.Error("Failed to rollback migration during reset", zap.Int("version", migration.Version), zap.Error(err)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"version": migration.Version, "error": err}).Error("Failed to rollback migration during reset"){{else if eq .Logger "zerolog"}}mm.logger.Error().Int("version", migration.Version).Err(err).Msg("Failed to rollback migration during reset"){{end}}
+			}
+		}
+	}
+	
+	// Reapply all migrations
+	return mm.Migrate(ctx)
+}
+{{end}}

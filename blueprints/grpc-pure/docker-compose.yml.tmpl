@@ -1,0 +1,151 @@
+version: '3.8'
+
+services:
+  {{.ProjectName | lower}}:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "{{.GrpcPort}}:{{.GrpcPort}}"
+      - "{{.MetricsPort}}:{{.MetricsPort}}"
+    environment:
+      - CONFIG_FILE=configs/config.dev.yaml
+      - LOG_LEVEL=info{{if ne .DatabaseDriver ""}}
+      - DB_HOST={{.DatabaseDriver}}-db
+      - DB_PORT={{if eq .DatabaseDriver "postgres"}}5432{{else if eq .DatabaseDriver "mysql"}}3306{{else if eq .DatabaseDriver "sqlite"}}0{{end}}
+      - DB_NAME={{.ProjectName | lower}}
+      - DB_USER={{.ProjectName | lower}}
+      - DB_PASSWORD=password123{{end}}{{if eq .AuthType "jwt"}}
+      - JWT_SECRET=your-super-secret-jwt-key-change-in-production{{end}}
+    depends_on:{{if ne .DatabaseDriver ""}}
+      - {{.DatabaseDriver}}-db{{end}}{{if .MetricsEnabled}}
+      - prometheus{{end}}{{if .TracingEnabled}}
+      - jaeger{{end}}
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:{{.MetricsPort}}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+{{if ne .DatabaseDriver ""}}
+  {{.DatabaseDriver}}-db:
+    image: {{if eq .DatabaseDriver "postgres"}}postgres:15-alpine{{else if eq .DatabaseDriver "mysql"}}mysql:8.0{{else if eq .DatabaseDriver "sqlite"}}alpine:3.19{{end}}
+    environment:{{if eq .DatabaseDriver "postgres"}}
+      POSTGRES_DB: {{.ProjectName | lower}}
+      POSTGRES_USER: {{.ProjectName | lower}}
+      POSTGRES_PASSWORD: password123{{else if eq .DatabaseDriver "mysql"}}
+      MYSQL_DATABASE: {{.ProjectName | lower}}
+      MYSQL_USER: {{.ProjectName | lower}}
+      MYSQL_PASSWORD: password123
+      MYSQL_ROOT_PASSWORD: rootpassword123{{end}}
+    ports:
+      - "{{if eq .DatabaseDriver "postgres"}}5432:5432{{else if eq .DatabaseDriver "mysql"}}3306:3306{{end}}"{{if ne .DatabaseDriver "sqlite"}}
+    volumes:
+      - {{.DatabaseDriver}}-data:/{{if eq .DatabaseDriver "postgres"}}var/lib/postgresql/data{{else if eq .DatabaseDriver "mysql"}}var/lib/mysql{{end}}{{end}}
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+    healthcheck:{{if eq .DatabaseDriver "postgres"}}
+      test: ["CMD-SHELL", "pg_isready -U {{.ProjectName | lower}}"]{{else if eq .DatabaseDriver "mysql"}}
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "{{.ProjectName | lower}}", "-ppassword123"]{{end}}
+      interval: 10s
+      timeout: 5s
+      retries: 5
+{{end}}
+{{if .MetricsEnabled}}
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.1.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./configs/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./configs/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+{{end}}
+{{if .TracingEnabled}}
+  jaeger:
+    image: jaegertracing/all-in-one:1.49
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # HTTP collector
+      - "6831:6831/udp"  # UDP agent
+      - "6832:6832/udp"  # UDP agent
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+{{end}}
+{{if eq .ServiceDiscovery "consul"}}
+  consul:
+    image: consul:1.16
+    ports:
+      - "8500:8500"
+      - "8600:8600/udp"
+    environment:
+      - CONSUL_BIND_INTERFACE=eth0
+    command: consul agent -dev -client=0.0.0.0 -ui
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+{{end}}
+{{if eq .ServiceDiscovery "etcd"}}
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.9
+    ports:
+      - "2379:2379"
+      - "2380:2380"
+    environment:
+      - ETCD_NAME=etcd-server
+      - ETCD_DATA_DIR=/etcd-data
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_PEER_URLS=http://0.0.0.0:2380
+      - ETCD_INITIAL_ADVERTISE_PEER_URLS=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER=etcd-server=http://etcd:2380
+      - ETCD_INITIAL_CLUSTER_TOKEN=etcd-cluster-1
+      - ETCD_INITIAL_CLUSTER_STATE=new
+    volumes:
+      - etcd-data:/etcd-data
+    networks:
+      - {{.ProjectName | lower}}-network
+    restart: unless-stopped
+{{end}}
+
+networks:
+  {{.ProjectName | lower}}-network:
+    driver: bridge
+
+volumes:{{if ne .DatabaseDriver ""}}{{if ne .DatabaseDriver "sqlite"}}
+  {{.DatabaseDriver}}-data:{{end}}{{end}}{{if .MetricsEnabled}}
+  prometheus-data:
+  grafana-data:{{end}}{{if eq .ServiceDiscovery "etcd"}}
+  etcd-data:{{end}}

@@ -1,0 +1,82 @@
+environment: development
+
+server:
+  address: ""
+  port: 8080
+  timeout: 30
+  read_timeout: 15
+  write_timeout: 15
+  idle_timeout: 60
+
+logger:
+  level: debug
+  format: json
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: {{.DatabaseDriver}}
+  host: localhost
+{{- if eq .DatabaseDriver "postgres"}}
+  port: 5432
+  username: {{.ProjectName}}
+  password: password
+  database: {{.ProjectName}}_dev
+  ssl_mode: disable
+{{- else if eq .DatabaseDriver "mysql"}}
+  port: 3306
+  username: {{.ProjectName}}
+  password: password
+  database: {{.ProjectName}}_dev
+{{- else if eq .DatabaseDriver "sqlite"}}
+  database: {{.ProjectName}}_dev.db
+{{- end}}
+  max_open_conns: 25
+  max_idle_conns: 25
+  conn_max_lifetime: 300
+{{- end}}
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+jwt:
+  secret: "dev-secret-key-change-this-in-production"
+  access_token_ttl: 3600    # 1 hour
+  refresh_token_ttl: 604800 # 7 days
+  issuer: "{{.ProjectName}}"
+{{- end}}
+
+cors:
+  allowed_origins: 
+    - "http://localhost:3000"
+    - "http://localhost:3001"
+    - "http://localhost:8080"
+  allowed_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  allowed_headers:
+    - "Accept"
+    - "Authorization"
+    - "Content-Type"
+    - "X-CSRF-Token"
+    - "X-Request-ID"
+  exposed_headers:
+    - "Link"
+    - "X-Request-ID"
+  allow_credentials: true
+  max_age: 300
+
+{{- if .EnableMetrics}}
+metrics:
+  enabled: true
+  path: "/metrics"
+  port: 9090
+{{- end}}
+
+{{- if .EnableTracing}}
+tracing:
+  enabled: true
+  service_name: "{{.ProjectName}}"
+  endpoint: "http://localhost:14268/api/traces"
+  sample_rate: 1.0  # 100% sampling in development
+{{- end}}

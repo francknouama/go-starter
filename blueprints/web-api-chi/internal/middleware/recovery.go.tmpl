@@ -1,0 +1,45 @@
+package middleware
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"runtime/debug"
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Recovery creates a Chi-compatible recovery middleware that handles panics
+func Recovery(log logger.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if err := recover(); err != nil {
+					// Log the panic with stack trace
+					stack := string(debug.Stack())
+					log.Error("Panic recovered",
+						"error", fmt.Sprintf("%v", err),
+						"path", r.URL.Path,
+						"method", r.Method,
+						"stack", stack,
+					)
+
+					// Respond with 500 Internal Server Error
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					
+					response := map[string]interface{}{
+						"error": "Internal server error",
+						"code":  "INTERNAL_ERROR",
+					}
+					
+					if err := json.NewEncoder(w).Encode(response); err != nil {
+						log.Error("Failed to encode error response", "error", err)
+					}
+				}
+			}()
+
+			next.ServeHTTP(w, r)
+		})
+	}
+}

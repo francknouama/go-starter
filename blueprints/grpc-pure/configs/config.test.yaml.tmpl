@@ -1,0 +1,242 @@
+# {{.ProjectName}} - Test Configuration
+# This file contains test-specific settings for the gRPC service
+
+server:
+  grpc:
+    port: 0  # Use random available port for tests
+    
+    # Disable TLS for tests
+    tls:
+      enabled: false
+    
+    # Fast timeouts for tests
+    timeouts:
+      read: "5s"
+      write: "5s"
+      idle: "10s"
+    
+    # Minimal connection limits for tests
+    max_connections: 10
+    max_concurrent_streams: 10
+    
+    # Disable keepalive for tests
+    keepalive:
+      time: "5s"
+      timeout: "1s"
+
+  # Metrics endpoints for tests
+  metrics:
+    enabled: {{.MetricsEnabled}}
+    port: 0  # Use random available port
+    path: "/metrics"
+    
+  health:
+    enabled: true
+    path: "/health"
+    
+  # Enable reflection for testing
+  reflection:
+    enabled: true
+
+# Logging configuration for tests
+logging:
+  level: "error"  # Minimal logging during tests
+  format: "text"  # Simple format for test output
+  output: "stdout"
+  
+  # Test-specific fields
+  fields:
+    service: "{{.ProjectName | lower}}"
+    version: "test"
+    environment: "test"
+
+{{- if .TracingEnabled}}
+# Minimal tracing for tests
+tracing:
+  enabled: false  # Disable tracing in tests unless specifically needed
+  provider: "noop"
+  service_name: "{{.ProjectName | lower}}-test"
+  sampling_rate: 0.0
+{{- end}}
+
+{{- if .MetricsEnabled}}
+# Minimal metrics for tests
+metrics:
+  enabled: true
+  provider: "prometheus"
+  namespace: "{{.ProjectName | lower}}_test"
+  
+  # Fast collection for tests
+  collection:
+    interval: "1s"
+    timeout: "1s"
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+# Test database configuration
+database:
+  driver: "{{.DatabaseDriver}}"
+  
+  {{- if eq .DatabaseDriver "postgres"}}
+  postgres:
+    host: "localhost"
+    port: 5432
+    database: "{{.ProjectName | lower}}_test"
+    username: "test"
+    password: "test"
+    sslmode: "disable"
+    
+    # Minimal pool for tests
+    pool:
+      max_open_connections: 5
+      max_idle_connections: 2
+      connection_max_lifetime: "5m"
+      connection_max_idle_time: "1m"
+  {{- else if eq .DatabaseDriver "mysql"}}
+  mysql:
+    host: "localhost"
+    port: 3306
+    database: "{{.ProjectName | lower}}_test"
+    username: "test"
+    password: "test"
+    charset: "utf8mb4"
+    tls: "false"
+    
+    # Minimal pool for tests
+    pool:
+      max_open_connections: 5
+      max_idle_connections: 2
+      connection_max_lifetime: "5m"
+      connection_max_idle_time: "1m"
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  sqlite:
+    path: ":memory:"  # Use in-memory database for tests
+    pragma:
+      journal_mode: "MEMORY"
+      synchronous: "OFF"
+      cache_size: "-8000"  # 8MB cache
+      temp_store: "MEMORY"
+  {{- end}}
+  
+  # Migration settings for tests
+  migrations:
+    enabled: true
+    path: "migrations"
+    auto_migrate: true  # Enable auto-migration for tests
+{{- end}}
+
+{{- if ne .AuthType ""}}
+# Test authentication configuration
+auth:
+  type: "{{.AuthType}}"
+  
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: "test-secret-key-for-testing-only"
+    issuer: "{{.ProjectName | lower}}-test"
+    audience: "{{.ProjectName | lower}}-test-api"
+    expiration: "1h"
+    refresh_expiration: "24h"
+    algorithm: "HS256"
+    
+    # Relaxed validation for tests
+    validation:
+      verify_issuer: false
+      verify_audience: false
+      verify_expiration: true
+      clock_skew: "10m"
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    provider: "mock"
+    client_id: "test-client-id"
+    client_secret: "test-client-secret"
+    redirect_url: "http://localhost:8080/callback"
+    scopes: ["openid", "profile", "email"]
+    
+    # Mock endpoints for tests
+    endpoints:
+      auth_url: "http://localhost:8080/auth"
+      token_url: "http://localhost:8080/token"
+      userinfo_url: "http://localhost:8080/userinfo"
+  {{- else if eq .AuthType "mtls"}}
+  mtls:
+    ca_cert_file: "testdata/certs/ca.crt"
+    verify_client_cert: false  # Relax for tests
+    allowed_subjects: ["CN=test-client"]
+  {{- end}}
+{{- end}}
+
+{{- if ne .ServiceDiscovery ""}}
+# Mock service discovery for tests
+discovery:
+  provider: "mock"
+  
+  # Mock configuration
+  mock:
+    services:
+      - name: "{{.ProjectName | lower}}"
+        address: "localhost"
+        port: {{.GrpcPort}}
+        tags: ["grpc", "test"]
+{{- end}}
+
+# Security settings for tests
+security:
+  # Disabled rate limiting for tests
+  rate_limit:
+    enabled: false
+    
+  # Generous limits for tests
+  max_request_size: "10MB"
+  max_response_size: "10MB"
+  
+  # Permissive CORS for tests
+  cors:
+    allowed_origins: ["*"]
+    allowed_methods: ["*"]
+    allowed_headers: ["*"]
+    max_age: "0"
+
+# Operational settings for tests
+operations:
+  # Fast shutdown for tests
+  shutdown:
+    timeout: "1s"
+    
+  # Fast health checks for tests
+  health:
+    startup_probe:
+      initial_delay: "100ms"
+      period: "100ms"
+      timeout: "100ms"
+      failure_threshold: 1
+      
+    liveness_probe:
+      period: "100ms"
+      timeout: "100ms"
+      failure_threshold: 1
+      
+    readiness_probe:
+      period: "100ms"
+      timeout: "100ms"
+      failure_threshold: 1
+
+# Test environment settings
+environment: "test"
+
+# Test-specific settings
+test:
+  # Test data cleanup
+  cleanup:
+    enabled: true
+    tables: ["users", "sessions"]
+    
+  # Test fixtures
+  fixtures:
+    enabled: true
+    path: "testdata/fixtures"
+    
+  # Mock services
+  mocks:
+    enabled: true
+    external_services: true

@@ -1,0 +1,361 @@
+package repository
+
+import (
+	"context"
+	"time"
+	
+	"{{.ModulePath}}/internal/models"
+)
+
+// UserRepository defines the interface for user data operations
+type UserRepository interface {
+	// Create operations
+	Create(ctx context.Context, user *models.User) error
+	CreateBatch(ctx context.Context, users []*models.User) error
+	
+	// Read operations
+	GetByID(ctx context.Context, id int64) (*models.User, error)
+	GetByUsername(ctx context.Context, username string) (*models.User, error)
+	GetByEmail(ctx context.Context, email string) (*models.User, error)
+	GetByProvider(ctx context.Context, provider, providerID string) (*models.User, error)
+	List(ctx context.Context, filter models.UserFilter) ([]*models.User, error)
+	Count(ctx context.Context, filter models.UserFilter) (int64, error)
+	
+	// Update operations
+	Update(ctx context.Context, user *models.User) error
+	UpdateByID(ctx context.Context, id int64, updates map[string]interface{}) error
+	UpdatePassword(ctx context.Context, userID int64, passwordHash string) error
+	UpdateLastLogin(ctx context.Context, userID int64) error
+	IncrementFailedLogins(ctx context.Context, userID int64) error
+	ResetFailedLogins(ctx context.Context, userID int64) error
+	LockUser(ctx context.Context, userID int64, until *time.Time) error
+	UnlockUser(ctx context.Context, userID int64) error
+	
+	// Delete operations
+	Delete(ctx context.Context, id int64) error
+	SoftDelete(ctx context.Context, id int64) error
+	HardDelete(ctx context.Context, id int64) error
+	
+	// Bulk operations
+	DeleteBatch(ctx context.Context, ids []int64) error
+	UpdateBatch(ctx context.Context, ids []int64, updates map[string]interface{}) error
+	
+	// Search and filtering
+	Search(ctx context.Context, query string, limit, offset int) ([]*models.User, error)
+	GetActiveUsers(ctx context.Context, limit, offset int) ([]*models.User, error)
+	GetUsersByRole(ctx context.Context, role string, limit, offset int) ([]*models.User, error)
+	GetRecentUsers(ctx context.Context, since time.Time, limit int) ([]*models.User, error)
+	
+	// Analytics and statistics
+	GetUserStats(ctx context.Context) (*UserStats, error)
+	GetRegistrationStats(ctx context.Context, from, to time.Time) (*RegistrationStats, error)
+	GetLoginStats(ctx context.Context, from, to time.Time) (*LoginStats, error)
+	
+	// Existence checks
+	ExistsByUsername(ctx context.Context, username string) (bool, error)
+	ExistsByEmail(ctx context.Context, email string) (bool, error)
+	ExistsBy(ctx context.Context, field, value string) (bool, error)
+	
+	// Transaction support
+	WithTransaction(ctx context.Context, fn func(ctx context.Context, repo UserRepository) error) error
+	
+	// Health and maintenance
+	HealthCheck(ctx context.Context) error
+	CleanupExpiredLocks(ctx context.Context) error
+	CleanupSoftDeleted(ctx context.Context, olderThan time.Time) error
+}
+
+// SessionRepository defines the interface for session data operations
+type SessionRepository interface {
+	// Create operations
+	Create(ctx context.Context, session *Session) error
+	
+	// Read operations
+	GetByID(ctx context.Context, sessionID string) (*Session, error)
+	GetByUserID(ctx context.Context, userID int64) ([]*Session, error)
+	GetActiveSessions(ctx context.Context, userID int64) ([]*Session, error)
+	
+	// Update operations
+	Update(ctx context.Context, session *Session) error
+	RefreshExpiration(ctx context.Context, sessionID string, expiresAt time.Time) error
+	
+	// Delete operations
+	Delete(ctx context.Context, sessionID string) error
+	DeleteByUserID(ctx context.Context, userID int64) error
+	DeleteExpired(ctx context.Context) error
+	
+	// Session management
+	CleanupExpired(ctx context.Context) error
+	CountActiveSessions(ctx context.Context) (int64, error)
+	
+	// Health check
+	HealthCheck(ctx context.Context) error
+}
+
+// TokenRepository defines the interface for token data operations (refresh tokens, reset tokens, etc.)
+type TokenRepository interface {
+	// Create operations
+	Create(ctx context.Context, token *Token) error
+	
+	// Read operations
+	GetByToken(ctx context.Context, tokenValue string) (*Token, error)
+	GetByUserID(ctx context.Context, userID int64, tokenType TokenType) ([]*Token, error)
+	
+	// Update operations
+	Update(ctx context.Context, token *Token) error
+	MarkAsUsed(ctx context.Context, tokenValue string) error
+	
+	// Delete operations
+	Delete(ctx context.Context, tokenValue string) error
+	DeleteByUserID(ctx context.Context, userID int64, tokenType TokenType) error
+	DeleteExpired(ctx context.Context) error
+	
+	// Token management
+	CleanupExpired(ctx context.Context) error
+	
+	// Health check
+	HealthCheck(ctx context.Context) error
+}
+
+// AuditRepository defines the interface for audit log operations
+type AuditRepository interface {
+	// Create operations
+	Create(ctx context.Context, entry *AuditEntry) error
+	CreateBatch(ctx context.Context, entries []*AuditEntry) error
+	
+	// Read operations
+	GetByID(ctx context.Context, id int64) (*AuditEntry, error)
+	GetByUserID(ctx context.Context, userID int64, limit, offset int) ([]*AuditEntry, error)
+	GetByAction(ctx context.Context, action string, limit, offset int) ([]*AuditEntry, error)
+	GetByTimeRange(ctx context.Context, from, to time.Time, limit, offset int) ([]*AuditEntry, error)
+	
+	// Search and filtering
+	Search(ctx context.Context, filter AuditFilter) ([]*AuditEntry, error)
+	Count(ctx context.Context, filter AuditFilter) (int64, error)
+	
+	// Cleanup
+	DeleteOlderThan(ctx context.Context, olderThan time.Time) error
+	
+	// Health check
+	HealthCheck(ctx context.Context) error
+}
+
+// Repository aggregates all repository interfaces
+type Repository interface {
+	Users() UserRepository
+	Sessions() SessionRepository
+	Tokens() TokenRepository
+	Audit() AuditRepository
+	
+	// Transaction support
+	WithTransaction(ctx context.Context, fn func(ctx context.Context, repo Repository) error) error
+	
+	// Health and maintenance
+	HealthCheck(ctx context.Context) error
+	Close() error
+}
+
+// Supporting types and enums
+
+// UserStats represents user statistics
+type UserStats struct {
+	TotalUsers    int64 `json:"total_users"`
+	ActiveUsers   int64 `json:"active_users"`
+	VerifiedUsers int64 `json:"verified_users"`
+	LockedUsers   int64 `json:"locked_users"`
+	ExternalUsers int64 `json:"external_users"`
+}
+
+// RegistrationStats represents registration statistics
+type RegistrationStats struct {
+	Period           string            `json:"period"`
+	TotalRegistered  int64             `json:"total_registered"`
+	ByProvider       map[string]int64  `json:"by_provider"`
+	Daily            []DailyCount      `json:"daily"`
+}
+
+// LoginStats represents login statistics
+type LoginStats struct {
+	Period        string            `json:"period"`
+	TotalLogins   int64             `json:"total_logins"`
+	UniqueUsers   int64             `json:"unique_users"`
+	FailedLogins  int64             `json:"failed_logins"`
+	ByProvider    map[string]int64  `json:"by_provider"`
+	Daily         []DailyCount      `json:"daily"`
+}
+
+// DailyCount represents daily count statistics
+type DailyCount struct {
+	Date  time.Time `json:"date"`
+	Count int64     `json:"count"`
+}
+
+// Session represents a user session
+type Session struct {
+	ID        string                 `json:"id"`
+	UserID    int64                  `json:"user_id"`
+	CreatedAt time.Time              `json:"created_at"`
+	ExpiresAt time.Time              `json:"expires_at"`
+	IPAddress string                 `json:"ip_address"`
+	UserAgent string                 `json:"user_agent"`
+	Active    bool                   `json:"active"`
+	Data      map[string]interface{} `json:"data"`
+}
+
+// IsExpired checks if the session is expired
+func (s *Session) IsExpired() bool {
+	return time.Now().After(s.ExpiresAt)
+}
+
+// TokenType represents the type of token
+type TokenType string
+
+const (
+	TokenTypeRefresh     TokenType = "refresh"
+	TokenTypeReset       TokenType = "reset"
+	TokenTypeVerification TokenType = "verification"
+	TokenTypeAPI         TokenType = "api"
+)
+
+// Token represents various types of tokens (refresh, reset, etc.)
+type Token struct {
+	ID        int64     `json:"id"`
+	UserID    int64     `json:"user_id"`
+	Token     string    `json:"token"`
+	Type      TokenType `json:"type"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Used      bool      `json:"used"`
+	UsedAt    *time.Time `json:"used_at"`
+	IPAddress string    `json:"ip_address"`
+	UserAgent string    `json:"user_agent"`
+}
+
+// IsExpired checks if the token is expired
+func (t *Token) IsExpired() bool {
+	return time.Now().After(t.ExpiresAt)
+}
+
+// IsValid checks if the token is valid (not used and not expired)
+func (t *Token) IsValid() bool {
+	return !t.Used && !t.IsExpired()
+}
+
+// AuditAction represents the type of audit action
+type AuditAction string
+
+const (
+	AuditActionCreate AuditAction = "create"
+	AuditActionRead   AuditAction = "read"
+	AuditActionUpdate AuditAction = "update"
+	AuditActionDelete AuditAction = "delete"
+	AuditActionLogin  AuditAction = "login"
+	AuditActionLogout AuditAction = "logout"
+	AuditActionLock   AuditAction = "lock"
+	AuditActionUnlock AuditAction = "unlock"
+)
+
+// AuditEntry represents an audit log entry
+type AuditEntry struct {
+	ID         int64                  `json:"id"`
+	UserID     *int64                 `json:"user_id"`
+	Action     AuditAction            `json:"action"`
+	Resource   string                 `json:"resource"`
+	ResourceID *string                `json:"resource_id"`
+	Details    map[string]interface{} `json:"details"`
+	IPAddress  string                 `json:"ip_address"`
+	UserAgent  string                 `json:"user_agent"`
+	CreatedAt  time.Time              `json:"created_at"`
+	Success    bool                   `json:"success"`
+	Error      *string                `json:"error"`
+}
+
+// AuditFilter represents filtering options for audit queries
+type AuditFilter struct {
+	UserID     *int64       `json:"user_id"`
+	Action     *AuditAction `json:"action"`
+	Resource   *string      `json:"resource"`
+	Success    *bool        `json:"success"`
+	IPAddress  *string      `json:"ip_address"`
+	From       *time.Time   `json:"from"`
+	To         *time.Time   `json:"to"`
+	
+	// Pagination
+	Limit  int `json:"limit" validate:"min=1,max=1000"`
+	Offset int `json:"offset" validate:"min=0"`
+	
+	// Sorting
+	SortBy    string `json:"sort_by" validate:"oneof=id user_id action resource created_at"`
+	SortOrder string `json:"sort_order" validate:"oneof=asc desc"`
+}
+
+// DefaultAuditFilter returns default filter values
+func DefaultAuditFilter() AuditFilter {
+	return AuditFilter{
+		Limit:     100,
+		Offset:    0,
+		SortBy:    "created_at",
+		SortOrder: "desc",
+	}
+}
+
+// RepositoryError represents repository-specific errors
+type RepositoryError struct {
+	Type    ErrorType `json:"type"`
+	Message string    `json:"message"`
+	Cause   error     `json:"-"`
+}
+
+// ErrorType represents the type of repository error
+type ErrorType string
+
+const (
+	ErrorTypeNotFound      ErrorType = "not_found"
+	ErrorTypeDuplicate     ErrorType = "duplicate"
+	ErrorTypeConstraint    ErrorType = "constraint"
+	ErrorTypeConnection    ErrorType = "connection"
+	ErrorTypeTransaction   ErrorType = "transaction"
+	ErrorTypeValidation    ErrorType = "validation"
+	ErrorTypeUnknown       ErrorType = "unknown"
+)
+
+// Error implements the error interface
+func (e *RepositoryError) Error() string {
+	if e.Cause != nil {
+		return e.Message + ": " + e.Cause.Error()
+	}
+	return e.Message
+}
+
+// NewRepositoryError creates a new repository error
+func NewRepositoryError(errType ErrorType, message string, cause error) *RepositoryError {
+	return &RepositoryError{
+		Type:    errType,
+		Message: message,
+		Cause:   cause,
+	}
+}
+
+// IsNotFound checks if the error is a not found error
+func IsNotFound(err error) bool {
+	if repoErr, ok := err.(*RepositoryError); ok {
+		return repoErr.Type == ErrorTypeNotFound
+	}
+	return false
+}
+
+// IsDuplicate checks if the error is a duplicate error
+func IsDuplicate(err error) bool {
+	if repoErr, ok := err.(*RepositoryError); ok {
+		return repoErr.Type == ErrorTypeDuplicate
+	}
+	return false
+}
+
+// IsConstraint checks if the error is a constraint error
+func IsConstraint(err error) bool {
+	if repoErr, ok := err.(*RepositoryError); ok {
+		return repoErr.Type == ErrorTypeConstraint
+	}
+	return false
+}

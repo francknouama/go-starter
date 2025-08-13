@@ -1,0 +1,232 @@
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// AuthHandler handles authentication-related HTTP requests using Chi router
+type AuthHandler struct {
+	authService services.AuthService
+	logger      logger.Logger
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler(authService services.AuthService, log logger.Logger) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+		logger:      log,
+	}
+}
+
+// Login handles POST /api/v1/auth/login
+// @Summary User login
+// @Description Authenticate user and return access token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param credentials body models.LoginRequest true "Login credentials"
+// @Success 200 {object} models.LoginResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/login [post]
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Login attempt")
+
+	var req models.LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid login request data", "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request data", "INVALID_REQUEST_DATA")
+		return
+	}
+
+	h.logger.Debug("Login request", "email", req.Email)
+
+	response, err := h.authService.Login(req)
+	if err != nil {
+		h.logger.Error("Login failed", "email", req.Email, "error", err)
+		if err.Error() == "invalid credentials" {
+			h.writeErrorResponse(w, http.StatusUnauthorized, "Invalid credentials", "INVALID_CREDENTIALS")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Login failed", "LOGIN_ERROR")
+		return
+	}
+
+	h.logger.Info("Login successful", "email", req.Email)
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// Register handles POST /api/v1/auth/register
+// @Summary User registration
+// @Description Register a new user account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param user body models.RegisterRequest true "Registration data"
+// @Success 201 {object} models.RegisterResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/register [post]
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Registration attempt")
+
+	var req models.RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid registration request data", "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request data", "INVALID_REQUEST_DATA")
+		return
+	}
+
+	h.logger.Debug("Registration request", "email", req.Email, "name", req.Name)
+
+	response, err := h.authService.Register(req)
+	if err != nil {
+		h.logger.Error("Registration failed", "email", req.Email, "error", err)
+		if err.Error() == "user already exists" {
+			h.writeErrorResponse(w, http.StatusConflict, "User already exists", "USER_EXISTS")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Registration failed", "REGISTRATION_ERROR")
+		return
+	}
+
+	h.logger.Info("Registration successful", "email", req.Email)
+	h.writeJSONResponse(w, http.StatusCreated, response)
+}
+
+// RefreshToken handles POST /api/v1/auth/refresh
+// @Summary Refresh access token
+// @Description Refresh the access token using refresh token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param token body models.RefreshTokenRequest true "Refresh token"
+// @Success 200 {object} models.RefreshTokenResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/refresh [post]
+func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Token refresh attempt")
+
+	var req models.RefreshTokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid refresh token request data", "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request data", "INVALID_REQUEST_DATA")
+		return
+	}
+
+	response, err := h.authService.RefreshToken(req)
+	if err != nil {
+		h.logger.Error("Token refresh failed", "error", err)
+		if err.Error() == "invalid refresh token" {
+			h.writeErrorResponse(w, http.StatusUnauthorized, "Invalid refresh token", "INVALID_REFRESH_TOKEN")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Token refresh failed", "REFRESH_ERROR")
+		return
+	}
+
+	h.logger.Debug("Token refresh successful")
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// Logout handles POST /api/v1/auth/logout
+// @Summary User logout
+// @Description Logout user and invalidate tokens
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/logout [post]
+func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Logout attempt")
+
+	// Get user ID from context (set by auth middleware)
+	userID, ok := r.Context().Value("userID").(uint)
+	if !ok {
+		h.logger.Error("User ID not found in context")
+		h.writeErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "UNAUTHORIZED")
+		return
+	}
+
+	err := h.authService.Logout(userID)
+	if err != nil {
+		h.logger.Error("Logout failed", "userID", userID, "error", err)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Logout failed", "LOGOUT_ERROR")
+		return
+	}
+
+	h.logger.Info("Logout successful", "userID", userID)
+	response := map[string]interface{}{
+		"message": "Logout successful",
+	}
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// GetCurrentUser handles GET /api/v1/auth/me
+// @Summary Get current user
+// @Description Get the currently authenticated user's information
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Security ApiKeyAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/me [get]
+func (h *AuthHandler) GetCurrentUser(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Get current user request")
+
+	// Get user ID from context (set by auth middleware)
+	userID, ok := r.Context().Value("userID").(uint)
+	if !ok {
+		h.logger.Error("User ID not found in context")
+		h.writeErrorResponse(w, http.StatusUnauthorized, "Unauthorized", "UNAUTHORIZED")
+		return
+	}
+
+	user, err := h.authService.GetCurrentUser(userID)
+	if err != nil {
+		h.logger.Error("Failed to get current user", "userID", userID, "error", err)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to get user", "USER_FETCH_ERROR")
+		return
+	}
+
+	response := map[string]interface{}{
+		"data": user,
+	}
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// writeJSONResponse is a helper method to write JSON responses consistently
+func (h *AuthHandler) writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		h.logger.Error("Failed to encode JSON response", "error", err)
+		// Don't try to write another response, just log the error
+	}
+}
+
+// writeErrorResponse is a helper method to write error responses consistently
+func (h *AuthHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, message, code string) {
+	response := map[string]interface{}{
+		"error": message,
+		"code":  code,
+	}
+	h.writeJSONResponse(w, statusCode, response)
+}
+{{- end}}

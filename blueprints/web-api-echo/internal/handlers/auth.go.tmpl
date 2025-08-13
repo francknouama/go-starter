@@ -1,0 +1,211 @@
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/services"
+)
+
+// AuthHandler contains authentication-related handler methods
+type AuthHandler struct {
+	authService services.AuthService
+}
+
+// NewAuthHandler creates a new auth handler
+func NewAuthHandler(authService services.AuthService) *AuthHandler {
+	return &AuthHandler{
+		authService: authService,
+	}
+}
+
+// LoginRequest represents the login request structure
+type LoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
+
+// RegisterRequest represents the registration request structure
+type RegisterRequest struct {
+	Name     string `json:"name" validate:"required"`
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+}
+
+// AuthResponse represents the authentication response structure
+type AuthResponse struct {
+{{- if eq .AuthType "jwt"}}
+	Token        string `json:"token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+{{- else if eq .AuthType "session"}}
+	SessionID    string `json:"session_id"`
+{{- end}}
+	User         interface{} `json:"user"`
+	Message      string      `json:"message"`
+}
+
+// Login handles POST /auth/login
+func (h *AuthHandler) Login(c echo.Context) error {
+	var request LoginRequest
+	
+	if err := c.Bind(&request); err != nil {
+		logger.Error("Failed to bind login request", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request body",
+		})
+	}
+	
+	if err := c.Validate(&request); err != nil {
+		logger.Error("Login validation failed", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Validation failed",
+		})
+	}
+	
+	logger.Info("User login attempt", "email", request.Email)
+	
+	// For now, return a simple response
+	// In a real implementation, you would call h.authService.Login()
+{{- if eq .AuthType "jwt"}}
+	response := AuthResponse{
+		Token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", // Mock JWT token
+		User: map[string]interface{}{
+			"id":    1,
+			"name":  "John Doe",
+			"email": request.Email,
+		},
+		Message: "Login successful",
+	}
+{{- else if eq .AuthType "session"}}
+	response := AuthResponse{
+		SessionID: "session_123456789", // Mock session ID
+		User: map[string]interface{}{
+			"id":    1,
+			"name":  "John Doe", 
+			"email": request.Email,
+		},
+		Message: "Login successful",
+	}
+{{- else}}
+	response := AuthResponse{
+		User: map[string]interface{}{
+			"id":    1,
+			"name":  "John Doe",
+			"email": request.Email,
+		},
+		Message: "Login successful",
+	}
+{{- end}}
+	
+	return c.JSON(http.StatusOK, response)
+}
+
+// Register handles POST /auth/register
+func (h *AuthHandler) Register(c echo.Context) error {
+	var request RegisterRequest
+	
+	if err := c.Bind(&request); err != nil {
+		logger.Error("Failed to bind register request", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request body",
+		})
+	}
+	
+	if err := c.Validate(&request); err != nil {
+		logger.Error("Registration validation failed", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Validation failed",
+		})
+	}
+	
+	logger.Info("User registration attempt", "name", request.Name, "email", request.Email)
+	
+	// For now, return a simple response
+	// In a real implementation, you would call h.authService.Register()
+{{- if eq .AuthType "jwt"}}
+	response := AuthResponse{
+		Token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", // Mock JWT token
+		User: map[string]interface{}{
+			"id":    2,
+			"name":  request.Name,
+			"email": request.Email,
+		},
+		Message: "Registration successful",
+	}
+{{- else if eq .AuthType "session"}}
+	response := AuthResponse{
+		SessionID: "session_987654321", // Mock session ID
+		User: map[string]interface{}{
+			"id":    2,
+			"name":  request.Name,
+			"email": request.Email,
+		},
+		Message: "Registration successful",
+	}
+{{- else}}
+	response := AuthResponse{
+		User: map[string]interface{}{
+			"id":    2,
+			"name":  request.Name,
+			"email": request.Email,
+		},
+		Message: "Registration successful",
+	}
+{{- end}}
+	
+	return c.JSON(http.StatusCreated, response)
+}
+
+{{- if eq .AuthType "jwt"}}
+
+// RefreshToken handles POST /auth/refresh
+func (h *AuthHandler) RefreshToken(c echo.Context) error {
+	var request struct {
+		RefreshToken string `json:"refresh_token" validate:"required"`
+	}
+	
+	if err := c.Bind(&request); err != nil {
+		logger.Error("Failed to bind refresh token request", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Invalid request body",
+		})
+	}
+	
+	if err := c.Validate(&request); err != nil {
+		logger.Error("Refresh token validation failed", "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{
+			"error": "Validation failed",
+		})
+	}
+	
+	logger.Info("Token refresh attempt")
+	
+	// For now, return a simple response
+	// In a real implementation, you would call h.authService.RefreshToken()
+	response := map[string]interface{}{
+		"token":         "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...", // Mock new JWT token
+		"refresh_token": "new_refresh_token_123456789",                  // Mock new refresh token
+		"message":       "Token refreshed successfully",
+	}
+	
+	return c.JSON(http.StatusOK, response)
+}
+
+{{- end}}
+
+// Logout handles POST /auth/logout
+func (h *AuthHandler) Logout(c echo.Context) error {
+	logger.Info("User logout")
+	
+	// For now, return a simple response
+	// In a real implementation, you would call h.authService.Logout()
+{{- if eq .AuthType "session"}}
+	// Invalidate session
+{{- end}}
+	
+	return c.JSON(http.StatusOK, map[string]string{
+		"message": "Logout successful",
+	})
+}

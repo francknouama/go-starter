@@ -1,0 +1,463 @@
+package services
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+	{{- if ne .DatabaseDriver ""}}
+	"gorm.io/gorm"
+	{{- end}}
+
+	healthv1 "{{.ModulePath}}/proto/health/v1"
+	commonv1 "{{.ModulePath}}/proto/common/v1"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+// HealthService implements the health checking service
+type HealthService struct {
+	healthv1.UnimplementedHealthServiceServer
+	grpc_health_v1.UnimplementedHealthServer
+	
+	logger       logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db           *gorm.DB
+	{{- end}}
+	startTime    time.Time
+	mu           sync.RWMutex
+	serviceStatus map[string]healthv1.ServingStatus
+	components   map[string]*ComponentHealth
+	watchers     map[string][]chan *healthv1.HealthCheckResponse
+}
+
+// ComponentHealth represents the health status of a service component
+type ComponentHealth struct {
+	Status      commonv1.HealthStatus
+	Message     string
+	LastCheck   time.Time
+	Duration    time.Duration
+	ErrorCount  int32
+	Metadata    map[string]string
+}
+
+// NewHealthService creates a new health service
+func NewHealthService(
+	log logger.Logger,
+	{{- if ne .DatabaseDriver ""}}
+	db *gorm.DB,
+	{{- end}}
+) *HealthService {
+	return &HealthService{
+		logger:        log,
+		{{- if ne .DatabaseDriver ""}}
+		db:            db,
+		{{- end}}
+		startTime:     time.Now(),
+		serviceStatus: make(map[string]healthv1.ServingStatus),
+		components:    make(map[string]*ComponentHealth),
+		watchers:      make(map[string][]chan *healthv1.HealthCheckResponse),
+	}
+}
+
+// Check implements the standard gRPC health check
+func (h *HealthService) Check(ctx context.Context, req *healthv1.HealthCheckRequest) (*healthv1.HealthCheckResponse, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	serviceName := req.Service
+	if serviceName == "" {
+		serviceName = "overall"
+	}
+
+	status, exists := h.serviceStatus[serviceName]
+	if !exists {
+		// Default to serving if not explicitly set
+		status = healthv1.ServingStatus_SERVING_STATUS_SERVING
+	}
+
+	response := &healthv1.HealthCheckResponse{
+		Status:    status,
+		Timestamp: timestamppb.Now(),
+	}
+
+	// Add status message based on the status
+	switch status {
+	case healthv1.ServingStatus_SERVING_STATUS_SERVING:
+		response.Message = "Service is healthy"
+	case healthv1.ServingStatus_SERVING_STATUS_NOT_SERVING:
+		response.Message = "Service is not serving"
+	case healthv1.ServingStatus_SERVING_STATUS_SERVICE_UNKNOWN:
+		response.Message = "Service status unknown"
+	default:
+		response.Message = "Unknown status"
+	}
+
+	h.logger.Debug("Health check requested",
+		"service", serviceName,
+		"status", status.String(),
+	)
+
+	return response, nil
+}
+
+// Watch implements streaming health check
+func (h *HealthService) Watch(req *healthv1.HealthCheckRequest, stream healthv1.HealthService_WatchServer) error {
+	serviceName := req.Service
+	if serviceName == "" {
+		serviceName = "overall"
+	}
+
+	// Create a channel for this watcher
+	watcherCh := make(chan *healthv1.HealthCheckResponse, 10)
+
+	// Register the watcher
+	h.mu.Lock()
+	if h.watchers[serviceName] == nil {
+		h.watchers[serviceName] = make([]chan *healthv1.HealthCheckResponse, 0)
+	}
+	h.watchers[serviceName] = append(h.watchers[serviceName], watcherCh)
+	h.mu.Unlock()
+
+	// Send initial status
+	initialResponse, err := h.Check(stream.Context(), req)
+	if err != nil {
+		return err
+	}
+	
+	if err := stream.Send(initialResponse); err != nil {
+		return err
+	}
+
+	// Listen for updates and context cancellation
+	for {
+		select {
+		case response := <-watcherCh:
+			if err := stream.Send(response); err != nil {
+				h.removeWatcher(serviceName, watcherCh)
+				return err
+			}
+		case <-stream.Context().Done():
+			h.removeWatcher(serviceName, watcherCh)
+			return stream.Context().Err()
+		}
+	}
+}
+
+// GetHealth returns detailed health information
+func (h *HealthService) GetHealth(ctx context.Context, req *healthv1.GetHealthRequest) (*healthv1.GetHealthResponse, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	// Determine overall health status
+	overallStatus := h.calculateOverallHealth()
+
+	response := &healthv1.GetHealthResponse{
+		OverallStatus: overallStatus,
+		Version:       "{{.ProjectName}}-v1.0.0", // You might want to make this configurable
+		StartedAt:     timestamppb.New(h.startTime),
+		Timestamp:     timestamppb.Now(),
+		Components:    make(map[string]*healthv1.ComponentHealth),
+		Metadata:      make(map[string]string),
+	}
+
+	// Add component health if requested
+	if req.IncludeComponents {
+		for name, component := range h.components {
+			// Filter components if specified
+			if len(req.Components) > 0 {
+				found := false
+				for _, requestedComponent := range req.Components {
+					if requestedComponent == name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					continue
+				}
+			}
+
+			response.Components[name] = &healthv1.ComponentHealth{
+				Status:      component.Status,
+				Message:     component.Message,
+				LastCheck:   timestamppb.New(component.LastCheck),
+				DurationMs:  component.Duration.Milliseconds(),
+				ErrorCount:  component.ErrorCount,
+				Metadata:    component.Metadata,
+			}
+		}
+	}
+
+	// Add service metadata
+	response.Metadata["uptime_seconds"] = time.Since(h.startTime).String()
+	response.Metadata["go_version"] = "{{.GoVersion}}"
+	response.Metadata["service_type"] = "grpc"
+
+	h.logger.Debug("Detailed health check requested",
+		"overall_status", overallStatus.String(),
+		"components_requested", req.IncludeComponents,
+		"component_count", len(response.Components),
+	)
+
+	return response, nil
+}
+
+// CheckReadiness returns readiness status (for Kubernetes readiness probes)
+func (h *HealthService) CheckReadiness(ctx context.Context, req *healthv1.ReadinessRequest) (*healthv1.ReadinessResponse, error) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	ready := true
+	message := "Service is ready"
+	notReadyComponents := make([]string, 0)
+
+	// Check critical components
+	for name, component := range h.components {
+		if component.Status == commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY {
+			ready = false
+			notReadyComponents = append(notReadyComponents, name)
+		}
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Check database connectivity
+	if h.db != nil {
+		dbCheck := h.checkDatabaseHealth()
+		if dbCheck.Status == commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY {
+			ready = false
+			notReadyComponents = append(notReadyComponents, "database")
+		}
+	}
+	{{- end}}
+
+	if !ready {
+		message = "Service is not ready"
+	}
+
+	response := &healthv1.ReadinessResponse{
+		Ready:               ready,
+		Message:             message,
+		Timestamp:           timestamppb.Now(),
+		NotReadyComponents:  notReadyComponents,
+	}
+
+	h.logger.Debug("Readiness check requested",
+		"ready", ready,
+		"not_ready_components", notReadyComponents,
+	)
+
+	return response, nil
+}
+
+// CheckLiveness returns liveness status (for Kubernetes liveness probes)
+func (h *HealthService) CheckLiveness(ctx context.Context, req *healthv1.LivenessRequest) (*healthv1.LivenessResponse, error) {
+	// Liveness check is typically simpler - just check if the service is running
+	uptime := time.Since(h.startTime)
+
+	response := &healthv1.LivenessResponse{
+		Alive:         true,
+		Message:       "Service is alive",
+		Timestamp:     timestamppb.Now(),
+		UptimeSeconds: int64(uptime.Seconds()),
+	}
+
+	h.logger.Debug("Liveness check requested",
+		"alive", true,
+		"uptime_seconds", uptime.Seconds(),
+	)
+
+	return response, nil
+}
+
+// SetServiceStatus sets the health status for a specific service
+func (h *HealthService) SetServiceStatus(service string, status healthv1.ServingStatus) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.serviceStatus[service] = status
+
+	// Notify watchers
+	response := &healthv1.HealthCheckResponse{
+		Status:    status,
+		Timestamp: timestamppb.Now(),
+	}
+
+	if watchers, exists := h.watchers[service]; exists {
+		for _, watcher := range watchers {
+			select {
+			case watcher <- response:
+			default:
+				// Watcher channel is full, skip
+			}
+		}
+	}
+
+	h.logger.Info("Service status updated",
+		"service", service,
+		"status", status.String(),
+	)
+}
+
+// UpdateComponentHealth updates the health status of a component
+func (h *HealthService) UpdateComponentHealth(name string, status commonv1.HealthStatus, message string, duration time.Duration) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	component, exists := h.components[name]
+	if !exists {
+		component = &ComponentHealth{
+			Metadata: make(map[string]string),
+		}
+		h.components[name] = component
+	}
+
+	// Update error count
+	if status == commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY {
+		component.ErrorCount++
+	} else if status == commonv1.HealthStatus_HEALTH_STATUS_HEALTHY {
+		component.ErrorCount = 0 // Reset on successful check
+	}
+
+	component.Status = status
+	component.Message = message
+	component.LastCheck = time.Now()
+	component.Duration = duration
+
+	h.logger.Debug("Component health updated",
+		"component", name,
+		"status", status.String(),
+		"message", message,
+		"duration_ms", duration.Milliseconds(),
+	)
+}
+
+// StartHealthChecks starts periodic health checks for all components
+func (h *HealthService) StartHealthChecks(ctx context.Context) {
+	go h.periodicHealthChecks(ctx)
+}
+
+// periodicHealthChecks runs health checks for all components periodically
+func (h *HealthService) periodicHealthChecks(ctx context.Context) {
+	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			h.performHealthChecks()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// performHealthChecks performs health checks on all components
+func (h *HealthService) performHealthChecks() {
+	{{- if ne .DatabaseDriver ""}}
+	// Check database health
+	if h.db != nil {
+		dbHealth := h.checkDatabaseHealth()
+		h.UpdateComponentHealth("database", dbHealth.Status, dbHealth.Message, dbHealth.Duration)
+	}
+	{{- end}}
+
+	// Add other component health checks here
+	// For example: cache, external services, etc.
+}
+
+{{- if ne .DatabaseDriver ""}}
+// checkDatabaseHealth checks the health of the database connection
+func (h *HealthService) checkDatabaseHealth() *ComponentHealth {
+	start := time.Now()
+	
+	sqlDB, err := h.db.DB()
+	if err != nil {
+		return &ComponentHealth{
+			Status:   commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY,
+			Message:  "Failed to get database connection: " + err.Error(),
+			Duration: time.Since(start),
+		}
+	}
+
+	err = sqlDB.Ping()
+	duration := time.Since(start)
+
+	if err != nil {
+		return &ComponentHealth{
+			Status:   commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY,
+			Message:  "Database ping failed: " + err.Error(),
+			Duration: duration,
+		}
+	}
+
+	return &ComponentHealth{
+		Status:   commonv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+		Message:  "Database connection is healthy",
+		Duration: duration,
+	}
+}
+{{- end}}
+
+// calculateOverallHealth calculates the overall health status based on components
+func (h *HealthService) calculateOverallHealth() commonv1.HealthStatus {
+	if len(h.components) == 0 {
+		return commonv1.HealthStatus_HEALTH_STATUS_HEALTHY
+	}
+
+	hasWarning := false
+	for _, component := range h.components {
+		switch component.Status {
+		case commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY:
+			return commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY
+		case commonv1.HealthStatus_HEALTH_STATUS_WARNING:
+			hasWarning = true
+		}
+	}
+
+	if hasWarning {
+		return commonv1.HealthStatus_HEALTH_STATUS_WARNING
+	}
+
+	return commonv1.HealthStatus_HEALTH_STATUS_HEALTHY
+}
+
+// removeWatcher removes a watcher from the list
+func (h *HealthService) removeWatcher(serviceName string, watcherCh chan *healthv1.HealthCheckResponse) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	watchers, exists := h.watchers[serviceName]
+	if !exists {
+		return
+	}
+
+	for i, watcher := range watchers {
+		if watcher == watcherCh {
+			// Remove the watcher from the slice
+			h.watchers[serviceName] = append(watchers[:i], watchers[i+1:]...)
+			close(watcherCh)
+			break
+		}
+	}
+}
+
+// Shutdown gracefully shuts down the health service
+func (h *HealthService) Shutdown() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	// Close all watcher channels
+	for _, watchers := range h.watchers {
+		for _, watcher := range watchers {
+			close(watcher)
+		}
+	}
+
+	h.watchers = make(map[string][]chan *healthv1.HealthCheckResponse)
+	h.logger.Info("Health service shut down")
+}

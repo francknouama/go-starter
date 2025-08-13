@@ -1,0 +1,30 @@
+{{- if ne .DatabaseDriver ""}}
+-- Rollback users table creation
+{{- if eq .DatabaseDriver "postgres"}}
+-- Drop trigger first
+DROP TRIGGER IF EXISTS update_users_updated_at ON users;
+DROP FUNCTION IF EXISTS update_updated_at_column();
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_deleted_at;
+
+-- Drop table
+DROP TABLE IF EXISTS users CASCADE;
+
+{{- else if eq .DatabaseDriver "mysql"}}
+-- Drop table (indexes are dropped automatically)
+DROP TABLE IF EXISTS users;
+
+{{- else if eq .DatabaseDriver "sqlite"}}
+-- Drop trigger
+DROP TRIGGER IF EXISTS update_users_updated_at;
+
+-- Drop indexes
+DROP INDEX IF EXISTS idx_users_email;
+DROP INDEX IF EXISTS idx_users_deleted_at;
+
+-- Drop table
+DROP TABLE IF EXISTS users;
+{{- end}}
+{{- end}}

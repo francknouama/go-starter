@@ -1,0 +1,327 @@
+package logger
+
+import (
+	"fmt"
+	"os"
+{{- if eq .Logger "slog"}}
+	"log/slog"
+	"strings"
+{{- else if eq .Logger "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+{{- else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{- else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"strings"
+{{- end}}
+)
+
+{{- if eq .Logger "slog"}}
+// slogLogger wraps slog.Logger
+type slogLogger struct {
+	logger *slog.Logger
+}
+
+// New creates a new logger instance
+func New(level, environment string) Logger {
+	var logLevel slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "info":
+		logLevel = slog.LevelInfo
+	case "warn", "warning":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		logLevel = slog.LevelInfo
+	}
+
+	opts := &slog.HandlerOptions{
+		Level: logLevel,
+		AddSource: environment == "development",
+	}
+
+	var handler slog.Handler
+	if environment == "development" {
+		handler = slog.NewTextHandler(os.Stdout, opts)
+	} else {
+		handler = slog.NewJSONHandler(os.Stdout, opts)
+	}
+
+	return &slogLogger{
+		logger: slog.New(handler),
+	}
+}
+
+func (l *slogLogger) Debug(msg string, fields ...interface{}) {
+	l.logger.Debug(msg, fields...)
+}
+
+func (l *slogLogger) Info(msg string, fields ...interface{}) {
+	l.logger.Info(msg, fields...)
+}
+
+func (l *slogLogger) Warn(msg string, fields ...interface{}) {
+	l.logger.Warn(msg, fields...)
+}
+
+func (l *slogLogger) Error(msg string, fields ...interface{}) {
+	l.logger.Error(msg, fields...)
+}
+
+func (l *slogLogger) Fatal(msg string, fields ...interface{}) {
+	l.logger.Error(msg, fields...)
+	os.Exit(1)
+}
+
+func (l *slogLogger) With(fields ...interface{}) Logger {
+	return &slogLogger{
+		logger: l.logger.With(fields...),
+	}
+}
+
+{{- else if eq .Logger "zap"}}
+// zapLogger wraps zap.Logger
+type zapLogger struct {
+	logger *zap.Logger
+	sugar  *zap.SugaredLogger
+}
+
+// New creates a new logger instance
+func New(level, environment string) Logger {
+	var config zap.Config
+	
+	if environment == "development" {
+		config = zap.NewDevelopmentConfig()
+		config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	} else {
+		config = zap.NewProductionConfig()
+		config.DisableStacktrace = true
+	}
+
+	// Set log level
+	switch level {
+	case "debug":
+		config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "info":
+		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	case "warn", "warning":
+		config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	logger, err := config.Build()
+	if err != nil {
+		panic(fmt.Sprintf("Failed to initialize logger: %v", err))
+	}
+
+	return &zapLogger{
+		logger: logger,
+		sugar:  logger.Sugar(),
+	}
+}
+
+func (l *zapLogger) Debug(msg string, fields ...interface{}) {
+	l.sugar.Debugw(msg, fields...)
+}
+
+func (l *zapLogger) Info(msg string, fields ...interface{}) {
+	l.sugar.Infow(msg, fields...)
+}
+
+func (l *zapLogger) Warn(msg string, fields ...interface{}) {
+	l.sugar.Warnw(msg, fields...)
+}
+
+func (l *zapLogger) Error(msg string, fields ...interface{}) {
+	l.sugar.Errorw(msg, fields...)
+}
+
+func (l *zapLogger) Fatal(msg string, fields ...interface{}) {
+	l.sugar.Fatalw(msg, fields...)
+}
+
+func (l *zapLogger) With(fields ...interface{}) Logger {
+	return &zapLogger{
+		logger: l.logger,
+		sugar:  l.sugar.With(fields...),
+	}
+}
+
+{{- else if eq .Logger "logrus"}}
+// logrusLogger wraps logrus.Logger
+type logrusLogger struct {
+	logger *logrus.Logger
+	entry  *logrus.Entry
+}
+
+// New creates a new logger instance
+func New(level, environment string) Logger {
+	logger := logrus.New()
+
+	// Set log level
+	switch level {
+	case "debug":
+		logger.SetLevel(logrus.DebugLevel)
+	case "info":
+		logger.SetLevel(logrus.InfoLevel)
+	case "warn", "warning":
+		logger.SetLevel(logrus.WarnLevel)
+	case "error":
+		logger.SetLevel(logrus.ErrorLevel)
+	default:
+		logger.SetLevel(logrus.InfoLevel)
+	}
+
+	// Set formatter
+	if environment == "development" {
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp: true,
+			ForceColors:   true,
+		})
+	} else {
+		logger.SetFormatter(&logrus.JSONFormatter{})
+	}
+
+	logger.SetOutput(os.Stdout)
+
+	return &logrusLogger{
+		logger: logger,
+		entry:  logger.WithFields(logrus.Fields{}),
+	}
+}
+
+func (l *logrusLogger) Debug(msg string, fields ...interface{}) {
+	l.entry.WithFields(toLogrusFields(fields...)).Debug(msg)
+}
+
+func (l *logrusLogger) Info(msg string, fields ...interface{}) {
+	l.entry.WithFields(toLogrusFields(fields...)).Info(msg)
+}
+
+func (l *logrusLogger) Warn(msg string, fields ...interface{}) {
+	l.entry.WithFields(toLogrusFields(fields...)).Warn(msg)
+}
+
+func (l *logrusLogger) Error(msg string, fields ...interface{}) {
+	l.entry.WithFields(toLogrusFields(fields...)).Error(msg)
+}
+
+func (l *logrusLogger) Fatal(msg string, fields ...interface{}) {
+	l.entry.WithFields(toLogrusFields(fields...)).Fatal(msg)
+}
+
+func (l *logrusLogger) With(fields ...interface{}) Logger {
+	return &logrusLogger{
+		logger: l.logger,
+		entry:  l.entry.WithFields(toLogrusFields(fields...)),
+	}
+}
+
+func toLogrusFields(fields ...interface{}) logrus.Fields {
+	result := make(logrus.Fields)
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			key, ok := fields[i].(string)
+			if ok {
+				result[key] = fields[i+1]
+			}
+		}
+	}
+	return result
+}
+
+{{- else if eq .Logger "zerolog"}}
+// zerologLogger wraps zerolog.Logger
+type zerologLogger struct {
+	logger zerolog.Logger
+}
+
+// New creates a new logger instance
+func New(level, environment string) Logger {
+	// Set global log level
+	switch strings.ToLower(level) {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "info":
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	case "warn", "warning":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+
+	// Configure output
+	if environment == "development" {
+		output := zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: "15:04:05"}
+		log.Logger = log.Output(output)
+	} else {
+		log.Logger = log.Output(os.Stdout)
+	}
+
+	return &zerologLogger{
+		logger: log.Logger,
+	}
+}
+
+func (l *zerologLogger) Debug(msg string, fields ...interface{}) {
+	event := l.logger.Debug()
+	appendFields(event, fields...).Msg(msg)
+}
+
+func (l *zerologLogger) Info(msg string, fields ...interface{}) {
+	event := l.logger.Info()
+	appendFields(event, fields...).Msg(msg)
+}
+
+func (l *zerologLogger) Warn(msg string, fields ...interface{}) {
+	event := l.logger.Warn()
+	appendFields(event, fields...).Msg(msg)
+}
+
+func (l *zerologLogger) Error(msg string, fields ...interface{}) {
+	event := l.logger.Error()
+	appendFields(event, fields...).Msg(msg)
+}
+
+func (l *zerologLogger) Fatal(msg string, fields ...interface{}) {
+	event := l.logger.Fatal()
+	appendFields(event, fields...).Msg(msg)
+}
+
+func (l *zerologLogger) With(fields ...interface{}) Logger {
+	ctx := l.logger.With()
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			key, ok := fields[i].(string)
+			if ok {
+				ctx = ctx.Interface(key, fields[i+1])
+			}
+		}
+	}
+	return &zerologLogger{
+		logger: ctx.Logger(),
+	}
+}
+
+func appendFields(event *zerolog.Event, fields ...interface{}) *zerolog.Event {
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			key, ok := fields[i].(string)
+			if ok {
+				event = event.Interface(key, fields[i+1])
+			}
+		}
+	}
+	return event
+}
+{{- end}}

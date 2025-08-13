@@ -1,0 +1,75 @@
+package middleware
+
+import (
+	"fmt"
+	"runtime"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Recovery returns an Echo recovery middleware with custom error logging
+func Recovery() echo.MiddlewareFunc {
+	return middleware.RecoverWithConfig(middleware.RecoverConfig{
+		LogErrorFunc: func(c echo.Context, err error, stack []byte) error {
+			logger.Error("Panic recovered",
+				"error", err,
+				"method", c.Request().Method,
+				"uri", c.Request().RequestURI,
+				"remote_ip", c.RealIP(),
+				"user_agent", c.Request().UserAgent(),
+				"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+				"stack", string(stack),
+			)
+			return nil
+		},
+	})
+}
+
+// DetailedRecovery returns a recovery middleware with more detailed error information
+func DetailedRecovery() echo.MiddlewareFunc {
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			defer func() {
+				if r := recover(); r != nil {
+					var err error
+					switch x := r.(type) {
+					case string:
+						err = fmt.Errorf("%s", x)
+					case error:
+						err = x
+					default:
+						err = fmt.Errorf("unknown panic: %v", x)
+					}
+
+					// Get stack trace
+					stack := make([]byte, 4096)
+					length := runtime.Stack(stack, false)
+					
+					logger.Error("Panic recovered with detailed info",
+						"error", err,
+						"panic_value", fmt.Sprintf("%v", r),
+						"method", c.Request().Method,
+						"uri", c.Request().RequestURI,
+						"remote_ip", c.RealIP(),
+						"user_agent", c.Request().UserAgent(),
+						"request_id", c.Response().Header().Get(echo.HeaderXRequestID),
+						"stack", string(stack[:length]),
+					)
+
+					// Return internal server error
+					if !c.Response().Committed {
+						c.JSON(500, map[string]interface{}{
+							"error":      "Internal server error",
+							"request_id": c.Response().Header().Get(echo.HeaderXRequestID),
+						})
+					}
+				}
+			}()
+			
+			return next(c)
+		}
+	}
+}

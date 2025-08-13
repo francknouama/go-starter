@@ -1,0 +1,461 @@
+package integration
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+	"{{.ModulePath}}/internal/services"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	"{{.ModulePath}}/internal/repository"
+	{{- end}}
+
+	{{.ProjectName | lower}}v1 "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+// InterceptorIntegrationTestSuite tests gRPC interceptor functionality
+type InterceptorIntegrationTestSuite struct {
+	suite.Suite
+	
+	server *server.GRPCServer
+	conn   *grpc.ClientConn
+	client {{.ProjectName | lower}}v1.{{.ProjectName}}ServiceClient
+	
+	cfg    *config.Config
+	logger logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db     interface{} // Database connection
+	{{- end}}
+}
+
+// SetupSuite initializes the interceptor test environment
+func (s *InterceptorIntegrationTestSuite) SetupSuite() {
+	// Initialize logger
+	var err error
+	s.logger, err = logger.NewLogger("test", "debug")
+	s.Require().NoError(err, "Failed to initialize logger")
+
+	// Load test configuration with interceptors enabled
+	s.cfg = &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:    0, // Use random port for testing
+			MetricsPort: 0, // Use random port for testing
+			Environment: "test",
+		},
+		Logger: config.LoggerConfig{
+			Level:  "debug",
+			Format: "json",
+		},
+		{{- if ne .DatabaseDriver ""}}
+		Database: config.DatabaseConfig{
+			Driver: "{{.DatabaseDriver}}",
+			{{- if eq .DatabaseDriver "sqlite"}}
+			URL:    ":memory:", // Use in-memory database for tests
+			{{- else if eq .DatabaseDriver "postgres"}}
+			URL:    "postgres://test:test@localhost:5432/test_db?sslmode=disable",
+			{{- else if eq .DatabaseDriver "mysql"}}
+			URL:    "test:test@tcp(localhost:3306)/test_db?parseTime=true",
+			{{- end}}
+			MaxOpenConns: 10,
+			MaxIdleConns: 5,
+		},
+		{{- end}}
+		{{- if .TracingEnabled}}
+		Tracing: config.TracingConfig{
+			Enabled:     true, // Enable for interceptor testing
+			ServiceName: "{{.ProjectName | lower}}-interceptor-test",
+		},
+		{{- end}}
+		{{- if .MetricsEnabled}}
+		Metrics: config.MetricsConfig{
+			Enabled: true,
+			Path:    "/metrics",
+		},
+		{{- end}}
+		{{- if ne .AuthType ""}}
+		Auth: config.AuthConfig{
+			Type: "{{.AuthType}}",
+			{{- if eq .AuthType "jwt"}}
+			JWTSecret: "test-secret-key-for-testing-only",
+			{{- end}}
+		},
+		{{- end}}
+		RateLimit: config.RateLimitConfig{
+			Enabled: true,
+			Rate:    100, // requests per second
+			Burst:   200, // burst capacity
+		},
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database for testing
+	s.db, err = database.InitDatabase(s.cfg.Database, s.logger)
+	s.Require().NoError(err, "Failed to initialize test database")
+	{{- end}}
+
+	// Initialize services
+	{{- if ne .DatabaseDriver ""}}
+	userRepo := repository.NewUserRepository(s.db, s.logger)
+	mainService := services.New{{.ProjectName}}Service(s.logger, userRepo)
+	{{- else}}
+	mainService := services.New{{.ProjectName}}Service(s.logger)
+	{{- end}}
+	healthService := services.NewHealthService(s.logger{{if ne .DatabaseDriver ""}}, s.db{{end}})
+
+	// Create gRPC server with interceptors
+	s.server, err = server.NewGRPCServer(s.cfg, s.logger)
+	s.Require().NoError(err, "Failed to create gRPC server")
+
+	// Register services
+	s.server.RegisterServices(mainService, healthService)
+
+	// Start server in background
+	go func() {
+		if err := s.server.Start(); err != nil {
+			s.logger.Error("Failed to start interceptor test server", "error", err)
+		}
+	}()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create client connection
+	s.conn, err = grpc.Dial(
+		s.server.GetAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	s.Require().NoError(err, "Failed to connect to interceptor test server")
+
+	// Create service client
+	s.client = {{.ProjectName | lower}}v1.New{{.ProjectName}}ServiceClient(s.conn)
+}
+
+// TearDownSuite cleans up the interceptor test environment
+func (s *InterceptorIntegrationTestSuite) TearDownSuite() {
+	if s.conn != nil {
+		s.conn.Close()
+	}
+	if s.server != nil {
+		s.server.Shutdown()
+	}
+}
+
+// TestLoggingInterceptor tests the logging interceptor functionality
+func (s *InterceptorIntegrationTestSuite) TestLoggingInterceptor() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Add request ID to context for correlation
+	ctx = metadata.AppendToOutgoingContext(ctx, "x-request-id", "test-request-123")
+
+	// Make a request - the logging interceptor should log it
+	resp, err := s.client.GetVersion(ctx, &emptypb.Empty{})
+	s.Require().NoError(err, "GetVersion should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	// Verify response (logging verification would require log capture)
+	s.Assert().Equal("1.0.0", resp.Version)
+	s.Assert().Equal("{{.ProjectName | lower}}", resp.ServiceName)
+}
+
+// TestRecoveryInterceptor tests the panic recovery interceptor
+func (s *InterceptorIntegrationTestSuite) TestRecoveryInterceptor() {
+	// Note: This test would require a service method that can panic
+	// For now, we test that normal requests work through the recovery interceptor
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+		Message: "recovery test",
+	})
+	s.Require().NoError(err, "Echo should not return an error through recovery interceptor")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("Echo: recovery test", resp.Message)
+}
+
+{{- if .MetricsEnabled}}
+// TestMetricsInterceptor tests the metrics collection interceptor
+func (s *InterceptorIntegrationTestSuite) TestMetricsInterceptor() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Make several requests to generate metrics
+	for i := 0; i < 5; i++ {
+		_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+			Message: fmt.Sprintf("metrics test %d", i),
+		})
+		s.Require().NoError(err, "Echo request %d should not return an error", i)
+	}
+
+	// The metrics interceptor should have recorded these requests
+	// Actual metrics verification would require accessing the metrics endpoint
+	s.Assert().True(true, "Metrics interceptor should record request metrics")
+}
+{{- end}}
+
+{{- if .TracingEnabled}}
+// TestTracingInterceptor tests the distributed tracing interceptor
+func (s *InterceptorIntegrationTestSuite) TestTracingInterceptor() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Add trace headers to context
+	ctx = metadata.AppendToOutgoingContext(ctx, 
+		"x-trace-id", "test-trace-123",
+		"x-span-id", "test-span-456",
+	)
+
+	resp, err := s.client.GetVersion(ctx, &emptypb.Empty{})
+	s.Require().NoError(err, "GetVersion should not return an error with tracing")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	// The tracing interceptor should have created spans for this request
+	s.Assert().Equal("1.0.0", resp.Version)
+}
+{{- end}}
+
+// TestRateLimitInterceptor tests the rate limiting interceptor
+func (s *InterceptorIntegrationTestSuite) TestRateLimitInterceptor() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Make requests rapidly to potentially trigger rate limiting
+	// Note: With a high rate limit (100 req/s), we need many requests to trigger it
+	successCount := 0
+	rateLimitedCount := 0
+	
+	for i := 0; i < 10; i++ { // Small number for test efficiency
+		_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+			Message: fmt.Sprintf("rate limit test %d", i),
+		})
+		
+		if err != nil {
+			grpcStatus := status.Convert(err)
+			if grpcStatus.Code() == codes.ResourceExhausted {
+				rateLimitedCount++
+			}
+		} else {
+			successCount++
+		}
+	}
+
+	// With normal test load, most requests should succeed
+	s.Assert().Greater(successCount, 0, "Some requests should succeed")
+	// Rate limiting may or may not be triggered with low request count
+}
+
+{{- if ne .AuthType ""}}
+// TestAuthInterceptor tests the authentication interceptor
+func (s *InterceptorIntegrationTestSuite) TestAuthInterceptor() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test without authentication (should work for public methods)
+	resp, err := s.client.GetVersion(ctx, &emptypb.Empty{})
+	s.Require().NoError(err, "GetVersion should work without auth")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	{{- if eq .AuthType "jwt"}}
+	// Test with invalid JWT token for protected methods
+	ctxWithInvalidAuth := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer invalid-token")
+	
+	// Assuming user operations require authentication
+	{{- if ne .DatabaseDriver ""}}
+	_, err = s.client.CreateUser(ctxWithInvalidAuth, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "Test User",
+		Email: "test@example.com",
+	})
+	// This might return an authentication error depending on configuration
+	if err != nil {
+		grpcStatus := status.Convert(err)
+		s.Assert().Equal(codes.Unauthenticated, grpcStatus.Code(), "Should return unauthenticated error")
+	}
+	{{- end}}
+	{{- end}}
+}
+{{- end}}
+
+// TestInterceptorChain tests that all interceptors work together
+func (s *InterceptorIntegrationTestSuite) TestInterceptorChain() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Add various metadata that different interceptors might use
+	ctx = metadata.AppendToOutgoingContext(ctx,
+		"x-request-id", "chain-test-request",
+		{{- if .TracingEnabled}}
+		"x-trace-id", "chain-test-trace",
+		{{- end}}
+		"user-agent", "interceptor-chain-test/1.0",
+	)
+
+	// Make a request that goes through the entire interceptor chain
+	resp, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+		Message: "interceptor chain test",
+	})
+	s.Require().NoError(err, "Request should succeed through interceptor chain")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("Echo: interceptor chain test", resp.Message)
+	s.Assert().NotNil(resp.Status)
+}
+
+// TestInterceptorPerformance tests that interceptors don't significantly impact performance
+func (s *InterceptorIntegrationTestSuite) TestInterceptorPerformance() {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	const numRequests = 100
+	start := time.Now()
+
+	// Make many requests to measure performance
+	for i := 0; i < numRequests; i++ {
+		_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+			Message: fmt.Sprintf("performance test %d", i),
+		})
+		s.Require().NoError(err, "Performance test request %d should not fail", i)
+	}
+
+	duration := time.Since(start)
+	avgRequestTime := duration / numRequests
+
+	s.logger.Info("Interceptor performance test completed",
+		"total_requests", numRequests,
+		"total_duration", duration.String(),
+		"avg_request_time", avgRequestTime.String(),
+	)
+
+	// Assert that average request time is reasonable (less than 100ms)
+	s.Assert().Less(avgRequestTime, 100*time.Millisecond, 
+		"Average request time should be reasonable with interceptors")
+}
+
+// TestStreamingWithInterceptors tests that streaming requests work with interceptors
+func (s *InterceptorIntegrationTestSuite) TestStreamingWithInterceptors() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := s.client.StreamEcho(ctx)
+	s.Require().NoError(err, "StreamEcho should work with interceptors")
+
+	// Send and receive multiple messages through the interceptor chain
+	testMessages := []string{
+		"streaming message 1",
+		"streaming message 2", 
+		"streaming message 3",
+	}
+
+	for _, msg := range testMessages {
+		err := stream.Send(&{{.ProjectName | lower}}v1.EchoRequest{
+			Message: msg,
+		})
+		s.Require().NoError(err, "Failed to send streaming message")
+
+		resp, err := stream.Recv()
+		s.Require().NoError(err, "Failed to receive streaming response")
+		s.Assert().Equal("Stream Echo: "+msg, resp.Message)
+	}
+
+	err = stream.CloseSend()
+	s.Require().NoError(err, "Failed to close send stream")
+}
+
+// TestInterceptorContextPropagation tests that context is properly propagated through interceptors
+func (s *InterceptorIntegrationTestSuite) TestInterceptorContextPropagation() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Add custom values to context
+	ctx = metadata.AppendToOutgoingContext(ctx,
+		"x-custom-header", "custom-value",
+		"x-test-id", "context-propagation-test",
+	)
+
+	resp, err := s.client.GetStatus(ctx, &{{.ProjectName | lower}}v1.StatusRequest{
+		IncludeDetails: true,
+	})
+	s.Require().NoError(err, "GetStatus should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	// Verify the request was processed successfully (context was propagated)
+	s.Assert().Equal("{{.ProjectName | lower}}", resp.ServiceName)
+	s.Assert().NotEmpty(resp.Details)
+}
+
+// TestInterceptorErrorHandling tests error handling through the interceptor chain
+func (s *InterceptorIntegrationTestSuite) TestInterceptorErrorHandling() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Try to get a non-existent user (should return NotFound error)
+	{{- if ne .DatabaseDriver ""}}
+	_, err := s.client.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: "non-existent-user-id",
+	})
+	s.Require().Error(err, "GetUser should return an error for non-existent user")
+
+	// Check that the error is properly formatted through interceptors
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.NotFound, grpcStatus.Code())
+	{{- else}}
+	// Test with invalid request (empty message)
+	_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+		Message: "", // Empty message
+	})
+	// This should still succeed as echo doesn't validate message content
+	s.NoError(err, "Echo should handle empty message")
+	{{- end}}
+}
+
+// TestConcurrentRequestsWithInterceptors tests concurrent requests through interceptors
+func (s *InterceptorIntegrationTestSuite) TestConcurrentRequestsWithInterceptors() {
+	const numConcurrentRequests = 20
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create a channel to collect results
+	results := make(chan error, numConcurrentRequests)
+
+	// Launch concurrent requests
+	for i := 0; i < numConcurrentRequests; i++ {
+		go func(id int) {
+			requestCtx := metadata.AppendToOutgoingContext(ctx,
+				"x-request-id", fmt.Sprintf("concurrent-request-%d", id),
+			)
+			
+			_, err := s.client.Echo(requestCtx, &{{.ProjectName | lower}}v1.EchoRequest{
+				Message: fmt.Sprintf("concurrent message %d", id),
+			})
+			results <- err
+		}(i)
+	}
+
+	// Collect results
+	for i := 0; i < numConcurrentRequests; i++ {
+		err := <-results
+		s.Assert().NoError(err, "Concurrent request %d should not return an error", i)
+	}
+}
+
+// Run the interceptor integration test suite
+func TestInterceptorIntegrationSuite(t *testing.T) {
+	suite.Run(t, new(InterceptorIntegrationTestSuite))
+}

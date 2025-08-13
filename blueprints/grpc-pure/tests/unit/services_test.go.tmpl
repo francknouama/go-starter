@@ -1,0 +1,597 @@
+package unit
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/services"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/models"
+	{{- end}}
+
+	{{.ProjectName | lower}}v1 "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1"
+	commonv1 "{{.ModulePath}}/proto/common/v1"
+	healthv1 "{{.ModulePath}}/proto/health/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+{{- if ne .DatabaseDriver ""}}
+// MockUserRepository is a mock implementation of UserRepository
+type MockUserRepository struct {
+	mock.Mock
+}
+
+func (m *MockUserRepository) Create(ctx context.Context, name, email string) (*models.User, error) {
+	args := m.Called(ctx, name, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) GetByID(ctx context.Context, id string) (*models.User, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) List(ctx context.Context, page, pageSize int) ([]*models.User, int, error) {
+	args := m.Called(ctx, page, pageSize)
+	if args.Get(0) == nil {
+		return nil, args.Int(1), args.Error(2)
+	}
+	return args.Get(0).([]*models.User), args.Int(1), args.Error(2)
+}
+
+func (m *MockUserRepository) Update(ctx context.Context, id, name, email string) (*models.User, error) {
+	args := m.Called(ctx, id, name, email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserRepository) Delete(ctx context.Context, id string) error {
+	args := m.Called(ctx, id)
+	return args.Error(0)
+}
+{{- end}}
+
+// ServiceUnitTestSuite tests service layer functionality
+type ServiceUnitTestSuite struct {
+	suite.Suite
+	
+	logger        logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	mockUserRepo  *MockUserRepository
+	{{- end}}
+	mainService   *services.{{.ProjectName}}Service
+	healthService *services.HealthService
+}
+
+// SetupSuite initializes the unit test environment
+func (s *ServiceUnitTestSuite) SetupSuite() {
+	// Initialize logger for testing
+	var err error
+	s.logger, err = logger.NewLogger("test", "error") // Use error level to reduce noise
+	s.Require().NoError(err, "Failed to initialize test logger")
+}
+
+// SetupTest runs before each test
+func (s *ServiceUnitTestSuite) SetupTest() {
+	{{- if ne .DatabaseDriver ""}}
+	// Create fresh mocks for each test
+	s.mockUserRepo = new(MockUserRepository)
+	
+	// Initialize services with mocks
+	s.mainService = services.New{{.ProjectName}}Service(s.logger, s.mockUserRepo)
+	s.healthService = services.NewHealthService(s.logger, nil) // No DB for health service in unit tests
+	{{- else}}
+	// Initialize services
+	s.mainService = services.New{{.ProjectName}}Service(s.logger)
+	s.healthService = services.NewHealthService(s.logger)
+	{{- end}}
+}
+
+// TearDownTest runs after each test
+func (s *ServiceUnitTestSuite) TearDownTest() {
+	{{- if ne .DatabaseDriver ""}}
+	// Assert all mock expectations were met
+	s.mockUserRepo.AssertExpectations(s.T())
+	{{- end}}
+}
+
+// Test{{.ProjectName}}Service_GetVersion tests the GetVersion method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_GetVersion() {
+	ctx := context.Background()
+
+	resp, err := s.mainService.GetVersion(ctx, &emptypb.Empty{})
+	s.Require().NoError(err, "GetVersion should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("1.0.0", resp.Version)
+	s.Assert().Equal("{{.ProjectName | lower}}", resp.ServiceName)
+	s.Assert().Equal("{{.GoVersion}}", resp.GoVersion)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Equal(commonv1.StatusCode_STATUS_CODE_OK, resp.Status.Code)
+}
+
+// Test{{.ProjectName}}Service_GetStatus tests the GetStatus method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_GetStatus() {
+	ctx := context.Background()
+
+	// Test without details
+	resp, err := s.mainService.GetStatus(ctx, &{{.ProjectName | lower}}v1.StatusRequest{
+		IncludeDetails: false,
+	})
+	s.Require().NoError(err, "GetStatus should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("{{.ProjectName | lower}}", resp.ServiceName)
+	s.Assert().NotEmpty(resp.Uptime)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Empty(resp.Details)
+
+	// Test with details
+	resp, err = s.mainService.GetStatus(ctx, &{{.ProjectName | lower}}v1.StatusRequest{
+		IncludeDetails: true,
+	})
+	s.Require().NoError(err, "GetStatus with details should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().NotEmpty(resp.Details)
+	s.Assert().Equal("grpc", resp.Details["service_type"])
+	s.Assert().Equal("{{.GoVersion}}", resp.Details["go_version"])
+	s.Assert().Equal("{{.Logger}}", resp.Details["logger_type"])
+}
+
+// Test{{.ProjectName}}Service_Echo tests the Echo method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_Echo() {
+	ctx := context.Background()
+
+	testMessage := "Hello, Unit Test!"
+	resp, err := s.mainService.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+		Message: testMessage,
+	})
+	s.Require().NoError(err, "Echo should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("Echo: "+testMessage, resp.Message)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Equal(commonv1.StatusCode_STATUS_CODE_OK, resp.Status.Code)
+}
+
+{{- if ne .DatabaseDriver ""}}
+// Test{{.ProjectName}}Service_CreateUser tests the CreateUser method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_CreateUser() {
+	ctx := context.Background()
+
+	// Test successful user creation
+	expectedUser := &models.User{
+		ID:        1,
+		Name:      "John Doe",
+		Email:     "john.doe@example.com",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	s.mockUserRepo.On("Create", ctx, "John Doe", "john.doe@example.com").Return(expectedUser, nil)
+
+	resp, err := s.mainService.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "John Doe",
+		Email: "john.doe@example.com",
+	})
+	s.Require().NoError(err, "CreateUser should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+	s.Require().NotNil(resp.User, "User should not be nil")
+
+	s.Assert().Equal("1", resp.User.Id)
+	s.Assert().Equal("John Doe", resp.User.Name)
+	s.Assert().Equal("john.doe@example.com", resp.User.Email)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Equal(commonv1.StatusCode_STATUS_CODE_OK, resp.Status.Code)
+}
+
+// Test{{.ProjectName}}Service_CreateUser_ValidationError tests validation errors
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_CreateUser_ValidationError() {
+	ctx := context.Background()
+
+	// Test empty name
+	_, err := s.mainService.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "",
+		Email: "john.doe@example.com",
+	})
+	s.Require().Error(err, "CreateUser should return error for empty name")
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.InvalidArgument, grpcStatus.Code())
+
+	// Test empty email
+	_, err = s.mainService.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "John Doe",
+		Email: "",
+	})
+	s.Require().Error(err, "CreateUser should return error for empty email")
+	grpcStatus = status.Convert(err)
+	s.Assert().Equal(codes.InvalidArgument, grpcStatus.Code())
+}
+
+// Test{{.ProjectName}}Service_CreateUser_RepositoryError tests repository error handling
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_CreateUser_RepositoryError() {
+	ctx := context.Background()
+
+	// Mock repository error
+	s.mockUserRepo.On("Create", ctx, "John Doe", "john.doe@example.com").Return(nil, assert.AnError)
+
+	_, err := s.mainService.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "John Doe",
+		Email: "john.doe@example.com",
+	})
+	s.Require().Error(err, "CreateUser should return error when repository fails")
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.Internal, grpcStatus.Code())
+}
+
+// Test{{.ProjectName}}Service_GetUser tests the GetUser method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_GetUser() {
+	ctx := context.Background()
+
+	// Test successful user retrieval
+	expectedUser := &models.User{
+		ID:        1,
+		Name:      "John Doe",
+		Email:     "john.doe@example.com",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+	}
+
+	s.mockUserRepo.On("GetByID", ctx, "1").Return(expectedUser, nil)
+
+	resp, err := s.mainService.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: "1",
+	})
+	s.Require().NoError(err, "GetUser should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+	s.Require().NotNil(resp.User, "User should not be nil")
+
+	s.Assert().Equal("1", resp.User.Id)
+	s.Assert().Equal("John Doe", resp.User.Name)
+	s.Assert().Equal("john.doe@example.com", resp.User.Email)
+}
+
+// Test{{.ProjectName}}Service_GetUser_ValidationError tests validation errors for GetUser
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_GetUser_ValidationError() {
+	ctx := context.Background()
+
+	// Test empty user ID
+	_, err := s.mainService.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: "",
+	})
+	s.Require().Error(err, "GetUser should return error for empty ID")
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.InvalidArgument, grpcStatus.Code())
+}
+
+// Test{{.ProjectName}}Service_GetUser_NotFound tests user not found scenario
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_GetUser_NotFound() {
+	ctx := context.Background()
+
+	// Mock user not found error
+	s.mockUserRepo.On("GetByID", ctx, "999").Return(nil, errors.New("user not found"))
+
+	_, err := s.mainService.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: "999",
+	})
+	s.Require().Error(err, "GetUser should return error for non-existent user")
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.NotFound, grpcStatus.Code())
+}
+
+// Test{{.ProjectName}}Service_ListUsers tests the ListUsers method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_ListUsers() {
+	ctx := context.Background()
+
+	// Test successful user listing
+	expectedUsers := []*models.User{
+		{
+			ID:        1,
+			Name:      "John Doe",
+			Email:     "john.doe@example.com",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+		{
+			ID:        2,
+			Name:      "Jane Smith",
+			Email:     "jane.smith@example.com",
+			CreatedAt: time.Now(),
+			UpdatedAt: time.Now(),
+		},
+	}
+
+	s.mockUserRepo.On("List", ctx, 1, 10).Return(expectedUsers, 2, nil)
+
+	resp, err := s.mainService.ListUsers(ctx, &{{.ProjectName | lower}}v1.ListUsersRequest{
+		Page:     1,
+		PageSize: 10,
+	})
+	s.Require().NoError(err, "ListUsers should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Len(resp.Users, 2)
+	s.Assert().Equal("1", resp.Users[0].Id)
+	s.Assert().Equal("John Doe", resp.Users[0].Name)
+	s.Assert().Equal("2", resp.Users[1].Id)
+	s.Assert().Equal("Jane Smith", resp.Users[1].Name)
+
+	s.Assert().NotNil(resp.Pagination)
+	s.Assert().Equal(int32(1), resp.Pagination.Page)
+	s.Assert().Equal(int32(10), resp.Pagination.PageSize)
+	s.Assert().Equal(int64(2), resp.Pagination.Total)
+	s.Assert().Equal(int64(1), resp.Pagination.TotalPages)
+}
+
+// Test{{.ProjectName}}Service_ListUsers_DefaultPagination tests default pagination values
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_ListUsers_DefaultPagination() {
+	ctx := context.Background()
+
+	// Mock with expected default values
+	s.mockUserRepo.On("List", ctx, 1, 10).Return([]*models.User{}, 0, nil)
+
+	resp, err := s.mainService.ListUsers(ctx, &{{.ProjectName | lower}}v1.ListUsersRequest{
+		Page:     0, // Should default to 1
+		PageSize: 0, // Should default to 10
+	})
+	s.Require().NoError(err, "ListUsers should handle default pagination")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().NotNil(resp.Pagination)
+	s.Assert().Equal(int32(1), resp.Pagination.Page)
+	s.Assert().Equal(int32(10), resp.Pagination.PageSize)
+}
+
+// Test{{.ProjectName}}Service_ListUsers_MaxPageSize tests page size limiting
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_ListUsers_MaxPageSize() {
+	ctx := context.Background()
+
+	// Mock with limited page size (should be capped at 100)
+	s.mockUserRepo.On("List", ctx, 1, 100).Return([]*models.User{}, 0, nil)
+
+	resp, err := s.mainService.ListUsers(ctx, &{{.ProjectName | lower}}v1.ListUsersRequest{
+		Page:     1,
+		PageSize: 500, // Should be capped at 100
+	})
+	s.Require().NoError(err, "ListUsers should handle large page size")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().NotNil(resp.Pagination)
+	s.Assert().Equal(int32(100), resp.Pagination.PageSize)
+}
+
+// Test{{.ProjectName}}Service_UpdateUser tests the UpdateUser method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_UpdateUser() {
+	ctx := context.Background()
+
+	// Test successful user update
+	updatedUser := &models.User{
+		ID:        1,
+		Name:      "John Smith",
+		Email:     "john.smith@example.com",
+		CreatedAt: time.Now().Add(-1 * time.Hour),
+		UpdatedAt: time.Now(),
+	}
+
+	s.mockUserRepo.On("Update", ctx, "1", "John Smith", "john.smith@example.com").Return(updatedUser, nil)
+
+	resp, err := s.mainService.UpdateUser(ctx, &{{.ProjectName | lower}}v1.UpdateUserRequest{
+		Id:    "1",
+		Name:  "John Smith",
+		Email: "john.smith@example.com",
+	})
+	s.Require().NoError(err, "UpdateUser should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+	s.Require().NotNil(resp.User, "User should not be nil")
+
+	s.Assert().Equal("1", resp.User.Id)
+	s.Assert().Equal("John Smith", resp.User.Name)
+	s.Assert().Equal("john.smith@example.com", resp.User.Email)
+}
+
+// Test{{.ProjectName}}Service_UpdateUser_ValidationError tests validation errors for UpdateUser
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_UpdateUser_ValidationError() {
+	ctx := context.Background()
+
+	// Test empty user ID
+	_, err := s.mainService.UpdateUser(ctx, &{{.ProjectName | lower}}v1.UpdateUserRequest{
+		Id:    "",
+		Name:  "John Smith",
+		Email: "john.smith@example.com",
+	})
+	s.Require().Error(err, "UpdateUser should return error for empty ID")
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.InvalidArgument, grpcStatus.Code())
+}
+
+// Test{{.ProjectName}}Service_DeleteUser tests the DeleteUser method
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_DeleteUser() {
+	ctx := context.Background()
+
+	// Test successful user deletion
+	s.mockUserRepo.On("Delete", ctx, "1").Return(nil)
+
+	resp, err := s.mainService.DeleteUser(ctx, &{{.ProjectName | lower}}v1.DeleteUserRequest{
+		Id: "1",
+	})
+	s.Require().NoError(err, "DeleteUser should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Equal(commonv1.StatusCode_STATUS_CODE_OK, resp.Status.Code)
+}
+
+// Test{{.ProjectName}}Service_DeleteUser_ValidationError tests validation errors for DeleteUser
+func (s *ServiceUnitTestSuite) Test{{.ProjectName}}Service_DeleteUser_ValidationError() {
+	ctx := context.Background()
+
+	// Test empty user ID
+	_, err := s.mainService.DeleteUser(ctx, &{{.ProjectName | lower}}v1.DeleteUserRequest{
+		Id: "",
+	})
+	s.Require().Error(err, "DeleteUser should return error for empty ID")
+	grpcStatus := status.Convert(err)
+	s.Assert().Equal(codes.InvalidArgument, grpcStatus.Code())
+}
+{{- end}}
+
+// TestHealthService_Check tests the basic health check
+func (s *ServiceUnitTestSuite) TestHealthService_Check() {
+	ctx := context.Background()
+
+	resp, err := s.healthService.Check(ctx, &healthv1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Health check should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal(healthv1.ServingStatus_SERVING_STATUS_SERVING, resp.Status)
+	s.Assert().NotEmpty(resp.Message)
+	s.Assert().NotNil(resp.Timestamp)
+}
+
+// TestHealthService_GetHealth tests the detailed health check
+func (s *ServiceUnitTestSuite) TestHealthService_GetHealth() {
+	ctx := context.Background()
+
+	resp, err := s.healthService.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: false,
+	})
+	s.Require().NoError(err, "GetHealth should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().NotNil(resp.OverallStatus)
+	s.Assert().Equal("{{.ProjectName}}-v1.0.0", resp.Version)
+	s.Assert().NotNil(resp.StartedAt)
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().NotEmpty(resp.Metadata)
+}
+
+// TestHealthService_CheckReadiness tests the readiness probe
+func (s *ServiceUnitTestSuite) TestHealthService_CheckReadiness() {
+	ctx := context.Background()
+
+	resp, err := s.healthService.CheckReadiness(ctx, &healthv1.ReadinessRequest{})
+	s.Require().NoError(err, "CheckReadiness should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().True(resp.Ready)
+	s.Assert().NotEmpty(resp.Message)
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().Empty(resp.NotReadyComponents)
+}
+
+// TestHealthService_CheckLiveness tests the liveness probe
+func (s *ServiceUnitTestSuite) TestHealthService_CheckLiveness() {
+	ctx := context.Background()
+
+	resp, err := s.healthService.CheckLiveness(ctx, &healthv1.LivenessRequest{})
+	s.Require().NoError(err, "CheckLiveness should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().True(resp.Alive)
+	s.Assert().NotEmpty(resp.Message)
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().Greater(resp.UptimeSeconds, int64(0))
+}
+
+// TestHealthService_UpdateComponentHealth tests component health management
+func (s *ServiceUnitTestSuite) TestHealthService_UpdateComponentHealth() {
+	ctx := context.Background()
+
+	// Update a component health status
+	s.healthService.UpdateComponentHealth(
+		"test-component",
+		commonv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+		"Test component is healthy",
+		25*time.Millisecond,
+	)
+
+	// Get detailed health info with components
+	resp, err := s.healthService.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+	})
+	s.Require().NoError(err, "GetHealth should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	// Check if our test component is present
+	if component, exists := resp.Components["test-component"]; exists {
+		s.Assert().Equal(commonv1.HealthStatus_HEALTH_STATUS_HEALTHY, component.Status)
+		s.Assert().Equal("Test component is healthy", component.Message)
+		s.Assert().NotNil(component.LastCheck)
+		s.Assert().Greater(component.DurationMs, int64(0))
+		s.Assert().Equal(int32(0), component.ErrorCount)
+	}
+}
+
+// TestHealthService_SetServiceStatus tests service status management
+func (s *ServiceUnitTestSuite) TestHealthService_SetServiceStatus() {
+	ctx := context.Background()
+
+	// Set service status to not serving
+	s.healthService.SetServiceStatus("test-service", healthv1.ServingStatus_SERVING_STATUS_NOT_SERVING)
+
+	// Check the status
+	resp, err := s.healthService.Check(ctx, &healthv1.HealthCheckRequest{
+		Service: "test-service",
+	})
+	s.Require().NoError(err, "Health check should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal(healthv1.ServingStatus_SERVING_STATUS_NOT_SERVING, resp.Status)
+}
+
+// TestHealthService_ComponentFiltering tests component filtering in health checks
+func (s *ServiceUnitTestSuite) TestHealthService_ComponentFiltering() {
+	ctx := context.Background()
+
+	// Add multiple test components
+	s.healthService.UpdateComponentHealth(
+		"component-a",
+		commonv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+		"Component A is healthy",
+		25*time.Millisecond,
+	)
+	s.healthService.UpdateComponentHealth(
+		"component-b",
+		commonv1.HealthStatus_HEALTH_STATUS_WARNING,
+		"Component B has warnings",
+		50*time.Millisecond,
+	)
+
+	// Test filtering specific components
+	resp, err := s.healthService.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+		Components:        []string{"component-a"},
+	})
+	s.Require().NoError(err, "GetHealth with component filter should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	// Should only contain component-a
+	s.Assert().Contains(resp.Components, "component-a")
+	s.Assert().NotContains(resp.Components, "component-b")
+}
+
+// Run the service unit test suite
+func TestServiceUnitSuite(t *testing.T) {
+	suite.Run(t, new(ServiceUnitTestSuite))
+}

@@ -1,0 +1,311 @@
+# {{.ProjectName}}
+
+A high-performance web API built with [Fiber](https://gofiber.io/), the Express-inspired web framework for Go.
+
+## Features
+
+- ⚡ **Fast HTTP performance** with fasthttp under the hood
+- 🚀 **Express-inspired API** design for familiar development experience
+- 📊 **Built-in middleware** for CORS, logging, recovery, security, and more
+- 🔐 **Authentication support** with JWT{{if eq .AuthType "oauth2"}}, OAuth2{{end}}{{if eq .AuthType "session"}}, sessions{{end}}
+- 📦 **Database integration** with {{if eq .DatabaseORM "gorm"}}GORM{{else if eq .DatabaseORM "sqlx"}}SQLx{{end}}{{if ne .DatabaseDriver ""}} ({{.DatabaseDriver}}){{end}}
+- 📝 **Structured logging** with {{.Logger}}
+{{- if .EnableWebSocket}}
+- 🔌 **WebSocket support** for real-time communication
+{{- end}}
+{{- if .EnableMetrics}}
+- 📈 **Prometheus metrics** for monitoring
+{{- end}}
+{{- if .EnableTracing}}
+- 🔍 **OpenTelemetry tracing** for observability
+{{- end}}
+- 🐳 **Docker support** with multi-stage builds
+- 🧪 **Comprehensive testing** setup
+- 📚 **API documentation** with OpenAPI/Swagger
+
+## Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}} or later
+{{- if ne .DatabaseDriver ""}}
+- {{if eq .DatabaseDriver "postgres"}}PostgreSQL{{else if eq .DatabaseDriver "mysql"}}MySQL{{else if eq .DatabaseDriver "sqlite"}}SQLite{{else if eq .DatabaseDriver "redis"}}Redis{{end}}
+{{- end}}
+- Docker (optional)
+
+### Local Development
+
+1. **Clone and setup**
+   ```bash
+   git clone <your-repo>
+   cd {{.ProjectName}}
+   cp .env.example .env
+   ```
+
+2. **Install dependencies**
+   ```bash
+   go mod download
+   ```
+
+3. **Configure environment**
+   Edit `.env` file with your configuration:
+   ```bash
+   # Database
+{{- if eq .DatabaseDriver "postgres"}}
+   DB_HOST=localhost
+   DB_PORT=5432
+   DB_NAME={{.ProjectName}}_dev
+   DB_USER=postgres
+   DB_PASSWORD=postgres
+{{- else if eq .DatabaseDriver "mysql"}}
+   DB_HOST=localhost
+   DB_PORT=3306
+   DB_NAME={{.ProjectName}}_dev
+   DB_USER=root
+   DB_PASSWORD=root
+{{- else if eq .DatabaseDriver "sqlite"}}
+   DB_NAME={{.ProjectName}}_dev.db
+{{- end}}
+   
+{{- if ne .AuthType ""}}
+   # Authentication
+   AUTH_SECRET=your-super-secret-key-change-this
+{{- end}}
+   ```
+
+4. **Start the server**
+   ```bash
+   make run
+   # or for live reload
+   make dev
+   ```
+
+The API will be available at `http://localhost:8080`
+
+### Docker Development
+
+```bash
+# Start all services
+make docker-up
+
+# View logs
+make docker-logs
+
+# Stop services
+make docker-down
+```
+
+## API Endpoints
+
+### Health Checks
+- `GET /health` - Basic health check
+- `GET /ready` - Readiness check with dependencies
+- `GET /live` - Liveness check
+
+{{- if ne .AuthType ""}}
+### Authentication
+- `POST /api/v1/auth/register` - Register new user
+- `POST /api/v1/auth/login` - Login user
+{{- if eq .AuthType "jwt"}}
+- `POST /api/v1/auth/refresh` - Refresh JWT token
+{{- end}}
+{{- if eq .AuthType "oauth2"}}
+- `GET /api/v1/auth/oauth/:provider` - OAuth login
+- `GET /api/v1/auth/oauth/:provider/callback` - OAuth callback
+{{- end}}
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+### Users
+- `GET /api/v1/users` - List users (paginated)
+- `GET /api/v1/users/:id` - Get user by ID
+- `POST /api/v1/users` - Create user
+- `PUT /api/v1/users/:id` - Update user
+- `DELETE /api/v1/users/:id` - Delete user
+{{- if ne .AuthType ""}}
+- `GET /api/v1/users/me` - Get current user
+- `PUT /api/v1/users/me` - Update current user
+- `DELETE /api/v1/users/me` - Delete current user
+{{- end}}
+{{- end}}
+
+{{- if .EnableWebSocket}}
+### WebSocket
+- `GET /ws` - WebSocket connection endpoint
+{{- end}}
+
+{{- if .EnableMetrics}}
+### Monitoring
+- `GET /metrics` - Prometheus metrics (development only)
+{{- end}}
+
+Full API documentation is available at `/api/docs` when running in development mode.
+
+## Development
+
+### Available Commands
+
+```bash
+make help              # Show all available commands
+make build             # Build the application
+make run               # Run the application
+make dev               # Run with live reload
+make test              # Run tests
+make test-coverage     # Run tests with coverage
+make lint              # Lint code
+make format            # Format code
+make migrate           # Run database migrations
+```
+
+### Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/server/          # Application entrypoint
+├── internal/            # Private application code
+│   ├── config/         # Configuration management
+│   ├── handlers/       # HTTP handlers
+│   ├── middleware/     # Fiber middleware
+│   ├── models/         # Data models
+│   ├── repository/     # Data access layer
+│   ├── services/       # Business logic
+│   ├── server/         # Server setup
+│   └── logger/         # Logging utilities
+├── migrations/         # Database migrations
+├── configs/           # Configuration files
+├── tests/             # Test files
+├── api/               # API documentation
+└── scripts/           # Utility scripts
+```
+
+### Testing
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Run benchmarks
+make benchmark
+```
+
+### Database Migrations
+
+{{- if eq .DatabaseORM "gorm"}}
+Migrations are handled automatically by GORM's AutoMigrate feature.
+{{- else}}
+```bash
+# Run migrations
+make migrate
+
+# Or manually
+go run cmd/server/main.go migrate
+```
+{{- end}}
+
+## Configuration
+
+The application uses a hierarchical configuration system:
+
+1. **Default values** (in code)
+2. **Configuration files** (`configs/*.yaml`)
+3. **Environment variables** (`.env` file)
+
+### Environment Variables
+
+Key environment variables:
+
+{{- if ne .DatabaseDriver ""}}
+- `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` - Database connection
+{{- end}}
+{{- if ne .AuthType ""}}
+- `AUTH_SECRET` - Authentication secret key
+{{- end}}
+- `LOG_LEVEL` - Logging level (debug, info, warn, error)
+- `ENVIRONMENT` - Application environment (development, staging, production)
+
+## Deployment
+
+### Docker
+
+```bash
+# Build image
+make docker-build
+
+# Run container
+docker run -p 8080:8080 {{.ProjectName}}:latest
+```
+
+### Production Considerations
+
+1. **Environment variables**: Set all required environment variables
+2. **Database**: Use connection pooling and read replicas if needed
+3. **Logging**: Use structured JSON logging in production
+4. **Monitoring**: Enable metrics and tracing endpoints
+5. **Security**: Use HTTPS, secure headers, and proper authentication
+6. **Rate limiting**: Configure appropriate rate limits
+7. **Caching**: Enable caching for frequently accessed data
+
+## Performance Features
+
+Fiber provides excellent performance out of the box:
+
+- **fasthttp**: Fiber is built on top of fasthttp, one of the fastest HTTP engines for Go
+- **Zero allocation**: Minimal memory allocations for common operations
+- **Compression**: Built-in gzip/deflate compression
+- **Keep-alive**: HTTP keep-alive connections
+- **Connection pooling**: Database connection pooling
+- **Caching**: Response caching middleware
+- **Rate limiting**: Built-in rate limiting to prevent abuse
+
+## Fiber-Specific Features
+
+This template leverages Fiber's unique capabilities:
+
+- **Express-like API**: Familiar syntax for developers coming from Node.js
+- **Built-in middleware**: Comprehensive middleware ecosystem
+- **WebSocket support**: Native WebSocket implementation
+{{- if .EnableMetrics}}
+- **Metrics integration**: Prometheus metrics with Fiber adapters
+{{- end}}
+- **Static file serving**: Efficient static file handling
+- **Template engines**: Multiple template engine support
+- **Request validation**: Built-in request validation
+- **Error handling**: Centralized error handling
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## License
+
+This project is licensed under the {{.License}} License - see the [LICENSE](LICENSE) file for details.
+
+## Acknowledgments
+
+- [Fiber](https://gofiber.io/) - The web framework
+{{- if eq .Logger "zap"}}
+- [Zap](https://go.uber.org/zap) - Blazing fast, structured, leveled logging
+{{- else if eq .Logger "logrus"}}
+- [Logrus](https://github.com/sirupsen/logrus) - Structured logger for Go
+{{- else if eq .Logger "zerolog"}}
+- [Zerolog](https://github.com/rs/zerolog) - Zero allocation JSON logger
+{{- end}}
+{{- if eq .DatabaseORM "gorm"}}
+- [GORM](https://gorm.io/) - The fantastic ORM library
+{{- else if eq .DatabaseORM "sqlx"}}
+- [SQLx](https://github.com/jmoiron/sqlx) - Extensions to database/sql
+{{- end}}
+- [Viper](https://github.com/spf13/viper) - Configuration management
+{{- if .EnableMetrics}}
+- [Prometheus](https://prometheus.io/) - Monitoring and alerting
+{{- end}}
+{{- if .EnableTracing}}
+- [OpenTelemetry](https://opentelemetry.io/) - Observability framework
+{{- end}}

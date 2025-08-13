@@ -1,0 +1,258 @@
+package migrations
+
+import (
+	"embed"
+	"fmt"
+	"io/fs"
+	"path"
+	"sort"
+	"strings"
+)
+
+// MigrationFS contains all SQL migration files
+//go:embed *.sql
+var MigrationFS embed.FS
+
+// Migration represents a single database migration
+type Migration struct {
+	Version   string
+	Name      string
+	UpSQL     string
+	DownSQL   string
+	Direction string // "up" or "down"
+}
+
+// GetMigrations returns all available migrations sorted by version
+func GetMigrations() ([]Migration, error) {
+	migrations := make(map[string]*Migration)
+	
+	entries, err := MigrationFS.ReadDir(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read migration directory: %w", err)
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
+			continue
+		}
+		
+		migration, err := parseMigrationFile(entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse migration file %s: %w", entry.Name(), err)
+		}
+		
+		content, err := MigrationFS.ReadFile(entry.Name())
+		if err != nil {
+			return nil, fmt.Errorf("failed to read migration file %s: %w", entry.Name(), err)
+		}
+		
+		if existing, exists := migrations[migration.Version]; exists {
+			// Update existing migration with the content
+			if migration.Direction == "up" {
+				existing.UpSQL = string(content)
+			} else {
+				existing.DownSQL = string(content)
+			}
+		} else {
+			// Create new migration
+			migration.Name = generateMigrationName(migration.Version)
+			if migration.Direction == "up" {
+				migration.UpSQL = string(content)
+			} else {
+				migration.DownSQL = string(content)
+			}
+			migrations[migration.Version] = migration
+		}
+	}
+	
+	// Convert map to sorted slice
+	var result []Migration
+	var versions []string
+	for version := range migrations {
+		versions = append(versions, version)
+	}
+	sort.Strings(versions)
+	
+	for _, version := range versions {
+		result = append(result, *migrations[version])
+	}
+	
+	return result, nil
+}
+
+// GetMigration returns a specific migration by version
+func GetMigration(version string) (*Migration, error) {
+	migrations, err := GetMigrations()
+	if err != nil {
+		return nil, err
+	}
+	
+	for _, migration := range migrations {
+		if migration.Version == version {
+			return &migration, nil
+		}
+	}
+	
+	return nil, fmt.Errorf("migration version %s not found", version)
+}
+
+// GetLatestVersion returns the latest migration version
+func GetLatestVersion() (string, error) {
+	migrations, err := GetMigrations()
+	if err != nil {
+		return "", err
+	}
+	
+	if len(migrations) == 0 {
+		return "", fmt.Errorf("no migrations found")
+	}
+	
+	return migrations[len(migrations)-1].Version, nil
+}
+
+// GetPendingMigrations returns migrations that need to be applied
+// currentVersion is the last applied migration version
+func GetPendingMigrations(currentVersion string) ([]Migration, error) {
+	migrations, err := GetMigrations()
+	if err != nil {
+		return nil, err
+	}
+	
+	if currentVersion == "" {
+		// No migrations applied yet, return all
+		return migrations, nil
+	}
+	
+	var pending []Migration
+	found := false
+	
+	for _, migration := range migrations {
+		if migration.Version == currentVersion {
+			found = true
+			continue
+		}
+		if found {
+			pending = append(pending, migration)
+		}
+	}
+	
+	if !found {
+		return nil, fmt.Errorf("current migration version %s not found", currentVersion)
+	}
+	
+	return pending, nil
+}
+
+// GetRollbackMigrations returns migrations to rollback to a target version
+// currentVersion is the current applied migration version
+// targetVersion is the target version to rollback to (can be empty for complete rollback)
+func GetRollbackMigrations(currentVersion, targetVersion string) ([]Migration, error) {
+	migrations, err := GetMigrations()
+	if err != nil {
+		return nil, err
+	}
+	
+	var rollback []Migration
+	
+	// Reverse the order for rollback
+	for i := len(migrations) - 1; i >= 0; i-- {
+		migration := migrations[i]
+		
+		// Include migrations from current down to (but not including) target
+		if migration.Version == targetVersion {
+			break
+		}
+		
+		if migration.Version == currentVersion {
+			rollback = append(rollback, migration)
+			continue
+		}
+		
+		if len(rollback) > 0 {
+			rollback = append(rollback, migration)
+		}
+	}
+	
+	return rollback, nil
+}
+
+// ListMigrationFiles returns all migration file names
+func ListMigrationFiles() ([]string, error) {
+	entries, err := MigrationFS.ReadDir(".")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read migration directory: %w", err)
+	}
+	
+	var files []string
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			files = append(files, entry.Name())
+		}
+	}
+	
+	sort.Strings(files)
+	return files, nil
+}
+
+// parseMigrationFile parses migration filename to extract version and direction
+// Expected format: {version}_{name}.{direction}.sql
+// Example: 001_create_users.up.sql
+func parseMigrationFile(filename string) (*Migration, error) {
+	name := strings.TrimSuffix(filename, path.Ext(filename))
+	parts := strings.Split(name, ".")
+	
+	if len(parts) != 2 {
+		return nil, fmt.Errorf("invalid migration filename format: %s", filename)
+	}
+	
+	direction := parts[1]
+	if direction != "up" && direction != "down" {
+		return nil, fmt.Errorf("invalid migration direction: %s", direction)
+	}
+	
+	nameParts := strings.Split(parts[0], "_")
+	if len(nameParts) < 2 {
+		return nil, fmt.Errorf("invalid migration name format: %s", filename)
+	}
+	
+	version := nameParts[0]
+	
+	return &Migration{
+		Version:   version,
+		Direction: direction,
+	}, nil
+}
+
+// generateMigrationName generates a human-readable name from version
+func generateMigrationName(version string) string {
+	switch version {
+	case "001":
+		return "Create users table"
+	default:
+		return fmt.Sprintf("Migration %s", version)
+	}
+}
+
+// ValidateMigrations checks that all migrations have both up and down SQL
+func ValidateMigrations() error {
+	migrations, err := GetMigrations()
+	if err != nil {
+		return err
+	}
+	
+	for _, migration := range migrations {
+		if migration.UpSQL == "" {
+			return fmt.Errorf("migration %s is missing up SQL", migration.Version)
+		}
+		if migration.DownSQL == "" {
+			return fmt.Errorf("migration %s is missing down SQL", migration.Version)
+		}
+	}
+	
+	return nil
+}
+
+// GetMigrationFS returns the embedded filesystem for direct access
+func GetMigrationFS() fs.FS {
+	return MigrationFS
+}

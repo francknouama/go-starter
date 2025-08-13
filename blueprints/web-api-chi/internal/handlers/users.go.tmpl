@@ -1,0 +1,271 @@
+{{- if ne .DatabaseDriver ""}}
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/services"
+)
+
+// UserHandler handles user-related HTTP requests using Chi router
+type UserHandler struct {
+	userService services.UserService
+	logger      logger.Logger
+}
+
+// NewUserHandler creates a new user handler
+func NewUserHandler(userService services.UserService, log logger.Logger) *UserHandler {
+	return &UserHandler{
+		userService: userService,
+		logger:      log,
+	}
+}
+
+// GetUsers handles GET /api/v1/users
+// @Summary Get all users
+// @Description Get all users with pagination
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param page query int false "Page number" default(1)
+// @Param limit query int false "Items per page" default(10)
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users [get]
+func (h *UserHandler) GetUsers(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("GetUsers called", "method", r.Method, "path", r.URL.Path)
+
+	// Parse pagination parameters
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	limit := 10
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 100 {
+			limit = parsed
+		}
+	}
+
+	h.logger.Debug("Pagination parameters", "page", page, "limit", limit)
+
+	users, total, err := h.userService.GetUsers(page, limit)
+	if err != nil {
+		h.logger.Error("Failed to retrieve users", "error", err)
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve users", "USERS_FETCH_ERROR")
+		return
+	}
+
+	totalPages := (total + limit - 1) / limit
+
+	response := map[string]interface{}{
+		"data": users,
+		"pagination": map[string]interface{}{
+			"page":  page,
+			"limit": limit,
+			"total": total,
+			"pages": totalPages,
+		},
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// GetUser handles GET /api/v1/users/{id}
+// @Summary Get user by ID
+// @Description Get a single user by their ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id} [get]
+func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	h.logger.Debug("GetUser called", "id", idStr)
+
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		h.logger.Error("Invalid user ID", "id", idStr, "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "INVALID_USER_ID")
+		return
+	}
+
+	user, err := h.userService.GetUserByID(uint(id))
+	if err != nil {
+		h.logger.Error("Failed to retrieve user", "id", id, "error", err)
+		if err.Error() == "user not found" {
+			h.writeErrorResponse(w, http.StatusNotFound, "User not found", "USER_NOT_FOUND")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to retrieve user", "USER_FETCH_ERROR")
+		return
+	}
+
+	response := map[string]interface{}{
+		"data": user,
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// CreateUser handles POST /api/v1/users
+// @Summary Create a new user
+// @Description Create a new user with the provided data
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param user body models.CreateUserRequest true "User data"
+// @Success 201 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users [post]
+func (h *UserHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("CreateUser called")
+
+	var req models.CreateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid request data", "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request data", "INVALID_REQUEST_DATA")
+		return
+	}
+
+	h.logger.Debug("Creating user", "email", req.Email, "name", req.Name)
+
+	user, err := h.userService.CreateUser(req)
+	if err != nil {
+		h.logger.Error("Failed to create user", "error", err)
+		if err.Error() == "user already exists" {
+			h.writeErrorResponse(w, http.StatusConflict, "User already exists", "USER_EXISTS")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to create user", "USER_CREATE_ERROR")
+		return
+	}
+
+	response := map[string]interface{}{
+		"data": user,
+	}
+
+	h.writeJSONResponse(w, http.StatusCreated, response)
+}
+
+// UpdateUser handles PUT /api/v1/users/{id}
+// @Summary Update a user
+// @Description Update an existing user with the provided data
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Param user body models.UpdateUserRequest true "User data"
+// @Success 200 {object} map[string]interface{}
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id} [put]
+func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	h.logger.Debug("UpdateUser called", "id", idStr)
+
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		h.logger.Error("Invalid user ID", "id", idStr, "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "INVALID_USER_ID")
+		return
+	}
+
+	var req models.UpdateUserRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.logger.Error("Invalid request data", "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid request data", "INVALID_REQUEST_DATA")
+		return
+	}
+
+	user, err := h.userService.UpdateUser(uint(id), req)
+	if err != nil {
+		h.logger.Error("Failed to update user", "id", id, "error", err)
+		if err.Error() == "user not found" {
+			h.writeErrorResponse(w, http.StatusNotFound, "User not found", "USER_NOT_FOUND")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to update user", "USER_UPDATE_ERROR")
+		return
+	}
+
+	response := map[string]interface{}{
+		"data": user,
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// DeleteUser handles DELETE /api/v1/users/{id}
+// @Summary Delete a user
+// @Description Delete an existing user by their ID
+// @Tags users
+// @Accept json
+// @Produce json
+// @Param id path int true "User ID"
+// @Success 204
+// @Failure 400 {object} map[string]interface{}
+// @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/users/{id} [delete]
+func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+	idStr := chi.URLParam(r, "id")
+	h.logger.Debug("DeleteUser called", "id", idStr)
+
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		h.logger.Error("Invalid user ID", "id", idStr, "error", err)
+		h.writeErrorResponse(w, http.StatusBadRequest, "Invalid user ID", "INVALID_USER_ID")
+		return
+	}
+
+	err = h.userService.DeleteUser(uint(id))
+	if err != nil {
+		h.logger.Error("Failed to delete user", "id", id, "error", err)
+		if err.Error() == "user not found" {
+			h.writeErrorResponse(w, http.StatusNotFound, "User not found", "USER_NOT_FOUND")
+			return
+		}
+		h.writeErrorResponse(w, http.StatusInternalServerError, "Failed to delete user", "USER_DELETE_ERROR")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// writeJSONResponse is a helper method to write JSON responses consistently
+func (h *UserHandler) writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		h.logger.Error("Failed to encode JSON response", "error", err)
+		// Don't try to write another response, just log the error
+	}
+}
+
+// writeErrorResponse is a helper method to write error responses consistently
+func (h *UserHandler) writeErrorResponse(w http.ResponseWriter, statusCode int, message, code string) {
+	response := map[string]interface{}{
+		"error": message,
+		"code":  code,
+	}
+	h.writeJSONResponse(w, statusCode, response)
+}
+{{- end}}

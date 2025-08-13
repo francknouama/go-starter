@@ -1,0 +1,233 @@
+package middleware
+
+import (
+	"context"
+
+	"github.com/labstack/echo/v4"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+const (
+	tracerName = "{{.ModulePath}}/middleware"
+)
+
+// Tracing returns an OpenTelemetry tracing middleware for Echo
+func Tracing() echo.MiddlewareFunc {
+	tracer := otel.Tracer(tracerName)
+	
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			// Skip tracing for health checks and metrics
+			path := c.Path()
+			if path == "/health" || path == "/ready" || path == "/metrics" {
+				return next(c)
+			}
+
+			req := c.Request()
+			
+			// Start a new span
+			ctx, span := tracer.Start(req.Context(), req.Method+" "+c.Path(),
+				trace.WithAttributes(
+					attribute.String("http.method", req.Method),
+					attribute.String("http.url", req.URL.String()),
+					attribute.String("http.scheme", req.URL.Scheme),
+					attribute.String("http.host", req.Host),
+					attribute.String("http.user_agent", req.UserAgent()),
+					attribute.String("http.remote_addr", c.RealIP()),
+					attribute.String("http.request_id", c.Response().Header().Get(echo.HeaderXRequestID)),
+				),
+			)
+			defer span.End()
+
+			// Set the span context in the request context
+			c.SetRequest(req.WithContext(ctx))
+
+			// Process request
+			err := next(c)
+
+			// Set response attributes
+			status := c.Response().Status
+			span.SetAttributes(
+				attribute.Int("http.status_code", status),
+				attribute.Int64("http.response_size", c.Response().Size),
+			)
+
+			// Set span status based on HTTP status code
+			if status >= 400 {
+				span.SetStatus(codes.Error, "HTTP Error")
+				if err != nil {
+					span.RecordError(err)
+				}
+			} else {
+				span.SetStatus(codes.Ok, "")
+			}
+
+			// Add user information if available
+			if userID := c.Get("user_id"); userID != nil {
+				span.SetAttributes(attribute.String("user.id", userID.(string)))
+			}
+			if userEmail := c.Get("user_email"); userEmail != nil {
+				span.SetAttributes(attribute.String("user.email", userEmail.(string)))
+			}
+
+			return err
+		}
+	}
+}
+
+// CustomTracing returns a middleware with custom tracing logic
+func CustomTracing(serviceName string) echo.MiddlewareFunc {
+	tracer := otel.Tracer(serviceName)
+	
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			req := c.Request()
+			path := c.Path()
+			
+			// Skip certain paths
+			if shouldSkipTracing(path) {
+				return next(c)
+			}
+
+			// Create span name based on route pattern
+			spanName := generateSpanName(req.Method, path)
+			
+			ctx, span := tracer.Start(req.Context(), spanName,
+				trace.WithAttributes(
+					attribute.String("service.name", serviceName),
+					attribute.String("http.method", req.Method),
+					attribute.String("http.route", path),
+					attribute.String("http.url", req.URL.String()),
+					attribute.String("http.user_agent", req.UserAgent()),
+					attribute.String("http.remote_addr", c.RealIP()),
+				),
+			)
+			defer span.End()
+
+			// Add custom attributes
+			addCustomAttributes(span, c)
+
+			// Set context
+			c.SetRequest(req.WithContext(ctx))
+
+			// Process request
+			err := next(c)
+
+			// Record final span information
+			recordSpanResult(span, c, err)
+
+			return err
+		}
+	}
+}
+
+// shouldSkipTracing determines if a path should be traced
+func shouldSkipTracing(path string) bool {
+	skipPaths := []string{
+		"/health",
+		"/ready", 
+		"/metrics",
+		"/favicon.ico",
+	}
+	
+	for _, skipPath := range skipPaths {
+		if path == skipPath {
+			return true
+		}
+	}
+	return false
+}
+
+// generateSpanName creates a meaningful span name
+func generateSpanName(method, path string) string {
+	// Replace path parameters with placeholders for better grouping
+	switch {
+	case path == "/api/v1/users" && method == "GET":
+		return "GET /api/v1/users"
+	case path == "/api/v1/users" && method == "POST":
+		return "POST /api/v1/users"
+	case path == "/api/v1/users/:id":
+		return method + " /api/v1/users/{id}"
+	case path == "/api/v1/auth/login":
+		return "POST /api/v1/auth/login"
+	case path == "/api/v1/auth/register":
+		return "POST /api/v1/auth/register"
+	default:
+		return method + " " + path
+	}
+}
+
+// addCustomAttributes adds application-specific attributes to the span
+func addCustomAttributes(span trace.Span, c echo.Context) {
+	// Add request ID
+	if requestID := c.Response().Header().Get(echo.HeaderXRequestID); requestID != "" {
+		span.SetAttributes(attribute.String("request.id", requestID))
+	}
+	
+	// Add content type
+	if contentType := c.Request().Header.Get("Content-Type"); contentType != "" {
+		span.SetAttributes(attribute.String("http.request.content_type", contentType))
+	}
+	
+	// Add accept header
+	if accept := c.Request().Header.Get("Accept"); accept != "" {
+		span.SetAttributes(attribute.String("http.request.accept", accept))
+	}
+}
+
+// recordSpanResult records the final result of the span
+func recordSpanResult(span trace.Span, c echo.Context, err error) {
+	status := c.Response().Status
+	
+	span.SetAttributes(
+		attribute.Int("http.status_code", status),
+		attribute.Int64("http.response_size", c.Response().Size),
+	)
+	
+	// Set response content type
+	if contentType := c.Response().Header().Get("Content-Type"); contentType != "" {
+		span.SetAttributes(attribute.String("http.response.content_type", contentType))
+	}
+
+	// Record error information
+	if err != nil {
+		span.RecordError(err)
+		span.SetAttributes(attribute.String("error.message", err.Error()))
+	}
+
+	// Set span status
+	if status >= 400 {
+		span.SetStatus(codes.Error, "HTTP Error")
+		
+		// Log error details
+		logger.Error("HTTP request failed",
+			"status", status,
+			"method", c.Request().Method,
+			"path", c.Path(),
+			"error", err,
+		)
+	} else {
+		span.SetStatus(codes.Ok, "")
+	}
+
+	// Add user context if available
+	if userID := c.Get("user_id"); userID != nil {
+		span.SetAttributes(attribute.String("user.id", userID.(string)))
+	}
+}
+
+// TraceFromContext extracts the trace context for manual instrumentation
+func TraceFromContext(ctx context.Context) trace.Span {
+	return trace.SpanFromContext(ctx)
+}
+
+// AddEventToSpan adds a custom event to the current span
+func AddEventToSpan(c echo.Context, name string, attributes ...attribute.KeyValue) {
+	span := trace.SpanFromContext(c.Request().Context())
+	span.AddEvent(name, trace.WithAttributes(attributes...))
+}

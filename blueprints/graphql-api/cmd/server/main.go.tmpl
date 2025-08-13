@@ -1,0 +1,154 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/99designs/gqlgen/graphql/handler"
+	"github.com/99designs/gqlgen/graphql/playground"
+	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
+
+	"{{.ModulePath}}/internal/config"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	{{- end}}
+	"{{.ModulePath}}/internal/graphql/generated"
+	"{{.ModulePath}}/internal/graphql/resolvers"
+	{{- if .EnableDataloader}}
+	"{{.ModulePath}}/internal/graphql/dataloaders"
+	{{- end}}
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/middleware"
+	{{- if .EnableSubscriptions}}
+	"github.com/99designs/gqlgen/graphql/handler/transport"
+	"github.com/gorilla/websocket"
+	{{- end}}
+)
+
+func main() {
+	// Load environment variables
+	if err := godotenv.Load(); err != nil {
+		log.Println("No .env file found")
+	}
+
+	// Initialize configuration
+	cfg := config.Load()
+
+	// Initialize logger
+	log := logger.New(cfg.LogLevel)
+	log.Info("Starting {{.ProjectName}} GraphQL server")
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database
+	db, err := database.New(cfg.Database)
+	if err != nil {
+		log.Error("Failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer db.Close()
+
+	// Run migrations
+	if err := database.Migrate(db); err != nil {
+		log.Error("Failed to run migrations", "error", err)
+		os.Exit(1)
+	}
+	{{- end}}
+
+	// Create resolver
+	resolver := &resolvers.Resolver{
+		{{- if ne .DatabaseDriver ""}}
+		DB: db,
+		{{- end}}
+		Logger: log,
+	}
+
+	// Create GraphQL server
+	srv := handler.NewDefaultServer(generated.NewExecutableSchema(generated.Config{Resolvers: resolver}))
+
+	{{- if .EnableSubscriptions}}
+	// Add WebSocket transport for subscriptions
+	srv.AddTransport(&transport.Websocket{
+		Upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				// Configure origin checking for production
+				return true
+			},
+			ReadBufferSize:  1024,
+			WriteBufferSize: 1024,
+		},
+		KeepAlivePingInterval: 10 * time.Second,
+	})
+	{{- end}}
+
+	// Setup router
+	router := mux.NewRouter()
+
+	// Apply middleware
+	router.Use(middleware.CORS)
+	router.Use(middleware.Logging(log))
+	{{- if ne .AuthType ""}}
+	router.Use(middleware.Auth(cfg.Auth))
+	{{- end}}
+
+	{{- if .EnableDataloader}}
+	// Apply dataloader middleware
+	router.Use(dataloaders.Middleware({{if ne .DatabaseDriver ""}}db{{else}}nil{{end}}))
+	{{- end}}
+
+	// GraphQL endpoint
+	router.Handle("/graphql", srv)
+
+	{{- if .EnablePlayground}}
+	// GraphQL playground
+	router.Handle("/", playground.Handler("GraphQL playground", "/graphql"))
+	log.Info("GraphQL playground enabled at /")
+	{{- end}}
+
+	// Health check endpoint
+	router.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "OK")
+	})
+
+	// Create HTTP server
+	httpServer := &http.Server{
+		Addr:         fmt.Sprintf(":%s", cfg.ServerPort),
+		Handler:      router,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	// Start server in goroutine
+	go func() {
+		log.Info("Server listening", "port", cfg.ServerPort)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("Server failed to start", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown the server
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("Shutting down server...")
+
+	// Graceful shutdown with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := httpServer.Shutdown(ctx); err != nil {
+		log.Error("Server forced to shutdown", "error", err)
+	}
+
+	log.Info("Server exited")
+}

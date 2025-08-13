@@ -1,0 +1,88 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - ENVIRONMENT=development
+{{- if eq .DatabaseDriver "postgres"}}
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME={{.ProjectName}}_dev
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_SSL_MODE=disable
+{{- else if eq .DatabaseDriver "mysql"}}
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_NAME={{.ProjectName}}_dev
+      - DB_USER=root
+      - DB_PASSWORD=root
+{{- end}}
+    depends_on:
+{{- if eq .DatabaseDriver "postgres"}}
+      - postgres
+{{- else if eq .DatabaseDriver "mysql"}}
+      - mysql
+{{- end}}
+    restart: unless-stopped
+    networks:
+      - app-network
+
+{{- if eq .DatabaseDriver "postgres"}}
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB={{.ProjectName}}_dev
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - app-network
+
+{{- else if eq .DatabaseDriver "mysql"}}
+  mysql:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE={{.ProjectName}}_dev
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - app-network
+{{- end}}
+
+{{- if eq .DatabaseDriver "redis"}}
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - app-network
+{{- end}}
+
+volumes:
+{{- if eq .DatabaseDriver "postgres"}}
+  postgres_data:
+{{- else if eq .DatabaseDriver "mysql"}}
+  mysql_data:
+{{- end}}
+{{- if eq .DatabaseDriver "redis"}}
+  redis_data:
+{{- end}}
+
+networks:
+  app-network:
+    driver: bridge

@@ -1,0 +1,658 @@
+package load
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+	"{{.ModulePath}}/internal/services"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	"{{.ModulePath}}/internal/repository"
+	{{- end}}
+
+	{{.ProjectName | lower}}v1 "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1"
+	healthv1 "{{.ModulePath}}/proto/health/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+// LoadTestResult represents the results of a load test
+type LoadTestResult struct {
+	TotalRequests    int
+	SuccessfulReqs   int
+	FailedReqs       int
+	TotalDuration    time.Duration
+	AvgResponseTime  time.Duration
+	MinResponseTime  time.Duration
+	MaxResponseTime  time.Duration
+	RequestsPerSec   float64
+	Errors           []string
+}
+
+// GRPCLoadTestSuite tests gRPC service performance under load
+type GRPCLoadTestSuite struct {
+	suite.Suite
+	
+	server       *server.GRPCServer
+	conn         *grpc.ClientConn
+	client       {{.ProjectName | lower}}v1.{{.ProjectName}}ServiceClient
+	healthClient grpc_health_v1.HealthClient
+	extHealthClient healthv1.HealthServiceClient
+	
+	cfg    *config.Config
+	logger logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db     interface{} // Database connection
+	{{- end}}
+}
+
+// SetupSuite initializes the load test environment
+func (s *GRPCLoadTestSuite) SetupSuite() {
+	// Initialize logger with higher level to reduce noise during load testing
+	var err error
+	s.logger, err = logger.NewLogger("load-test", "warn")
+	s.Require().NoError(err, "Failed to initialize load test logger")
+
+	// Load optimized configuration for load testing
+	s.cfg = &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:    0, // Use random port for testing
+			MetricsPort: 0, // Use random port for testing
+			Environment: "load-test",
+		},
+		Logger: config.LoggerConfig{
+			Level:  "warn", // Reduce logging overhead
+			Format: "json",
+		},
+		{{- if ne .DatabaseDriver ""}}
+		Database: config.DatabaseConfig{
+			Driver: "{{.DatabaseDriver}}",
+			{{- if eq .DatabaseDriver "sqlite"}}
+			URL:    ":memory:", // Use in-memory database for load tests
+			{{- else if eq .DatabaseDriver "postgres"}}
+			URL:    "postgres://test:test@localhost:5432/load_test_db?sslmode=disable",
+			{{- else if eq .DatabaseDriver "mysql"}}
+			URL:    "test:test@tcp(localhost:3306)/load_test_db?parseTime=true",
+			{{- end}}
+			MaxOpenConns: 50,  // Increased for load testing
+			MaxIdleConns: 25,  // Increased for load testing
+		},
+		{{- end}}
+		{{- if .TracingEnabled}}
+		Tracing: config.TracingConfig{
+			Enabled:     false, // Disable tracing for load tests to reduce overhead
+			ServiceName: "{{.ProjectName | lower}}-load-test",
+		},
+		{{- end}}
+		{{- if .MetricsEnabled}}
+		Metrics: config.MetricsConfig{
+			Enabled: true,
+			Path:    "/metrics",
+		},
+		{{- end}}
+		RateLimit: config.RateLimitConfig{
+			Enabled: false, // Disable rate limiting for load tests
+		},
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database for load testing
+	s.db, err = database.InitDatabase(s.cfg.Database, s.logger)
+	s.Require().NoError(err, "Failed to initialize load test database")
+	{{- end}}
+
+	// Initialize services
+	{{- if ne .DatabaseDriver ""}}
+	userRepo := repository.NewUserRepository(s.db, s.logger)
+	mainService := services.New{{.ProjectName}}Service(s.logger, userRepo)
+	{{- else}}
+	mainService := services.New{{.ProjectName}}Service(s.logger)
+	{{- end}}
+	healthService := services.NewHealthService(s.logger{{if ne .DatabaseDriver ""}}, s.db{{end}})
+
+	// Create optimized gRPC server for load testing
+	s.server, err = server.NewGRPCServer(s.cfg, s.logger)
+	s.Require().NoError(err, "Failed to create load test gRPC server")
+
+	// Register services
+	s.server.RegisterServices(mainService, healthService)
+
+	// Start server in background
+	go func() {
+		if err := s.server.Start(); err != nil {
+			s.logger.Error("Failed to start load test server", "error", err)
+		}
+	}()
+
+	// Wait for server to start
+	time.Sleep(200 * time.Millisecond)
+
+	// Create client connection with optimized settings
+	s.conn, err = grpc.Dial(
+		s.server.GetAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+		grpc.WithDefaultCallOptions(
+			grpc.MaxCallRecvMsgSize(4*1024*1024), // 4MB
+			grpc.MaxCallSendMsgSize(4*1024*1024), // 4MB
+		),
+	)
+	s.Require().NoError(err, "Failed to connect to load test server")
+
+	// Create service clients
+	s.client = {{.ProjectName | lower}}v1.New{{.ProjectName}}ServiceClient(s.conn)
+	s.healthClient = grpc_health_v1.NewHealthClient(s.conn)
+	s.extHealthClient = healthv1.NewHealthServiceClient(s.conn)
+}
+
+// TearDownSuite cleans up the load test environment
+func (s *GRPCLoadTestSuite) TearDownSuite() {
+	if s.conn != nil {
+		s.conn.Close()
+	}
+	if s.server != nil {
+		s.server.Shutdown()
+	}
+}
+
+// TestEchoLoadTest tests Echo service under load
+func (s *GRPCLoadTestSuite) TestEchoLoadTest() {
+	const (
+		numGoroutines = 50
+		requestsPerGoroutine = 20
+		totalRequests = numGoroutines * requestsPerGoroutine
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result := s.runLoadTest(ctx, "Echo Load Test", numGoroutines, requestsPerGoroutine, func(ctx context.Context, id int) error {
+		_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+			Message: fmt.Sprintf("Load test message %d", id),
+		})
+		return err
+	})
+
+	s.logLoadTestResult("Echo Load Test", result)
+
+	// Assertions
+	s.Assert().Equal(totalRequests, result.TotalRequests)
+	s.Assert().Greater(result.SuccessfulReqs, totalRequests*90/100, "At least 90% success rate expected")
+	s.Assert().Less(result.AvgResponseTime, 100*time.Millisecond, "Average response time should be under 100ms")
+	s.Assert().Greater(result.RequestsPerSec, 100.0, "Should handle at least 100 requests per second")
+}
+
+// TestHealthCheckLoadTest tests health check service under load
+func (s *GRPCLoadTestSuite) TestHealthCheckLoadTest() {
+	const (
+		numGoroutines = 30
+		requestsPerGoroutine = 30
+		totalRequests = numGoroutines * requestsPerGoroutine
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	result := s.runLoadTest(ctx, "Health Check Load Test", numGoroutines, requestsPerGoroutine, func(ctx context.Context, id int) error {
+		_, err := s.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
+			Service: "",
+		})
+		return err
+	})
+
+	s.logLoadTestResult("Health Check Load Test", result)
+
+	// Assertions
+	s.Assert().Equal(totalRequests, result.TotalRequests)
+	s.Assert().Greater(result.SuccessfulReqs, totalRequests*95/100, "At least 95% success rate expected for health checks")
+	s.Assert().Less(result.AvgResponseTime, 50*time.Millisecond, "Health check should be very fast")
+	s.Assert().Greater(result.RequestsPerSec, 200.0, "Health checks should handle at least 200 requests per second")
+}
+
+// TestGetVersionLoadTest tests GetVersion service under load
+func (s *GRPCLoadTestSuite) TestGetVersionLoadTest() {
+	const (
+		numGoroutines = 40
+		requestsPerGoroutine = 25
+		totalRequests = numGoroutines * requestsPerGoroutine
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	result := s.runLoadTest(ctx, "GetVersion Load Test", numGoroutines, requestsPerGoroutine, func(ctx context.Context, id int) error {
+		_, err := s.client.GetVersion(ctx, &emptypb.Empty{})
+		return err
+	})
+
+	s.logLoadTestResult("GetVersion Load Test", result)
+
+	// Assertions
+	s.Assert().Equal(totalRequests, result.TotalRequests)
+	s.Assert().Greater(result.SuccessfulReqs, totalRequests*95/100, "At least 95% success rate expected")
+	s.Assert().Less(result.AvgResponseTime, 75*time.Millisecond, "GetVersion should be fast")
+	s.Assert().Greater(result.RequestsPerSec, 150.0, "Should handle at least 150 requests per second")
+}
+
+{{- if ne .DatabaseDriver ""}}
+// TestUserCRUDLoadTest tests user CRUD operations under load
+func (s *GRPCLoadTestSuite) TestUserCRUDLoadTest() {
+	const (
+		numGoroutines = 20
+		requestsPerGoroutine = 10
+		totalRequests = numGoroutines * requestsPerGoroutine
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	result := s.runLoadTest(ctx, "User CRUD Load Test", numGoroutines, requestsPerGoroutine, func(ctx context.Context, id int) error {
+		// Create user
+		createResp, err := s.client.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+			Name:  fmt.Sprintf("Load Test User %d", id),
+			Email: fmt.Sprintf("loadtest%d@example.com", id),
+		})
+		if err != nil {
+			return fmt.Errorf("create user failed: %w", err)
+		}
+
+		userID := createResp.User.Id
+
+		// Get user
+		_, err = s.client.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+			Id: userID,
+		})
+		if err != nil {
+			return fmt.Errorf("get user failed: %w", err)
+		}
+
+		// Update user
+		_, err = s.client.UpdateUser(ctx, &{{.ProjectName | lower}}v1.UpdateUserRequest{
+			Id:    userID,
+			Name:  fmt.Sprintf("Updated Load Test User %d", id),
+			Email: fmt.Sprintf("updated.loadtest%d@example.com", id),
+		})
+		if err != nil {
+			return fmt.Errorf("update user failed: %w", err)
+		}
+
+		// Delete user
+		_, err = s.client.DeleteUser(ctx, &{{.ProjectName | lower}}v1.DeleteUserRequest{
+			Id: userID,
+		})
+		if err != nil {
+			return fmt.Errorf("delete user failed: %w", err)
+		}
+
+		return nil
+	})
+
+	s.logLoadTestResult("User CRUD Load Test", result)
+
+	// Assertions (more lenient for database operations)
+	s.Assert().Equal(totalRequests, result.TotalRequests)
+	s.Assert().Greater(result.SuccessfulReqs, totalRequests*80/100, "At least 80% success rate expected for CRUD operations")
+	s.Assert().Less(result.AvgResponseTime, 500*time.Millisecond, "CRUD operations should complete within 500ms on average")
+	s.Assert().Greater(result.RequestsPerSec, 20.0, "Should handle at least 20 CRUD sequences per second")
+}
+
+// TestListUsersLoadTest tests user listing under load
+func (s *GRPCLoadTestSuite) TestListUsersLoadTest() {
+	// First, create some test users for listing
+	ctx := context.Background()
+	for i := 0; i < 50; i++ {
+		_, err := s.client.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+			Name:  fmt.Sprintf("List Test User %d", i),
+			Email: fmt.Sprintf("listtest%d@example.com", i),
+		})
+		s.Require().NoError(err, "Failed to create test user for listing")
+	}
+
+	const (
+		numGoroutines = 25
+		requestsPerGoroutine = 20
+		totalRequests = numGoroutines * requestsPerGoroutine
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result := s.runLoadTest(ctx, "List Users Load Test", numGoroutines, requestsPerGoroutine, func(ctx context.Context, id int) error {
+		page := int32((id % 5) + 1) // Vary pages 1-5
+		_, err := s.client.ListUsers(ctx, &{{.ProjectName | lower}}v1.ListUsersRequest{
+			Page:     page,
+			PageSize: 10,
+		})
+		return err
+	})
+
+	s.logLoadTestResult("List Users Load Test", result)
+
+	// Assertions
+	s.Assert().Equal(totalRequests, result.TotalRequests)
+	s.Assert().Greater(result.SuccessfulReqs, totalRequests*85/100, "At least 85% success rate expected for list operations")
+	s.Assert().Less(result.AvgResponseTime, 200*time.Millisecond, "List operations should be fast")
+	s.Assert().Greater(result.RequestsPerSec, 50.0, "Should handle at least 50 list requests per second")
+}
+{{- end}}
+
+// TestStreamingLoadTest tests bidirectional streaming under load
+func (s *GRPCLoadTestSuite) TestStreamingLoadTest() {
+	const (
+		numStreams = 10
+		messagesPerStream = 20
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	results := make(chan LoadTestResult, numStreams)
+
+	for i := 0; i < numStreams; i++ {
+		wg.Add(1)
+		go func(streamID int) {
+			defer wg.Done()
+
+			start := time.Now()
+			var errors []string
+			successCount := 0
+
+			stream, err := s.client.StreamEcho(ctx)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("Failed to create stream: %v", err))
+				results <- LoadTestResult{
+					TotalRequests: messagesPerStream,
+					FailedReqs:    messagesPerStream,
+					Errors:        errors,
+				}
+				return
+			}
+
+			// Send messages
+			for j := 0; j < messagesPerStream; j++ {
+				err := stream.Send(&{{.ProjectName | lower}}v1.EchoRequest{
+					Message: fmt.Sprintf("Stream %d message %d", streamID, j),
+				})
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("Send failed: %v", err))
+					continue
+				}
+
+				_, err = stream.Recv()
+				if err != nil {
+					errors = append(errors, fmt.Sprintf("Recv failed: %v", err))
+					continue
+				}
+
+				successCount++
+			}
+
+			stream.CloseSend()
+			duration := time.Since(start)
+
+			results <- LoadTestResult{
+				TotalRequests:   messagesPerStream,
+				SuccessfulReqs:  successCount,
+				FailedReqs:      messagesPerStream - successCount,
+				TotalDuration:   duration,
+				AvgResponseTime: duration / time.Duration(messagesPerStream),
+				RequestsPerSec:  float64(messagesPerStream) / duration.Seconds(),
+				Errors:          errors,
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(results)
+
+	// Aggregate results
+	totalSuccess := 0
+	totalFailed := 0
+	totalReqs := 0
+	var allErrors []string
+
+	for result := range results {
+		totalSuccess += result.SuccessfulReqs
+		totalFailed += result.FailedReqs
+		totalReqs += result.TotalRequests
+		allErrors = append(allErrors, result.Errors...)
+	}
+
+	s.logger.Info("Streaming Load Test Results",
+		"total_streams", numStreams,
+		"messages_per_stream", messagesPerStream,
+		"total_requests", totalReqs,
+		"successful_requests", totalSuccess,
+		"failed_requests", totalFailed,
+		"success_rate", float64(totalSuccess)/float64(totalReqs)*100,
+	)
+
+	// Assertions
+	s.Assert().Equal(numStreams*messagesPerStream, totalReqs)
+	s.Assert().Greater(totalSuccess, totalReqs*80/100, "At least 80% success rate expected for streaming")
+	s.Assert().LessOrEqual(len(allErrors), totalReqs*20/100, "Error rate should be less than 20%")
+}
+
+// TestMixedWorkloadLoadTest tests a mixed workload scenario
+func (s *GRPCLoadTestSuite) TestMixedWorkloadLoadTest() {
+	const (
+		numGoroutines = 30
+		requestsPerGoroutine = 15
+		totalRequests = numGoroutines * requestsPerGoroutine
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+
+	// Define mixed workload operations
+	operations := []func(context.Context, int) error{
+		// Health check (40% of requests)
+		func(ctx context.Context, id int) error {
+			_, err := s.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{Service: ""})
+			return err
+		},
+		// Echo (30% of requests)
+		func(ctx context.Context, id int) error {
+			_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+				Message: fmt.Sprintf("Mixed workload echo %d", id),
+			})
+			return err
+		},
+		// GetVersion (20% of requests)
+		func(ctx context.Context, id int) error {
+			_, err := s.client.GetVersion(ctx, &emptypb.Empty{})
+			return err
+		},
+		// GetStatus (10% of requests)
+		func(ctx context.Context, id int) error {
+			_, err := s.client.GetStatus(ctx, &{{.ProjectName | lower}}v1.StatusRequest{IncludeDetails: false})
+			return err
+		},
+	}
+
+	weights := []int{40, 30, 20, 10} // Percentage weights
+
+	result := s.runLoadTest(ctx, "Mixed Workload Load Test", numGoroutines, requestsPerGoroutine, func(ctx context.Context, id int) error {
+		// Select operation based on weights
+		opIndex := s.selectOperationByWeight(id, weights)
+		return operations[opIndex](ctx, id)
+	})
+
+	s.logLoadTestResult("Mixed Workload Load Test", result)
+
+	// Assertions
+	s.Assert().Equal(totalRequests, result.TotalRequests)
+	s.Assert().Greater(result.SuccessfulReqs, totalRequests*90/100, "At least 90% success rate expected for mixed workload")
+	s.Assert().Less(result.AvgResponseTime, 150*time.Millisecond, "Mixed workload should maintain good performance")
+	s.Assert().Greater(result.RequestsPerSec, 80.0, "Should handle at least 80 requests per second with mixed workload")
+}
+
+// runLoadTest executes a load test with the given parameters
+func (s *GRPCLoadTestSuite) runLoadTest(
+	ctx context.Context,
+	testName string,
+	numGoroutines int,
+	requestsPerGoroutine int,
+	operation func(context.Context, int) error,
+) LoadTestResult {
+	var wg sync.WaitGroup
+	results := make(chan time.Duration, numGoroutines*requestsPerGoroutine)
+	errors := make(chan string, numGoroutines*requestsPerGoroutine)
+
+	start := time.Now()
+
+	// Launch goroutines
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func(goroutineID int) {
+			defer wg.Done()
+
+			for j := 0; j < requestsPerGoroutine; j++ {
+				requestStart := time.Now()
+				requestID := goroutineID*requestsPerGoroutine + j
+
+				err := operation(ctx, requestID)
+				requestDuration := time.Since(requestStart)
+
+				if err != nil {
+					errors <- fmt.Sprintf("Request %d failed: %v", requestID, err)
+				} else {
+					results <- requestDuration
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	totalDuration := time.Since(start)
+
+	close(results)
+	close(errors)
+
+	// Collect results
+	var responseTimes []time.Duration
+	var errorList []string
+
+	for duration := range results {
+		responseTimes = append(responseTimes, duration)
+	}
+
+	for err := range errors {
+		errorList = append(errorList, err)
+	}
+
+	// Calculate statistics
+	totalRequests := numGoroutines * requestsPerGoroutine
+	successfulReqs := len(responseTimes)
+	failedReqs := len(errorList)
+
+	result := LoadTestResult{
+		TotalRequests:  totalRequests,
+		SuccessfulReqs: successfulReqs,
+		FailedReqs:     failedReqs,
+		TotalDuration:  totalDuration,
+		RequestsPerSec: float64(totalRequests) / totalDuration.Seconds(),
+		Errors:         errorList,
+	}
+
+	if len(responseTimes) > 0 {
+		// Calculate average response time
+		var totalTime time.Duration
+		minTime := responseTimes[0]
+		maxTime := responseTimes[0]
+
+		for _, duration := range responseTimes {
+			totalTime += duration
+			if duration < minTime {
+				minTime = duration
+			}
+			if duration > maxTime {
+				maxTime = duration
+			}
+		}
+
+		result.AvgResponseTime = totalTime / time.Duration(len(responseTimes))
+		result.MinResponseTime = minTime
+		result.MaxResponseTime = maxTime
+	}
+
+	return result
+}
+
+// selectOperationByWeight selects an operation index based on weights
+func (s *GRPCLoadTestSuite) selectOperationByWeight(id int, weights []int) int {
+	totalWeight := 0
+	for _, weight := range weights {
+		totalWeight += weight
+	}
+
+	selector := id % totalWeight
+	currentWeight := 0
+
+	for i, weight := range weights {
+		currentWeight += weight
+		if selector < currentWeight {
+			return i
+		}
+	}
+
+	return 0 // Fallback
+}
+
+// logLoadTestResult logs detailed load test results
+func (s *GRPCLoadTestSuite) logLoadTestResult(testName string, result LoadTestResult) {
+	successRate := float64(result.SuccessfulReqs) / float64(result.TotalRequests) * 100
+
+	s.logger.Info("Load Test Results",
+		"test_name", testName,
+		"total_requests", result.TotalRequests,
+		"successful_requests", result.SuccessfulReqs,
+		"failed_requests", result.FailedReqs,
+		"success_rate_percent", fmt.Sprintf("%.2f", successRate),
+		"total_duration", result.TotalDuration.String(),
+		"avg_response_time", result.AvgResponseTime.String(),
+		"min_response_time", result.MinResponseTime.String(),
+		"max_response_time", result.MaxResponseTime.String(),
+		"requests_per_second", fmt.Sprintf("%.2f", result.RequestsPerSec),
+		"error_count", len(result.Errors),
+	)
+
+	if len(result.Errors) > 0 {
+		s.logger.Warn("Load test errors occurred",
+			"test_name", testName,
+			"error_count", len(result.Errors),
+			"first_few_errors", result.Errors[:min(5, len(result.Errors))],
+		)
+	}
+}
+
+// min returns the minimum of two integers
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// Run the load test suite
+func TestGRPCLoadTestSuite(t *testing.T) {
+	// Skip load tests in short mode
+	if testing.Short() {
+		t.Skip("Skipping load tests in short mode")
+	}
+
+	suite.Run(t, new(GRPCLoadTestSuite))
+}

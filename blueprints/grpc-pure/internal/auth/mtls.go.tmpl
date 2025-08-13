@@ -1,0 +1,524 @@
+{{if eq .AuthType "mtls"}}package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"io/ioutil"
+	"math/big"
+	"net"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
+)
+
+// MTLSConfig holds mTLS authentication configuration
+type MTLSConfig struct {
+	CACertFile     string   `yaml:"ca_cert_file" mapstructure:"ca_cert_file"`
+	ServerCertFile string   `yaml:"server_cert_file" mapstructure:"server_cert_file"`
+	ServerKeyFile  string   `yaml:"server_key_file" mapstructure:"server_key_file"`
+	ClientCertFile string   `yaml:"client_cert_file" mapstructure:"client_cert_file"`
+	ClientKeyFile  string   `yaml:"client_key_file" mapstructure:"client_key_file"`
+	VerifyClient   bool     `yaml:"verify_client" mapstructure:"verify_client"`
+	AllowedCNs     []string `yaml:"allowed_cns" mapstructure:"allowed_cns"`
+	AllowedOUs     []string `yaml:"allowed_ous" mapstructure:"allowed_ous"`
+	SkipPaths      []string `yaml:"skip_paths" mapstructure:"skip_paths"`
+}
+
+// DefaultMTLSConfig returns default mTLS configuration
+func DefaultMTLSConfig() *MTLSConfig {
+	return &MTLSConfig{
+		VerifyClient: true,
+		SkipPaths: []string{
+			"/grpc.health.v1.Health/Check",
+			"/grpc.health.v1.Health/Watch",
+		},
+	}
+}
+
+// CertificateInfo holds information about a client certificate
+type CertificateInfo struct {
+	Subject       pkix.Name `json:"subject"`
+	Issuer        pkix.Name `json:"issuer"`
+	SerialNumber  string    `json:"serial_number"`
+	NotBefore     time.Time `json:"not_before"`
+	NotAfter      time.Time `json:"not_after"`
+	DNSNames      []string  `json:"dns_names"`
+	IPAddresses   []net.IP  `json:"ip_addresses"`
+	IsCA          bool      `json:"is_ca"`
+	KeyUsage      string    `json:"key_usage"`
+	ExtKeyUsage   []string  `json:"ext_key_usage"`
+}
+
+// ClientIdentity represents an authenticated client
+type ClientIdentity struct {
+	CommonName         string          `json:"common_name"`
+	OrganizationalUnit []string        `json:"organizational_unit"`
+	Organization       []string        `json:"organization"`
+	Country            []string        `json:"country"`
+	Province           []string        `json:"province"`
+	Locality           []string        `json:"locality"`
+	Certificate        CertificateInfo `json:"certificate"`
+	Verified           bool            `json:"verified"`
+}
+
+// MTLSManager manages mutual TLS authentication
+type MTLSManager struct {
+	config       *MTLSConfig
+	logger       {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+	caCertPool   *x509.CertPool
+	serverCert   tls.Certificate
+	clientCert   tls.Certificate
+	tlsConfig    *tls.Config
+}
+
+// NewMTLSManager creates a new mTLS manager
+func NewMTLSManager(config *MTLSConfig, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) (*MTLSManager, error) {
+	if config == nil {
+		config = DefaultMTLSConfig()
+	}
+	
+	mm := &MTLSManager{
+		config: config,
+		logger: logger,
+	}
+	
+	if err := mm.loadCertificates(); err != nil {
+		return nil, fmt.Errorf("failed to load certificates: %w", err)
+	}
+	
+	if err := mm.setupTLSConfig(); err != nil {
+		return nil, fmt.Errorf("failed to setup TLS config: %w", err)
+	}
+	
+	{{if eq .Logger "slog"}}logger.Info("mTLS manager initialized", "verify_client", config.VerifyClient, "allowed_cns", len(config.AllowedCNs)){{else if eq .Logger "zap"}}logger.Info("mTLS manager initialized", zap.Bool("verify_client", config.VerifyClient), zap.Int("allowed_cns", len(config.AllowedCNs))){{else if eq .Logger "logrus"}}logger.WithFields(logrus.Fields{"verify_client": config.VerifyClient, "allowed_cns": len(config.AllowedCNs)}).Info("mTLS manager initialized"){{else if eq .Logger "zerolog"}}logger.Info().Bool("verify_client", config.VerifyClient).Int("allowed_cns", len(config.AllowedCNs)).Msg("mTLS manager initialized"){{end}}
+	
+	return mm, nil
+}
+
+// loadCertificates loads CA, server, and client certificates
+func (mm *MTLSManager) loadCertificates() error {
+	// Load CA certificate if provided
+	if mm.config.CACertFile != "" {
+		caCert, err := loadCertificateFile(mm.config.CACertFile)
+		if err != nil {
+			return fmt.Errorf("failed to load CA certificate: %w", err)
+		}
+		
+		mm.caCertPool = x509.NewCertPool()
+		mm.caCertPool.AddCert(caCert)
+		
+		{{if eq .Logger "slog"}}mm.logger.Info("CA certificate loaded", "subject", caCert.Subject.String()){{else if eq .Logger "zap"}}mm.logger.Info("CA certificate loaded", zap.String("subject", caCert.Subject.String())){{else if eq .Logger "logrus"}}mm.logger.WithField("subject", caCert.Subject.String()).Info("CA certificate loaded"){{else if eq .Logger "zerolog"}}mm.logger.Info().Str("subject", caCert.Subject.String()).Msg("CA certificate loaded"){{end}}
+	}
+	
+	// Load server certificate and key
+	if mm.config.ServerCertFile != "" && mm.config.ServerKeyFile != "" {
+		var err error
+		mm.serverCert, err = tls.LoadX509KeyPair(mm.config.ServerCertFile, mm.config.ServerKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to load server certificate: %w", err)
+		}
+		
+		{{if eq .Logger "slog"}}mm.logger.Info("Server certificate loaded"){{else if eq .Logger "zap"}}mm.logger.Info("Server certificate loaded"){{else if eq .Logger "logrus"}}mm.logger.Info("Server certificate loaded"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("Server certificate loaded"){{end}}
+	}
+	
+	// Load client certificate and key if provided (for client authentication)
+	if mm.config.ClientCertFile != "" && mm.config.ClientKeyFile != "" {
+		var err error
+		mm.clientCert, err = tls.LoadX509KeyPair(mm.config.ClientCertFile, mm.config.ClientKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		
+		{{if eq .Logger "slog"}}mm.logger.Info("Client certificate loaded"){{else if eq .Logger "zap"}}mm.logger.Info("Client certificate loaded"){{else if eq .Logger "logrus"}}mm.logger.Info("Client certificate loaded"){{else if eq .Logger "zerolog"}}mm.logger.Info().Msg("Client certificate loaded"){{end}}
+	}
+	
+	return nil
+}
+
+// setupTLSConfig creates the TLS configuration for the server
+func (mm *MTLSManager) setupTLSConfig() error {
+	mm.tlsConfig = &tls.Config{
+		Certificates: []tls.Certificate{mm.serverCert},
+		ClientAuth:   tls.NoClientCert,
+		MinVersion:   tls.VersionTLS12,
+		CurvePreferences: []tls.CurveID{
+			tls.CurveP521,
+			tls.CurveP384,
+			tls.CurveP256,
+		},
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		},
+	}
+	
+	if mm.config.VerifyClient {
+		if mm.caCertPool == nil {
+			{{if eq .Logger "slog"}}mm.logger.Warn("Client verification enabled but no CA certificate provided, using system CA pool"){{else if eq .Logger "zap"}}mm.logger.Warn("Client verification enabled but no CA certificate provided, using system CA pool"){{else if eq .Logger "logrus"}}mm.logger.Warn("Client verification enabled but no CA certificate provided, using system CA pool"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Msg("Client verification enabled but no CA certificate provided, using system CA pool"){{end}}
+		}
+		
+		mm.tlsConfig.ClientAuth = tls.RequireAndVerifyClientCert
+		mm.tlsConfig.ClientCAs = mm.caCertPool
+		mm.tlsConfig.VerifyPeerCertificate = mm.verifyPeerCertificate
+	}
+	
+	return nil
+}
+
+// verifyPeerCertificate performs additional client certificate verification
+func (mm *MTLSManager) verifyPeerCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("no client certificate provided")
+	}
+	
+	// Parse the client certificate
+	clientCert, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse client certificate: %w", err)
+	}
+	
+	// Check allowed Common Names
+	if len(mm.config.AllowedCNs) > 0 {
+		allowed := false
+		for _, allowedCN := range mm.config.AllowedCNs {
+			if clientCert.Subject.CommonName == allowedCN {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			{{if eq .Logger "slog"}}mm.logger.Warn("Client certificate rejected: unauthorized CN", "cn", clientCert.Subject.CommonName){{else if eq .Logger "zap"}}mm.logger.Warn("Client certificate rejected: unauthorized CN", zap.String("cn", clientCert.Subject.CommonName)){{else if eq .Logger "logrus"}}mm.logger.WithField("cn", clientCert.Subject.CommonName).Warn("Client certificate rejected: unauthorized CN"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Str("cn", clientCert.Subject.CommonName).Msg("Client certificate rejected: unauthorized CN"){{end}}
+			return fmt.Errorf("unauthorized common name: %s", clientCert.Subject.CommonName)
+		}
+	}
+	
+	// Check allowed Organizational Units
+	if len(mm.config.AllowedOUs) > 0 {
+		allowed := false
+		for _, clientOU := range clientCert.Subject.OrganizationalUnit {
+			for _, allowedOU := range mm.config.AllowedOUs {
+				if clientOU == allowedOU {
+					allowed = true
+					break
+				}
+			}
+			if allowed {
+				break
+			}
+		}
+		if !allowed {
+			{{if eq .Logger "slog"}}mm.logger.Warn("Client certificate rejected: unauthorized OU", "ous", clientCert.Subject.OrganizationalUnit){{else if eq .Logger "zap"}}mm.logger.Warn("Client certificate rejected: unauthorized OU", zap.Strings("ous", clientCert.Subject.OrganizationalUnit)){{else if eq .Logger "logrus"}}mm.logger.WithField("ous", clientCert.Subject.OrganizationalUnit).Warn("Client certificate rejected: unauthorized OU"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Strs("ous", clientCert.Subject.OrganizationalUnit).Msg("Client certificate rejected: unauthorized OU"){{end}}
+			return fmt.Errorf("unauthorized organizational unit: %v", clientCert.Subject.OrganizationalUnit)
+		}
+	}
+	
+	{{if eq .Logger "slog"}}mm.logger.Debug("Client certificate verified", "cn", clientCert.Subject.CommonName, "serial", clientCert.SerialNumber.String()){{else if eq .Logger "zap"}}mm.logger.Debug("Client certificate verified", zap.String("cn", clientCert.Subject.CommonName), zap.String("serial", clientCert.SerialNumber.String())){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"cn": clientCert.Subject.CommonName, "serial": clientCert.SerialNumber.String()}).Debug("Client certificate verified"){{else if eq .Logger "zerolog"}}mm.logger.Debug().Str("cn", clientCert.Subject.CommonName).Str("serial", clientCert.SerialNumber.String()).Msg("Client certificate verified"){{end}}
+	
+	return nil
+}
+
+// GetTransportCredentials returns gRPC transport credentials for mTLS
+func (mm *MTLSManager) GetTransportCredentials() credentials.TransportCredentials {
+	return credentials.NewTLS(mm.tlsConfig)
+}
+
+// GetUnaryInterceptor returns a gRPC unary interceptor for mTLS authentication
+func (mm *MTLSManager) GetUnaryInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Check if the method should skip authentication
+		if mm.shouldSkipAuth(info.FullMethod) {
+			return handler(ctx, req)
+		}
+		
+		// Extract and validate client identity
+		newCtx, err := mm.authenticate(ctx)
+		if err != nil {
+			{{if eq .Logger "slog"}}mm.logger.Warn("mTLS authentication failed", "method", info.FullMethod, "error", err){{else if eq .Logger "zap"}}mm.logger.Warn("mTLS authentication failed", zap.String("method", info.FullMethod), zap.Error(err)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"method": info.FullMethod, "error": err}).Warn("mTLS authentication failed"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Str("method", info.FullMethod).Err(err).Msg("mTLS authentication failed"){{end}}
+			return nil, status.Errorf(codes.Unauthenticated, "mTLS authentication failed: %v", err)
+		}
+		
+		return handler(newCtx, req)
+	}
+}
+
+// GetStreamInterceptor returns a gRPC stream interceptor for mTLS authentication
+func (mm *MTLSManager) GetStreamInterceptor() grpc.StreamServerInterceptor {
+	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		// Check if the method should skip authentication
+		if mm.shouldSkipAuth(info.FullMethod) {
+			return handler(srv, stream)
+		}
+		
+		// Extract and validate client identity
+		newCtx, err := mm.authenticate(stream.Context())
+		if err != nil {
+			{{if eq .Logger "slog"}}mm.logger.Warn("mTLS authentication failed", "method", info.FullMethod, "error", err){{else if eq .Logger "zap"}}mm.logger.Warn("mTLS authentication failed", zap.String("method", info.FullMethod), zap.Error(err)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"method": info.FullMethod, "error": err}).Warn("mTLS authentication failed"){{else if eq .Logger "zerolog"}}mm.logger.Warn().Str("method", info.FullMethod).Err(err).Msg("mTLS authentication failed"){{end}}
+			return status.Errorf(codes.Unauthenticated, "mTLS authentication failed: %v", err)
+		}
+		
+		// Create a new stream with the authenticated context
+		wrappedStream := &wrappedServerStream{
+			ServerStream: stream,
+			ctx:          newCtx,
+		}
+		
+		return handler(srv, wrappedStream)
+	}
+}
+
+// authenticate extracts client certificate information from the peer context
+func (mm *MTLSManager) authenticate(ctx context.Context) (context.Context, error) {
+	peer, ok := peer.FromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("no peer information available")
+	}
+	
+	tlsInfo, ok := peer.AuthInfo.(credentials.TLSInfo)
+	if !ok {
+		return nil, fmt.Errorf("no TLS authentication info available")
+	}
+	
+	if len(tlsInfo.State.PeerCertificates) == 0 {
+		return nil, fmt.Errorf("no client certificate provided")
+	}
+	
+	clientCert := tlsInfo.State.PeerCertificates[0]
+	
+	// Create client identity
+	identity := &ClientIdentity{
+		CommonName:         clientCert.Subject.CommonName,
+		OrganizationalUnit: clientCert.Subject.OrganizationalUnit,
+		Organization:       clientCert.Subject.Organization,
+		Country:            clientCert.Subject.Country,
+		Province:           clientCert.Subject.Province,
+		Locality:           clientCert.Subject.Locality,
+		Certificate:        mm.extractCertificateInfo(clientCert),
+		Verified:           true,
+	}
+	
+	// Add client identity to context
+	ctx = context.WithValue(ctx, "client_identity", identity)
+	ctx = context.WithValue(ctx, "client_certificate", clientCert)
+	
+	{{if eq .Logger "slog"}}mm.logger.Debug("Client authenticated via mTLS", "cn", identity.CommonName, "org", identity.Organization){{else if eq .Logger "zap"}}mm.logger.Debug("Client authenticated via mTLS", zap.String("cn", identity.CommonName), zap.Strings("org", identity.Organization)){{else if eq .Logger "logrus"}}mm.logger.WithFields(logrus.Fields{"cn": identity.CommonName, "org": identity.Organization}).Debug("Client authenticated via mTLS"){{else if eq .Logger "zerolog"}}mm.logger.Debug().Str("cn", identity.CommonName).Strs("org", identity.Organization).Msg("Client authenticated via mTLS"){{end}}
+	
+	return ctx, nil
+}
+
+// shouldSkipAuth checks if a method should skip authentication
+func (mm *MTLSManager) shouldSkipAuth(fullMethod string) bool {
+	for _, skipPath := range mm.config.SkipPaths {
+		if fullMethod == skipPath {
+			return true
+		}
+	}
+	return false
+}
+
+// extractCertificateInfo extracts detailed information from a certificate
+func (mm *MTLSManager) extractCertificateInfo(cert *x509.Certificate) CertificateInfo {
+	keyUsage := ""
+	if cert.KeyUsage&x509.KeyUsageDigitalSignature != 0 {
+		keyUsage += "Digital Signature, "
+	}
+	if cert.KeyUsage&x509.KeyUsageKeyEncipherment != 0 {
+		keyUsage += "Key Encipherment, "
+	}
+	if cert.KeyUsage&x509.KeyUsageDataEncipherment != 0 {
+		keyUsage += "Data Encipherment, "
+	}
+	if cert.KeyUsage&x509.KeyUsageKeyAgreement != 0 {
+		keyUsage += "Key Agreement, "
+	}
+	if cert.KeyUsage&x509.KeyUsageCertSign != 0 {
+		keyUsage += "Certificate Sign, "
+	}
+	if cert.KeyUsage&x509.KeyUsageCRLSign != 0 {
+		keyUsage += "CRL Sign, "
+	}
+	
+	var extKeyUsage []string
+	for _, usage := range cert.ExtKeyUsage {
+		switch usage {
+		case x509.ExtKeyUsageServerAuth:
+			extKeyUsage = append(extKeyUsage, "Server Authentication")
+		case x509.ExtKeyUsageClientAuth:
+			extKeyUsage = append(extKeyUsage, "Client Authentication")
+		case x509.ExtKeyUsageCodeSigning:
+			extKeyUsage = append(extKeyUsage, "Code Signing")
+		case x509.ExtKeyUsageEmailProtection:
+			extKeyUsage = append(extKeyUsage, "Email Protection")
+		case x509.ExtKeyUsageTimeStamping:
+			extKeyUsage = append(extKeyUsage, "Time Stamping")
+		}
+	}
+	
+	return CertificateInfo{
+		Subject:      cert.Subject,
+		Issuer:       cert.Issuer,
+		SerialNumber: cert.SerialNumber.String(),
+		NotBefore:    cert.NotBefore,
+		NotAfter:     cert.NotAfter,
+		DNSNames:     cert.DNSNames,
+		IPAddresses:  cert.IPAddresses,
+		IsCA:         cert.IsCA,
+		KeyUsage:     keyUsage,
+		ExtKeyUsage:  extKeyUsage,
+	}
+}
+
+// Helper functions
+
+// GetClientIdentityFromContext extracts the client identity from context
+func GetClientIdentityFromContext(ctx context.Context) (*ClientIdentity, bool) {
+	identity, ok := ctx.Value("client_identity").(*ClientIdentity)
+	return identity, ok
+}
+
+// GetClientCertificateFromContext extracts the client certificate from context
+func GetClientCertificateFromContext(ctx context.Context) (*x509.Certificate, bool) {
+	cert, ok := ctx.Value("client_certificate").(*x509.Certificate)
+	return cert, ok
+}
+
+// HasCommonName checks if the client has a specific common name
+func HasCommonName(ctx context.Context, cn string) bool {
+	identity, ok := GetClientIdentityFromContext(ctx)
+	if !ok {
+		return false
+	}
+	return identity.CommonName == cn
+}
+
+// HasOrganizationalUnit checks if the client has a specific organizational unit
+func HasOrganizationalUnit(ctx context.Context, ou string) bool {
+	identity, ok := GetClientIdentityFromContext(ctx)
+	if !ok {
+		return false
+	}
+	
+	for _, clientOU := range identity.OrganizationalUnit {
+		if clientOU == ou {
+			return true
+		}
+	}
+	return false
+}
+
+// RequireCommonName returns an error if the client doesn't have the required CN
+func RequireCommonName(ctx context.Context, cn string) error {
+	if !HasCommonName(ctx, cn) {
+		return status.Errorf(codes.PermissionDenied, "insufficient permissions: common name '%s' required", cn)
+	}
+	return nil
+}
+
+// RequireOrganizationalUnit returns an error if the client doesn't have the required OU
+func RequireOrganizationalUnit(ctx context.Context, ou string) error {
+	if !HasOrganizationalUnit(ctx, ou) {
+		return status.Errorf(codes.PermissionDenied, "insufficient permissions: organizational unit '%s' required", ou)
+	}
+	return nil
+}
+
+// Utility functions for certificate management
+
+// loadCertificateFile loads a certificate from a PEM file
+func loadCertificateFile(filename string) (*x509.Certificate, error) {
+	certPEM, err := ioutil.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read certificate file: %w", err)
+	}
+	
+	block, _ := pem.Decode(certPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+	
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	
+	return cert, nil
+}
+
+// GenerateSelfSignedCertificate generates a self-signed certificate for testing
+func GenerateSelfSignedCertificate(commonName string, hosts []string, validFor time.Duration) (certPEM, keyPEM []byte, err error) {
+	// Generate a private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate private key: %w", err)
+	}
+	
+	// Create certificate template
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   commonName,
+			Organization: []string{"{{.ProjectName}} Test"},
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(validFor),
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+	
+	// Add hosts to certificate
+	for _, host := range hosts {
+		if ip := net.ParseIP(host); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, host)
+		}
+	}
+	
+	// Create the certificate
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
+	}
+	
+	// Encode certificate to PEM
+	certPEM = pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certDER,
+	})
+	
+	// Encode private key to PEM
+	privateKeyDER := x509.MarshalPKCS1PrivateKey(privateKey)
+	keyPEM = pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privateKeyDER,
+	})
+	
+	return certPEM, keyPEM, nil
+}
+
+// wrappedServerStream wraps a gRPC server stream with a custom context
+type wrappedServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (w *wrappedServerStream) Context() context.Context {
+	return w.ctx
+}
+{{end}}

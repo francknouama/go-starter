@@ -1,0 +1,420 @@
+package discovery
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+
+	consul "github.com/hashicorp/consul/api"
+)
+
+// ConsulServiceDiscovery implements ServiceDiscovery using HashiCorp Consul
+type ConsulServiceDiscovery struct {
+	client         *consul.Client
+	config         config.DiscoveryConfig
+	serviceID      string
+	serviceName    string
+	serviceAddress string
+	servicePort    int
+	serviceTags    []string
+	serviceMeta    map[string]string
+	mu             sync.RWMutex
+	healthStatus   HealthStatus
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
+}
+
+// NewConsulServiceDiscovery creates a new Consul service discovery client
+func NewConsulServiceDiscovery(cfg config.DiscoveryConfig) (ServiceDiscovery, error) {
+	// Create Consul client configuration
+	consulConfig := consul.DefaultConfig()
+	consulConfig.Address = cfg.Address
+	if cfg.Token != "" {
+		consulConfig.Token = cfg.Token
+	}
+	if cfg.Datacenter != "" {
+		consulConfig.Datacenter = cfg.Datacenter
+	}
+
+	// Create Consul client
+	client, err := consul.NewClient(consulConfig)
+	if err != nil {
+		return nil, NewDiscoveryError("CONSUL_CLIENT_ERROR", "failed to create Consul client", err)
+	}
+
+	// Test connection
+	_, err = client.Status().Leader()
+	if err != nil {
+		return nil, NewDiscoveryError("CONSUL_CONNECTION_ERROR", "failed to connect to Consul", err)
+	}
+
+	sd := &ConsulServiceDiscovery{
+		client:       client,
+		config:       cfg,
+		serviceTags:  cfg.Tags,
+		serviceMeta:  cfg.Meta,
+		healthStatus: HealthStatusUnknown,
+		stopCh:       make(chan struct{}),
+	}
+
+	return sd, nil
+}
+
+// Register registers a service instance with Consul
+func (c *ConsulServiceDiscovery) Register(instance ServiceInstance) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	c.serviceID = instance.ID
+	c.serviceName = instance.Name
+	c.serviceAddress = instance.Address
+	c.servicePort = instance.Port
+	if len(instance.Tags) > 0 {
+		c.serviceTags = instance.Tags
+	}
+	if len(instance.Meta) > 0 {
+		c.serviceMeta = instance.Meta
+	}
+
+	// Create service registration
+	registration := &consul.AgentServiceRegistration{
+		ID:      instance.ID,
+		Name:    instance.Name,
+		Address: instance.Address,
+		Port:    instance.Port,
+		Tags:    instance.Tags,
+		Meta:    instance.Meta,
+	}
+
+	// Add health check if configured
+	if c.config.HealthCheck.Enabled {
+		check := c.createHealthCheck()
+		if check != nil {
+			registration.Check = check
+		}
+	}
+
+	// Register service
+	err := c.client.Agent().ServiceRegister(registration)
+	if err != nil {
+		return NewDiscoveryError("CONSUL_REGISTER_ERROR", "failed to register service", err)
+	}
+
+	c.healthStatus = HealthStatusHealthy
+
+	// Start health update routine if needed
+	if c.config.HealthCheck.Enabled {
+		c.wg.Add(1)
+		go c.healthUpdateRoutine()
+	}
+
+	return nil
+}
+
+// Deregister removes the service instance from Consul
+func (c *ConsulServiceDiscovery) Deregister() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.serviceID == "" {
+		return nil // Not registered
+	}
+
+	// Stop health update routine
+	close(c.stopCh)
+	c.wg.Wait()
+
+	// Deregister service
+	err := c.client.Agent().ServiceDeregister(c.serviceID)
+	if err != nil {
+		return NewDiscoveryError("CONSUL_DEREGISTER_ERROR", "failed to deregister service", err)
+	}
+
+	c.serviceID = ""
+	c.healthStatus = HealthStatusUnknown
+
+	return nil
+}
+
+// Discover returns healthy instances of a service from Consul
+func (c *ConsulServiceDiscovery) Discover(serviceName string) ([]ServiceInstance, error) {
+	// Query healthy services
+	services, _, err := c.client.Health().Service(serviceName, "", true, nil)
+	if err != nil {
+		return nil, NewDiscoveryError("CONSUL_DISCOVER_ERROR", "failed to discover services", err)
+	}
+
+	instances := make([]ServiceInstance, 0, len(services))
+	for _, service := range services {
+		instance := ServiceInstance{
+			ID:      service.Service.ID,
+			Name:    service.Service.Service,
+			Address: service.Service.Address,
+			Port:    service.Service.Port,
+			Tags:    service.Service.Tags,
+			Meta:    service.Service.Meta,
+			Health:  c.mapConsulHealthStatus(service.Checks),
+		}
+
+		// Use node address if service address is empty
+		if instance.Address == "" {
+			instance.Address = service.Node.Address
+		}
+
+		instances = append(instances, instance)
+	}
+
+	return instances, nil
+}
+
+// Watch watches for changes to a service in Consul
+func (c *ConsulServiceDiscovery) Watch(ctx context.Context, serviceName string) (<-chan []ServiceInstance, error) {
+	ch := make(chan []ServiceInstance, 10)
+
+	c.wg.Add(1)
+	go func() {
+		defer c.wg.Done()
+		defer close(ch)
+
+		var lastIndex uint64
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-c.stopCh:
+				return
+			default:
+			}
+
+			// Query with blocking
+			queryOpts := &consul.QueryOptions{
+				WaitIndex: lastIndex,
+				WaitTime:  30 * time.Second,
+			}
+
+			services, meta, err := c.client.Health().Service(serviceName, "", true, queryOpts)
+			if err != nil {
+				// Log error and continue
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			lastIndex = meta.LastIndex
+
+			instances := make([]ServiceInstance, 0, len(services))
+			for _, service := range services {
+				instance := ServiceInstance{
+					ID:      service.Service.ID,
+					Name:    service.Service.Service,
+					Address: service.Service.Address,
+					Port:    service.Service.Port,
+					Tags:    service.Service.Tags,
+					Meta:    service.Service.Meta,
+					Health:  c.mapConsulHealthStatus(service.Checks),
+				}
+
+				if instance.Address == "" {
+					instance.Address = service.Node.Address
+				}
+
+				instances = append(instances, instance)
+			}
+
+			select {
+			case ch <- instances:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+// UpdateHealth updates the health status of this service instance
+func (c *ConsulServiceDiscovery) UpdateHealth(status HealthStatus) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.serviceID == "" {
+		return NewDiscoveryError("SERVICE_NOT_REGISTERED", "service not registered", nil)
+	}
+
+	c.healthStatus = status
+
+	// Update TTL check if it exists
+	checkID := fmt.Sprintf("service:%s", c.serviceID)
+	
+	switch status {
+	case HealthStatusHealthy:
+		err := c.client.Agent().PassTTL(checkID, "Service is healthy")
+		if err != nil {
+			return NewDiscoveryError("CONSUL_HEALTH_UPDATE_ERROR", "failed to update health status", err)
+		}
+	case HealthStatusWarning:
+		err := c.client.Agent().WarnTTL(checkID, "Service has warnings")
+		if err != nil {
+			return NewDiscoveryError("CONSUL_HEALTH_UPDATE_ERROR", "failed to update health status", err)
+		}
+	case HealthStatusUnhealthy:
+		err := c.client.Agent().FailTTL(checkID, "Service is unhealthy")
+		if err != nil {
+			return NewDiscoveryError("CONSUL_HEALTH_UPDATE_ERROR", "failed to update health status", err)
+		}
+	}
+
+	return nil
+}
+
+// GetHealth returns the current health status
+func (c *ConsulServiceDiscovery) GetHealth() (HealthStatus, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.healthStatus, nil
+}
+
+// Close closes the Consul client
+func (c *ConsulServiceDiscovery) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Stop all goroutines
+	close(c.stopCh)
+	c.wg.Wait()
+
+	return nil
+}
+
+// createHealthCheck creates a Consul health check configuration
+func (c *ConsulServiceDiscovery) createHealthCheck() *consul.AgentServiceCheck {
+	hc := c.config.HealthCheck
+
+	check := &consul.AgentServiceCheck{
+		Interval: hc.Interval.String(),
+		Timeout:  hc.Timeout.String(),
+	}
+
+	if hc.DeregisterCriticalServiceAfter > 0 {
+		check.DeregisterCriticalServiceAfter = hc.DeregisterCriticalServiceAfter.String()
+	}
+
+	// Determine check type based on configuration
+	if hc.HTTP != "" {
+		check.HTTP = hc.HTTP
+	} else if hc.GRPC != "" {
+		check.GRPC = hc.GRPC
+	} else if hc.TCP != "" {
+		check.TCP = hc.TCP
+	} else {
+		// Default to TTL check
+		check.TTL = hc.Interval.String()
+	}
+
+	return check
+}
+
+// healthUpdateRoutine periodically updates health status for TTL checks
+func (c *ConsulServiceDiscovery) healthUpdateRoutine() {
+	defer c.wg.Done()
+
+	ticker := time.NewTicker(c.config.HealthCheck.Interval / 2) // Update twice per interval
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.mu.RLock()
+			status := c.healthStatus
+			serviceID := c.serviceID
+			c.mu.RUnlock()
+
+			if serviceID != "" && status == HealthStatusHealthy {
+				checkID := fmt.Sprintf("service:%s", serviceID)
+				c.client.Agent().PassTTL(checkID, "Service is healthy")
+			}
+
+		case <-c.stopCh:
+			return
+		}
+	}
+}
+
+// mapConsulHealthStatus maps Consul health checks to our health status
+func (c *ConsulServiceDiscovery) mapConsulHealthStatus(checks consul.HealthChecks) HealthStatus {
+	if len(checks) == 0 {
+		return HealthStatusUnknown
+	}
+
+	hasWarning := false
+	for _, check := range checks {
+		switch check.Status {
+		case consul.HealthCritical:
+			return HealthStatusUnhealthy
+		case consul.HealthWarning:
+			hasWarning = true
+		}
+	}
+
+	if hasWarning {
+		return HealthStatusWarning
+	}
+
+	return HealthStatusHealthy
+}
+
+// GetServiceInstances is a helper method to get instances with additional metadata
+func (c *ConsulServiceDiscovery) GetServiceInstances(serviceName string, tag string) ([]ServiceInstance, error) {
+	// Query services with specific tag
+	services, _, err := c.client.Health().Service(serviceName, tag, true, nil)
+	if err != nil {
+		return nil, NewDiscoveryError("CONSUL_DISCOVER_ERROR", "failed to discover services with tag", err)
+	}
+
+	instances := make([]ServiceInstance, 0, len(services))
+	for _, service := range services {
+		instance := ServiceInstance{
+			ID:      service.Service.ID,
+			Name:    service.Service.Service,
+			Address: service.Service.Address,
+			Port:    service.Service.Port,
+			Tags:    service.Service.Tags,
+			Meta:    service.Service.Meta,
+			Health:  c.mapConsulHealthStatus(service.Checks),
+		}
+
+		if instance.Address == "" {
+			instance.Address = service.Node.Address
+		}
+
+		// Add node metadata
+		if instance.Meta == nil {
+			instance.Meta = make(map[string]string)
+		}
+		instance.Meta["node_id"] = service.Node.ID
+		instance.Meta["node_name"] = service.Node.Node
+		instance.Meta["datacenter"] = service.Node.Datacenter
+
+		instances = append(instances, instance)
+	}
+
+	return instances, nil
+}
+
+// GetServiceNames returns all available service names
+func (c *ConsulServiceDiscovery) GetServiceNames() ([]string, error) {
+	services, _, err := c.client.Catalog().Services(nil)
+	if err != nil {
+		return nil, NewDiscoveryError("CONSUL_CATALOG_ERROR", "failed to get service catalog", err)
+	}
+
+	names := make([]string, 0, len(services))
+	for name := range services {
+		names = append(names, name)
+	}
+
+	return names, nil
+}

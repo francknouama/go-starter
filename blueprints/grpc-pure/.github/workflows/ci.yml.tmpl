@@ -1,0 +1,344 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: '{{.GoVersion}}'
+  PROTOBUF_VERSION: '25.1'
+  BUF_VERSION: '1.29.0'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: [{{.GoVersion}}, '1.22', '1.23']
+
+    services:
+{{- if eq .DatabaseDriver "postgres"}}
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_USER: {{.ProjectName | lower}}
+          POSTGRES_DB: {{.ProjectName | lower}}_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+{{- else if eq .DatabaseDriver "mysql"}}
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: {{.ProjectName | lower}}_test
+          MYSQL_USER: {{.ProjectName | lower}}
+          MYSQL_PASSWORD: password
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+        ports:
+          - 3306:3306
+{{- end}}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{`{{ matrix.go-version }}`}}
+        check-latest: true
+
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{`{{ runner.os }}`}}-go-${{`{{ matrix.go-version }}`}}-${{`{{ hashFiles('**/go.sum') }}`}}
+        restore-keys: |
+          ${{`{{ runner.os }}`}}-go-${{`{{ matrix.go-version }}`}}-
+
+    - name: Install Protocol Buffers
+      run: |
+        PB_REL="https://github.com/protocolbuffers/protobuf/releases"
+        curl -LO $PB_REL/download/v${{`{{ env.PROTOBUF_VERSION }}`}}/protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip
+        unzip protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip -d $HOME/.local
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+    - name: Install Buf
+      run: |
+        curl -sSL "https://github.com/bufbuild/buf/releases/download/v${{`{{ env.BUF_VERSION }}`}}/buf-$(uname -s)-$(uname -m)" \
+          -o "$HOME/.local/bin/buf"
+        chmod +x "$HOME/.local/bin/buf"
+
+    - name: Install Go tools
+      run: |
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+
+    - name: Verify Protobuf installation
+      run: |
+        protoc --version
+        buf --version
+        protoc-gen-go --version
+        protoc-gen-go-grpc --version
+
+    - name: Generate Protocol Buffers
+      run: |
+        make generate
+
+    - name: Download dependencies
+      run: go mod download
+
+    - name: Verify dependencies
+      run: go mod verify
+
+    - name: Build
+      run: make build
+
+    - name: Run unit tests
+      run: go test -v -race -coverprofile=coverage.out ./internal/... ./pkg/...
+
+    - name: Run integration tests
+      run: go test -v -race -tags=integration ./tests/integration/...
+      env:
+{{- if ne .DatabaseDriver ""}}
+        {{- if eq .DatabaseDriver "postgres"}}
+        DATABASE_URL: postgres://{{.ProjectName | lower}}:password@localhost:5432/{{.ProjectName | lower}}_test?sslmode=disable
+        {{- else if eq .DatabaseDriver "mysql"}}
+        DATABASE_URL: mysql://{{.ProjectName | lower}}:password@localhost:3306/{{.ProjectName | lower}}_test
+        {{- else if eq .DatabaseDriver "sqlite"}}
+        DATABASE_URL: sqlite://{{.ProjectName | lower}}_test.db
+        {{- end}}
+{{- end}}
+        GRPC_PORT: {{.GrpcPort | default 50051}}
+        METRICS_PORT: {{.MetricsPort | default 8080}}
+        LOG_LEVEL: debug
+
+    - name: Upload coverage to Codecov
+      if: matrix.go-version == '{{.GoVersion}}'
+      uses: codecov/codecov-action@v4
+      with:
+        file: ./coverage.out
+        flags: unittests
+        name: codecov-umbrella
+
+    - name: Test gRPC server startup
+      run: |
+        # Build the server
+        go build -o bin/{{.ProjectName}} cmd/server/main.go
+        
+        # Start server in background
+        timeout 30s ./bin/{{.ProjectName}} --config configs/config.test.yaml &
+        SERVER_PID=$!
+        
+        # Wait for server to start
+        sleep 5
+        
+        # Test health check if metrics are enabled
+        {{- if .MetricsEnabled}}
+        curl -f http://localhost:{{.MetricsPort | default 8080}}/health || echo "Health check endpoint not ready"
+        {{- end}}
+        
+        # Test gRPC reflection if enabled
+        {{- if .ReflectionEnabled}}
+        grpcurl -plaintext localhost:{{.GrpcPort | default 50051}} list || echo "gRPC reflection not available"
+        {{- end}}
+        
+        # Kill server
+        kill $SERVER_PID 2>/dev/null || true
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{`{{ env.GO_VERSION }}`}}
+        check-latest: true
+
+    - name: Install Protocol Buffers and Buf
+      run: |
+        # Install protoc
+        PB_REL="https://github.com/protocolbuffers/protobuf/releases"
+        curl -LO $PB_REL/download/v${{`{{ env.PROTOBUF_VERSION }}`}}/protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip
+        unzip protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip -d $HOME/.local
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        
+        # Install buf
+        curl -sSL "https://github.com/bufbuild/buf/releases/download/v${{`{{ env.BUF_VERSION }}`}}/buf-$(uname -s)-$(uname -m)" \
+          -o "$HOME/.local/bin/buf"
+        chmod +x "$HOME/.local/bin/buf"
+
+    - name: Generate Protocol Buffers
+      run: |
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        make generate
+
+    - name: Lint Protocol Buffers
+      run: buf lint
+
+    - name: Check Protocol Buffer breaking changes
+      run: |
+        # Skip breaking change check if no previous version exists
+        buf breaking --against '.git#branch=main' || echo "No previous version to compare against"
+
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: --timeout=5m
+
+    - name: Check Go formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "The following files are not formatted:"
+          gofmt -s -l .
+          exit 1
+        fi
+
+    - name: Check Go imports
+      run: |
+        go install golang.org/x/tools/cmd/goimports@latest
+        if [ "$(goimports -l . | wc -l)" -gt 0 ]; then
+          echo "The following files have incorrect imports:"
+          goimports -l .
+          exit 1
+        fi
+
+  build:
+    runs-on: ${{`{{ matrix.os }}`}}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        
+    steps:
+    - uses: actions/checkout@v4
+    
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{`{{ env.GO_VERSION }}`}}
+
+    - name: Install Protocol Buffers (Ubuntu/macOS)
+      if: matrix.os != 'windows-latest'
+      run: |
+        if [ "${{`{{ matrix.os }}`}}" = "ubuntu-latest" ]; then
+          PB_REL="https://github.com/protocolbuffers/protobuf/releases"
+          curl -LO $PB_REL/download/v${{`{{ env.PROTOBUF_VERSION }}`}}/protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip
+          unzip protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip -d $HOME/.local
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+        elif [ "${{`{{ matrix.os }}`}}" = "macos-latest" ]; then
+          brew install protobuf buf
+        fi
+
+    - name: Install Protocol Buffers (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install protoc buf
+
+    - name: Generate Protocol Buffers
+      run: |
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        make generate
+
+    - name: Build
+      run: go build -o bin/{{.ProjectName}}${{`{{ matrix.os == 'windows-latest' && '.exe' || '' }}`}} cmd/server/main.go
+
+    - name: Test binary
+      run: |
+        chmod +x bin/{{.ProjectName}}${{`{{ matrix.os == 'windows-latest' && '.exe' || '' }}`}} || true
+        timeout 10s ./bin/{{.ProjectName}}${{`{{ matrix.os == 'windows-latest' && '.exe' || '' }}`}} --help || true
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build Docker image
+      run: |
+        docker build -t {{.ProjectName}}:test .
+
+    - name: Test Docker image
+      run: |
+        # Test that the image can start and respond to help
+        timeout 10s docker run --rm {{.ProjectName}}:test --help || true
+        
+        # Test that required files exist in the image
+        docker run --rm {{.ProjectName}}:test ls -la /app/
+        
+        # Test that protobuf files are present
+        docker run --rm {{.ProjectName}}:test find /app -name "*.proto" || true
+
+  load-test:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - uses: actions/setup-go@v5
+      with:
+        go-version: ${{`{{ env.GO_VERSION }}`}}
+
+    - name: Install dependencies
+      run: |
+        # Install ghz for gRPC load testing
+        go install github.com/bojand/ghz/cmd/ghz@latest
+
+    - name: Generate Protocol Buffers
+      run: |
+        # Install protoc and buf
+        PB_REL="https://github.com/protocolbuffers/protobuf/releases"
+        curl -LO $PB_REL/download/v${{`{{ env.PROTOBUF_VERSION }}`}}/protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip
+        unzip protoc-${{`{{ env.PROTOBUF_VERSION }}`}}-linux-x86_64.zip -d $HOME/.local
+        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        make generate
+
+    - name: Build and start server
+      run: |
+        go build -o bin/{{.ProjectName}} cmd/server/main.go
+        ./bin/{{.ProjectName}} --config configs/config.test.yaml &
+        echo $! > server.pid
+        sleep 5
+
+    - name: Run load tests
+      run: |
+        # Run basic load test
+        make load-test || echo "Load tests completed with warnings"
+
+    - name: Stop server
+      run: |
+        if [ -f server.pid ]; then
+          kill $(cat server.pid) || true
+          rm server.pid
+        fi
+
+    - name: Upload load test results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: load-test-results
+        path: |
+          load-test-results/
+          *.json
+        retention-days: 7

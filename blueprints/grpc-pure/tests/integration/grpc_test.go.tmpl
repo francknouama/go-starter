@@ -1,0 +1,448 @@
+package integration
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+	"{{.ModulePath}}/internal/services"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	"{{.ModulePath}}/internal/repository"
+	{{- end}}
+
+	{{.ProjectName | lower}}v1 "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1"
+	healthv1 "{{.ModulePath}}/proto/health/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/emptypb"
+)
+
+// GRPCIntegrationTestSuite tests the complete gRPC service integration
+type GRPCIntegrationTestSuite struct {
+	suite.Suite
+	
+	server     *server.GRPCServer
+	conn       *grpc.ClientConn
+	client     {{.ProjectName | lower}}v1.{{.ProjectName}}ServiceClient
+	healthClient grpc_health_v1.HealthClient
+	extHealthClient healthv1.HealthServiceClient
+	
+	cfg        *config.Config
+	logger     logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db         interface{} // Database connection
+	{{- end}}
+	
+	testPort   int
+}
+
+// SetupSuite initializes the test environment
+func (s *GRPCIntegrationTestSuite) SetupSuite() {
+	// Initialize logger
+	var err error
+	s.logger, err = logger.NewLogger("test", "debug")
+	s.Require().NoError(err, "Failed to initialize logger")
+
+	// Load test configuration
+	s.cfg = &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:    0, // Use random port for testing
+			MetricsPort: 0, // Use random port for testing
+			Environment: "test",
+		},
+		Logger: config.LoggerConfig{
+			Level:  "debug",
+			Format: "json",
+		},
+		{{- if ne .DatabaseDriver ""}}
+		Database: config.DatabaseConfig{
+			Driver: "{{.DatabaseDriver}}",
+			{{- if eq .DatabaseDriver "sqlite"}}
+			URL:    ":memory:", // Use in-memory database for tests
+			{{- else if eq .DatabaseDriver "postgres"}}
+			URL:    "postgres://test:test@localhost:5432/test_db?sslmode=disable",
+			{{- else if eq .DatabaseDriver "mysql"}}
+			URL:    "test:test@tcp(localhost:3306)/test_db?parseTime=true",
+			{{- end}}
+			MaxOpenConns: 10,
+			MaxIdleConns: 5,
+		},
+		{{- end}}
+		{{- if .TracingEnabled}}
+		Tracing: config.TracingConfig{
+			Enabled:     false, // Disable for integration tests
+			ServiceName: "{{.ProjectName | lower}}-test",
+		},
+		{{- end}}
+		{{- if .MetricsEnabled}}
+		Metrics: config.MetricsConfig{
+			Enabled: true,
+			Path:    "/metrics",
+		},
+		{{- end}}
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database for testing
+	s.db, err = database.InitDatabase(s.cfg.Database, s.logger)
+	s.Require().NoError(err, "Failed to initialize test database")
+	{{- end}}
+
+	// Initialize services
+	{{- if ne .DatabaseDriver ""}}
+	userRepo := repository.NewUserRepository(s.db, s.logger)
+	mainService := services.New{{.ProjectName}}Service(s.logger, userRepo)
+	{{- else}}
+	mainService := services.New{{.ProjectName}}Service(s.logger)
+	{{- end}}
+	healthService := services.NewHealthService(s.logger{{if ne .DatabaseDriver ""}}, s.db{{end}})
+
+	// Create gRPC server
+	s.server, err = server.NewGRPCServer(s.cfg, s.logger)
+	s.Require().NoError(err, "Failed to create gRPC server")
+
+	// Register services
+	s.server.RegisterServices(mainService, healthService)
+
+	// Start server in background
+	go func() {
+		if err := s.server.Start(); err != nil {
+			s.logger.Error("Failed to start test server", "error", err)
+		}
+	}()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Get the actual port assigned by the server
+	s.testPort = s.server.GetPort()
+	s.Require().NotZero(s.testPort, "Server port should be assigned")
+
+	// Create client connection
+	s.conn, err = grpc.Dial(
+		s.server.GetAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	s.Require().NoError(err, "Failed to connect to test server")
+
+	// Create service clients
+	s.client = {{.ProjectName | lower}}v1.New{{.ProjectName}}ServiceClient(s.conn)
+	s.healthClient = grpc_health_v1.NewHealthClient(s.conn)
+	s.extHealthClient = healthv1.NewHealthServiceClient(s.conn)
+}
+
+// TearDownSuite cleans up the test environment
+func (s *GRPCIntegrationTestSuite) TearDownSuite() {
+	if s.conn != nil {
+		s.conn.Close()
+	}
+	if s.server != nil {
+		s.server.Shutdown()
+	}
+}
+
+// TestGetVersion tests the GetVersion service method
+func (s *GRPCIntegrationTestSuite) TestGetVersion() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := s.client.GetVersion(ctx, &emptypb.Empty{})
+	s.Require().NoError(err, "GetVersion should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("1.0.0", resp.Version)
+	s.Assert().Equal("{{.ProjectName | lower}}", resp.ServiceName)
+	s.Assert().Equal("{{.GoVersion}}", resp.GoVersion)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Equal(int32(0), int32(resp.Status.Code)) // STATUS_CODE_OK
+}
+
+// TestGetStatus tests the GetStatus service method
+func (s *GRPCIntegrationTestSuite) TestGetStatus() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test without details
+	resp, err := s.client.GetStatus(ctx, &{{.ProjectName | lower}}v1.StatusRequest{
+		IncludeDetails: false,
+	})
+	s.Require().NoError(err, "GetStatus should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("{{.ProjectName | lower}}", resp.ServiceName)
+	s.Assert().NotEmpty(resp.Uptime)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Empty(resp.Details)
+
+	// Test with details
+	resp, err = s.client.GetStatus(ctx, &{{.ProjectName | lower}}v1.StatusRequest{
+		IncludeDetails: true,
+	})
+	s.Require().NoError(err, "GetStatus with details should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().NotEmpty(resp.Details)
+	s.Assert().Equal("grpc", resp.Details["service_type"])
+	s.Assert().Equal("{{.GoVersion}}", resp.Details["go_version"])
+	s.Assert().Equal("{{.Logger}}", resp.Details["logger_type"])
+	{{- if ne .DatabaseDriver ""}}
+	s.Assert().Equal("{{.DatabaseDriver}}", resp.Details["database"])
+	{{- end}}
+}
+
+// TestEcho tests the Echo service method
+func (s *GRPCIntegrationTestSuite) TestEcho() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	testMessage := "Hello, gRPC!"
+	resp, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+		Message: testMessage,
+	})
+	s.Require().NoError(err, "Echo should not return an error")
+	s.Require().NotNil(resp, "Response should not be nil")
+
+	s.Assert().Equal("Echo: "+testMessage, resp.Message)
+	s.Assert().NotNil(resp.Status)
+	s.Assert().Equal(int32(0), int32(resp.Status.Code)) // STATUS_CODE_OK
+}
+
+// TestStreamEcho tests the bidirectional streaming echo service
+func (s *GRPCIntegrationTestSuite) TestStreamEcho() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := s.client.StreamEcho(ctx)
+	s.Require().NoError(err, "StreamEcho should not return an error")
+
+	// Test multiple messages
+	testMessages := []string{
+		"First message",
+		"Second message",
+		"Third message",
+	}
+
+	// Send messages and receive responses
+	for _, msg := range testMessages {
+		err := stream.Send(&{{.ProjectName | lower}}v1.EchoRequest{
+			Message: msg,
+		})
+		s.Require().NoError(err, "Failed to send message")
+
+		resp, err := stream.Recv()
+		s.Require().NoError(err, "Failed to receive response")
+		s.Assert().Equal("Stream Echo: "+msg, resp.Message)
+		s.Assert().NotNil(resp.Status)
+	}
+
+	// Close the stream
+	err = stream.CloseSend()
+	s.Require().NoError(err, "Failed to close send stream")
+}
+
+{{- if ne .DatabaseDriver ""}}
+// TestUserCRUD tests the complete user CRUD operations
+func (s *GRPCIntegrationTestSuite) TestUserCRUD() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Test CreateUser
+	createResp, err := s.client.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "John Doe",
+		Email: "john.doe@example.com",
+	})
+	s.Require().NoError(err, "CreateUser should not return an error")
+	s.Require().NotNil(createResp, "Create response should not be nil")
+	s.Require().NotNil(createResp.User, "Created user should not be nil")
+
+	userID := createResp.User.Id
+	s.Assert().NotEmpty(userID)
+	s.Assert().Equal("John Doe", createResp.User.Name)
+	s.Assert().Equal("john.doe@example.com", createResp.User.Email)
+
+	// Test GetUser
+	getResp, err := s.client.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: userID,
+	})
+	s.Require().NoError(err, "GetUser should not return an error")
+	s.Require().NotNil(getResp, "Get response should not be nil")
+	s.Require().NotNil(getResp.User, "Retrieved user should not be nil")
+
+	s.Assert().Equal(userID, getResp.User.Id)
+	s.Assert().Equal("John Doe", getResp.User.Name)
+	s.Assert().Equal("john.doe@example.com", getResp.User.Email)
+
+	// Test UpdateUser
+	updateResp, err := s.client.UpdateUser(ctx, &{{.ProjectName | lower}}v1.UpdateUserRequest{
+		Id:    userID,
+		Name:  "John Smith",
+		Email: "john.smith@example.com",
+	})
+	s.Require().NoError(err, "UpdateUser should not return an error")
+	s.Require().NotNil(updateResp, "Update response should not be nil")
+	s.Require().NotNil(updateResp.User, "Updated user should not be nil")
+
+	s.Assert().Equal(userID, updateResp.User.Id)
+	s.Assert().Equal("John Smith", updateResp.User.Name)
+	s.Assert().Equal("john.smith@example.com", updateResp.User.Email)
+
+	// Test ListUsers
+	listResp, err := s.client.ListUsers(ctx, &{{.ProjectName | lower}}v1.ListUsersRequest{
+		Page:     1,
+		PageSize: 10,
+	})
+	s.Require().NoError(err, "ListUsers should not return an error")
+	s.Require().NotNil(listResp, "List response should not be nil")
+
+	s.Assert().GreaterOrEqual(len(listResp.Users), 1)
+	s.Assert().NotNil(listResp.Pagination)
+	s.Assert().Equal(int32(1), listResp.Pagination.Page)
+
+	// Test DeleteUser
+	deleteResp, err := s.client.DeleteUser(ctx, &{{.ProjectName | lower}}v1.DeleteUserRequest{
+		Id: userID,
+	})
+	s.Require().NoError(err, "DeleteUser should not return an error")
+	s.Require().NotNil(deleteResp, "Delete response should not be nil")
+	s.Assert().NotNil(deleteResp.Status)
+
+	// Verify user is deleted
+	_, err = s.client.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: userID,
+	})
+	s.Assert().Error(err, "GetUser should return an error for deleted user")
+}
+
+// TestUserValidation tests input validation for user operations
+func (s *GRPCIntegrationTestSuite) TestUserValidation() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test CreateUser with empty name
+	_, err := s.client.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "",
+		Email: "test@example.com",
+	})
+	s.Assert().Error(err, "CreateUser should return error for empty name")
+
+	// Test CreateUser with empty email
+	_, err = s.client.CreateUser(ctx, &{{.ProjectName | lower}}v1.CreateUserRequest{
+		Name:  "Test User",
+		Email: "",
+	})
+	s.Assert().Error(err, "CreateUser should return error for empty email")
+
+	// Test GetUser with empty ID
+	_, err = s.client.GetUser(ctx, &{{.ProjectName | lower}}v1.GetUserRequest{
+		Id: "",
+	})
+	s.Assert().Error(err, "GetUser should return error for empty ID")
+}
+{{- end}}
+
+// TestGRPCHealthCheck tests the standard gRPC health check
+func (s *GRPCIntegrationTestSuite) TestGRPCHealthCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := s.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Health check should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	s.Assert().Equal(grpc_health_v1.HealthCheckResponse_SERVING, resp.Status)
+}
+
+// TestExtendedHealthCheck tests the extended health check service
+func (s *GRPCIntegrationTestSuite) TestExtendedHealthCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test basic health check
+	resp, err := s.extHealthClient.Check(ctx, &healthv1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Extended health check should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().NotEmpty(resp.Message)
+
+	// Test detailed health check
+	detailResp, err := s.extHealthClient.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+	})
+	s.Require().NoError(err, "GetHealth should not return an error")
+	s.Require().NotNil(detailResp, "Detailed health response should not be nil")
+
+	s.Assert().NotNil(detailResp.StartedAt)
+	s.Assert().NotNil(detailResp.Timestamp)
+	s.Assert().Equal("{{.ProjectName}}-v1.0.0", detailResp.Version)
+	s.Assert().NotEmpty(detailResp.Metadata)
+
+	// Test readiness check
+	readinessResp, err := s.extHealthClient.CheckReadiness(ctx, &healthv1.ReadinessRequest{})
+	s.Require().NoError(err, "CheckReadiness should not return an error")
+	s.Require().NotNil(readinessResp, "Readiness response should not be nil")
+
+	s.Assert().True(readinessResp.Ready)
+	s.Assert().NotEmpty(readinessResp.Message)
+
+	// Test liveness check
+	livenessResp, err := s.extHealthClient.CheckLiveness(ctx, &healthv1.LivenessRequest{})
+	s.Require().NoError(err, "CheckLiveness should not return an error")
+	s.Require().NotNil(livenessResp, "Liveness response should not be nil")
+
+	s.Assert().True(livenessResp.Alive)
+	s.Assert().Greater(livenessResp.UptimeSeconds, int64(0))
+}
+
+// TestConcurrentRequests tests handling of concurrent requests
+func (s *GRPCIntegrationTestSuite) TestConcurrentRequests() {
+	const numRequests = 10
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create a channel to collect results
+	results := make(chan error, numRequests)
+
+	// Launch concurrent requests
+	for i := 0; i < numRequests; i++ {
+		go func(id int) {
+			_, err := s.client.Echo(ctx, &{{.ProjectName | lower}}v1.EchoRequest{
+				Message: fmt.Sprintf("Concurrent message %d", id),
+			})
+			results <- err
+		}(i)
+	}
+
+	// Collect results
+	for i := 0; i < numRequests; i++ {
+		err := <-results
+		s.Assert().NoError(err, "Concurrent request %d should not return an error", i)
+	}
+}
+
+// TestServerShutdown tests graceful server shutdown
+func (s *GRPCIntegrationTestSuite) TestServerShutdown() {
+	// This test is primarily to ensure the server can shut down gracefully
+	// The actual shutdown happens in TearDownSuite
+	s.Assert().NotNil(s.server, "Server should be initialized")
+}
+
+// Run the integration test suite
+func TestGRPCIntegrationSuite(t *testing.T) {
+	suite.Run(t, new(GRPCIntegrationTestSuite))
+}

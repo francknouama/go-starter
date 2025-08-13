@@ -1,0 +1,292 @@
+version: "1.0"
+name: "GraphQL API"
+type: "graphql-api"
+description: "Production-ready GraphQL API with schema-first development and code generation"
+tags:
+  - "api"
+  - "graphql"
+  - "gqlgen"
+  - "schema-first"
+
+variables:
+  - name: ProjectName
+    type: string
+    description: "Name of the project"
+    default: "{{.ProjectName}}"
+  
+  - name: ModulePath
+    type: string
+    description: "Go module path"
+    default: "{{.ModulePath}}"
+  
+  - name: GoVersion
+    type: string
+    description: "Go version"
+    default: "{{.GoVersion}}"
+  
+  - name: ServerPort
+    type: string
+    description: "Server port"
+    default: "8080"
+  
+  - name: LoggerType
+    type: string
+    description: "Logger implementation"
+    default: "{{.LoggerType}}"
+    enum: ["slog", "zap", "logrus", "zerolog"]
+  
+  - name: DatabaseDriver
+    type: string
+    description: "Database driver"
+    default: "{{.Features.Database.Driver}}"
+    enum: ["postgres", "mysql", "sqlite", "mongodb", ""]
+  
+  - name: DatabaseORM
+    type: string
+    description: "Database ORM/Query builder"
+    default: "{{.Features.Database.ORM}}"
+    enum: ["gorm", "sqlx", "sqlc", "ent", ""]
+  
+  - name: AuthType
+    type: string
+    description: "Authentication type"
+    default: "{{.Features.Authentication.Type}}"
+    enum: ["jwt", "oauth2", "api-key", "session", ""]
+  
+  - name: EnableSubscriptions
+    type: boolean
+    description: "Enable GraphQL subscriptions"
+    default: true
+  
+  - name: EnableDataloader
+    type: boolean
+    description: "Enable dataloaders for N+1 query prevention"
+    default: true
+  
+  - name: EnableIntrospection
+    type: boolean
+    description: "Enable GraphQL introspection in production"
+    default: false
+  
+  - name: EnablePlayground
+    type: boolean
+    description: "Enable GraphQL playground UI"
+    default: true
+  
+  - name: GenerateMocks
+    type: boolean
+    description: "Generate mock implementations for testing"
+    default: true
+
+dependencies:
+  - package: "github.com/99designs/gqlgen"
+    version: "v0.17.40"
+  
+  - package: "github.com/vektah/gqlparser/v2"
+    version: "v2.5.10"
+  
+  - package: "github.com/gorilla/mux"
+    version: "v1.8.1"
+  
+  - package: "github.com/joho/godotenv"
+    version: "v1.5.1"
+  
+  - package: "github.com/stretchr/testify"
+    version: "v1.8.4"
+  
+  # Logger dependencies
+  - package: "go.uber.org/zap"
+    version: "v1.26.0"
+    condition: "{{eq .LoggerType \"zap\"}}"
+  
+  - package: "github.com/sirupsen/logrus"
+    version: "v1.9.3"
+    condition: "{{eq .LoggerType \"logrus\"}}"
+  
+  - package: "github.com/rs/zerolog"
+    version: "v1.31.0"
+    condition: "{{eq .LoggerType \"zerolog\"}}"
+  
+  # Database dependencies
+  - package: "gorm.io/gorm"
+    version: "v1.25.5"
+    condition: "{{eq .DatabaseORM \"gorm\"}}"
+  
+  - package: "gorm.io/driver/postgres"
+    version: "v1.5.4"
+    condition: "{{and (eq .DatabaseDriver \"postgres\") (eq .DatabaseORM \"gorm\")}}"
+  
+  - package: "gorm.io/driver/mysql"
+    version: "v1.5.2"
+    condition: "{{and (eq .DatabaseDriver \"mysql\") (eq .DatabaseORM \"gorm\")}}"
+  
+  - package: "gorm.io/driver/sqlite"
+    version: "v1.5.4"
+    condition: "{{and (eq .DatabaseDriver \"sqlite\") (eq .DatabaseORM \"gorm\")}}"
+  
+  - package: "github.com/jmoiron/sqlx"
+    version: "v1.3.5"
+    condition: "{{eq .DatabaseORM \"sqlx\"}}"
+  
+  # Subscription dependencies
+  - package: "github.com/gorilla/websocket"
+    version: "v1.5.1"
+    condition: "{{.EnableSubscriptions}}"
+  
+  # Dataloader dependencies
+  - package: "github.com/graph-gophers/dataloader/v7"
+    version: "v7.1.0"
+    condition: "{{.EnableDataloader}}"
+  
+  # Authentication dependencies
+  - package: "github.com/golang-jwt/jwt/v5"
+    version: "v5.2.0"
+    condition: "{{eq .AuthType \"jwt\"}}"
+
+files:
+  # Core server files
+  - source: cmd/server/main.go.tmpl
+    destination: cmd/server/main.go
+  
+  - source: internal/config/config.go.tmpl
+    destination: internal/config/config.go
+  
+  # GraphQL schema and configuration
+  - source: internal/graphql/schema.graphql.tmpl
+    destination: internal/graphql/schema.graphql
+  
+  - source: internal/graphql/gqlgen.yml.tmpl
+    destination: gqlgen.yml
+  
+  - source: internal/graphql/tools.go.tmpl
+    destination: tools.go
+  
+  # Resolvers
+  - source: internal/graphql/resolvers/resolver.go.tmpl
+    destination: internal/graphql/resolvers/resolver.go
+  
+  - source: internal/graphql/resolvers/query.go.tmpl
+    destination: internal/graphql/resolvers/query.go
+  
+  - source: internal/graphql/resolvers/mutation.go.tmpl
+    destination: internal/graphql/resolvers/mutation.go
+  
+  - source: internal/graphql/resolvers/subscription.go.tmpl
+    destination: internal/graphql/resolvers/subscription.go
+    condition: "{{.EnableSubscriptions}}"
+  
+  # Models
+  - source: internal/graphql/models/user.go.tmpl
+    destination: internal/graphql/models/user.go
+  
+  - source: internal/graphql/models/todo.go.tmpl
+    destination: internal/graphql/models/todo.go
+  
+  # Database layer
+  - source: internal/database/database.go.tmpl
+    destination: internal/database/database.go
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  
+  - source: internal/database/migrations.go.tmpl
+    destination: internal/database/migrations.go
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  
+  # Middleware
+  - source: internal/middleware/cors.go.tmpl
+    destination: internal/middleware/cors.go
+  
+  - source: internal/middleware/auth.go.tmpl
+    destination: internal/middleware/auth.go
+    condition: "{{ne .AuthType \"\"}}"
+  
+  - source: internal/middleware/logging.go.tmpl
+    destination: internal/middleware/logging.go
+  
+  # Dataloaders
+  - source: internal/graphql/dataloaders/dataloaders.go.tmpl
+    destination: internal/graphql/dataloaders/dataloaders.go
+    condition: "{{.EnableDataloader}}"
+  
+  - source: internal/graphql/dataloaders/user_loader.go.tmpl
+    destination: internal/graphql/dataloaders/user_loader.go
+    condition: "{{.EnableDataloader}}"
+  
+  # Logger
+  - source: internal/logger/logger.go.tmpl
+    destination: internal/logger/logger.go
+  
+  # Utils
+  - source: internal/utils/context.go.tmpl
+    destination: internal/utils/context.go
+  
+  - source: internal/utils/errors.go.tmpl
+    destination: internal/utils/errors.go
+  
+  # Tests
+  - source: internal/graphql/resolvers/resolver_test.go.tmpl
+    destination: internal/graphql/resolvers/resolver_test.go
+  
+  - source: internal/graphql/resolvers/query_test.go.tmpl
+    destination: internal/graphql/resolvers/query_test.go
+  
+  - source: internal/graphql/resolvers/mutation_test.go.tmpl
+    destination: internal/graphql/resolvers/mutation_test.go
+  
+  # Configuration files
+  - source: .env.example.tmpl
+    destination: .env.example
+  
+  - source: Makefile.tmpl
+    destination: Makefile
+  
+  - source: Dockerfile.tmpl
+    destination: Dockerfile
+  
+  - source: docker-compose.yml.tmpl
+    destination: docker-compose.yml
+    condition: "{{ne .DatabaseDriver \"\"}}"
+  
+  - source: README.md.tmpl
+    destination: README.md
+  
+  - source: .gitignore.tmpl
+    destination: .gitignore
+  
+  - source: .dockerignore.tmpl
+    destination: .dockerignore
+
+hooks:
+  post_generation:
+    - command: "go mod init {{.ModulePath}}"
+      description: "Initialize Go module"
+    
+    - command: "go mod tidy"
+      description: "Download dependencies"
+    
+    - command: "go run github.com/99designs/gqlgen generate"
+      description: "Generate GraphQL code"
+      condition: "{{not .DryRun}}"
+    
+    - command: "go build -o bin/server cmd/server/main.go"
+      description: "Build the server"
+      condition: "{{not .DryRun}}"
+
+metadata:
+  min_go_version: "1.21"
+  categories:
+    - "api"
+    - "graphql"
+    - "web"
+  difficulty: "intermediate"
+  production_ready: true
+  features:
+    - "Schema-first development"
+    - "Code generation with gqlgen"
+    - "Type-safe resolvers"
+    - "GraphQL subscriptions support"
+    - "Dataloader for N+1 prevention"
+    - "GraphQL Playground"
+    - "Authentication middleware"
+    - "Database integration"
+    - "Docker support"
+    - "Comprehensive testing"

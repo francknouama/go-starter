@@ -1,0 +1,138 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+{{- end}}
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+)
+
+// @title {{.ProjectName}} API
+// @version 1.0
+// @description {{.ProjectName}} API server using Fiber framework
+// @termsOfService http://swagger.io/terms/
+
+// @contact.name API Support
+{{- if ne .Email ""}}
+// @contact.email {{.Email}}
+{{- end}}
+
+// @license.name {{.License}}
+{{- if eq .License "MIT"}}
+// @license.url https://opensource.org/licenses/MIT
+{{- else if eq .License "Apache-2.0"}}
+// @license.url https://www.apache.org/licenses/LICENSE-2.0.html
+{{- else if eq .License "GPL-3.0"}}
+// @license.url https://www.gnu.org/licenses/gpl-3.0.html
+{{- else if eq .License "BSD-3-Clause"}}
+// @license.url https://opensource.org/licenses/BSD-3-Clause
+{{- end}}
+
+// @host localhost:8080
+// @BasePath /api/v1
+
+{{- if eq .AuthType "jwt"}}
+// @securityDefinitions.apikey BearerAuth
+// @in header
+// @name Authorization
+// @description Type "Bearer" followed by a space and JWT token.
+{{- else if eq .AuthType "oauth2"}}
+// @securityDefinitions.oauth2.application OAuth2Application
+// @tokenUrl /oauth/token
+// @scope.read Grants read access
+// @scope.write Grants write access
+{{- else if eq .AuthType "api-key"}}
+// @securityDefinitions.apikey ApiKeyAuth
+// @in header
+// @name X-API-Key
+{{- end}}
+
+func main() {
+	// Initialize configuration
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger
+	log := logger.New(cfg.Log.Level, cfg.Environment)
+	log.Info("Starting {{.ProjectName}} server",
+		"version", cfg.App.Version,
+		"environment", cfg.Environment,
+	)
+
+{{- if ne .DatabaseDriver ""}}
+	// Initialize database
+	db, err := database.Connect(cfg.Database)
+	if err != nil {
+		log.Error("Failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := database.Close(db); err != nil {
+			log.Error("Failed to close database connection", "error", err)
+		}
+	}()
+
+	// Run migrations
+	if cfg.Database.AutoMigrate {
+		if err := database.Migrate(db); err != nil {
+			log.Error("Failed to run migrations", "error", err)
+			os.Exit(1)
+		}
+	}
+{{- end}}
+
+	// Create server dependencies
+	deps := &server.Dependencies{
+		Config: cfg,
+		Logger: log,
+{{- if ne .DatabaseDriver ""}}
+		DB:     db,
+{{- end}}
+	}
+
+	// Create and configure server
+	srv := server.New(deps)
+
+	// Handle graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	// Start server in a goroutine
+	go func() {
+		addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+		log.Info("Server starting", "address", addr)
+		
+		if err := srv.Listen(addr); err != nil {
+			log.Error("Server failed to start", "error", err)
+			os.Exit(1)
+		}
+	}()
+
+	// Wait for interrupt signal
+	<-quit
+	log.Info("Shutting down server...")
+
+	// Create context with timeout for shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Graceful shutdown
+	if err := srv.ShutdownWithContext(ctx); err != nil {
+		log.Error("Server forced to shutdown", "error", err)
+		os.Exit(1)
+	}
+
+	log.Info("Server stopped gracefully")
+}

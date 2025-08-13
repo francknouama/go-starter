@@ -1,0 +1,223 @@
+package auth
+
+import (
+	"context"
+	"encoding/json"
+	"time"
+)
+
+// Authenticator defines the interface for authentication mechanisms
+type Authenticator interface {
+	// Authenticate validates a token/credential and returns user information
+	Authenticate(ctx context.Context, token string) (*User, error)
+}
+
+// User represents an authenticated user
+type User struct {
+	ID       string                 `json:"id"`
+	Email    string                 `json:"email"`
+	Username string                 `json:"username"`
+	Name     string                 `json:"name"`
+	Roles    []string               `json:"roles,omitempty"`
+	Provider string                 `json:"provider"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// HasRole checks if the user has a specific role
+func (u *User) HasRole(role string) bool {
+	for _, r := range u.Roles {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+// HasAnyRole checks if the user has any of the specified roles
+func (u *User) HasAnyRole(roles ...string) bool {
+	for _, role := range roles {
+		if u.HasRole(role) {
+			return true
+		}
+	}
+	return false
+}
+
+// ToJSON converts the user to JSON representation
+func (u *User) ToJSON() ([]byte, error) {
+	return json.Marshal(u)
+}
+
+// FromJSON creates a user from JSON representation
+func FromJSON(data []byte) (*User, error) {
+	var user User
+	if err := json.Unmarshal(data, &user); err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+// Claims represents JWT-style claims that can be extended
+type Claims interface {
+	// Valid validates the claims
+	Valid() error
+	
+	// GetSubject returns the subject (user ID)
+	GetSubject() string
+	
+	// GetAudience returns the audience
+	GetAudience() []string
+	
+	// GetIssuer returns the issuer
+	GetIssuer() string
+	
+	// GetExpirationTime returns the expiration time
+	GetExpirationTime() int64
+	
+	// GetIssuedAt returns the issued at time
+	GetIssuedAt() int64
+}
+
+// TokenValidator defines the interface for token validation
+type TokenValidator interface {
+	// ValidateToken validates a token and returns claims
+	ValidateToken(ctx context.Context, token string) (Claims, error)
+	
+	// GetTokenType returns the type of tokens this validator handles
+	GetTokenType() string
+}
+
+// TokenIssuer defines the interface for token generation
+type TokenIssuer interface {
+	// IssueToken generates a new token for the given user
+	IssueToken(ctx context.Context, user *User) (string, error)
+	
+	// IssueRefreshToken generates a refresh token for the given user
+	IssueRefreshToken(ctx context.Context, user *User) (string, error)
+	
+	// GetTokenType returns the type of tokens this issuer generates
+	GetTokenType() string
+}
+
+// AuthProvider defines a complete authentication provider
+type AuthProvider interface {
+	Authenticator
+	TokenValidator
+	TokenIssuer
+	
+	// GetProviderName returns the name of the authentication provider
+	GetProviderName() string
+	
+	// Initialize sets up the authentication provider
+	Initialize(config map[string]interface{}) error
+	
+	// Close cleans up resources
+	Close() error
+}
+
+// SessionManager defines the interface for session management
+type SessionManager interface {
+	// CreateSession creates a new session for the user
+	CreateSession(ctx context.Context, user *User) (*Session, error)
+	
+	// GetSession retrieves a session by ID
+	GetSession(ctx context.Context, sessionID string) (*Session, error)
+	
+	// UpdateSession updates an existing session
+	UpdateSession(ctx context.Context, session *Session) error
+	
+	// DeleteSession removes a session
+	DeleteSession(ctx context.Context, sessionID string) error
+	
+	// CleanExpiredSessions removes expired sessions
+	CleanExpiredSessions(ctx context.Context) error
+}
+
+// Session represents a user session
+type Session struct {
+	ID        string                 `json:"id"`
+	UserID    string                 `json:"user_id"`
+	CreatedAt int64                  `json:"created_at"`
+	ExpiresAt int64                  `json:"expires_at"`
+	Data      map[string]interface{} `json:"data,omitempty"`
+}
+
+// IsExpired checks if the session is expired
+func (s *Session) IsExpired() bool {
+	return s.ExpiresAt > 0 && s.ExpiresAt < getCurrentTimestamp()
+}
+
+// PermissionChecker defines the interface for permission checking
+type PermissionChecker interface {
+	// HasPermission checks if the user has a specific permission
+	HasPermission(ctx context.Context, user *User, resource, action string) (bool, error)
+	
+	// GetUserPermissions returns all permissions for a user
+	GetUserPermissions(ctx context.Context, user *User) ([]Permission, error)
+}
+
+// Permission represents a permission
+type Permission struct {
+	Resource string `json:"resource"`
+	Action   string `json:"action"`
+	Effect   string `json:"effect"` // "allow" or "deny"
+}
+
+// RoleManager defines the interface for role management
+type RoleManager interface {
+	// GetUserRoles returns all roles assigned to a user
+	GetUserRoles(ctx context.Context, userID string) ([]Role, error)
+	
+	// AssignRole assigns a role to a user
+	AssignRole(ctx context.Context, userID, roleID string) error
+	
+	// RevokeRole revokes a role from a user
+	RevokeRole(ctx context.Context, userID, roleID string) error
+	
+	// GetRole retrieves a role by ID
+	GetRole(ctx context.Context, roleID string) (*Role, error)
+}
+
+// Role represents a role
+type Role struct {
+	ID          string       `json:"id"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Permissions []Permission `json:"permissions"`
+}
+
+// AuthConfig represents authentication configuration
+type AuthConfig struct {
+	Type       string                 `yaml:"type"`
+	Providers  map[string]interface{} `yaml:"providers"`
+	Session    SessionConfig          `yaml:"session"`
+	Permission PermissionConfig       `yaml:"permission"`
+}
+
+// SessionConfig represents session configuration
+type SessionConfig struct {
+	Timeout  int64  `yaml:"timeout"`
+	Storage  string `yaml:"storage"`
+	CookieCfg CookieConfig `yaml:"cookie"`
+}
+
+// CookieConfig represents cookie configuration
+type CookieConfig struct {
+	Name     string `yaml:"name"`
+	Domain   string `yaml:"domain"`
+	Path     string `yaml:"path"`
+	Secure   bool   `yaml:"secure"`
+	HttpOnly bool   `yaml:"http_only"`
+	SameSite string `yaml:"same_site"`
+}
+
+// PermissionConfig represents permission configuration
+type PermissionConfig struct {
+	Enabled bool   `yaml:"enabled"`
+	Backend string `yaml:"backend"`
+}
+
+// getCurrentTimestamp returns the current Unix timestamp
+func getCurrentTimestamp() int64 {
+	return time.Now().Unix()
+}

@@ -1,0 +1,348 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+	{{- if ne .ServiceDiscovery ""}}
+	"{{.ModulePath}}/internal/discovery"
+	{{- end}}
+	{{- if .TracingEnabled}}
+	"{{.ModulePath}}/internal/observability"
+	{{- end}}
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	{{- end}}
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	{{- if .ReflectionEnabled}}
+	"google.golang.org/grpc/reflection"
+	{{- end}}
+)
+
+var (
+	// Version information (set during build)
+	Version   = "dev"
+	BuildTime = "unknown"
+	GitCommit = "unknown"
+)
+
+func main() {
+	var rootCmd = &cobra.Command{
+		Use:   "{{.ProjectName | lower}}-server",
+		Short: "{{.ProjectName}} gRPC service",
+		Long:  `A high-performance gRPC service built with go-starter`,
+		Run:   runServer,
+	}
+
+	// Configuration flags
+	rootCmd.Flags().String("config", "", "Configuration file path")
+	rootCmd.Flags().String("env", "dev", "Environment (dev, test, prod)")
+	rootCmd.Flags().Int("grpc-port", {{.GrpcPort}}, "gRPC server port")
+	rootCmd.Flags().Int("metrics-port", {{.MetricsPort}}, "Metrics and health server port")
+	rootCmd.Flags().String("log-level", "info", "Log level (debug, info, warn, error)")
+	rootCmd.Flags().Bool("log-json", false, "Use JSON logging format")
+
+	// Version command
+	var versionCmd = &cobra.Command{
+		Use:   "version",
+		Short: "Show version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("{{.ProjectName}} gRPC Service\n")
+			fmt.Printf("Version: %s\n", Version)
+			fmt.Printf("Build Time: %s\n", BuildTime)
+			fmt.Printf("Git Commit: %s\n", GitCommit)
+		},
+	}
+
+	rootCmd.AddCommand(versionCmd)
+
+	// Bind flags to viper
+	viper.BindPFlags(rootCmd.Flags())
+
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runServer(cmd *cobra.Command, args []string) {
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Initialize logger
+	log, err := logger.New(cfg.Logger)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if closer, ok := log.(interface{ Close() error }); ok {
+			closer.Close()
+		}
+	}()
+
+	log.Info("Starting {{.ProjectName}} gRPC service",
+		"version", Version,
+		"build_time", BuildTime,
+		"git_commit", GitCommit,
+		"grpc_port", cfg.Server.GRPCPort,
+		"metrics_port", cfg.Server.MetricsPort,
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+
+	{{- if .TracingEnabled}}
+	// Initialize tracing
+	tracingShutdown, err := observability.InitTracing(ctx, cfg.Observability.Tracing)
+	if err != nil {
+		log.Error("Failed to initialize tracing", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := tracingShutdown(shutdownCtx); err != nil {
+			log.Error("Failed to shutdown tracing", "error", err)
+		}
+	}()
+	{{- end}}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database
+	db, err := database.Connect(cfg.Database)
+	if err != nil {
+		log.Error("Failed to connect to database", "error", err)
+		os.Exit(1)
+	}
+	defer database.Close(db)
+
+	// Run database migrations
+	if err := database.Migrate(db); err != nil {
+		log.Error("Failed to run database migrations", "error", err)
+		os.Exit(1)
+	}
+	{{- end}}
+
+	{{- if ne .ServiceDiscovery ""}}
+	// Initialize service discovery
+	serviceDiscovery, err := discovery.New(cfg.Discovery)
+	if err != nil {
+		log.Error("Failed to initialize service discovery", "error", err)
+		os.Exit(1)
+	}
+	defer serviceDiscovery.Close()
+	{{- end}}
+
+	// Create gRPC server
+	grpcServer, err := server.NewGRPCServer(cfg, log{{- if ne .DatabaseDriver ""}}, db{{- end}}{{- if ne .ServiceDiscovery ""}}, serviceDiscovery{{- end}})
+	if err != nil {
+		log.Error("Failed to create gRPC server", "error", err)
+		os.Exit(1)
+	}
+
+	{{- if .ReflectionEnabled}}
+	// Enable gRPC reflection for development
+	reflection.Register(grpcServer)
+	log.Info("gRPC reflection enabled")
+	{{- end}}
+
+	// Start gRPC server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := startGRPCServer(ctx, grpcServer, cfg.Server.GRPCPort, log); err != nil {
+			log.Error("gRPC server error", "error", err)
+			cancel()
+		}
+	}()
+
+	{{- if .MetricsEnabled}}
+	// Start metrics server
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := startMetricsServer(ctx, cfg.Server.MetricsPort, log); err != nil {
+			log.Error("Metrics server error", "error", err)
+			cancel()
+		}
+	}()
+	{{- end}}
+
+	{{- if ne .ServiceDiscovery ""}}
+	// Register service with service discovery
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := registerService(ctx, serviceDiscovery, cfg, log); err != nil {
+			log.Error("Service registration error", "error", err)
+			cancel()
+		}
+	}()
+	{{- end}}
+
+	// Wait for shutdown signal
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	select {
+	case sig := <-sigChan:
+		log.Info("Received shutdown signal", "signal", sig)
+	case <-ctx.Done():
+		log.Info("Context cancelled, shutting down")
+	}
+
+	// Graceful shutdown
+	log.Info("Starting graceful shutdown")
+	
+	{{- if ne .ServiceDiscovery ""}}
+	// Deregister from service discovery
+	if err := serviceDiscovery.Deregister(); err != nil {
+		log.Error("Failed to deregister service", "error", err)
+	}
+	{{- end}}
+
+	// Stop gRPC server gracefully
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
+
+	done := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		log.Info("gRPC server stopped gracefully")
+	case <-shutdownCtx.Done():
+		log.Warn("Forcing gRPC server shutdown")
+		grpcServer.Stop()
+	}
+
+	cancel() // Cancel context to stop other goroutines
+	wg.Wait() // Wait for all goroutines to finish
+
+	log.Info("{{.ProjectName}} gRPC service stopped")
+}
+
+func startGRPCServer(ctx context.Context, grpcServer *grpc.Server, port int, log logger.Logger) error {
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return fmt.Errorf("failed to listen on port %d: %w", port, err)
+	}
+
+	log.Info("gRPC server starting", "port", port)
+
+	// Server ready channel for health checks
+	go func() {
+		<-ctx.Done()
+	}()
+
+	if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
+		return fmt.Errorf("gRPC server failed: %w", err)
+	}
+
+	return nil
+}
+
+{{- if .MetricsEnabled}}
+func startMetricsServer(ctx context.Context, port int, log logger.Logger) error {
+	mux := http.NewServeMux()
+	
+	// Prometheus metrics endpoint
+	mux.Handle("/metrics", server.PrometheusHandler())
+	
+	// Health check endpoints
+	mux.HandleFunc("/health", server.HealthHandler())
+	mux.HandleFunc("/ready", server.ReadinessHandler())
+	mux.HandleFunc("/live", server.LivenessHandler())
+
+	httpServer := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	log.Info("Metrics server starting", "port", port)
+
+	// Start server in goroutine
+	errChan := make(chan error, 1)
+	go func() {
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errChan <- err
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		// Graceful shutdown
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Error("Failed to shutdown metrics server gracefully", "error", err)
+			return err
+		}
+		log.Info("Metrics server stopped gracefully")
+		return nil
+	case err := <-errChan:
+		return fmt.Errorf("metrics server failed: %w", err)
+	}
+}
+{{- end}}
+
+{{- if ne .ServiceDiscovery ""}}
+func registerService(ctx context.Context, serviceDiscovery discovery.ServiceDiscovery, cfg *config.Config, log logger.Logger) error {
+	service := discovery.ServiceInstance{
+		ID:      fmt.Sprintf("{{.ProjectName | lower}}-%s", cfg.Server.InstanceID),
+		Name:    "{{.ProjectName | lower}}",
+		Address: cfg.Server.Address,
+		Port:    cfg.Server.GRPCPort,
+		Tags:    []string{"grpc", "{{.ProjectName | lower}}", cfg.Environment},
+		Meta: map[string]string{
+			"version":    Version,
+			"build_time": BuildTime,
+			"git_commit": GitCommit,
+		},
+	}
+
+	if err := serviceDiscovery.Register(service); err != nil {
+		return fmt.Errorf("failed to register service: %w", err)
+	}
+
+	log.Info("Service registered with service discovery",
+		"service_id", service.ID,
+		"service_name", service.Name,
+		"address", service.Address,
+		"port", service.Port,
+	)
+
+	// Keep the service registered until context is cancelled
+	<-ctx.Done()
+	return nil
+}
+{{- end}}

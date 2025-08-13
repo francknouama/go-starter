@@ -1,0 +1,67 @@
+# Build stage
+FROM golang:{{.GoVersion}}-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata make
+
+# Set build environment
+ENV CGO_ENABLED=0 \
+    GOOS=linux \
+    GOARCH=amd64
+
+# Create build directory
+WORKDIR /build
+
+# Copy dependency files first for better caching
+COPY go.mod go.sum ./
+
+# Download dependencies
+RUN go mod download && go mod verify
+
+# Copy source code
+COPY . .
+
+# Generate protocol buffer code
+RUN make generate
+
+# Build the application
+RUN make build
+
+# Runtime stage
+FROM alpine:3.19
+
+# Install runtime dependencies
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user for security
+RUN addgroup -g 1001 {{.ProjectName | lower}} && \
+    adduser -D -s /bin/sh -u 1001 -G {{.ProjectName | lower}} {{.ProjectName | lower}}
+
+# Create necessary directories
+RUN mkdir -p /app/configs /app/logs && \
+    chown -R {{.ProjectName | lower}}:{{.ProjectName | lower}} /app
+
+# Switch to non-root user
+USER {{.ProjectName | lower}}
+
+# Set working directory
+WORKDIR /app
+
+# Copy binary from builder stage
+COPY --from=builder --chown={{.ProjectName | lower}}:{{.ProjectName | lower}} /build/bin/{{.ProjectName | lower}}-server ./{{.ProjectName | lower}}-server
+
+# Copy configuration files
+COPY --from=builder --chown={{.ProjectName | lower}}:{{.ProjectName | lower}} /build/configs/ ./configs/
+
+# Expose ports
+EXPOSE {{.GrpcPort}} {{.MetricsPort}}
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:{{.MetricsPort}}/health || exit 1
+
+# Set default configuration
+ENV CONFIG_FILE=configs/config.prod.yaml
+
+# Run the application
+CMD ["./{{.ProjectName | lower}}-server"]

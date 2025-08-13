@@ -1,0 +1,145 @@
+.PHONY: build run test clean dev docker-build docker-run migrate lint format
+
+# Variables
+BINARY_NAME={{.ProjectName}}
+DOCKER_IMAGE={{.ProjectName}}:latest
+GO_VERSION={{.GoVersion}}
+
+# Build the application
+build:
+	@echo "Building $(BINARY_NAME)..."
+	@go build -o bin/$(BINARY_NAME) cmd/server/main.go
+
+# Run the application
+run:
+	@echo "Running $(BINARY_NAME)..."
+	@go run cmd/server/main.go
+
+# Run with live reload (requires air: go install github.com/cosmtrek/air@latest)
+dev:
+	@echo "Starting development server with live reload..."
+	@air
+
+# Run tests
+test:
+	@echo "Running tests..."
+	@go test -v ./...
+
+# Run tests with coverage
+test-coverage:
+	@echo "Running tests with coverage..."
+	@go test -v -race -coverprofile=coverage.out ./...
+	@go tool cover -html=coverage.out -o coverage.html
+
+# Run benchmarks
+benchmark:
+	@echo "Running benchmarks..."
+	@go test -bench=. -benchmem ./...
+
+# Clean build artifacts
+clean:
+	@echo "Cleaning..."
+	@go clean
+	@rm -rf bin/
+	@rm -f coverage.out coverage.html
+
+# Format code
+format:
+	@echo "Formatting code..."
+	@go fmt ./...
+	@goimports -w .
+
+# Lint code
+lint:
+	@echo "Linting code..."
+	@golangci-lint run
+
+# Run migrations
+migrate:
+	@echo "Running migrations..."
+	@go run cmd/server/main.go migrate
+
+# Generate code (if needed)
+generate:
+	@echo "Generating code..."
+	@go generate ./...
+
+# Install dependencies
+deps:
+	@echo "Installing dependencies..."
+	@go mod download
+	@go mod tidy
+
+# Update dependencies
+update-deps:
+	@echo "Updating dependencies..."
+	@go get -u ./...
+	@go mod tidy
+
+# Build Docker image
+docker-build:
+	@echo "Building Docker image..."
+	@docker build -t $(DOCKER_IMAGE) .
+
+# Run Docker container
+docker-run:
+	@echo "Running Docker container..."
+	@docker run -p 8080:8080 $(DOCKER_IMAGE)
+
+# Start services with docker-compose
+docker-up:
+	@echo "Starting services with docker-compose..."
+	@docker-compose up -d
+
+# Stop services with docker-compose
+docker-down:
+	@echo "Stopping services with docker-compose..."
+	@docker-compose down
+
+# View logs
+docker-logs:
+	@echo "Viewing logs..."
+	@docker-compose logs -f
+
+# Install development tools
+install-tools:
+	@echo "Installing development tools..."
+	@go install github.com/cosmtrek/air@latest
+	@go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	@go install golang.org/x/tools/cmd/goimports@latest
+
+# Security scan
+security:
+	@echo "Running security scan..."
+	@gosec ./...
+
+# Performance profiling
+profile:
+	@echo "Starting server with profiling..."
+	@go run cmd/server/main.go -cpuprofile=cpu.prof -memprofile=mem.prof
+
+# Help
+help:
+	@echo "Available commands:"
+	@echo "  build         - Build the application"
+	@echo "  run           - Run the application"
+	@echo "  dev           - Run with live reload"
+	@echo "  test          - Run tests"
+	@echo "  test-coverage - Run tests with coverage"
+	@echo "  benchmark     - Run benchmarks"
+	@echo "  clean         - Clean build artifacts"
+	@echo "  format        - Format code"
+	@echo "  lint          - Lint code"
+	@echo "  migrate       - Run database migrations"
+	@echo "  generate      - Generate code"
+	@echo "  deps          - Install dependencies"
+	@echo "  update-deps   - Update dependencies"
+	@echo "  docker-build  - Build Docker image"
+	@echo "  docker-run    - Run Docker container"
+	@echo "  docker-up     - Start services with docker-compose"
+	@echo "  docker-down   - Stop services with docker-compose"
+	@echo "  docker-logs   - View docker-compose logs"
+	@echo "  install-tools - Install development tools"
+	@echo "  security      - Run security scan"
+	@echo "  profile       - Start server with profiling"
+	@echo "  help          - Show this help message"

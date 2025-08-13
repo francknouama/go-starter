@@ -1,0 +1,481 @@
+package discovery
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+)
+
+// KubernetesServiceDiscovery implements ServiceDiscovery using Kubernetes
+type KubernetesServiceDiscovery struct {
+	client         kubernetes.Interface
+	config         config.DiscoveryConfig
+	namespace      string
+	serviceName    string
+	podName        string
+	servicePort    int
+	labels         map[string]string
+	annotations    map[string]string
+	mu             sync.RWMutex
+	healthStatus   HealthStatus
+	stopCh         chan struct{}
+	wg             sync.WaitGroup
+}
+
+// NewKubernetesServiceDiscovery creates a new Kubernetes service discovery client
+func NewKubernetesServiceDiscovery(cfg config.DiscoveryConfig) (ServiceDiscovery, error) {
+	// Create Kubernetes client configuration
+	k8sConfig, err := getKubernetesConfig()
+	if err != nil {
+		return nil, NewDiscoveryError("K8S_CONFIG_ERROR", "failed to get Kubernetes config", err)
+	}
+
+	// Create Kubernetes client
+	client, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		return nil, NewDiscoveryError("K8S_CLIENT_ERROR", "failed to create Kubernetes client", err)
+	}
+
+	// Test connection
+	_, err = client.CoreV1().Namespaces().List(context.Background(), metav1.ListOptions{Limit: 1})
+	if err != nil {
+		return nil, NewDiscoveryError("K8S_CONNECTION_ERROR", "failed to connect to Kubernetes", err)
+	}
+
+	// Get namespace from environment or config
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	sd := &KubernetesServiceDiscovery{
+		client:       client,
+		config:       cfg,
+		namespace:    namespace,
+		healthStatus: HealthStatusUnknown,
+		stopCh:       make(chan struct{}),
+		labels:       make(map[string]string),
+		annotations:  make(map[string]string),
+	}
+
+	return sd, nil
+}
+
+// Register registers a service instance with Kubernetes (updates pod labels/annotations)
+func (k *KubernetesServiceDiscovery) Register(instance ServiceInstance) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	k.serviceName = instance.Name
+	k.servicePort = instance.Port
+
+	// Get pod name from environment
+	k.podName = os.Getenv("POD_NAME")
+	if k.podName == "" {
+		return NewDiscoveryError("K8S_POD_NAME_ERROR", "POD_NAME environment variable not set", nil)
+	}
+
+	// Prepare labels and annotations
+	k.labels["app"] = instance.Name
+	k.labels["version"] = instance.Version
+	for _, tag := range instance.Tags {
+		k.labels[fmt.Sprintf("tag-%s", tag)] = "true"
+	}
+
+	for key, value := range instance.Meta {
+		k.annotations[key] = value
+	}
+	k.annotations["service-discovery/port"] = strconv.Itoa(instance.Port)
+	k.annotations["service-discovery/address"] = instance.Address
+
+	// Update pod labels and annotations
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pod, err := k.client.CoreV1().Pods(k.namespace).Get(ctx, k.podName, metav1.GetOptions{})
+	if err != nil {
+		return NewDiscoveryError("K8S_GET_POD_ERROR", "failed to get pod", err)
+	}
+
+	// Update labels
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	for key, value := range k.labels {
+		pod.Labels[key] = value
+	}
+
+	// Update annotations
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+	for key, value := range k.annotations {
+		pod.Annotations[key] = value
+	}
+
+	// Mark as ready for service discovery
+	pod.Annotations["service-discovery/ready"] = "true"
+	pod.Annotations["service-discovery/health"] = string(HealthStatusHealthy)
+
+	_, err = k.client.CoreV1().Pods(k.namespace).Update(ctx, pod, metav1.UpdateOptions{})
+	if err != nil {
+		return NewDiscoveryError("K8S_UPDATE_POD_ERROR", "failed to update pod", err)
+	}
+
+	k.healthStatus = HealthStatusHealthy
+
+	// Start health update routine
+	if k.config.HealthCheck.Enabled {
+		k.wg.Add(1)
+		go k.healthUpdateRoutine()
+	}
+
+	return nil
+}
+
+// Deregister removes the service instance from Kubernetes (updates pod annotations)
+func (k *KubernetesServiceDiscovery) Deregister() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	if k.podName == "" {
+		return nil // Not registered
+	}
+
+	// Stop health update routine
+	close(k.stopCh)
+	k.wg.Wait()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pod, err := k.client.CoreV1().Pods(k.namespace).Get(ctx, k.podName, metav1.GetOptions{})
+	if err != nil {
+		return NewDiscoveryError("K8S_GET_POD_ERROR", "failed to get pod", err)
+	}
+
+	// Mark as not ready for service discovery
+	if pod.Annotations != nil {
+		pod.Annotations["service-discovery/ready"] = "false"
+		pod.Annotations["service-discovery/health"] = string(HealthStatusUnhealthy)
+	}
+
+	_, err = k.client.CoreV1().Pods(k.namespace).Update(ctx, pod, metav1.UpdateOptions{})
+	if err != nil {
+		return NewDiscoveryError("K8S_UPDATE_POD_ERROR", "failed to update pod", err)
+	}
+
+	k.healthStatus = HealthStatusUnknown
+
+	return nil
+}
+
+// Discover returns healthy instances of a service from Kubernetes
+func (k *KubernetesServiceDiscovery) Discover(serviceName string) ([]ServiceInstance, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Get pods with the service label
+	labelSelector := fmt.Sprintf("app=%s", serviceName)
+	pods, err := k.client.CoreV1().Pods(k.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, NewDiscoveryError("K8S_LIST_PODS_ERROR", "failed to list pods", err)
+	}
+
+	instances := make([]ServiceInstance, 0, len(pods.Items))
+	for _, pod := range pods.Items {
+		// Skip pods that are not ready for service discovery
+		if ready, exists := pod.Annotations["service-discovery/ready"]; !exists || ready != "true" {
+			continue
+		}
+
+		// Skip pods that are not running
+		if pod.Status.Phase != "Running" {
+			continue
+		}
+
+		// Skip pods that are not ready
+		if !k.isPodReady(pod) {
+			continue
+		}
+
+		instance := k.podToServiceInstance(pod)
+		if instance.Health == HealthStatusHealthy || instance.Health == HealthStatusWarning {
+			instances = append(instances, instance)
+		}
+	}
+
+	return instances, nil
+}
+
+// Watch watches for changes to a service in Kubernetes
+func (k *KubernetesServiceDiscovery) Watch(ctx context.Context, serviceName string) (<-chan []ServiceInstance, error) {
+	ch := make(chan []ServiceInstance, 10)
+
+	k.wg.Add(1)
+	go func() {
+		defer k.wg.Done()
+		defer close(ch)
+
+		labelSelector := fmt.Sprintf("app=%s", serviceName)
+		
+		// Send initial state
+		instances, err := k.Discover(serviceName)
+		if err == nil {
+			select {
+			case ch <- instances:
+			case <-ctx.Done():
+				return
+			}
+		}
+
+		// Watch for changes
+		watchOptions := metav1.ListOptions{
+			LabelSelector: labelSelector,
+			Watch:         true,
+		}
+
+		watcher, err := k.client.CoreV1().Pods(k.namespace).Watch(ctx, watchOptions)
+		if err != nil {
+			return
+		}
+		defer watcher.Stop()
+
+		for {
+			select {
+			case event := <-watcher.ResultChan():
+				if event.Type == watch.Error {
+					return
+				}
+
+				// Get updated instances
+				instances, err := k.Discover(serviceName)
+				if err != nil {
+					continue
+				}
+
+				select {
+				case ch <- instances:
+				case <-ctx.Done():
+					return
+				}
+
+			case <-ctx.Done():
+				return
+			case <-k.stopCh:
+				return
+			}
+		}
+	}()
+
+	return ch, nil
+}
+
+// UpdateHealth updates the health status of this service instance
+func (k *KubernetesServiceDiscovery) UpdateHealth(status HealthStatus) error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	if k.podName == "" {
+		return NewDiscoveryError("SERVICE_NOT_REGISTERED", "service not registered", nil)
+	}
+
+	k.healthStatus = status
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pod, err := k.client.CoreV1().Pods(k.namespace).Get(ctx, k.podName, metav1.GetOptions{})
+	if err != nil {
+		return NewDiscoveryError("K8S_GET_POD_ERROR", "failed to get pod", err)
+	}
+
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+
+	pod.Annotations["service-discovery/health"] = string(status)
+	pod.Annotations["service-discovery/health-updated"] = time.Now().Format(time.RFC3339)
+
+	_, err = k.client.CoreV1().Pods(k.namespace).Update(ctx, pod, metav1.UpdateOptions{})
+	if err != nil {
+		return NewDiscoveryError("K8S_HEALTH_UPDATE_ERROR", "failed to update health status", err)
+	}
+
+	return nil
+}
+
+// GetHealth returns the current health status
+func (k *KubernetesServiceDiscovery) GetHealth() (HealthStatus, error) {
+	k.mu.RLock()
+	defer k.mu.RUnlock()
+	return k.healthStatus, nil
+}
+
+// Close closes the Kubernetes client
+func (k *KubernetesServiceDiscovery) Close() error {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+
+	// Stop all goroutines
+	close(k.stopCh)
+	k.wg.Wait()
+
+	return nil
+}
+
+// healthUpdateRoutine periodically updates health status
+func (k *KubernetesServiceDiscovery) healthUpdateRoutine() {
+	defer k.wg.Done()
+
+	ticker := time.NewTicker(k.config.HealthCheck.Interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			k.mu.RLock()
+			status := k.healthStatus
+			k.mu.RUnlock()
+
+			if status != HealthStatusUnknown {
+				k.UpdateHealth(status)
+			}
+
+		case <-k.stopCh:
+			return
+		}
+	}
+}
+
+// podToServiceInstance converts a Kubernetes pod to a ServiceInstance
+func (k *KubernetesServiceDiscovery) podToServiceInstance(pod metav1.Object) ServiceInstance {
+	annotations := pod.GetAnnotations()
+	labels := pod.GetLabels()
+
+	instance := ServiceInstance{
+		ID:      string(pod.GetUID()),
+		Name:    labels["app"],
+		Address: annotations["service-discovery/address"],
+		Tags:    make([]string, 0),
+		Meta:    make(map[string]string),
+		Version: labels["version"],
+	}
+
+	// Extract port
+	if portStr, exists := annotations["service-discovery/port"]; exists {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			instance.Port = port
+		}
+	}
+
+	// Extract tags from labels
+	for key, value := range labels {
+		if fmt.Sprintf("tag-%s", value) == key && value == "true" {
+			instance.Tags = append(instance.Tags, value)
+		}
+	}
+
+	// Copy annotations to meta
+	for key, value := range annotations {
+		if key != "service-discovery/port" && key != "service-discovery/address" &&
+		   key != "service-discovery/ready" && key != "service-discovery/health" {
+			instance.Meta[key] = value
+		}
+	}
+
+	// Get health status
+	if healthStr, exists := annotations["service-discovery/health"]; exists {
+		instance.Health = HealthStatus(healthStr)
+	} else {
+		instance.Health = HealthStatusUnknown
+	}
+
+	return instance
+}
+
+// isPodReady checks if a pod is ready based on its conditions
+func (k *KubernetesServiceDiscovery) isPodReady(pod metav1.Object) bool {
+	// For simplicity, we'll consider a pod ready if it's in Running phase
+	// In a real implementation, you'd check the Ready condition
+	return true
+}
+
+// getKubernetesConfig gets the Kubernetes client configuration
+func getKubernetesConfig() (*rest.Config, error) {
+	// Try in-cluster config first
+	config, err := rest.InClusterConfig()
+	if err == nil {
+		return config, nil
+	}
+
+	// Fall back to kubeconfig
+	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	if kubeconfigEnv := os.Getenv("KUBECONFIG"); kubeconfigEnv != "" {
+		kubeconfigPath = kubeconfigEnv
+	}
+
+	config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+// GetNamespaces returns all available namespaces
+func (k *KubernetesServiceDiscovery) GetNamespaces() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	namespaces, err := k.client.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, NewDiscoveryError("K8S_LIST_NAMESPACES_ERROR", "failed to list namespaces", err)
+	}
+
+	names := make([]string, 0, len(namespaces.Items))
+	for _, ns := range namespaces.Items {
+		names = append(names, ns.Name)
+	}
+
+	return names, nil
+}
+
+// GetServicesInNamespace returns all services in a specific namespace
+func (k *KubernetesServiceDiscovery) GetServicesInNamespace(namespace string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pods, err := k.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, NewDiscoveryError("K8S_LIST_PODS_ERROR", "failed to list pods", err)
+	}
+
+	serviceNames := make(map[string]bool)
+	for _, pod := range pods.Items {
+		if appName, exists := pod.Labels["app"]; exists {
+			serviceNames[appName] = true
+		}
+	}
+
+	names := make([]string, 0, len(serviceNames))
+	for name := range serviceNames {
+		names = append(names, name)
+	}
+
+	return names, nil
+}

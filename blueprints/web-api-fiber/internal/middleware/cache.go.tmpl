@@ -1,0 +1,49 @@
+package middleware
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cache"
+	"{{.ModulePath}}/internal/config"
+)
+
+// Cache returns a caching middleware
+func Cache(cfg *config.Config) fiber.Handler {
+	if !cfg.Server.Cache.Enabled {
+		return func(c *fiber.Ctx) error {
+			return c.Next()
+		}
+	}
+
+	return cache.New(cache.Config{
+		Expiration:   cfg.Server.Cache.Expiration,
+		CacheControl: true,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			// Generate cache key based on method, path, and query parameters
+			return c.Method() + ":" + c.Path() + "?" + string(c.Request().URI().QueryString())
+		},
+		ExpirationGenerator: func(c *fiber.Ctx, cfg *cache.Config) time.Duration {
+			// Different expiration times for different routes
+			path := c.Path()
+			
+			// Don't cache auth routes
+			if path == "/api/v1/auth/login" || path == "/api/v1/auth/register" {
+				return 0
+			}
+			
+			// Shorter cache for user-specific routes
+			if path == "/api/v1/users/me" {
+				return 1 * time.Minute
+			}
+			
+			// Use default expiration for other routes
+			return cfg.Expiration
+		},
+		Methods: []string{
+			fiber.MethodGet,
+			fiber.MethodHead,
+		},
+		CacheHeader: "X-Cache",
+	})
+}

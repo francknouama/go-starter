@@ -1,0 +1,134 @@
+package handlers
+
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/gofiber/contrib/websocket"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Message represents a WebSocket message
+type Message struct {
+	Type      string          `json:"type"`
+	Payload   json.RawMessage `json:"payload"`
+	Timestamp time.Time       `json:"timestamp"`
+}
+
+// WebSocketHandler handles WebSocket connections
+func WebSocketHandler(log logger.Logger) func(*websocket.Conn) {
+	return func(c *websocket.Conn) {
+		// Log new connection
+		log.Info("WebSocket connection established",
+			"remote_addr", c.RemoteAddr().String(),
+		)
+
+		// Ping ticker to keep connection alive
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		// Message channel
+		messageChan := make(chan Message)
+		defer close(messageChan)
+
+		// Error channel
+		errChan := make(chan error)
+		defer close(errChan)
+
+		// Read messages in goroutine
+		go func() {
+			for {
+				var msg Message
+				err := c.ReadJSON(&msg)
+				if err != nil {
+					if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+						log.Error("WebSocket read error", "error", err)
+					}
+					errChan <- err
+					return
+				}
+				messageChan <- msg
+			}
+		}()
+
+		// Main message loop
+		for {
+			select {
+			case msg := <-messageChan:
+				// Handle different message types
+				switch msg.Type {
+				case "ping":
+					// Respond with pong
+					response := Message{
+						Type:      "pong",
+						Payload:   json.RawMessage(`{"status":"ok"}`),
+						Timestamp: time.Now(),
+					}
+					if err := c.WriteJSON(response); err != nil {
+						log.Error("Failed to send pong", "error", err)
+						return
+					}
+
+				case "echo":
+					// Echo the message back
+					response := Message{
+						Type:      "echo",
+						Payload:   msg.Payload,
+						Timestamp: time.Now(),
+					}
+					if err := c.WriteJSON(response); err != nil {
+						log.Error("Failed to send echo", "error", err)
+						return
+					}
+
+				case "broadcast":
+					// In a real application, you would broadcast to all connected clients
+					// For now, just acknowledge
+					response := Message{
+						Type:      "broadcast_ack",
+						Payload:   json.RawMessage(`{"status":"received"}`),
+						Timestamp: time.Now(),
+					}
+					if err := c.WriteJSON(response); err != nil {
+						log.Error("Failed to send broadcast acknowledgment", "error", err)
+						return
+					}
+
+				default:
+					// Unknown message type
+					response := Message{
+						Type:      "error",
+						Payload:   json.RawMessage(`{"error":"unknown message type"}`),
+						Timestamp: time.Now(),
+					}
+					if err := c.WriteJSON(response); err != nil {
+						log.Error("Failed to send error response", "error", err)
+						return
+					}
+				}
+
+			case <-ticker.C:
+				// Send ping to keep connection alive
+				if err := c.WriteMessage(websocket.PingMessage, nil); err != nil {
+					log.Error("Failed to send ping", "error", err)
+					return
+				}
+
+			case err := <-errChan:
+				if err != nil {
+					log.Info("WebSocket connection closed",
+						"remote_addr", c.RemoteAddr().String(),
+						"error", err,
+					)
+					return
+				}
+			}
+		}
+	}
+}
+
+// BroadcastMessage broadcasts a message to all connected clients
+// This is a placeholder - in a real application, you would maintain a registry of connections
+func BroadcastMessage(msg Message) {
+	// TODO: Implement connection registry and broadcasting
+}

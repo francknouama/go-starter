@@ -1,0 +1,654 @@
+openapi: 3.0.3
+info:
+  title: {{.ProjectName}} API
+  description: |
+    A high-performance web API built with Fiber framework.
+    
+    ## Features
+    - Fast HTTP performance with fasthttp
+    - Express-inspired API design
+    - Built-in middleware for security and performance
+{{- if ne .AuthType ""}}
+    - {{if eq .AuthType "jwt"}}JWT{{else if eq .AuthType "oauth2"}}OAuth2{{else if eq .AuthType "session"}}Session-based{{end}} authentication
+{{- end}}
+{{- if ne .DatabaseDriver ""}}
+    - Database integration with {{.DatabaseDriver}}
+{{- end}}
+{{- if .EnableWebSocket}}
+    - WebSocket support for real-time communication
+{{- end}}
+    
+  version: 1.0.0
+{{- if ne .Email ""}}
+  contact:
+    email: {{.Email}}
+{{- end}}
+  license:
+    name: {{.License}}
+{{- if eq .License "MIT"}}
+    url: https://opensource.org/licenses/MIT
+{{- else if eq .License "Apache-2.0"}}
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+{{- end}}
+
+servers:
+  - url: http://localhost:8080
+    description: Development server
+  - url: https://api.{{.ProjectName}}.com
+    description: Production server
+
+paths:
+  /health:
+    get:
+      tags:
+        - Health
+      summary: Health check
+      description: Returns the health status of the service
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /ready:
+    get:
+      tags:
+        - Health
+      summary: Readiness check
+      description: Returns whether the service is ready to accept requests
+      operationId: readinessCheck
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /live:
+    get:
+      tags:
+        - Health
+      summary: Liveness check
+      description: Returns whether the service is alive
+      operationId: livenessCheck
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+{{- if ne .AuthType ""}}
+  /api/v1/auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Register new user
+      description: Register a new user account
+      operationId: register
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: Login user
+      description: Authenticate user and receive access token
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+{{- if eq .AuthType "jwt"}}
+  /api/v1/auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Refresh access token using refresh token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequest'
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+{{- end}}
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+  /api/v1/users:
+    get:
+      tags:
+        - Users
+      summary: List users
+      description: Get a paginated list of users
+      operationId: getUsers
+{{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+{{- end}}
+      parameters:
+        - name: limit
+          in: query
+          description: Number of users to return
+          required: false
+          schema:
+            type: integer
+            default: 10
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          description: Number of users to skip
+          required: false
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        '200':
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/UserResponse'
+
+    post:
+      tags:
+        - Users
+      summary: Create user
+      description: Create a new user
+      operationId: createUser
+{{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+{{- end}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: User already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/users/{id}:
+    get:
+      tags:
+        - Users
+      summary: Get user by ID
+      description: Retrieve a single user by ID
+      operationId: getUserById
+{{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+{{- end}}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Users
+      summary: Update user
+      description: Update a user by ID
+      operationId: updateUser
+{{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+{{- end}}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Users
+      summary: Delete user
+      description: Delete a user by ID
+      operationId: deleteUser
+{{- if ne .AuthType ""}}
+      security:
+        - BearerAuth: []
+{{- end}}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: User ID
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: User deleted successfully
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+{{- if ne .AuthType ""}}
+  /api/v1/users/me:
+    get:
+      tags:
+        - Users
+      summary: Get current user
+      description: Get the currently authenticated user
+      operationId: getCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Current user details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    put:
+      tags:
+        - Users
+      summary: Update current user
+      description: Update the currently authenticated user
+      operationId: updateCurrentUser
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateUserRequest'
+      responses:
+        '200':
+          description: User updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    delete:
+      tags:
+        - Users
+      summary: Delete current user
+      description: Delete the currently authenticated user
+      operationId: deleteCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        '204':
+          description: User deleted successfully
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+{{- end}}
+{{- end}}
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "healthy"
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+          example: "1.0.0"
+        checks:
+          type: object
+          additionalProperties:
+            type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: integer
+              example: 400
+            message:
+              type: string
+              example: "Bad request"
+        timestamp:
+          type: integer
+          format: int64
+        path:
+          type: string
+
+{{- if ne .AuthType ""}}
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          format: password
+          example: "password123"
+
+    RegisterRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "password123"
+        name:
+          type: string
+          minLength: 2
+          example: "John Doe"
+
+{{- if eq .AuthType "jwt"}}
+    RefreshTokenRequest:
+      type: object
+      required:
+        - refresh_token
+      properties:
+        refresh_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+{{- end}}
+
+    AuthResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+{{- if eq .AuthType "jwt"}}
+        refresh_token:
+          type: string
+          example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+{{- end}}
+        token_type:
+          type: string
+          example: "Bearer"
+        expires_in:
+          type: integer
+          format: int64
+          example: 3600
+        user:
+          $ref: '#/components/schemas/UserResponse'
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+          example: 1
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          example: "John Doe"
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateUserRequest:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "password123"
+        name:
+          type: string
+          minLength: 2
+          example: "John Doe"
+
+    UpdateUserRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          example: "user@example.com"
+        name:
+          type: string
+          minLength: 2
+          example: "John Doe"
+{{- end}}
+
+{{- if ne .AuthType ""}}
+  securitySchemes:
+{{- if eq .AuthType "jwt"}}
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Enter JWT token"
+{{- else if eq .AuthType "oauth2"}}
+    OAuth2:
+      type: oauth2
+      flows:
+        authorizationCode:
+          authorizationUrl: /api/v1/auth/oauth/authorize
+          tokenUrl: /api/v1/auth/oauth/token
+          scopes:
+            read: Read access
+            write: Write access
+{{- else if eq .AuthType "session"}}
+    SessionAuth:
+      type: apiKey
+      in: cookie
+      name: session_id
+      description: "Session-based authentication"
+{{- end}}
+{{- end}}
+
+tags:
+  - name: Health
+    description: Health check endpoints
+{{- if ne .AuthType ""}}
+  - name: Authentication
+    description: Authentication and authorization
+{{- end}}
+{{- if ne .DatabaseDriver ""}}
+  - name: Users
+    description: User management
+{{- end}}

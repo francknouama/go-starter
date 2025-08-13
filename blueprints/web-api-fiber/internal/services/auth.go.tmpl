@@ -1,0 +1,300 @@
+package services
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"time"
+
+{{- if eq .AuthType "jwt"}}
+	"github.com/golang-jwt/jwt/v5"
+{{- else if eq .AuthType "oauth2"}}
+	"golang.org/x/oauth2"
+{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+)
+
+var (
+	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInvalidToken       = errors.New("invalid token")
+)
+
+// AuthService provides authentication-related business logic
+type AuthService struct {
+	userService *UserService
+	config      *config.Config
+	logger      logger.Logger
+}
+
+// AuthResult represents the result of authentication
+type AuthResult struct {
+	Token        string
+{{- if eq .AuthType "jwt"}}
+	RefreshToken string
+{{- end}}
+	ExpiresAt    time.Time
+	User         *models.User
+}
+
+// NewAuthService creates a new auth service
+func NewAuthService(userService *UserService, cfg *config.Config, log logger.Logger) *AuthService {
+	return &AuthService{
+		userService: userService,
+		config:      cfg,
+		logger:      log,
+	}
+}
+
+// Register registers a new user and returns auth tokens
+func (s *AuthService) Register(ctx context.Context, email, password, name string) (*AuthResult, error) {
+	// Create user
+	user := &models.User{
+		Email:    email,
+		Password: password,
+		Name:     name,
+	}
+
+	if err := s.userService.CreateUser(ctx, user); err != nil {
+		return nil, err
+	}
+
+	// Generate tokens
+	return s.generateAuthResult(user)
+}
+
+// Login authenticates a user and returns auth tokens
+func (s *AuthService) Login(ctx context.Context, email, password string) (*AuthResult, error) {
+	// Get user by email
+	user, err := s.userService.GetUserByEmail(ctx, email)
+	if err != nil {
+		if err == ErrUserNotFound {
+			return nil, ErrInvalidCredentials
+		}
+		return nil, err
+	}
+
+	// Check password
+	if !user.CheckPassword(password) {
+		s.logger.Warn("Invalid login attempt", "email", email)
+		return nil, ErrInvalidCredentials
+	}
+
+	// Generate tokens
+	result, err := s.generateAuthResult(user)
+	if err != nil {
+		return nil, err
+	}
+
+	s.logger.Info("User logged in successfully", "user_id", user.ID, "email", email)
+	return result, nil
+}
+
+{{- if eq .AuthType "jwt"}}
+// RefreshToken refreshes an access token using a refresh token
+func (s *AuthService) RefreshToken(ctx context.Context, refreshToken string) (*AuthResult, error) {
+	// Parse and validate refresh token
+	token, err := jwt.Parse(refreshToken, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		return []byte(s.config.Auth.Secret), nil
+	})
+
+	if err != nil || !token.Valid {
+		return nil, ErrInvalidToken
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, ErrInvalidToken
+	}
+
+	// Check if it's a refresh token
+	tokenType, ok := claims["type"].(string)
+	if !ok || tokenType != "refresh" {
+		return nil, ErrInvalidToken
+	}
+
+	// Get user ID from claims
+	userIDFloat, ok := claims["sub"].(float64)
+	if !ok {
+		return nil, ErrInvalidToken
+	}
+	userID := uint(userIDFloat)
+
+	// Get user
+	user, err := s.userService.GetUserByID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate new tokens
+	return s.generateAuthResult(user)
+}
+
+// generateAuthResult creates JWT tokens for a user
+func (s *AuthService) generateAuthResult(user *models.User) (*AuthResult, error) {
+	now := time.Now()
+	expiresAt := now.Add(s.config.Auth.TokenExpiry)
+	refreshExpiresAt := now.Add(s.config.Auth.RefreshExpiry)
+
+	// Create access token claims
+	accessClaims := jwt.MapClaims{
+		"sub":   user.ID,
+		"email": user.Email,
+		"name":  user.Name,
+		"type":  "access",
+		"iat":   now.Unix(),
+		"exp":   expiresAt.Unix(),
+	}
+
+	// Create access token
+	accessToken := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims)
+	accessTokenString, err := accessToken.SignedString([]byte(s.config.Auth.Secret))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create access token: %w", err)
+	}
+
+	// Create refresh token claims
+	refreshClaims := jwt.MapClaims{
+		"sub":  user.ID,
+		"type": "refresh",
+		"iat":  now.Unix(),
+		"exp":  refreshExpiresAt.Unix(),
+	}
+
+	// Create refresh token
+	refreshToken := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims)
+	refreshTokenString, err := refreshToken.SignedString([]byte(s.config.Auth.Secret))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create refresh token: %w", err)
+	}
+
+	return &AuthResult{
+		Token:        accessTokenString,
+		RefreshToken: refreshTokenString,
+		ExpiresAt:    expiresAt,
+		User:         user,
+	}, nil
+}
+
+{{- else if eq .AuthType "oauth2"}}
+// GetOAuthURL returns the OAuth authorization URL for a provider
+func (s *AuthService) GetOAuthURL(ctx context.Context, provider string) (string, error) {
+	config, ok := s.config.Auth.OAuth.Providers[provider]
+	if !ok {
+		return "", fmt.Errorf("unsupported OAuth provider: %s", provider)
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		RedirectURL:  config.RedirectURL,
+		Scopes:       config.Scopes,
+	}
+
+	// Set endpoint based on provider
+	switch provider {
+	case "google":
+		oauthConfig.Endpoint = oauth2.Endpoint{
+			AuthURL:  "https://accounts.google.com/o/oauth2/auth",
+			TokenURL: "https://oauth2.googleapis.com/token",
+		}
+	case "github":
+		oauthConfig.Endpoint = oauth2.Endpoint{
+			AuthURL:  "https://github.com/login/oauth/authorize",
+			TokenURL: "https://github.com/login/oauth/access_token",
+		}
+	default:
+		return "", fmt.Errorf("unsupported OAuth provider: %s", provider)
+	}
+
+	// Generate state parameter (in production, store this securely)
+	state := "random-state-string" // TODO: Generate secure random state
+
+	url := oauthConfig.AuthCodeURL(state, oauth2.AccessTypeOffline)
+	return url, nil
+}
+
+// HandleOAuthCallback handles the OAuth callback
+func (s *AuthService) HandleOAuthCallback(ctx context.Context, provider, code, state string) (*AuthResult, error) {
+	// TODO: Validate state parameter
+
+	config, ok := s.config.Auth.OAuth.Providers[provider]
+	if !ok {
+		return nil, fmt.Errorf("unsupported OAuth provider: %s", provider)
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		RedirectURL:  config.RedirectURL,
+		Scopes:       config.Scopes,
+	}
+
+	// Set endpoint based on provider
+	switch provider {
+	case "google":
+		oauthConfig.Endpoint = oauth2.Endpoint{
+			AuthURL:  "https://accounts.google.com/o/oauth2/auth",
+			TokenURL: "https://oauth2.googleapis.com/token",
+		}
+	case "github":
+		oauthConfig.Endpoint = oauth2.Endpoint{
+			AuthURL:  "https://github.com/login/oauth/authorize",
+			TokenURL: "https://github.com/login/oauth/access_token",
+		}
+	default:
+		return nil, fmt.Errorf("unsupported OAuth provider: %s", provider)
+	}
+
+	// Exchange code for token
+	token, err := oauthConfig.Exchange(ctx, code)
+	if err != nil {
+		return nil, fmt.Errorf("failed to exchange code for token: %w", err)
+	}
+
+	// TODO: Use token to get user info from provider
+	// TODO: Create or find user in database
+	// TODO: Generate authentication result
+
+	// This is a placeholder - implement actual OAuth flow
+	_ = token
+	return nil, fmt.Errorf("OAuth callback not fully implemented")
+}
+
+// generateAuthResult creates tokens for OAuth authentication
+func (s *AuthService) generateAuthResult(user *models.User) (*AuthResult, error) {
+	// For OAuth, you might use different token generation logic
+	// This is a placeholder implementation
+	expiresAt := time.Now().Add(s.config.Auth.TokenExpiry)
+
+	// Generate a simple token (in production, use proper token generation)
+	token := fmt.Sprintf("oauth_token_%d_%d", user.ID, time.Now().Unix())
+
+	return &AuthResult{
+		Token:     token,
+		ExpiresAt: expiresAt,
+		User:      user,
+	}, nil
+}
+
+{{- else}}
+// generateAuthResult creates auth result for session-based auth
+func (s *AuthService) generateAuthResult(user *models.User) (*AuthResult, error) {
+	// For session-based auth, you might return a session ID
+	expiresAt := time.Now().Add(24 * time.Hour) // Default session expiry
+
+	// Generate session token (placeholder)
+	token := fmt.Sprintf("session_%d_%d", user.ID, time.Now().Unix())
+
+	return &AuthResult{
+		Token:     token,
+		ExpiresAt: expiresAt,
+		User:      user,
+	}, nil
+}
+{{- end}}

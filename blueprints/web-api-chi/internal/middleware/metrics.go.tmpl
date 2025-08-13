@@ -1,0 +1,81 @@
+{{- if .EnableMetrics}}
+package middleware
+
+import (
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+)
+
+var (
+	// HTTP request duration histogram
+	httpDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name: "http_request_duration_seconds",
+		Help: "Duration of HTTP requests in seconds",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"method", "path", "status_code"})
+
+	// HTTP request counter
+	httpRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "Total number of HTTP requests",
+	}, []string{"method", "path", "status_code"})
+
+	// HTTP requests in progress gauge
+	httpRequestsInProgress = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "http_requests_in_progress",
+		Help: "Number of HTTP requests currently being processed",
+	}, []string{"method", "path"})
+)
+
+// Metrics creates a Chi-compatible metrics middleware using Prometheus
+func Metrics() func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
+			path := r.URL.Path
+			method := r.Method
+
+			// Increment in-progress requests
+			httpRequestsInProgress.WithLabelValues(method, path).Inc()
+			defer httpRequestsInProgress.WithLabelValues(method, path).Dec()
+
+			// Create a wrapped response writer to capture status code
+			ww := &metricsResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+			// Call the next handler
+			next.ServeHTTP(ww, r)
+
+			// Record metrics
+			duration := time.Since(start).Seconds()
+			statusCode := strconv.Itoa(ww.statusCode)
+
+			httpDuration.WithLabelValues(method, path, statusCode).Observe(duration)
+			httpRequests.WithLabelValues(method, path, statusCode).Inc()
+		})
+	}
+}
+
+// metricsResponseWriter wraps http.ResponseWriter to capture status code for metrics
+type metricsResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+// WriteHeader captures the status code
+func (mrw *metricsResponseWriter) WriteHeader(code int) {
+	mrw.statusCode = code
+	mrw.ResponseWriter.WriteHeader(code)
+}
+
+// Write ensures status code is captured even if WriteHeader is not called
+func (mrw *metricsResponseWriter) Write(b []byte) (int, error) {
+	if mrw.statusCode == 0 {
+		mrw.statusCode = http.StatusOK
+	}
+	return mrw.ResponseWriter.Write(b)
+}
+{{- end}}

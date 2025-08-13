@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# Database migration script for {{.ProjectName}}
+
+set -e
+
+# Load environment variables from .env file if it exists
+if [ -f .env ]; then
+    echo "📄 Loading environment variables from .env"
+    set -a
+    source .env
+    set +a
+fi
+
+# Default action
+ACTION=${1:-up}
+
+case $ACTION in
+    up)
+        echo "🗃️  Running database migrations..."
+        go run cmd/server/main.go migrate
+        echo "✅ Migrations completed successfully"
+        ;;
+    
+    down)
+        echo "⬇️  Rolling back database migrations..."
+        echo "⚠️  This action is not reversible!"
+        read -p "Are you sure you want to rollback migrations? (y/N): " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            # Note: Implement rollback functionality in your application
+            echo "❌ Rollback functionality not implemented yet"
+            echo "   You need to implement migration rollback in your application"
+            exit 1
+        else
+            echo "❌ Rollback cancelled"
+            exit 0
+        fi
+        ;;
+    
+    status)
+        echo "📊 Migration status:"
+        # Note: Implement migration status checking in your application
+        echo "❌ Migration status checking not implemented yet"
+        echo "   You can check your database manually for the schema_migrations table"
+        ;;
+    
+    create)
+        if [ -z "$2" ]; then
+            echo "❌ Please provide a migration name"
+            echo "   Usage: $0 create <migration_name>"
+            exit 1
+        fi
+        
+        MIGRATION_NAME=$2
+        TIMESTAMP=$(date +%Y%m%d%H%M%S)
+        MIGRATION_FILE="migrations/${TIMESTAMP}_${MIGRATION_NAME}"
+        
+        echo "📝 Creating new migration: ${MIGRATION_FILE}"
+        
+        # Create up migration
+        cat > "${MIGRATION_FILE}.up.sql" << EOF
+-- Migration: ${MIGRATION_NAME}
+-- Created: $(date)
+
+-- Add your up migration SQL here
+
+EOF
+        
+        # Create down migration
+        cat > "${MIGRATION_FILE}.down.sql" << EOF
+-- Migration rollback: ${MIGRATION_NAME}
+-- Created: $(date)
+
+-- Add your down migration SQL here
+
+EOF
+        
+        echo "✅ Migration files created:"
+        echo "   - ${MIGRATION_FILE}.up.sql"
+        echo "   - ${MIGRATION_FILE}.down.sql"
+        ;;
+    
+    *)
+        echo "❌ Unknown action: $ACTION"
+        echo ""
+        echo "Usage: $0 [action]"
+        echo ""
+        echo "Actions:"
+        echo "  up      - Run all pending migrations (default)"
+        echo "  down    - Rollback migrations (not implemented)"
+        echo "  status  - Show migration status (not implemented)"
+        echo "  create  - Create a new migration file"
+        echo ""
+        echo "Examples:"
+        echo "  $0                    # Run migrations"
+        echo "  $0 up                 # Run migrations"
+        echo "  $0 create add_users   # Create new migration"
+        exit 1
+        ;;
+esac

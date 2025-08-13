@@ -1,0 +1,160 @@
+{{- if .EnableTracing}}
+package middleware
+
+import (
+	"context"
+	"net/http"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
+)
+
+const tracerName = "{{.ModulePath}}/middleware"
+
+// Tracing creates a Chi-compatible OpenTelemetry tracing middleware
+func Tracing() func(next http.Handler) http.Handler {
+	tracer := otel.Tracer(tracerName)
+	propagator := otel.GetTextMapPropagator()
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Extract context from incoming request headers
+			ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
+			// Start a new span
+			spanName := r.Method + " " + r.URL.Path
+			ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindServer))
+			defer span.End()
+
+			// Set span attributes
+			span.SetAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.url", r.URL.String()),
+				attribute.String("http.scheme", r.URL.Scheme),
+				attribute.String("http.host", r.Host),
+				attribute.String("http.target", r.URL.Path),
+				attribute.String("http.user_agent", r.UserAgent()),
+				attribute.String("http.remote_addr", r.RemoteAddr),
+			)
+
+			// Create a wrapped response writer to capture status code
+			ww := &tracingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+			// Add trace context to request
+			r = r.WithContext(ctx)
+
+			// Inject trace context into response headers
+			propagator.Inject(ctx, propagation.HeaderCarrier(w.Header()))
+
+			// Call the next handler
+			next.ServeHTTP(ww, r)
+
+			// Set response attributes
+			span.SetAttributes(
+				attribute.Int("http.status_code", ww.statusCode),
+			)
+
+			// Set span status based on HTTP status code
+			if ww.statusCode >= 400 {
+				span.SetAttributes(attribute.Bool("error", true))
+				if ww.statusCode >= 500 {
+					span.SetStatus(trace.StatusError, http.StatusText(ww.statusCode))
+				}
+			}
+		})
+	}
+}
+
+// TracingWithCustomTracer creates a Chi-compatible tracing middleware with custom tracer
+func TracingWithCustomTracer(tracer trace.Tracer) func(next http.Handler) http.Handler {
+	propagator := otel.GetTextMapPropagator()
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Extract context from incoming request headers
+			ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+
+			// Start a new span
+			spanName := r.Method + " " + r.URL.Path
+			ctx, span := tracer.Start(ctx, spanName, trace.WithSpanKind(trace.SpanKindServer))
+			defer span.End()
+
+			// Set span attributes
+			span.SetAttributes(
+				attribute.String("http.method", r.Method),
+				attribute.String("http.url", r.URL.String()),
+				attribute.String("http.scheme", r.URL.Scheme),
+				attribute.String("http.host", r.Host),
+				attribute.String("http.target", r.URL.Path),
+				attribute.String("http.user_agent", r.UserAgent()),
+				attribute.String("http.remote_addr", r.RemoteAddr),
+			)
+
+			// Create a wrapped response writer to capture status code
+			ww := &tracingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+			// Add trace context to request
+			r = r.WithContext(ctx)
+
+			// Inject trace context into response headers
+			propagator.Inject(ctx, propagation.HeaderCarrier(w.Header()))
+
+			// Call the next handler
+			next.ServeHTTP(ww, r)
+
+			// Set response attributes
+			span.SetAttributes(
+				attribute.Int("http.status_code", ww.statusCode),
+			)
+
+			// Set span status based on HTTP status code
+			if ww.statusCode >= 400 {
+				span.SetAttributes(attribute.Bool("error", true))
+				if ww.statusCode >= 500 {
+					span.SetStatus(trace.StatusError, http.StatusText(ww.statusCode))
+				}
+			}
+		})
+	}
+}
+
+// tracingResponseWriter wraps http.ResponseWriter to capture status code for tracing
+type tracingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+// WriteHeader captures the status code
+func (trw *tracingResponseWriter) WriteHeader(code int) {
+	trw.statusCode = code
+	trw.ResponseWriter.WriteHeader(code)
+}
+
+// Write ensures status code is captured even if WriteHeader is not called
+func (trw *tracingResponseWriter) Write(b []byte) (int, error) {
+	if trw.statusCode == 0 {
+		trw.statusCode = http.StatusOK
+	}
+	return trw.ResponseWriter.Write(b)
+}
+
+// GetTraceID extracts the trace ID from context
+func GetTraceID(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		return span.SpanContext().TraceID().String()
+	}
+	return ""
+}
+
+// GetSpanID extracts the span ID from context
+func GetSpanID(ctx context.Context) string {
+	span := trace.SpanFromContext(ctx)
+	if span.SpanContext().IsValid() {
+		return span.SpanContext().SpanID().String()
+	}
+	return ""
+}
+{{- end}}

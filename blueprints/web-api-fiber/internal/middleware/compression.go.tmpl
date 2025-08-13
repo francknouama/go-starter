@@ -1,0 +1,31 @@
+package middleware
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
+)
+
+// Compression returns a compression middleware
+func Compression() fiber.Handler {
+	return compress.New(compress.Config{
+		Level: compress.LevelBestSpeed, // Use best speed for better performance
+		Next: func(c *fiber.Ctx) bool {
+			// Skip compression for small responses
+			if len(c.Response().Body()) < 1024 { // Less than 1KB
+				return true
+			}
+			
+			// Skip compression for already compressed content
+			contentType := string(c.Response().Header.ContentType())
+			if contentType == "image/jpeg" || 
+			   contentType == "image/png" || 
+			   contentType == "image/gif" || 
+			   contentType == "application/zip" ||
+			   contentType == "application/gzip" {
+				return true
+			}
+			
+			return false
+		},
+	})
+}

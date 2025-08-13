@@ -1,0 +1,219 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/services"
+	"{{.ModulePath}}/internal/interceptors"
+	{{- if ne .AuthType ""}}
+	"{{.ModulePath}}/internal/auth"
+	{{- end}}
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/repository"
+	{{- end}}
+	{{- if ne .ServiceDiscovery ""}}
+	"{{.ModulePath}}/internal/discovery"
+	{{- end}}
+	{{- if .TracingEnabled}}
+	"{{.ModulePath}}/internal/observability"
+	{{- end}}
+
+	{{.ProjectName | lower}}v1 "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1"
+	healthv1 "{{.ModulePath}}/proto/health/v1"
+
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
+	{{- if .MetricsEnabled}}
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
+	{{- end}}
+	{{- if .TracingEnabled}}
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	{{- end}}
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/status"
+	{{- if .MetricsEnabled}}
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	{{- end}}
+	{{- if ne .DatabaseDriver ""}}
+	"database/sql"
+	"gorm.io/gorm"
+	{{- end}}
+)
+
+// NewGRPCServer creates a new gRPC server with all interceptors and services configured
+func NewGRPCServer(
+	cfg *config.Config,
+	log logger.Logger,
+	{{- if ne .DatabaseDriver ""}}
+	db *gorm.DB,
+	{{- end}}
+	{{- if ne .ServiceDiscovery ""}}
+	serviceDiscovery discovery.ServiceDiscovery,
+	{{- end}}
+) (*grpc.Server, error) {
+	// Build interceptor chain in the correct order
+	// Order matters: Recovery -> Logging -> Auth -> Metrics -> Tracing -> Rate Limiting
+	var unaryInterceptors []grpc.UnaryServerInterceptor
+	var streamInterceptors []grpc.StreamServerInterceptor
+
+	// 1. Recovery interceptor (should be first to catch panics)
+	recoveryOpts := []recovery.Option{
+		recovery.WithRecoveryHandler(func(p interface{}) (err error) {
+			log.Error("Recovered from panic", "panic", p)
+			return status.Errorf(codes.Internal, "Internal server error")
+		}),
+	}
+	unaryInterceptors = append(unaryInterceptors, recovery.UnaryServerInterceptor(recoveryOpts...))
+	streamInterceptors = append(streamInterceptors, recovery.StreamServerInterceptor(recoveryOpts...))
+
+	// 2. Logging interceptor
+	loggingInterceptor := interceptors.NewLoggingInterceptor(log)
+	unaryInterceptors = append(unaryInterceptors, loggingInterceptor.UnaryServerInterceptor())
+	streamInterceptors = append(streamInterceptors, loggingInterceptor.StreamServerInterceptor())
+
+	{{- if ne .AuthType ""}}
+	// 3. Authentication interceptor
+	authProvider, err := auth.NewProvider(cfg.Auth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create auth provider: %w", err)
+	}
+	authInterceptor := interceptors.NewAuthInterceptor(authProvider, log)
+	unaryInterceptors = append(unaryInterceptors, authInterceptor.UnaryServerInterceptor())
+	streamInterceptors = append(streamInterceptors, authInterceptor.StreamServerInterceptor())
+	{{- end}}
+
+	{{- if .MetricsEnabled}}
+	// 4. Metrics interceptor
+	metricsInterceptor := interceptors.NewMetricsInterceptor()
+	unaryInterceptors = append(unaryInterceptors, metricsInterceptor.UnaryServerInterceptor())
+	streamInterceptors = append(streamInterceptors, metricsInterceptor.StreamServerInterceptor())
+
+	// Initialize gRPC Prometheus metrics
+	grpc_prometheus.EnableHandlingTimeHistogram()
+	unaryInterceptors = append(unaryInterceptors, grpc_prometheus.UnaryServerInterceptor)
+	streamInterceptors = append(streamInterceptors, grpc_prometheus.StreamServerInterceptor)
+	{{- end}}
+
+	{{- if .TracingEnabled}}
+	// 5. Tracing interceptor
+	unaryInterceptors = append(unaryInterceptors, otelgrpc.UnaryServerInterceptor())
+	streamInterceptors = append(streamInterceptors, otelgrpc.StreamServerInterceptor())
+	{{- end}}
+
+	// 6. Rate limiting interceptor (should be last to limit after all processing)
+	rateLimitInterceptor := interceptors.NewRateLimitInterceptor(cfg.RateLimit)
+	unaryInterceptors = append(unaryInterceptors, rateLimitInterceptor.UnaryServerInterceptor())
+	streamInterceptors = append(streamInterceptors, rateLimitInterceptor.StreamServerInterceptor())
+
+	// Create gRPC server with interceptors
+	serverOpts := []grpc.ServerOption{
+		grpc.ChainUnaryInterceptor(unaryInterceptors...),
+		grpc.ChainStreamInterceptor(streamInterceptors...),
+	}
+
+	// Add TLS configuration if specified
+	if cfg.TLS.Enabled {
+		creds, err := loadTLSCredentials(cfg.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS credentials: %w", err)
+		}
+		serverOpts = append(serverOpts, grpc.Creds(creds))
+	}
+
+	// Configure server options
+	if cfg.Server.MaxConnectionIdle > 0 {
+		serverOpts = append(serverOpts, grpc.KeepaliveParams(cfg.Server.GetKeepaliveParams()))
+	}
+	if cfg.Server.MaxMessageSize > 0 {
+		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(cfg.Server.MaxMessageSize))
+		serverOpts = append(serverOpts, grpc.MaxSendMsgSize(cfg.Server.MaxMessageSize))
+	}
+
+	server := grpc.NewServer(serverOpts...)
+
+	// Register services
+	{{- if ne .DatabaseDriver ""}}
+	// Create repositories
+	userRepo := repository.NewUserRepository(db)
+	{{- end}}
+
+	// Register business service
+	{{.ProjectName | lower}}Service := services.New{{.ProjectName}}Service(
+		log,
+		{{- if ne .DatabaseDriver ""}}
+		userRepo,
+		{{- end}}
+		{{- if ne .ServiceDiscovery ""}}
+		serviceDiscovery,
+		{{- end}}
+	)
+	{{.ProjectName | lower}}v1.Register{{.ProjectName}}ServiceServer(server, {{.ProjectName | lower}}Service)
+
+	// Register health service
+	healthService := services.NewHealthService(log{{- if ne .DatabaseDriver ""}}, db{{- end}})
+	healthv1.RegisterHealthServiceServer(server, healthService)
+	grpc_health_v1.RegisterHealthServer(server, healthService)
+
+	{{- if .MetricsEnabled}}
+	// Initialize Prometheus metrics for gRPC
+	grpc_prometheus.Register(server)
+	{{- end}}
+
+	log.Info("gRPC server configured",
+		"interceptors", len(unaryInterceptors),
+		"services", []string{"{{.ProjectName}}", "Health"},
+		"tls_enabled", cfg.TLS.Enabled,
+		{{- if .MetricsEnabled}}
+		"metrics_enabled", true,
+		{{- end}}
+		{{- if .TracingEnabled}}
+		"tracing_enabled", true,
+		{{- end}}
+	)
+
+	return server, nil
+}
+
+{{- if .MetricsEnabled}}
+// PrometheusHandler returns the Prometheus metrics handler
+func PrometheusHandler() http.Handler {
+	return promhttp.Handler()
+}
+{{- end}}
+
+// HealthHandler returns a simple health check handler for HTTP
+func HealthHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	}
+}
+
+// ReadinessHandler returns a readiness check handler for Kubernetes
+func ReadinessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// TODO: Add readiness checks (database, dependencies)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("READY"))
+	}
+}
+
+// LivenessHandler returns a liveness check handler for Kubernetes
+func LivenessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ALIVE"))
+	}
+}
+
+// loadTLSCredentials loads TLS credentials from configuration
+func loadTLSCredentials(tlsConfig config.TLSConfig) (grpc.ServerCredentials, error) {
+	// Implementation for loading TLS credentials
+	// This would be implemented in internal/tls/config.go
+	return nil, fmt.Errorf("TLS configuration not implemented yet")
+}

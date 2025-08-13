@@ -1,0 +1,45 @@
+package middleware
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/limiter"
+	"{{.ModulePath}}/internal/config"
+)
+
+// RateLimiter returns a rate limiting middleware
+func RateLimiter(cfg *config.Config) fiber.Handler {
+	if !cfg.Server.RateLimit.Enabled {
+		return func(c *fiber.Ctx) error {
+			return c.Next()
+		}
+	}
+
+	return limiter.New(limiter.Config{
+		Max:        cfg.Server.RateLimit.Max,
+		Expiration: cfg.Server.RateLimit.Expiration,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			// Use IP address as key
+			return c.IP()
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusTooManyRequests,
+					"message": "Too many requests. Please try again later.",
+				},
+			})
+		},
+		SkipFailedRequests: cfg.Server.RateLimit.SkipFailed,
+		SkipSuccessfulRequests: cfg.Server.RateLimit.SkipSuccessful,
+		LimiterMiddleware: func(c *fiber.Ctx) bool {
+			// Skip rate limiting for health check endpoints
+			path := c.Path()
+			if path == "/health" || path == "/ready" || path == "/live" {
+				return true
+			}
+			return false
+		},
+	})
+}

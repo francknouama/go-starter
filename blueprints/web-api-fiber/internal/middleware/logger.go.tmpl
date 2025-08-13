@@ -1,0 +1,59 @@
+package middleware
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/logger"
+)
+
+// Logger returns a logging middleware
+func Logger(log logger.Logger) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Start timer
+		start := time.Now()
+
+		// Get request ID
+		requestID := c.Locals("requestid").(string)
+
+		// Process request
+		err := c.Next()
+
+		// Calculate latency
+		latency := time.Since(start)
+
+		// Get status code
+		status := c.Response().StatusCode()
+
+		// Log fields
+		fields := map[string]interface{}{
+			"request_id": requestID,
+			"method":     c.Method(),
+			"path":       c.Path(),
+			"status":     status,
+			"latency_ms": latency.Milliseconds(),
+			"ip":         c.IP(),
+			"user_agent": string(c.Request().Header.UserAgent()),
+			"bytes_sent": len(c.Response().Body()),
+		}
+
+		// Add error if present
+		if err != nil {
+			fields["error"] = err.Error()
+		}
+
+		// Log based on status code
+		switch {
+		case status >= 500:
+			log.Error("Server error", fields)
+		case status >= 400:
+			log.Warn("Client error", fields)
+		case status >= 300:
+			log.Info("Redirection", fields)
+		default:
+			log.Info("Request completed", fields)
+		}
+
+		return err
+	}
+}

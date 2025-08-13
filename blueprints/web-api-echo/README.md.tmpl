@@ -1,0 +1,283 @@
+# {{.ProjectName}}
+
+A high-performance web API built with Echo framework and Go.
+
+## Features
+
+- 🚀 **Echo Framework**: Fast and minimalist web framework
+- 📊 **Structured Logging**: Using {{.Logger}} for structured logging
+{{- if ne .DatabaseDriver ""}}
+- 🗄️ **Database**: {{.DatabaseDriver}} database integration
+{{- if ne .DatabaseORM ""}}
+- 🔧 **ORM**: {{.DatabaseORM}} for database operations
+{{- end}}
+{{- end}}
+{{- if eq .AuthType "jwt"}}
+- 🔐 **JWT Authentication**: Secure token-based authentication
+{{- else if eq .AuthType "session"}}
+- 🔐 **Session Authentication**: Secure session-based authentication
+{{- end}}
+{{- if .EnableMetrics}}
+- 📈 **Metrics**: Prometheus metrics collection
+{{- end}}
+{{- if .EnableTracing}}
+- 🔍 **Tracing**: OpenTelemetry distributed tracing
+{{- end}}
+- 🐳 **Docker**: Containerized deployment
+- 🧪 **Testing**: Comprehensive test suite
+
+## Quick Start
+
+### Prerequisites
+
+- Go {{.GoVersion}} or later
+- Docker (optional)
+{{- if ne .DatabaseDriver ""}}
+{{- if eq .DatabaseDriver "postgres"}}
+- PostgreSQL (or use Docker Compose)
+{{- else if eq .DatabaseDriver "mysql"}}
+- MySQL (or use Docker Compose)
+{{- end}}
+{{- end}}
+
+### Installation
+
+```bash
+# Clone and setup
+git clone <your-repo>
+cd {{.ProjectName}}
+
+# Install dependencies
+make deps
+
+# Run the application
+make run
+```
+
+### Development
+
+```bash
+# Run in development mode with auto-reload
+make dev
+
+# Run tests
+make test
+
+# Run with coverage
+make coverage
+
+# Lint code
+make lint
+```
+
+### Docker
+
+```bash
+# Build and run with Docker
+make docker-build
+make docker-run
+```
+
+{{- if ne .DatabaseDriver ""}}
+
+### Database Setup
+
+{{- if eq .DatabaseDriver "postgres"}}
+```bash
+# Using Docker Compose (recommended for development)
+docker-compose up -d postgres
+
+# Or install PostgreSQL locally and create database
+createdb {{.ProjectName}}
+```
+{{- else if eq .DatabaseDriver "mysql"}}
+```bash
+# Using Docker Compose (recommended for development)
+docker-compose up -d mysql
+
+# Or install MySQL locally and create database
+mysql -u root -p -e "CREATE DATABASE {{.ProjectName}};"
+```
+{{- else if eq .DatabaseDriver "sqlite"}}
+```bash
+# SQLite database will be created automatically
+```
+{{- end}}
+
+```bash
+# Run database migrations
+make migrate-up
+```
+{{- end}}
+
+## Configuration
+
+The application can be configured using environment variables or configuration files:
+
+- `configs/config.dev.yaml` - Development configuration
+- `configs/config.prod.yaml` - Production configuration
+- `configs/config.test.yaml` - Test configuration
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `ENVIRONMENT` | Application environment | `development` |
+| `{{upper .ProjectName}}_SERVER_PORT` | Server port | `8080` |
+{{- if ne .DatabaseDriver ""}}
+| `{{upper .ProjectName}}_DATABASE_HOST` | Database host | `localhost` |
+| `{{upper .ProjectName}}_DATABASE_NAME` | Database name | `{{.ProjectName}}` |
+{{- end}}
+{{- if eq .AuthType "jwt"}}
+| `{{upper .ProjectName}}_JWT_SECRET` | JWT secret key | **Required in production** |
+{{- end}}
+
+## API Documentation
+
+{{- if eq .AuthType "jwt"}}
+### Authentication
+
+All protected endpoints require a valid JWT token in the Authorization header:
+
+```
+Authorization: Bearer <your-jwt-token>
+```
+
+### Auth Endpoints
+
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/register` - User registration
+- `POST /api/v1/auth/logout` - User logout
+
+{{- end}}
+
+### Health Endpoints
+
+- `GET /health` - Application health check
+- `GET /ready` - Application readiness check
+
+{{- if ne .DatabaseDriver ""}}
+
+### User Endpoints
+
+- `GET /api/v1/users` - List users
+- `GET /api/v1/users/:id` - Get user by ID
+- `POST /api/v1/users` - Create user
+- `PUT /api/v1/users/:id` - Update user
+- `DELETE /api/v1/users/:id` - Delete user
+
+{{- end}}
+
+{{- if .EnableMetrics}}
+
+### Metrics
+
+Prometheus metrics are available at `GET /metrics` (default port 9090).
+
+{{- end}}
+
+## Project Structure
+
+```
+{{.ProjectName}}/
+├── cmd/
+│   └── server/          # Application entry point
+├── internal/
+│   ├── config/          # Configuration management
+│   ├── server/          # Echo server setup
+│   ├── handlers/        # HTTP handlers
+│   ├── middleware/      # Custom middleware
+│   ├── logger/          # Logging utilities
+{{- if ne .DatabaseDriver ""}}
+│   ├── database/        # Database connection and migrations
+│   ├── models/          # Data models
+│   ├── repository/      # Data access layer
+│   ├── services/        # Business logic
+{{- end}}
+├── configs/             # Configuration files
+{{- if ne .DatabaseDriver ""}}
+├── migrations/          # Database migrations
+{{- end}}
+├── tests/               # Test files
+├── scripts/             # Utility scripts
+└── docs/                # Documentation
+```
+
+## Development Guide
+
+### Adding New Endpoints
+
+1. Define handler in `internal/handlers/`
+2. Add route in `internal/server/server.go`
+3. Add tests in `tests/`
+
+### Middleware
+
+Echo provides built-in middleware, and custom middleware can be added in `internal/middleware/`.
+
+### Database Migrations
+
+{{- if ne .DatabaseDriver ""}}
+```bash
+# Create new migration
+make migrate-create name=create_new_table
+
+# Run migrations
+make migrate-up
+
+# Rollback migrations
+make migrate-down
+```
+{{- end}}
+
+## Testing
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make coverage
+
+# Run integration tests
+make test-integration
+
+# Run benchmark tests
+make bench
+```
+
+## Deployment
+
+### Docker
+
+```bash
+# Build production image
+docker build -t {{.ProjectName}}:latest .
+
+# Run container
+docker run -p 8080:8080 {{.ProjectName}}:latest
+```
+
+### Environment
+
+Ensure the following environment variables are set in production:
+
+{{- if eq .AuthType "jwt"}}
+- `{{upper .ProjectName}}_JWT_SECRET` - Strong JWT secret (required)
+{{- end}}
+{{- if ne .DatabaseDriver ""}}
+- `{{upper .ProjectName}}_DATABASE_HOST` - Database host
+- `{{upper .ProjectName}}_DATABASE_PASSWORD` - Database password
+{{- end}}
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
+
+## License
+
+{{.License}}

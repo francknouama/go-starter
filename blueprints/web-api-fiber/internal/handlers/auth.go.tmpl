@@ -1,0 +1,308 @@
+package handlers
+
+import (
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"{{.ModulePath}}/internal/services"
+)
+
+// LoginRequest represents the login request
+type LoginRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required"`
+}
+
+// RegisterRequest represents the registration request
+type RegisterRequest struct {
+	Email    string `json:"email" validate:"required,email"`
+	Password string `json:"password" validate:"required,min=8"`
+	Name     string `json:"name" validate:"required,min=2"`
+}
+
+// AuthResponse represents the authentication response
+type AuthResponse struct {
+	Token        string       `json:"token"`
+{{- if eq .AuthType "jwt"}}
+	RefreshToken string       `json:"refresh_token,omitempty"`
+{{- end}}
+	TokenType    string       `json:"token_type"`
+	ExpiresIn    int64        `json:"expires_in"`
+	User         UserResponse `json:"user"`
+}
+
+// Register handles POST /api/v1/auth/register
+// @Summary Register a new user
+// @Description Register a new user account
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param user body RegisterRequest true "Registration data"
+// @Success 201 {object} AuthResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 409 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/register [post]
+func Register(authService *services.AuthService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req RegisterRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusBadRequest,
+					"message": "Invalid request body",
+				},
+			})
+		}
+
+		// Register user
+		result, err := authService.Register(c.Context(), req.Email, req.Password, req.Name)
+		if err != nil {
+			if err == services.ErrUserExists {
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+					"error": fiber.Map{
+						"code":    fiber.StatusConflict,
+						"message": "User already exists",
+					},
+				})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusInternalServerError,
+					"message": "Failed to register user",
+				},
+			})
+		}
+
+		response := AuthResponse{
+			Token:     result.Token,
+{{- if eq .AuthType "jwt"}}
+			RefreshToken: result.RefreshToken,
+{{- end}}
+			TokenType: "Bearer",
+			ExpiresIn: int64(result.ExpiresAt.Sub(time.Now()).Seconds()),
+			User: UserResponse{
+				ID:        result.User.ID,
+				Email:     result.User.Email,
+				Name:      result.User.Name,
+				CreatedAt: result.User.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				UpdatedAt: result.User.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			},
+		}
+
+		return c.Status(fiber.StatusCreated).JSON(response)
+	}
+}
+
+// Login handles POST /api/v1/auth/login
+// @Summary Login to the application
+// @Description Authenticate user and receive access token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param credentials body LoginRequest true "Login credentials"
+// @Success 200 {object} AuthResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/login [post]
+func Login(authService *services.AuthService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req LoginRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusBadRequest,
+					"message": "Invalid request body",
+				},
+			})
+		}
+
+		// Authenticate user
+		result, err := authService.Login(c.Context(), req.Email, req.Password)
+		if err != nil {
+			if err == services.ErrInvalidCredentials {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": fiber.Map{
+						"code":    fiber.StatusUnauthorized,
+						"message": "Invalid email or password",
+					},
+				})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusInternalServerError,
+					"message": "Failed to login",
+				},
+			})
+		}
+
+		response := AuthResponse{
+			Token:     result.Token,
+{{- if eq .AuthType "jwt"}}
+			RefreshToken: result.RefreshToken,
+{{- end}}
+			TokenType: "Bearer",
+			ExpiresIn: int64(result.ExpiresAt.Sub(time.Now()).Seconds()),
+			User: UserResponse{
+				ID:        result.User.ID,
+				Email:     result.User.Email,
+				Name:      result.User.Name,
+				CreatedAt: result.User.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				UpdatedAt: result.User.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			},
+		}
+
+		return c.JSON(response)
+	}
+}
+
+{{- if eq .AuthType "jwt"}}
+// RefreshTokenRequest represents the refresh token request
+type RefreshTokenRequest struct {
+	RefreshToken string `json:"refresh_token" validate:"required"`
+}
+
+// RefreshToken handles POST /api/v1/auth/refresh
+// @Summary Refresh access token
+// @Description Refresh access token using refresh token
+// @Tags auth
+// @Accept json
+// @Produce json
+// @Param token body RefreshTokenRequest true "Refresh token"
+// @Success 200 {object} AuthResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/refresh [post]
+func RefreshToken(authService *services.AuthService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var req RefreshTokenRequest
+		if err := c.BodyParser(&req); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusBadRequest,
+					"message": "Invalid request body",
+				},
+			})
+		}
+
+		// Refresh token
+		result, err := authService.RefreshToken(c.Context(), req.RefreshToken)
+		if err != nil {
+			if err == services.ErrInvalidToken {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+					"error": fiber.Map{
+						"code":    fiber.StatusUnauthorized,
+						"message": "Invalid or expired refresh token",
+					},
+				})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusInternalServerError,
+					"message": "Failed to refresh token",
+				},
+			})
+		}
+
+		response := AuthResponse{
+			Token:        result.Token,
+			RefreshToken: result.RefreshToken,
+			TokenType:    "Bearer",
+			ExpiresIn:    int64(result.ExpiresAt.Sub(time.Now()).Seconds()),
+			User: UserResponse{
+				ID:        result.User.ID,
+				Email:     result.User.Email,
+				Name:      result.User.Name,
+				CreatedAt: result.User.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				UpdatedAt: result.User.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			},
+		}
+
+		return c.JSON(response)
+	}
+}
+{{- end}}
+
+{{- if eq .AuthType "oauth2"}}
+// OAuthLogin handles GET /api/v1/auth/oauth/:provider
+// @Summary Initiate OAuth login
+// @Description Redirect to OAuth provider for authentication
+// @Tags auth
+// @Param provider path string true "OAuth provider" Enums(google, github)
+// @Success 302 "Redirect to OAuth provider"
+// @Failure 400 {object} map[string]interface{}
+// @Router /api/v1/auth/oauth/{provider} [get]
+func OAuthLogin(authService *services.AuthService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		provider := c.Params("provider")
+		
+		url, err := authService.GetOAuthURL(c.Context(), provider)
+		if err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusBadRequest,
+					"message": "Invalid OAuth provider",
+				},
+			})
+		}
+
+		return c.Redirect(url, fiber.StatusTemporaryRedirect)
+	}
+}
+
+// OAuthCallback handles GET /api/v1/auth/oauth/:provider/callback
+// @Summary OAuth callback
+// @Description Handle OAuth provider callback
+// @Tags auth
+// @Param provider path string true "OAuth provider" Enums(google, github)
+// @Param code query string true "Authorization code"
+// @Param state query string true "State parameter"
+// @Success 200 {object} AuthResponse
+// @Failure 400 {object} map[string]interface{}
+// @Failure 401 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /api/v1/auth/oauth/{provider}/callback [get]
+func OAuthCallback(authService *services.AuthService) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		provider := c.Params("provider")
+		code := c.Query("code")
+		state := c.Query("state")
+
+		if code == "" || state == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusBadRequest,
+					"message": "Missing authorization code or state",
+				},
+			})
+		}
+
+		result, err := authService.HandleOAuthCallback(c.Context(), provider, code, state)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusUnauthorized,
+					"message": "OAuth authentication failed",
+				},
+			})
+		}
+
+		response := AuthResponse{
+			Token:     result.Token,
+			TokenType: "Bearer",
+			ExpiresIn: int64(result.ExpiresAt.Sub(time.Now()).Seconds()),
+			User: UserResponse{
+				ID:        result.User.ID,
+				Email:     result.User.Email,
+				Name:      result.User.Name,
+				CreatedAt: result.User.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				UpdatedAt: result.User.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+			},
+		}
+
+		return c.JSON(response)
+	}
+}
+{{- end}}

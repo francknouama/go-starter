@@ -1,0 +1,146 @@
+syntax = "proto3";
+
+package health.v1;
+
+import "google/protobuf/timestamp.proto";
+import "proto/common/v1/common.proto";
+
+option go_package = "{{.ModulePath}}/proto/health/v1;healthv1";
+
+// Health service for gRPC health checking protocol
+// Compatible with grpc_health_v1 standard
+service HealthService {
+  // Check the health of the service
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+  
+  // Watch for health status changes (streaming)
+  rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse);
+  
+  // Get detailed health information
+  rpc GetHealth(GetHealthRequest) returns (GetHealthResponse);
+  
+  // Get service readiness status
+  rpc CheckReadiness(ReadinessRequest) returns (ReadinessResponse);
+  
+  // Get service liveness status
+  rpc CheckLiveness(LivenessRequest) returns (LivenessResponse);
+}
+
+// Standard gRPC health check request
+message HealthCheckRequest {
+  // Service name to check (empty for overall service health)
+  string service = 1;
+}
+
+// Standard gRPC health check response
+message HealthCheckResponse {
+  // Health status
+  ServingStatus status = 1;
+  
+  // Additional status message
+  string message = 2;
+  
+  // Check timestamp
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// Service serving status enumeration
+enum ServingStatus {
+  SERVING_STATUS_UNKNOWN = 0;
+  SERVING_STATUS_SERVING = 1;
+  SERVING_STATUS_NOT_SERVING = 2;
+  SERVING_STATUS_SERVICE_UNKNOWN = 3;  // Service not found
+}
+
+// Detailed health request
+message GetHealthRequest {
+  // Include component details
+  bool include_components = 1;
+  
+  // Component filter (empty for all)
+  repeated string components = 2;
+}
+
+// Detailed health response
+message GetHealthResponse {
+  // Overall service health
+  common.v1.HealthStatus overall_status = 1;
+  
+  // Service version
+  string version = 2;
+  
+  // Service uptime
+  google.protobuf.Timestamp started_at = 3;
+  
+  // Current timestamp
+  google.protobuf.Timestamp timestamp = 4;
+  
+  // Component health details
+  map<string, ComponentHealth> components = 5;
+  
+  // Service metadata
+  map<string, string> metadata = 6;
+}
+
+// Component health information
+message ComponentHealth {
+  // Component status
+  common.v1.HealthStatus status = 1;
+  
+  // Status message
+  string message = 2;
+  
+  // Last check time
+  google.protobuf.Timestamp last_check = 3;
+  
+  // Check duration in milliseconds
+  int64 duration_ms = 4;
+  
+  // Error count in last period
+  int32 error_count = 5;
+  
+  // Component metadata
+  map<string, string> metadata = 6;
+}
+
+// Readiness check request (for Kubernetes probes)
+message ReadinessRequest {
+  // Timeout for the check in seconds
+  int32 timeout_seconds = 1;
+}
+
+// Readiness check response
+message ReadinessResponse {
+  // Ready status
+  bool ready = 1;
+  
+  // Status message
+  string message = 2;
+  
+  // Check timestamp
+  google.protobuf.Timestamp timestamp = 3;
+  
+  // Components that are not ready
+  repeated string not_ready_components = 4;
+}
+
+// Liveness check request (for Kubernetes probes)
+message LivenessRequest {
+  // Timeout for the check in seconds
+  int32 timeout_seconds = 1;
+}
+
+// Liveness check response
+message LivenessResponse {
+  // Alive status
+  bool alive = 1;
+  
+  // Status message
+  string message = 2;
+  
+  // Check timestamp
+  google.protobuf.Timestamp timestamp = 3;
+  
+  // Service uptime in seconds
+  int64 uptime_seconds = 4;
+}

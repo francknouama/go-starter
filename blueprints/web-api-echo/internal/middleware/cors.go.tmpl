@@ -1,0 +1,67 @@
+package middleware
+
+import (
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+)
+
+// CORS returns an Echo CORS middleware with sensible defaults
+func CORS() echo.MiddlewareFunc {
+	return middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{
+			"http://localhost:3000",
+			"http://localhost:3001", 
+			"http://localhost:8080",
+			"https://*.vercel.app",
+			"https://*.netlify.app",
+		},
+		AllowMethods: []string{
+			echo.GET,
+			echo.POST,
+			echo.PUT,
+			echo.PATCH,
+			echo.DELETE,
+			echo.OPTIONS,
+		},
+		AllowHeaders: []string{
+			echo.HeaderOrigin,
+			echo.HeaderContentType,
+			echo.HeaderAccept,
+			echo.HeaderAuthorization,
+			echo.HeaderXRequestID,
+			echo.HeaderXRequestedWith,
+			"X-CSRF-Token",
+		},
+		ExposeHeaders: []string{
+			echo.HeaderXRequestID,
+		},
+		AllowCredentials: true,
+		MaxAge:           86400, // 24 hours
+	})
+}
+
+// CORSProduction returns a more restrictive CORS configuration for production
+func CORSProduction(allowedOrigins []string) echo.MiddlewareFunc {
+	return middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: allowedOrigins,
+		AllowMethods: []string{
+			echo.GET,
+			echo.POST,
+			echo.PUT,
+			echo.PATCH,
+			echo.DELETE,
+		},
+		AllowHeaders: []string{
+			echo.HeaderOrigin,
+			echo.HeaderContentType,
+			echo.HeaderAccept,
+			echo.HeaderAuthorization,
+			echo.HeaderXRequestID,
+		},
+		ExposeHeaders: []string{
+			echo.HeaderXRequestID,
+		},
+		AllowCredentials: true,
+		MaxAge:           3600, // 1 hour
+	})
+}

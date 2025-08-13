@@ -1,0 +1,330 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+// Config holds the application configuration
+type Config struct {
+	Environment string         `mapstructure:"environment"`
+	Server      ServerConfig   `mapstructure:"server"`
+{{- if ne .DatabaseDriver ""}}
+	Database    DatabaseConfig `mapstructure:"database"`
+{{- end}}
+{{- if eq .AuthType "jwt"}}
+	JWT         JWTConfig      `mapstructure:"jwt"`
+{{- end}}
+	Logging     LoggingConfig  `mapstructure:"logging"`
+{{- if .EnableMetrics}}
+	Metrics     MetricsConfig  `mapstructure:"metrics"`
+{{- end}}
+{{- if .EnableTracing}}
+	Tracing     TracingConfig  `mapstructure:"tracing"`
+{{- end}}
+}
+
+// ServerConfig holds server configuration
+type ServerConfig struct {
+	Port         int           `mapstructure:"port"`
+	ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout time.Duration `mapstructure:"write_timeout"`
+	IdleTimeout  time.Duration `mapstructure:"idle_timeout"`
+	Host         string        `mapstructure:"host"`
+	TLS          TLSConfig     `mapstructure:"tls"`
+}
+
+// TLSConfig holds TLS configuration
+type TLSConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
+}
+
+{{- if ne .DatabaseDriver ""}}
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	Name            string        `mapstructure:"name"`
+	User            string        `mapstructure:"user"`
+	Password        string        `mapstructure:"password"`
+	SSLMode         string        `mapstructure:"ssl_mode"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	LogLevel        string        `mapstructure:"log_level"`
+	Charset         string        `mapstructure:"charset"`
+}
+
+// DSN returns the database connection string
+func (d DatabaseConfig) DSN() string {
+{{- if eq .DatabaseDriver "postgres"}}
+	sslMode := d.SSLMode
+	if sslMode == "" {
+		sslMode = "disable"
+	}
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		d.Host, d.Port, d.User, d.Password, d.Name, sslMode)
+{{- else if eq .DatabaseDriver "mysql"}}
+	charset := d.Charset
+	if charset == "" {
+		charset = "utf8mb4"
+	}
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=%s&parseTime=True&loc=Local",
+		d.User, d.Password, d.Host, d.Port, d.Name, charset)
+{{- else if eq .DatabaseDriver "sqlite"}}
+	return d.Name
+{{- else}}
+	return "" // Default case for unsupported database drivers
+{{- end}}
+}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+// JWTConfig holds JWT configuration
+type JWTConfig struct {
+	Secret     string        `mapstructure:"secret"`
+	Expiration time.Duration `mapstructure:"expiration"`
+	Issuer     string        `mapstructure:"issuer"`
+	Algorithm  string        `mapstructure:"algorithm"`
+}
+{{- end}}
+
+// LoggingConfig holds logging configuration
+type LoggingConfig struct {
+	Level      string `mapstructure:"level"`
+	Format     string `mapstructure:"format"`
+	Structured bool   `mapstructure:"structured"`
+	Output     string `mapstructure:"output"`
+}
+
+{{- if .EnableMetrics}}
+// MetricsConfig holds metrics configuration
+type MetricsConfig struct {
+	Enabled bool   `mapstructure:"enabled"`
+	Port    int    `mapstructure:"port"`
+	Path    string `mapstructure:"path"`
+}
+{{- end}}
+
+{{- if .EnableTracing}}
+// TracingConfig holds tracing configuration
+type TracingConfig struct {
+	Enabled     bool    `mapstructure:"enabled"`
+	ServiceName string  `mapstructure:"service_name"`
+	Endpoint    string  `mapstructure:"endpoint"`
+	SampleRate  float64 `mapstructure:"sample_rate"`
+}
+{{- end}}
+
+// Load loads configuration from file and environment variables
+func Load() (*Config, error) {
+	v := viper.New()
+
+	// Set default values
+	setDefaults(v)
+
+	// Set config file name and paths
+	v.SetConfigName("config")
+	v.SetConfigType("yaml")
+	v.AddConfigPath("./configs")
+	v.AddConfigPath(".")
+
+	// Set environment variable prefix
+	v.SetEnvPrefix("{{upper .ProjectName}}")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
+
+	// Determine environment
+	env := os.Getenv("ENVIRONMENT")
+	if env == "" {
+		env = "development"
+	}
+
+	// Try to read environment-specific config file
+	v.SetConfigName(fmt.Sprintf("config.%s", env))
+	if err := v.ReadInConfig(); err != nil {
+		// If environment-specific config doesn't exist, try default
+		v.SetConfigName("config")
+		if err := v.ReadInConfig(); err != nil {
+			// If no config file found, use defaults with env vars
+			if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+				return nil, fmt.Errorf("failed to read config file: %w", err)
+			}
+		}
+	}
+
+	var config Config
+	if err := v.Unmarshal(&config); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Set environment
+	config.Environment = env
+
+	// Validate configuration
+	if err := validateConfig(&config); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return &config, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults(v *viper.Viper) {
+	// Server defaults
+	v.SetDefault("server.port", 8080)
+	v.SetDefault("server.host", "")
+	v.SetDefault("server.read_timeout", "30s")
+	v.SetDefault("server.write_timeout", "30s")
+	v.SetDefault("server.idle_timeout", "60s")
+	v.SetDefault("server.tls.enabled", false)
+
+{{- if ne .DatabaseDriver ""}}
+	// Database defaults
+{{- if eq .DatabaseDriver "postgres"}}
+	v.SetDefault("database.host", "localhost")
+	v.SetDefault("database.port", 5432)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	v.SetDefault("database.password", "")
+	v.SetDefault("database.ssl_mode", "disable")
+	v.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.max_open_conns", 100)
+	v.SetDefault("database.conn_max_lifetime", "1h")
+	v.SetDefault("database.log_level", "info")
+{{- else if eq .DatabaseDriver "mysql"}}
+	v.SetDefault("database.host", "localhost")
+	v.SetDefault("database.port", 3306)
+	v.SetDefault("database.name", "{{.ProjectName}}")
+	v.SetDefault("database.user", "{{.ProjectName}}")
+	v.SetDefault("database.password", "")
+	v.SetDefault("database.charset", "utf8mb4")
+	v.SetDefault("database.max_idle_conns", 10)
+	v.SetDefault("database.max_open_conns", 100)
+	v.SetDefault("database.conn_max_lifetime", "1h")
+	v.SetDefault("database.log_level", "info")
+{{- else if eq .DatabaseDriver "sqlite"}}
+	v.SetDefault("database.name", "{{.ProjectName}}.db")
+	v.SetDefault("database.max_idle_conns", 5)
+	v.SetDefault("database.max_open_conns", 25)
+	v.SetDefault("database.conn_max_lifetime", "1h")
+	v.SetDefault("database.log_level", "info")
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+	// JWT defaults
+	v.SetDefault("jwt.secret", "your-secret-key")
+	v.SetDefault("jwt.expiration", "24h")
+	v.SetDefault("jwt.issuer", "{{.ProjectName}}")
+	v.SetDefault("jwt.algorithm", "HS256")
+{{- end}}
+
+	// Logging defaults
+	v.SetDefault("logging.level", "info")
+	v.SetDefault("logging.format", "json")
+	v.SetDefault("logging.structured", true)
+	v.SetDefault("logging.output", "stdout")
+
+{{- if .EnableMetrics}}
+	// Metrics defaults
+	v.SetDefault("metrics.enabled", true)
+	v.SetDefault("metrics.port", 9090)
+	v.SetDefault("metrics.path", "/metrics")
+{{- end}}
+
+{{- if .EnableTracing}}
+	// Tracing defaults
+	v.SetDefault("tracing.enabled", false)
+	v.SetDefault("tracing.service_name", "{{.ProjectName}}")
+	v.SetDefault("tracing.endpoint", "http://localhost:14268/api/traces")
+	v.SetDefault("tracing.sample_rate", 0.1)
+{{- end}}
+}
+
+// validateConfig validates the configuration
+func validateConfig(config *Config) error {
+	// Validate server port
+	if config.Server.Port <= 0 || config.Server.Port > 65535 {
+		return fmt.Errorf("invalid server port: %d", config.Server.Port)
+	}
+
+	// Validate timeouts
+	if config.Server.ReadTimeout <= 0 {
+		return fmt.Errorf("server read timeout must be positive")
+	}
+	if config.Server.WriteTimeout <= 0 {
+		return fmt.Errorf("server write timeout must be positive")
+	}
+
+{{- if ne .DatabaseDriver ""}}
+	// Validate database configuration
+{{- if ne .DatabaseDriver "sqlite"}}
+	if config.Database.Host == "" {
+		return fmt.Errorf("database host is required")
+	}
+	if config.Database.Name == "" {
+		return fmt.Errorf("database name is required")
+	}
+	if config.Database.User == "" {
+		return fmt.Errorf("database user is required")
+	}
+{{- else}}
+	if config.Database.Name == "" {
+		return fmt.Errorf("database name is required")
+	}
+{{- end}}
+{{- end}}
+
+{{- if eq .AuthType "jwt"}}
+	// Validate JWT configuration
+	if config.JWT.Secret == "" || config.JWT.Secret == "your-secret-key" {
+		return fmt.Errorf("SECURITY ERROR: JWT secret must be set and not use the default value. Set JWT_SECRET environment variable")
+	}
+	
+	// Enhanced security validation for production
+	if config.Environment == "production" && len(config.JWT.Secret) < 32 {
+		return fmt.Errorf("SECURITY ERROR: JWT secret must be at least 32 characters long in production")
+	}
+	
+	if config.JWT.Expiration <= 0 {
+		return fmt.Errorf("JWT expiration must be positive")
+	}
+	if config.JWT.Expiration > 168*time.Hour { // 7 days
+		return fmt.Errorf("SECURITY WARNING: JWT expiration should not exceed 7 days for security")
+	}
+{{- end}}
+
+	// Validate logging level
+	validLevels := map[string]bool{
+		"debug": true,
+		"info":  true,
+		"warn":  true,
+		"error": true,
+	}
+	if !validLevels[config.Logging.Level] {
+		return fmt.Errorf("invalid logging level: %s", config.Logging.Level)
+	}
+
+{{- if .EnableMetrics}}
+	// Validate metrics configuration
+	if config.Metrics.Port <= 0 || config.Metrics.Port > 65535 {
+		return fmt.Errorf("invalid metrics port: %d", config.Metrics.Port)
+	}
+{{- end}}
+
+{{- if .EnableTracing}}
+	// Validate tracing configuration
+	if config.Tracing.SampleRate < 0 || config.Tracing.SampleRate > 1 {
+		return fmt.Errorf("tracing sample rate must be between 0 and 1")
+	}
+{{- end}}
+
+	return nil
+}

@@ -1,0 +1,385 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/spf13/viper"
+	"google.golang.org/grpc/keepalive"
+)
+
+// Config holds all configuration for the gRPC service
+type Config struct {
+	Environment string        `mapstructure:"environment"`
+	Server      ServerConfig  `mapstructure:"server"`
+	Logger      LoggerConfig  `mapstructure:"logger"`
+	TLS         TLSConfig     `mapstructure:"tls"`
+	RateLimit   RateLimitConfig `mapstructure:"rate_limit"`
+	{{- if ne .DatabaseDriver ""}}
+	Database    DatabaseConfig `mapstructure:"database"`
+	{{- end}}
+	{{- if ne .ServiceDiscovery ""}}
+	Discovery   DiscoveryConfig `mapstructure:"discovery"`
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	Auth        AuthConfig    `mapstructure:"auth"`
+	{{- end}}
+	{{- if or .TracingEnabled .MetricsEnabled}}
+	Observability ObservabilityConfig `mapstructure:"observability"`
+	{{- end}}
+}
+
+// ServerConfig holds server-related configuration
+type ServerConfig struct {
+	GRPCPort           int           `mapstructure:"grpc_port"`
+	MetricsPort        int           `mapstructure:"metrics_port"`
+	Address            string        `mapstructure:"address"`
+	InstanceID         string        `mapstructure:"instance_id"`
+	MaxConnectionIdle  time.Duration `mapstructure:"max_connection_idle"`
+	MaxConnectionAge   time.Duration `mapstructure:"max_connection_age"`
+	MaxConnectionAgeGrace time.Duration `mapstructure:"max_connection_age_grace"`
+	Time               time.Duration `mapstructure:"time"`
+	Timeout            time.Duration `mapstructure:"timeout"`
+	MaxMessageSize     int           `mapstructure:"max_message_size"`
+	GracefulTimeout    time.Duration `mapstructure:"graceful_timeout"`
+}
+
+// GetKeepaliveParams returns gRPC keepalive parameters
+func (s ServerConfig) GetKeepaliveParams() keepalive.ServerParameters {
+	return keepalive.ServerParameters{
+		MaxConnectionIdle:     s.MaxConnectionIdle,
+		MaxConnectionAge:      s.MaxConnectionAge,
+		MaxConnectionAgeGrace: s.MaxConnectionAgeGrace,
+		Time:                  s.Time,
+		Timeout:               s.Timeout,
+	}
+}
+
+// LoggerConfig holds logger configuration
+type LoggerConfig struct {
+	Level        string `mapstructure:"level"`
+	Format       string `mapstructure:"format"` // json, text, console
+	Development  bool   `mapstructure:"development"`
+	EnableCaller bool   `mapstructure:"enable_caller"`
+	EnableStacktrace bool `mapstructure:"enable_stacktrace"`
+}
+
+// TLSConfig holds TLS configuration
+type TLSConfig struct {
+	Enabled  bool   `mapstructure:"enabled"`
+	CertFile string `mapstructure:"cert_file"`
+	KeyFile  string `mapstructure:"key_file"`
+	CAFile   string `mapstructure:"ca_file"`
+	Mutual   bool   `mapstructure:"mutual"` // mTLS
+}
+
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	Enabled     bool          `mapstructure:"enabled"`
+	RequestsPerSecond float64 `mapstructure:"requests_per_second"`
+	BurstSize   int           `mapstructure:"burst_size"`
+	CleanupInterval time.Duration `mapstructure:"cleanup_interval"`
+}
+
+{{- if ne .DatabaseDriver ""}}
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Driver          string        `mapstructure:"driver"`
+	DSN             string        `mapstructure:"dsn"`
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	Database        string        `mapstructure:"database"`
+	Username        string        `mapstructure:"username"`
+	Password        string        `mapstructure:"password"`
+	SSLMode         string        `mapstructure:"ssl_mode"`
+	MaxOpenConns    int           `mapstructure:"max_open_conns"`
+	MaxIdleConns    int           `mapstructure:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `mapstructure:"conn_max_lifetime"`
+	ConnMaxIdleTime time.Duration `mapstructure:"conn_max_idle_time"`
+	MigrationsPath  string        `mapstructure:"migrations_path"`
+}
+
+// GetDSN builds the database connection string
+func (d DatabaseConfig) GetDSN() string {
+	if d.DSN != "" {
+		return d.DSN
+	}
+
+	switch d.Driver {
+	case "postgres":
+		return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+			d.Host, d.Port, d.Username, d.Password, d.Database, d.SSLMode)
+	case "mysql":
+		return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			d.Username, d.Password, d.Host, d.Port, d.Database)
+	case "sqlite":
+		return d.Database
+	default:
+		return ""
+	}
+}
+{{- end}}
+
+{{- if ne .ServiceDiscovery ""}}
+// DiscoveryConfig holds service discovery configuration
+type DiscoveryConfig struct {
+	Type     string            `mapstructure:"type"` // consul, etcd, kubernetes
+	Address  string            `mapstructure:"address"`
+	Datacenter string          `mapstructure:"datacenter"`
+	Token    string            `mapstructure:"token"`
+	Tags     []string          `mapstructure:"tags"`
+	Meta     map[string]string `mapstructure:"meta"`
+	HealthCheck HealthCheckConfig `mapstructure:"health_check"`
+}
+
+// HealthCheckConfig holds health check configuration for service discovery
+type HealthCheckConfig struct {
+	Enabled  bool          `mapstructure:"enabled"`
+	Interval time.Duration `mapstructure:"interval"`
+	Timeout  time.Duration `mapstructure:"timeout"`
+	HTTP     string        `mapstructure:"http"`
+	GRPC     string        `mapstructure:"grpc"`
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+// AuthConfig holds authentication configuration
+type AuthConfig struct {
+	Type         string        `mapstructure:"type"` // jwt, mtls, oauth2
+	JWTSecret    string        `mapstructure:"jwt_secret"`
+	JWTIssuer    string        `mapstructure:"jwt_issuer"`
+	JWTAudience  string        `mapstructure:"jwt_audience"`
+	JWTExpiry    time.Duration `mapstructure:"jwt_expiry"`
+	OAuth2Config OAuth2Config  `mapstructure:"oauth2"`
+}
+
+// OAuth2Config holds OAuth2 configuration
+type OAuth2Config struct {
+	ClientID     string   `mapstructure:"client_id"`
+	ClientSecret string   `mapstructure:"client_secret"`
+	RedirectURL  string   `mapstructure:"redirect_url"`
+	Scopes       []string `mapstructure:"scopes"`
+	AuthURL      string   `mapstructure:"auth_url"`
+	TokenURL     string   `mapstructure:"token_url"`
+}
+{{- end}}
+
+{{- if or .TracingEnabled .MetricsEnabled}}
+// ObservabilityConfig holds observability configuration
+type ObservabilityConfig struct {
+	{{- if .TracingEnabled}}
+	Tracing TracingConfig `mapstructure:"tracing"`
+	{{- end}}
+	{{- if .MetricsEnabled}}
+	Metrics MetricsConfig `mapstructure:"metrics"`
+	{{- end}}
+}
+
+{{- if .TracingEnabled}}
+// TracingConfig holds distributed tracing configuration
+type TracingConfig struct {
+	Enabled      bool    `mapstructure:"enabled"`
+	ServiceName  string  `mapstructure:"service_name"`
+	Endpoint     string  `mapstructure:"endpoint"`
+	SampleRate   float64 `mapstructure:"sample_rate"`
+	Headers      map[string]string `mapstructure:"headers"`
+}
+{{- end}}
+
+{{- if .MetricsEnabled}}
+// MetricsConfig holds metrics configuration
+type MetricsConfig struct {
+	Enabled   bool   `mapstructure:"enabled"`
+	Namespace string `mapstructure:"namespace"`
+	Subsystem string `mapstructure:"subsystem"`
+}
+{{- end}}
+{{- end}}
+
+// Load loads configuration from files and environment variables
+func Load() (*Config, error) {
+	// Set defaults
+	setDefaults()
+
+	// Get environment from command line flag or environment variable
+	env := viper.GetString("env")
+	if env == "" {
+		env = os.Getenv("ENV")
+		if env == "" {
+			env = "dev"
+		}
+	}
+
+	// Set configuration file name based on environment
+	viper.SetConfigName(fmt.Sprintf("config.%s", env))
+	viper.SetConfigType("yaml")
+	viper.AddConfigPath("./configs")
+	viper.AddConfigPath("../configs")
+	viper.AddConfigPath("../../configs")
+	viper.AddConfigPath("/etc/{{.ProjectName | lower}}")
+
+	// Read configuration file
+	if err := viper.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+			return nil, fmt.Errorf("failed to read config file: %w", err)
+		}
+		// Config file not found; using defaults and environment variables
+	}
+
+	// Enable environment variable support
+	viper.SetEnvPrefix("{{.ProjectName | upper}}")
+	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
+	viper.AutomaticEnv()
+
+	// Unmarshal configuration
+	var cfg Config
+	if err := viper.Unmarshal(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
+	}
+
+	// Set environment
+	cfg.Environment = env
+
+	// Validate configuration
+	if err := validate(&cfg); err != nil {
+		return nil, fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	return &cfg, nil
+}
+
+// setDefaults sets default configuration values
+func setDefaults() {
+	// Server defaults
+	viper.SetDefault("server.grpc_port", {{.GrpcPort}})
+	viper.SetDefault("server.metrics_port", {{.MetricsPort}})
+	viper.SetDefault("server.address", "0.0.0.0")
+	viper.SetDefault("server.instance_id", generateInstanceID())
+	viper.SetDefault("server.max_connection_idle", "5m")
+	viper.SetDefault("server.max_connection_age", "10m")
+	viper.SetDefault("server.max_connection_age_grace", "5s")
+	viper.SetDefault("server.time", "5s")
+	viper.SetDefault("server.timeout", "1s")
+	viper.SetDefault("server.max_message_size", 4*1024*1024) // 4MB
+	viper.SetDefault("server.graceful_timeout", "30s")
+
+	// Logger defaults
+	viper.SetDefault("logger.level", "info")
+	viper.SetDefault("logger.format", "{{if eq .Logger "slog"}}text{{else}}json{{end}}")
+	viper.SetDefault("logger.development", false)
+	viper.SetDefault("logger.enable_caller", true)
+	viper.SetDefault("logger.enable_stacktrace", false)
+
+	// TLS defaults
+	viper.SetDefault("tls.enabled", false)
+	viper.SetDefault("tls.mutual", false)
+
+	// Rate limiting defaults
+	viper.SetDefault("rate_limit.enabled", true)
+	viper.SetDefault("rate_limit.requests_per_second", 100.0)
+	viper.SetDefault("rate_limit.burst_size", 200)
+	viper.SetDefault("rate_limit.cleanup_interval", "1m")
+
+	{{- if ne .DatabaseDriver ""}}
+	// Database defaults
+	viper.SetDefault("database.driver", "{{.DatabaseDriver}}")
+	viper.SetDefault("database.host", "localhost")
+	{{- if eq .DatabaseDriver "postgres"}}
+	viper.SetDefault("database.port", 5432)
+	viper.SetDefault("database.ssl_mode", "disable")
+	{{- else if eq .DatabaseDriver "mysql"}}
+	viper.SetDefault("database.port", 3306)
+	{{- else if eq .DatabaseDriver "sqlite"}}
+	viper.SetDefault("database.database", "./{{.ProjectName | lower}}.db")
+	{{- end}}
+	viper.SetDefault("database.max_open_conns", 25)
+	viper.SetDefault("database.max_idle_conns", 5)
+	viper.SetDefault("database.conn_max_lifetime", "5m")
+	viper.SetDefault("database.conn_max_idle_time", "5m")
+	viper.SetDefault("database.migrations_path", "./migrations")
+	{{- end}}
+
+	{{- if ne .ServiceDiscovery ""}}
+	// Service discovery defaults
+	viper.SetDefault("discovery.type", "{{.ServiceDiscovery}}")
+	{{- if eq .ServiceDiscovery "consul"}}
+	viper.SetDefault("discovery.address", "127.0.0.1:8500")
+	{{- else if eq .ServiceDiscovery "etcd"}}
+	viper.SetDefault("discovery.address", "127.0.0.1:2379")
+	{{- end}}
+	viper.SetDefault("discovery.health_check.enabled", true)
+	viper.SetDefault("discovery.health_check.interval", "10s")
+	viper.SetDefault("discovery.health_check.timeout", "3s")
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	// Authentication defaults
+	viper.SetDefault("auth.type", "{{.AuthType}}")
+	{{- if eq .AuthType "jwt"}}
+	viper.SetDefault("auth.jwt_expiry", "24h")
+	{{- end}}
+	{{- end}}
+
+	{{- if .TracingEnabled}}
+	// Tracing defaults
+	viper.SetDefault("observability.tracing.enabled", true)
+	viper.SetDefault("observability.tracing.service_name", "{{.ProjectName | lower}}")
+	viper.SetDefault("observability.tracing.sample_rate", 0.1)
+	{{- end}}
+
+	{{- if .MetricsEnabled}}
+	// Metrics defaults
+	viper.SetDefault("observability.metrics.enabled", true)
+	viper.SetDefault("observability.metrics.namespace", "{{.ProjectName | lower}}")
+	viper.SetDefault("observability.metrics.subsystem", "grpc")
+	{{- end}}
+}
+
+// validate validates the configuration
+func validate(cfg *Config) error {
+	if cfg.Server.GRPCPort <= 0 || cfg.Server.GRPCPort > 65535 {
+		return fmt.Errorf("invalid gRPC port: %d", cfg.Server.GRPCPort)
+	}
+
+	if cfg.Server.MetricsPort <= 0 || cfg.Server.MetricsPort > 65535 {
+		return fmt.Errorf("invalid metrics port: %d", cfg.Server.MetricsPort)
+	}
+
+	if cfg.Server.GRPCPort == cfg.Server.MetricsPort {
+		return fmt.Errorf("gRPC port and metrics port cannot be the same")
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	if cfg.Database.Driver == "" {
+		return fmt.Errorf("database driver is required")
+	}
+
+	if cfg.Database.Driver != "sqlite" {
+		if cfg.Database.Host == "" {
+			return fmt.Errorf("database host is required")
+		}
+		if cfg.Database.Database == "" {
+			return fmt.Errorf("database name is required")
+		}
+	}
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	{{- if eq .AuthType "jwt"}}
+	if cfg.Auth.Type == "jwt" && cfg.Auth.JWTSecret == "" {
+		return fmt.Errorf("JWT secret is required when using JWT authentication")
+	}
+	{{- end}}
+	{{- end}}
+
+	return nil
+}
+
+// generateInstanceID generates a unique instance ID
+func generateInstanceID() string {
+	hostname, _ := os.Hostname()
+	pid := os.Getpid()
+	return fmt.Sprintf("%s-%d", hostname, pid)
+}

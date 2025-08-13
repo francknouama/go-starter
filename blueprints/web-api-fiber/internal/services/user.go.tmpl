@@ -1,0 +1,128 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/models"
+	"{{.ModulePath}}/internal/repository"
+)
+
+var (
+	ErrUserNotFound = errors.New("user not found")
+	ErrUserExists   = errors.New("user already exists")
+)
+
+// UserService provides user-related business logic
+type UserService struct {
+	userRepo repository.UserRepository
+	logger   logger.Logger
+}
+
+// NewUserService creates a new user service
+func NewUserService(userRepo repository.UserRepository, log logger.Logger) *UserService {
+	return &UserService{
+		userRepo: userRepo,
+		logger:   log,
+	}
+}
+
+// CreateUser creates a new user
+func (s *UserService) CreateUser(ctx context.Context, user *models.User) error {
+	// Check if user already exists
+	existingUser, err := s.userRepo.GetByEmail(ctx, user.Email)
+	if err != nil && err != sql.ErrNoRows {
+		s.logger.Error("Failed to check existing user", "error", err, "email", user.Email)
+		return fmt.Errorf("failed to check existing user: %w", err)
+	}
+	if existingUser != nil {
+		return ErrUserExists
+	}
+
+	// Create user
+	if err := s.userRepo.Create(ctx, user); err != nil {
+		s.logger.Error("Failed to create user", "error", err, "email", user.Email)
+		return fmt.Errorf("failed to create user: %w", err)
+	}
+
+	s.logger.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+	return nil
+}
+
+// GetUserByID retrieves a user by ID
+func (s *UserService) GetUserByID(ctx context.Context, id uint) (*models.User, error) {
+	user, err := s.userRepo.GetByID(ctx, id)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrUserNotFound
+		}
+		s.logger.Error("Failed to get user by ID", "error", err, "id", id)
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return user, nil
+}
+
+// GetUserByEmail retrieves a user by email
+func (s *UserService) GetUserByEmail(ctx context.Context, email string) (*models.User, error) {
+	user, err := s.userRepo.GetByEmail(ctx, email)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, ErrUserNotFound
+		}
+		s.logger.Error("Failed to get user by email", "error", err, "email", email)
+		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+
+	return user, nil
+}
+
+// UpdateUser updates an existing user
+func (s *UserService) UpdateUser(ctx context.Context, user *models.User) error {
+	if err := s.userRepo.Update(ctx, user); err != nil {
+		s.logger.Error("Failed to update user", "error", err, "user_id", user.ID)
+		return fmt.Errorf("failed to update user: %w", err)
+	}
+
+	s.logger.Info("User updated successfully", "user_id", user.ID)
+	return nil
+}
+
+// DeleteUser deletes a user by ID
+func (s *UserService) DeleteUser(ctx context.Context, id uint) error {
+	if err := s.userRepo.Delete(ctx, id); err != nil {
+		if err == sql.ErrNoRows {
+			return ErrUserNotFound
+		}
+		s.logger.Error("Failed to delete user", "error", err, "id", id)
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+
+	s.logger.Info("User deleted successfully", "user_id", id)
+	return nil
+}
+
+// GetUsers retrieves users with pagination
+func (s *UserService) GetUsers(ctx context.Context, limit, offset int) ([]*models.User, error) {
+	users, err := s.userRepo.List(ctx, limit, offset)
+	if err != nil {
+		s.logger.Error("Failed to get users", "error", err)
+		return nil, fmt.Errorf("failed to get users: %w", err)
+	}
+
+	return users, nil
+}
+
+// CountUsers returns the total number of users
+func (s *UserService) CountUsers(ctx context.Context) (int64, error) {
+	count, err := s.userRepo.Count(ctx)
+	if err != nil {
+		s.logger.Error("Failed to count users", "error", err)
+		return 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	return count, nil
+}

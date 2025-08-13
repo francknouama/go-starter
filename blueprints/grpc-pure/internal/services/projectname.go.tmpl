@@ -1,0 +1,412 @@
+package services
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/repository"
+	{{- end}}
+	{{- if ne .ServiceDiscovery ""}}
+	"{{.ModulePath}}/internal/discovery"
+	{{- end}}
+
+	{{.ProjectName | lower}}v1 "{{.ModulePath}}/proto/{{.ProjectName | lower}}/v1"
+	commonv1 "{{.ModulePath}}/proto/common/v1"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
+)
+
+// {{.ProjectName}}Service implements the main gRPC service
+type {{.ProjectName}}Service struct {
+	{{.ProjectName | lower}}v1.Unimplemented{{.ProjectName}}ServiceServer
+
+	logger logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	userRepo repository.UserRepository
+	{{- end}}
+	{{- if ne .ServiceDiscovery ""}}
+	discovery discovery.ServiceDiscovery
+	{{- end}}
+}
+
+// New{{.ProjectName}}Service creates a new {{.ProjectName}} service
+func New{{.ProjectName}}Service(
+	log logger.Logger,
+	{{- if ne .DatabaseDriver ""}}
+	userRepo repository.UserRepository,
+	{{- end}}
+	{{- if ne .ServiceDiscovery ""}}
+	discovery discovery.ServiceDiscovery,
+	{{- end}}
+) *{{.ProjectName}}Service {
+	return &{{.ProjectName}}Service{
+		logger: log,
+		{{- if ne .DatabaseDriver ""}}
+		userRepo: userRepo,
+		{{- end}}
+		{{- if ne .ServiceDiscovery ""}}
+		discovery: discovery,
+		{{- end}}
+	}
+}
+
+// GetVersion returns the service version information
+func (s *{{.ProjectName}}Service) GetVersion(ctx context.Context, req *emptypb.Empty) (*{{.ProjectName | lower}}v1.VersionResponse, error) {
+	s.logger.Info("GetVersion called")
+
+	response := &{{.ProjectName | lower}}v1.VersionResponse{
+		Version:     "1.0.0",
+		ServiceName: "{{.ProjectName | lower}}",
+		BuildTime:   "2024-01-01T00:00:00Z", // This should be set during build
+		GitCommit:   "unknown",               // This should be set during build
+		GoVersion:   "{{.GoVersion}}",
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "Service is running",
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	return response, nil
+}
+
+// GetStatus returns the current service status
+func (s *{{.ProjectName}}Service) GetStatus(ctx context.Context, req *{{.ProjectName | lower}}v1.StatusRequest) (*{{.ProjectName | lower}}v1.StatusResponse, error) {
+	s.logger.Info("GetStatus called", "include_details", req.IncludeDetails)
+
+	response := &{{.ProjectName | lower}}v1.StatusResponse{
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "Service is healthy",
+			Timestamp: timestamppb.Now(),
+		},
+		ServiceName: "{{.ProjectName | lower}}",
+		Uptime:      "1h30m", // Calculate actual uptime
+	}
+
+	if req.IncludeDetails {
+		response.Details = map[string]string{
+			"service_type": "grpc",
+			"go_version":   "{{.GoVersion}}",
+			"logger_type":  "{{.Logger}}",
+			{{- if ne .DatabaseDriver ""}}
+			"database":     "{{.DatabaseDriver}}",
+			{{- end}}
+			{{- if ne .ServiceDiscovery ""}}
+			"discovery":    "{{.ServiceDiscovery}}",
+			{{- end}}
+		}
+	}
+
+	return response, nil
+}
+
+{{- if ne .DatabaseDriver ""}}
+// CreateUser creates a new user
+func (s *{{.ProjectName}}Service) CreateUser(ctx context.Context, req *{{.ProjectName | lower}}v1.CreateUserRequest) (*{{.ProjectName | lower}}v1.CreateUserResponse, error) {
+	s.logger.Info("CreateUser called", "email", req.Email)
+
+	// Validate request
+	if err := s.validateCreateUserRequest(req); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "Invalid request: %v", err)
+	}
+
+	// Create user via repository
+	user, err := s.userRepo.Create(ctx, req.Name, req.Email)
+	if err != nil {
+		s.logger.Error("Failed to create user", "error", err, "email", req.Email)
+		return nil, status.Errorf(codes.Internal, "Failed to create user: %v", err)
+	}
+
+	response := &{{.ProjectName | lower}}v1.CreateUserResponse{
+		User: &{{.ProjectName | lower}}v1.User{
+			Id:        fmt.Sprintf("%d", user.ID),
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		},
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "User created successfully",
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	s.logger.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+	return response, nil
+}
+
+// GetUser retrieves a user by ID
+func (s *{{.ProjectName}}Service) GetUser(ctx context.Context, req *{{.ProjectName | lower}}v1.GetUserRequest) (*{{.ProjectName | lower}}v1.GetUserResponse, error) {
+	s.logger.Info("GetUser called", "user_id", req.Id)
+
+	// Validate request
+	if req.Id == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "User ID is required")
+	}
+
+	// Get user via repository
+	user, err := s.userRepo.GetByID(ctx, req.Id)
+	if err != nil {
+		s.logger.Error("Failed to get user", "error", err, "user_id", req.Id)
+		if err.Error() == "user not found" {
+			return nil, status.Errorf(codes.NotFound, "User not found")
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to get user: %v", err)
+	}
+
+	response := &{{.ProjectName | lower}}v1.GetUserResponse{
+		User: &{{.ProjectName | lower}}v1.User{
+			Id:        fmt.Sprintf("%d", user.ID),
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		},
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "User retrieved successfully",
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	s.logger.Info("User retrieved successfully", "user_id", user.ID)
+	return response, nil
+}
+
+// ListUsers retrieves a list of users with pagination
+func (s *{{.ProjectName}}Service) ListUsers(ctx context.Context, req *{{.ProjectName | lower}}v1.ListUsersRequest) (*{{.ProjectName | lower}}v1.ListUsersResponse, error) {
+	s.logger.Info("ListUsers called", "page", req.Page, "page_size", req.PageSize)
+
+	// Set defaults for pagination
+	page := req.Page
+	if page <= 0 {
+		page = 1
+	}
+	pageSize := req.PageSize
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100 // Limit maximum page size
+	}
+
+	// Get users via repository
+	users, total, err := s.userRepo.List(ctx, int(page), int(pageSize))
+	if err != nil {
+		s.logger.Error("Failed to list users", "error", err)
+		return nil, status.Errorf(codes.Internal, "Failed to list users: %v", err)
+	}
+
+	// Convert to protobuf format
+	protoUsers := make([]*{{.ProjectName | lower}}v1.User, 0, len(users))
+	for _, user := range users {
+		protoUsers = append(protoUsers, &{{.ProjectName | lower}}v1.User{
+			Id:        fmt.Sprintf("%d", user.ID),
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		})
+	}
+
+	response := &{{.ProjectName | lower}}v1.ListUsersResponse{
+		Users: protoUsers,
+		Pagination: &commonv1.PaginationResponse{
+			Page:       page,
+			PageSize:   pageSize,
+			Total:      int64(total),
+			TotalPages: int64((total + int(pageSize) - 1) / int(pageSize)),
+		},
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   fmt.Sprintf("Retrieved %d users", len(users)),
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	s.logger.Info("Users listed successfully", "count", len(users), "total", total)
+	return response, nil
+}
+
+// UpdateUser updates an existing user
+func (s *{{.ProjectName}}Service) UpdateUser(ctx context.Context, req *{{.ProjectName | lower}}v1.UpdateUserRequest) (*{{.ProjectName | lower}}v1.UpdateUserResponse, error) {
+	s.logger.Info("UpdateUser called", "user_id", req.Id)
+
+	// Validate request
+	if req.Id == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "User ID is required")
+	}
+
+	// Update user via repository
+	user, err := s.userRepo.Update(ctx, req.Id, req.Name, req.Email)
+	if err != nil {
+		s.logger.Error("Failed to update user", "error", err, "user_id", req.Id)
+		if err.Error() == "user not found" {
+			return nil, status.Errorf(codes.NotFound, "User not found")
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to update user: %v", err)
+	}
+
+	response := &{{.ProjectName | lower}}v1.UpdateUserResponse{
+		User: &{{.ProjectName | lower}}v1.User{
+			Id:        fmt.Sprintf("%d", user.ID),
+			Name:      user.Name,
+			Email:     user.Email,
+			CreatedAt: timestamppb.New(user.CreatedAt),
+			UpdatedAt: timestamppb.New(user.UpdatedAt),
+		},
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "User updated successfully",
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	s.logger.Info("User updated successfully", "user_id", user.ID)
+	return response, nil
+}
+
+// DeleteUser deletes a user by ID
+func (s *{{.ProjectName}}Service) DeleteUser(ctx context.Context, req *{{.ProjectName | lower}}v1.DeleteUserRequest) (*{{.ProjectName | lower}}v1.DeleteUserResponse, error) {
+	s.logger.Info("DeleteUser called", "user_id", req.Id)
+
+	// Validate request
+	if req.Id == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "User ID is required")
+	}
+
+	// Delete user via repository
+	err := s.userRepo.Delete(ctx, req.Id)
+	if err != nil {
+		s.logger.Error("Failed to delete user", "error", err, "user_id", req.Id)
+		if err.Error() == "user not found" {
+			return nil, status.Errorf(codes.NotFound, "User not found")
+		}
+		return nil, status.Errorf(codes.Internal, "Failed to delete user: %v", err)
+	}
+
+	response := &{{.ProjectName | lower}}v1.DeleteUserResponse{
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "User deleted successfully",
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	s.logger.Info("User deleted successfully", "user_id", req.Id)
+	return response, nil
+}
+
+// validateCreateUserRequest validates the create user request
+func (s *{{.ProjectName}}Service) validateCreateUserRequest(req *{{.ProjectName | lower}}v1.CreateUserRequest) error {
+	if req.Name == "" {
+		return fmt.Errorf("name is required")
+	}
+	if req.Email == "" {
+		return fmt.Errorf("email is required")
+	}
+	// Add more validation as needed (email format, etc.)
+	return nil
+}
+{{- end}}
+
+{{- if ne .ServiceDiscovery ""}}
+// DiscoverServices discovers other service instances
+func (s *{{.ProjectName}}Service) DiscoverServices(ctx context.Context, req *{{.ProjectName | lower}}v1.DiscoverServicesRequest) (*{{.ProjectName | lower}}v1.DiscoverServicesResponse, error) {
+	s.logger.Info("DiscoverServices called", "service_name", req.ServiceName)
+
+	if req.ServiceName == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "Service name is required")
+	}
+
+	// Discover instances via service discovery
+	instances, err := s.discovery.Discover(req.ServiceName)
+	if err != nil {
+		s.logger.Error("Failed to discover services", "error", err, "service_name", req.ServiceName)
+		return nil, status.Errorf(codes.Internal, "Failed to discover services: %v", err)
+	}
+
+	// Convert to protobuf format
+	protoInstances := make([]*{{.ProjectName | lower}}v1.ServiceInstance, 0, len(instances))
+	for _, instance := range instances {
+		protoInstances = append(protoInstances, &{{.ProjectName | lower}}v1.ServiceInstance{
+			Id:      instance.ID,
+			Name:    instance.Name,
+			Address: instance.Address,
+			Port:    int32(instance.Port),
+			Tags:    instance.Tags,
+			Meta:    instance.Meta,
+			Health:  string(instance.Health),
+		})
+	}
+
+	response := &{{.ProjectName | lower}}v1.DiscoverServicesResponse{
+		Instances: protoInstances,
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   fmt.Sprintf("Discovered %d instances", len(instances)),
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	s.logger.Info("Services discovered successfully", "service_name", req.ServiceName, "count", len(instances))
+	return response, nil
+}
+{{- end}}
+
+// Echo implements a simple echo service for testing
+func (s *{{.ProjectName}}Service) Echo(ctx context.Context, req *{{.ProjectName | lower}}v1.EchoRequest) (*{{.ProjectName | lower}}v1.EchoResponse, error) {
+	s.logger.Debug("Echo called", "message", req.Message)
+
+	response := &{{.ProjectName | lower}}v1.EchoResponse{
+		Message: fmt.Sprintf("Echo: %s", req.Message),
+		Status: &commonv1.Status{
+			Code:      commonv1.StatusCode_STATUS_CODE_OK,
+			Message:   "Echo successful",
+			Timestamp: timestamppb.Now(),
+		},
+	}
+
+	return response, nil
+}
+
+// StreamEcho implements a bidirectional streaming echo service
+func (s *{{.ProjectName}}Service) StreamEcho(stream {{.ProjectName | lower}}v1.{{.ProjectName}}Service_StreamEchoServer) error {
+	s.logger.Info("StreamEcho started")
+
+	for {
+		req, err := stream.Recv()
+		if err != nil {
+			if err.Error() == "EOF" {
+				s.logger.Info("StreamEcho ended")
+				return nil
+			}
+			s.logger.Error("StreamEcho receive error", "error", err)
+			return err
+		}
+
+		s.logger.Debug("StreamEcho received", "message", req.Message)
+
+		response := &{{.ProjectName | lower}}v1.EchoResponse{
+			Message: fmt.Sprintf("Stream Echo: %s", req.Message),
+			Status: &commonv1.Status{
+				Code:      commonv1.StatusCode_STATUS_CODE_OK,
+				Message:   "Stream echo successful",
+				Timestamp: timestamppb.Now(),
+			},
+		}
+
+		if err := stream.Send(response); err != nil {
+			s.logger.Error("StreamEcho send error", "error", err)
+			return err
+		}
+	}
+}

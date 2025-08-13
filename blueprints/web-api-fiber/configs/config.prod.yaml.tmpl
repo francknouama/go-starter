@@ -1,0 +1,92 @@
+environment: production
+
+app:
+  name: "{{.ProjectName}}"
+  version: "1.0.0"
+
+server:
+  host: "0.0.0.0"
+  port: ${PORT:8080}
+  read_timeout: 30
+  write_timeout: 30
+  idle_timeout: 120
+  max_request_size: 10485760  # 10MB
+  concurrency: 262144
+  trusted_proxies: 
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "192.168.0.0/16"
+  
+  rate_limit:
+    enabled: true
+    max: 100  # More restrictive in production
+    expiration: 60s
+    limiter_type: "sliding"
+    skip_successful: false
+    skip_failed: false
+  
+  cache:
+    enabled: true
+    expiration: 1h
+    max_size: 10000
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+{{- if eq .DatabaseDriver "postgres"}}
+  host: ${DB_HOST:localhost}
+  port: ${DB_PORT:5432}
+  name: ${DB_NAME:{{.ProjectName}}_prod}
+  user: ${DB_USER:postgres}
+  password: ${DB_PASSWORD}
+  ssl_mode: ${DB_SSL_MODE:require}
+{{- else if eq .DatabaseDriver "mysql"}}
+  host: ${DB_HOST:localhost}
+  port: ${DB_PORT:3306}
+  name: ${DB_NAME:{{.ProjectName}}_prod}
+  user: ${DB_USER:root}
+  password: ${DB_PASSWORD}
+{{- else if eq .DatabaseDriver "sqlite"}}
+  name: ${DB_NAME:{{.ProjectName}}_prod.db}
+{{- end}}
+  max_connections: 100
+  max_idle_conns: 10
+  conn_max_lifetime: 5
+  auto_migrate: false  # Don't auto-migrate in production
+{{- end}}
+
+log:
+  level: "info"
+  format: "json"  # Use JSON format for production
+
+{{- if ne .AuthType ""}}
+auth:
+  type: "{{.AuthType}}"
+  secret: ${AUTH_SECRET}
+{{- if eq .AuthType "jwt"}}
+  token_expiry: 1h
+  refresh_expiry: 168h  # 7 days
+{{- else if eq .AuthType "session"}}
+  session:
+    name: "{{.ProjectName}}_session"
+    max_age: 3600  # 1 hour
+    secure: true   # Must be true in production with HTTPS
+    http_only: true
+    same_site: "strict"
+    domain: ${SESSION_DOMAIN}
+    path: "/"
+{{- else if eq .AuthType "oauth2"}}
+  oauth:
+    providers:
+      google:
+        client_id: ${GOOGLE_CLIENT_ID}
+        client_secret: ${GOOGLE_CLIENT_SECRET}
+        redirect_url: ${GOOGLE_REDIRECT_URL}
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: ${GITHUB_CLIENT_ID}
+        client_secret: ${GITHUB_CLIENT_SECRET}
+        redirect_url: ${GITHUB_REDIRECT_URL}
+        scopes: ["user:email"]
+{{- end}}
+{{- end}}

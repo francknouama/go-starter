@@ -1,0 +1,258 @@
+# {{.ProjectName}}
+
+A modern Go web API built with Chi router and following best practices.
+
+## Features
+
+- ⚡ **Fast**: Built with [Chi](https://github.com/go-chi/chi) router for high performance
+- 🔒 **Secure**: Security headers, CORS configuration, and authentication middleware
+- 📊 **Observable**: {{if .EnableMetrics}}Prometheus metrics, {{end}}{{if .EnableTracing}}OpenTelemetry tracing, {{end}}structured logging
+- 🗄️ **Database**: {{if ne .DatabaseDriver ""}}{{.DatabaseDriver}} with {{.DatabaseORM}} support{{else}}Database-agnostic design{{end}}
+- 🧪 **Testable**: Comprehensive test suite with integration tests
+- 🐳 **Containerized**: Docker support with multi-stage builds
+- 📝 **Well Documented**: OpenAPI/Swagger documentation
+
+## Technology Stack
+
+- **Framework**: [Chi](https://github.com/go-chi/chi) v5 - Lightweight HTTP router
+- **Language**: Go {{.GoVersion}}
+- **Logging**: {{.Logger}} for structured logging
+{{- if ne .DatabaseDriver ""}}
+- **Database**: {{.DatabaseDriver}}{{if ne .DatabaseORM ""}} with {{.DatabaseORM}}{{end}}
+{{- end}}
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+- **Authentication**: {{.AuthType}}{{if eq .AuthType "jwt"}} with JWT tokens{{end}}
+{{- end}}
+{{- if .EnableMetrics}}
+- **Metrics**: Prometheus metrics
+{{- end}}
+{{- if .EnableTracing}}
+- **Tracing**: OpenTelemetry distributed tracing
+{{- end}}
+- **Configuration**: Viper for configuration management
+- **Testing**: Testify for testing framework
+
+## Getting Started
+
+### Prerequisites
+
+- Go {{.GoVersion}} or higher
+- {{if eq .DatabaseDriver "postgres"}}PostgreSQL 12+{{else if eq .DatabaseDriver "mysql"}}MySQL 8.0+{{else if eq .DatabaseDriver "sqlite"}}SQLite3{{else}}No database requirements{{end}}
+- Docker (optional)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone <your-repo-url>
+cd {{.ProjectName}}
+```
+
+2. Install dependencies:
+```bash
+make deps
+```
+
+3. Set up your environment:
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+{{- if ne .DatabaseDriver ""}}
+4. Set up the database:
+{{- if eq .DatabaseDriver "postgres"}}
+```bash
+# Create database
+createdb {{.ProjectName}}_dev
+
+# Run migrations
+make migrate-up
+```
+{{- else if eq .DatabaseDriver "mysql"}}
+```bash
+# Create database
+mysql -u root -p -e "CREATE DATABASE {{.ProjectName}}_dev;"
+
+# Run migrations
+make migrate-up
+```
+{{- else if eq .DatabaseDriver "sqlite"}}
+```bash
+# SQLite database will be created automatically
+# Run migrations
+make migrate-up
+```
+{{- end}}
+{{- end}}
+
+5. Run the application:
+```bash
+make run
+```
+
+The API will be available at `http://localhost:8080`
+
+### Development
+
+For development with hot reload:
+```bash
+make dev
+```
+
+### Running Tests
+
+```bash
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+
+# Run integration tests
+make test-integration
+```
+
+## API Endpoints
+
+### Health Checks
+- `GET /health` - Health check endpoint
+- `GET /ready` - Readiness check endpoint
+
+{{- if ne .DatabaseDriver ""}}
+### Users
+- `GET /api/v1/users` - List users with pagination
+- `GET /api/v1/users/{id}` - Get user by ID
+- `POST /api/v1/users` - Create new user
+- `PUT /api/v1/users/{id}` - Update user
+- `DELETE /api/v1/users/{id}` - Delete user
+{{- end}}
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+### Authentication
+- `POST /api/v1/auth/login` - User login
+- `POST /api/v1/auth/register` - User registration
+- `POST /api/v1/auth/refresh` - Refresh access token
+- `POST /api/v1/auth/logout` - User logout (requires authentication)
+- `GET /api/v1/auth/me` - Get current user (requires authentication)
+{{- end}}
+
+### Documentation
+- `GET /docs` - API documentation (OpenAPI/Swagger)
+
+{{- if .EnableMetrics}}
+### Metrics
+- `GET /metrics` - Prometheus metrics endpoint
+{{- end}}
+
+## Configuration
+
+The application supports configuration through:
+
+1. **Configuration files** (`configs/config.{env}.yaml`)
+2. **Environment variables**
+3. **Command line flags**
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PORT` | Server port | `8080` |
+| `LOG_LEVEL` | Logging level | `info` |
+{{- if ne .DatabaseDriver ""}}
+| `DATABASE_URL` | Database connection URL | - |
+| `DB_HOST` | Database host | `localhost` |
+| `DB_PORT` | Database port | {{if eq .DatabaseDriver "postgres"}}`5432`{{else if eq .DatabaseDriver "mysql"}}`3306`{{else}}-{{end}} |
+| `DB_USER` | Database username | `{{.ProjectName}}` |
+| `DB_PASSWORD` | Database password | `password` |
+| `DB_NAME` | Database name | `{{.ProjectName}}` |
+{{- end}}
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+| `JWT_SECRET` | JWT signing secret | - |
+{{- end}}
+
+## Docker
+
+### Build and run with Docker:
+
+```bash
+# Build image
+make docker-build
+
+# Run container
+make docker-run
+```
+
+### Using Docker Compose:
+
+```bash
+# Start all services
+make docker-compose-up
+
+# Stop all services
+make docker-compose-down
+```
+
+## Architecture
+
+This project follows clean architecture principles with the following structure:
+
+```
+{{.ProjectName}}/
+├── cmd/server/          # Application entry point
+├── internal/
+│   ├── config/          # Configuration management
+│   ├── handlers/        # HTTP handlers (Chi-optimized)
+│   ├── middleware/      # HTTP middleware
+│   ├── logger/          # Logging utilities
+{{- if ne .DatabaseDriver ""}}
+│   ├── database/        # Database connection and migrations
+│   ├── models/          # Data models
+│   ├── repository/      # Data access layer
+│   ├── services/        # Business logic layer
+{{- end}}
+│   └── server/          # HTTP server setup
+├── configs/             # Configuration files
+{{- if ne .DatabaseDriver ""}}
+├── migrations/          # Database migrations
+{{- end}}
+├── tests/               # Test files
+├── api/                 # API documentation
+├── scripts/             # Utility scripts
+└── docs/                # Documentation
+```
+
+### Key Design Decisions
+
+1. **Chi Router**: Chosen for its lightweight nature and compatibility with standard `net/http`
+2. **Standard Library Focus**: Minimizes dependencies while maintaining functionality
+3. **Composable Middleware**: Easy to add, remove, and customize middleware
+4. **Interface-Based Design**: Enables easy testing and dependency injection
+5. **Configuration Flexibility**: Supports multiple configuration sources
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes
+4. Add tests for your changes
+5. Run the test suite (`make test`)
+6. Commit your changes (`git commit -m 'Add amazing feature'`)
+7. Push to the branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+## License
+
+This project is licensed under the {{.License}} License. See the [LICENSE](LICENSE) file for details.
+
+## Support
+
+If you have any questions or need help, please:
+
+1. Check the [documentation](./docs/)
+2. Search existing [issues](../../issues)
+3. Create a new [issue](../../issues/new)
+
+---
+
+**Generated with [go-starter](https://github.com/your-org/go-starter) - A modern Go project generator**

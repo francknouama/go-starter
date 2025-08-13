@@ -1,0 +1,381 @@
+# {{.ProjectName}}
+
+A high-performance gRPC microservice built with Go {{.GoVersion}}, featuring advanced observability, authentication, and modern development practices.
+
+## 🚀 Features
+
+- **Pure gRPC API** with Protocol Buffers
+- **Health Checks** with standard gRPC health service{{if .MetricsEnabled}}
+- **Prometheus Metrics** for monitoring and alerting{{end}}{{if .TracingEnabled}}
+- **Distributed Tracing** with OpenTelemetry{{end}}{{if ne .AuthType ""}}
+- **Authentication** with {{.AuthType | upper}} support{{end}}{{if ne .DatabaseDriver ""}}
+- **Database Integration** with {{.DatabaseDriver | title}}{{if ne .DatabaseORM ""}} and {{.DatabaseORM | upper}}{{end}}{{end}}{{if ne .ServiceDiscovery ""}}
+- **Service Discovery** with {{.ServiceDiscovery | title}}{{end}}
+- **Production-Ready** with Docker and containerization
+- **Comprehensive Testing** with unit, integration, and load tests
+- **Development Tools** with hot reloading and debugging support
+
+## 📋 Prerequisites
+
+- Go {{.GoVersion}} or later
+- Protocol Buffers compiler (`protoc`) or `buf`
+- Docker and Docker Compose
+- Make (for build automation){{if ne .DatabaseDriver ""}}
+- {{.DatabaseDriver | title}} database{{end}}
+
+## 🛠️ Quick Start
+
+### 1. Clone and Setup
+```bash
+git clone <repository-url>
+cd {{.ProjectName | lower}}
+make setup
+```
+
+### 2. Generate Protocol Buffer Code
+```bash
+make generate
+```
+
+### 3. Run the Service
+```bash
+# Development mode with hot reload
+make dev
+
+# Or build and run manually
+make build
+make run
+```
+
+The service will start on:
+- gRPC server: `localhost:{{.GrpcPort}}`{{if .MetricsEnabled}}
+- Metrics endpoint: `http://localhost:{{.MetricsPort}}/metrics`{{end}}
+- Health check: `http://localhost:{{.MetricsPort}}/health`
+
+## 🏗️ Architecture
+
+This service follows modern microservice patterns:
+
+```
+{{.ProjectName}}
+├── cmd/server/           # Application entry point
+├── internal/
+│   ├── config/          # Configuration management
+│   ├── server/          # gRPC server implementation
+│   ├── services/        # Business logic layer
+│   ├── interceptors/    # gRPC middleware{{if ne .DatabaseDriver ""}}
+│   ├── database/        # Database connection and migrations
+│   ├── models/          # Data models
+│   ├── repository/      # Data access layer{{end}}{{if ne .AuthType ""}}
+│   ├── auth/            # Authentication and authorization{{end}}{{if .TracingEnabled}}
+│   ├── observability/   # Tracing and monitoring{{end}}{{if ne .ServiceDiscovery ""}}
+│   ├── discovery/       # Service discovery{{end}}
+│   └── logger/          # Logging interface
+├── proto/               # Protocol Buffer definitions
+├── configs/             # Configuration files
+├── tests/               # Test suites
+└── docs/                # Documentation
+```
+
+## 🔧 Configuration
+
+Configuration is managed through YAML files and environment variables:
+
+```yaml
+# configs/config.dev.yaml
+server:
+  grpc_port: {{.GrpcPort}}
+  metrics_port: {{.MetricsPort}}
+  
+logging:
+  level: "info"
+  format: "json"{{if ne .DatabaseDriver ""}}
+
+database:
+  driver: "{{.DatabaseDriver}}"
+  host: "localhost"
+  port: 5432
+  name: "{{.ProjectName | lower}}"{{end}}{{if .TracingEnabled}}
+
+tracing:
+  enabled: true
+  service_name: "{{.ProjectName | lower}}"{{end}}{{if .MetricsEnabled}}
+
+metrics:
+  enabled: true
+  path: "/metrics"{{end}}
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `CONFIG_FILE` | Configuration file path | `configs/config.dev.yaml` |
+| `LOG_LEVEL` | Logging level | `info` |
+| `GRPC_PORT` | gRPC server port | `{{.GrpcPort}}` |
+| `METRICS_PORT` | Metrics server port | `{{.MetricsPort}}` |{{if ne .DatabaseDriver ""}}
+| `DB_HOST` | Database host | `localhost` |
+| `DB_PORT` | Database port | Database-specific |
+| `DB_NAME` | Database name | `{{.ProjectName | lower}}` |
+| `DB_USER` | Database user | `{{.ProjectName | lower}}` |
+| `DB_PASSWORD` | Database password | Required for production |{{end}}{{if eq .AuthType "jwt"}}
+| `JWT_SECRET` | JWT signing secret | Required |
+| `JWT_EXPIRY` | JWT token expiry | `24h` |{{end}}
+
+## 📡 API Documentation
+
+### Health Check
+```bash
+# HTTP health check
+curl http://localhost:{{.MetricsPort}}/health
+
+# gRPC health check
+grpcurl -plaintext localhost:{{.GrpcPort}} grpc.health.v1.Health/Check
+```
+
+### Service Methods
+```bash
+# List available services
+grpcurl -plaintext localhost:{{.GrpcPort}} list
+
+# Describe service
+grpcurl -plaintext localhost:{{.GrpcPort}} describe {{.ProjectName | lower}}.v1.{{.ProjectName}}Service
+```
+
+## 🧪 Testing
+
+### Run All Tests
+```bash
+make test
+```
+
+### Test Categories
+```bash
+# Unit tests only
+make test-unit
+
+# Integration tests
+make test-integration
+
+# Load tests
+make test-load
+
+# Generate coverage report
+make coverage
+```
+
+### Test Structure
+- **Unit Tests**: `tests/unit/` - Fast, isolated component tests
+- **Integration Tests**: `tests/integration/` - End-to-end API tests
+- **Load Tests**: `tests/load/` - Performance and stress tests
+
+## 🔍 Development
+
+### Local Development
+```bash
+# Install development tools
+make install-tools
+
+# Run with hot reload
+make dev
+
+# Format code
+make format
+
+# Run linting
+make lint
+
+# Security checks
+make security
+```
+
+### Protocol Buffer Development
+```bash
+# Generate code from .proto files
+make generate
+
+# Test gRPC endpoints
+make grpc-test
+
+# List available services
+make grpc-list
+```
+
+### Database Development{{if ne .DatabaseDriver ""}}
+```bash
+# Run migrations
+make migrate-up
+
+# Rollback migrations
+make migrate-down
+
+# Create new migration
+make migrate-create NAME=add_user_table
+```{{else}}
+Database integration is disabled. To enable:
+1. Set `DatabaseDriver` in configuration
+2. Add database connection details
+3. Run `make generate` to update dependencies{{end}}
+
+## 🐳 Docker Deployment
+
+### Local Docker
+```bash
+# Build and run with Docker
+make docker-build
+make docker-run
+
+# Or use Docker Compose
+make docker-compose-up
+```
+
+### Production Deployment
+```bash
+# Build optimized image
+docker build -t {{.ProjectName | lower}}:latest .
+
+# Run with production config
+docker run -p {{.GrpcPort}}:{{.GrpcPort}} \
+  -e CONFIG_FILE=configs/config.prod.yaml \
+  {{.ProjectName | lower}}:latest
+```
+
+## 📊 Monitoring{{if .MetricsEnabled}}
+
+### Prometheus Metrics
+```bash
+# View metrics
+make metrics
+
+# Key metrics available:
+# - grpc_server_handled_total
+# - grpc_server_handling_seconds
+# - go_memstats_*
+# - process_*
+```{{end}}
+
+### Health Monitoring
+```bash
+# Check service health
+make health
+
+# Health check returns:
+# - 200 OK: Service healthy
+# - 503 Service Unavailable: Service unhealthy
+```
+
+{{if .TracingEnabled}}### Distributed Tracing
+The service includes OpenTelemetry tracing:
+- Automatic gRPC span creation
+- Custom business logic tracing
+- Integration with Jaeger/Zipkin
+- Performance monitoring{{end}}
+
+## 🔐 Security{{if ne .AuthType ""}}
+
+### Authentication
+This service uses {{.AuthType | upper}} authentication:
+
+{{if eq .AuthType "jwt"}}#### JWT Authentication
+```bash
+# Include JWT token in requests
+grpcurl -plaintext \
+  -H "authorization: Bearer <jwt-token>" \
+  localhost:{{.GrpcPort}} {{.ProjectName | lower}}.v1.{{.ProjectName}}Service/Method
+```{{end}}
+
+{{if eq .AuthType "mtls"}}#### Mutual TLS (mTLS)
+```bash
+# Configure client certificates
+grpcurl -cert client.crt -key client.key \
+  -cacert ca.crt \
+  localhost:{{.GrpcPort}} {{.ProjectName | lower}}.v1.{{.ProjectName}}Service/Method
+```{{end}}
+
+{{if eq .AuthType "oauth2"}}#### OAuth2 Authentication
+```bash
+# Include OAuth2 token
+grpcurl -plaintext \
+  -H "authorization: Bearer <oauth2-token>" \
+  localhost:{{.GrpcPort}} {{.ProjectName | lower}}.v1.{{.ProjectName}}Service/Method
+```{{end}}{{end}}
+
+### Security Best Practices
+- TLS encryption for all communications
+- Input validation and sanitization
+- Rate limiting and request throttling
+- Secure configuration management
+- Regular security audits
+
+## 🚀 Production Deployment
+
+### Environment Setup
+1. **Configuration**: Use production config files
+2. **Secrets**: Store sensitive data in secure storage{{if ne .DatabaseDriver ""}}
+3. **Database**: Configure production database connections{{end}}
+4. **Monitoring**: Set up Prometheus and Grafana
+5. **Logging**: Configure centralized logging
+6. **Backup**: Implement backup strategies
+
+### Kubernetes Deployment
+```yaml
+# Basic Kubernetes deployment example
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.ProjectName | lower}}
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: {{.ProjectName | lower}}
+  template:
+    metadata:
+      labels:
+        app: {{.ProjectName | lower}}
+    spec:
+      containers:
+      - name: {{.ProjectName | lower}}
+        image: {{.ProjectName | lower}}:latest
+        ports:
+        - containerPort: {{.GrpcPort}}
+        - containerPort: {{.MetricsPort}}
+        env:
+        - name: CONFIG_FILE
+          value: "configs/config.prod.yaml"
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/amazing-feature`
+3. Commit changes: `git commit -m 'Add amazing feature'`
+4. Push to branch: `git push origin feature/amazing-feature`
+5. Open a Pull Request
+
+### Development Guidelines
+- Follow Go conventions and best practices
+- Add tests for new functionality
+- Update documentation as needed
+- Run linting and formatting before commits
+- Keep commits atomic and well-described
+
+## 📚 Additional Documentation
+
+- [Architecture Guide](docs/ARCHITECTURE.md) - Detailed architecture overview
+- [API Documentation](docs/API.md) - Complete API reference
+- [Deployment Guide](docs/DEPLOYMENT.md) - Production deployment details
+
+## 📄 License
+
+This project is licensed under the {{.License}} License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+- **Documentation**: Check the `docs/` directory
+- **Issues**: Report bugs and request features on GitHub
+- **Discussions**: Join community discussions for questions
+
+---
+
+**Generated by [go-starter](https://github.com/your-org/go-starter)** - The modern Go project generator

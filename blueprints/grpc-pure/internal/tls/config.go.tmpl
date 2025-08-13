@@ -1,0 +1,385 @@
+package tls
+
+import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net"
+	"os"
+	"time"
+
+	"github.com/spf13/viper"
+)
+
+// Config represents TLS configuration
+type Config struct {
+	Enabled    bool   `yaml:"enabled"`
+	CertFile   string `yaml:"cert_file"`
+	KeyFile    string `yaml:"key_file"`
+	CAFile     string `yaml:"ca_file"`
+	ServerName string `yaml:"server_name"`
+	
+	// Mutual TLS settings
+	MTLS struct {
+		Enabled            bool     `yaml:"enabled"`
+		CAFile             string   `yaml:"ca_file"`
+		ClientCertRequired bool     `yaml:"client_cert_required"`
+		AllowedSubjects    []string `yaml:"allowed_subjects"`
+	} `yaml:"mtls"`
+	
+	// TLS version and cipher settings
+	MinVersion string   `yaml:"min_version"`
+	MaxVersion string   `yaml:"max_version"`
+	Ciphers    []string `yaml:"ciphers"`
+	
+	// Certificate settings for auto-generation
+	AutoGenerate bool `yaml:"auto_generate"`
+	SelfSigned   bool `yaml:"self_signed"`
+	
+	// Certificate validity
+	Validity struct {
+		NotBefore time.Duration `yaml:"not_before"`
+		NotAfter  time.Duration `yaml:"not_after"`
+	} `yaml:"validity"`
+	
+	// Subject information for auto-generated certificates
+	Subject struct {
+		Country            []string `yaml:"country"`
+		Organization       []string `yaml:"organization"`
+		OrganizationalUnit []string `yaml:"organizational_unit"`
+		Locality           []string `yaml:"locality"`
+		Province           []string `yaml:"province"`
+		CommonName         string   `yaml:"common_name"`
+	} `yaml:"subject"`
+	
+	// Subject Alternative Names
+	SANs struct {
+		DNSNames    []string `yaml:"dns_names"`
+		IPAddresses []string `yaml:"ip_addresses"`
+	} `yaml:"sans"`
+}
+
+// TLSManager manages TLS configuration and certificates
+type TLSManager struct {
+	config *Config
+}
+
+// NewTLSManager creates a new TLS manager
+func NewTLSManager() (*TLSManager, error) {
+	config := &Config{}
+	if err := viper.UnmarshalKey("server.grpc.tls", config); err != nil {
+		return nil, fmt.Errorf("failed to parse TLS config: %w", err)
+	}
+	
+	// Set default values
+	if config.MinVersion == "" {
+		config.MinVersion = "1.2"
+	}
+	if config.MaxVersion == "" {
+		config.MaxVersion = "1.3"
+	}
+	
+	return &TLSManager{config: config}, nil
+}
+
+// GetServerTLSConfig returns TLS configuration for the gRPC server
+func (m *TLSManager) GetServerTLSConfig() (*tls.Config, error) {
+	if !m.config.Enabled {
+		return nil, nil
+	}
+	
+	// Load or generate certificates
+	cert, err := m.loadOrGenerateCertificate()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load certificate: %w", err)
+	}
+	
+	config := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   m.getTLSVersion(m.config.MinVersion),
+		MaxVersion:   m.getTLSVersion(m.config.MaxVersion),
+	}
+	
+	// Configure mutual TLS if enabled
+	if m.config.MTLS.Enabled {
+		clientCAPool, err := m.loadClientCAPool()
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client CA pool: %w", err)
+		}
+		
+		config.ClientCAs = clientCAPool
+		if m.config.MTLS.ClientCertRequired {
+			config.ClientAuth = tls.RequireAndVerifyClientCert
+		} else {
+			config.ClientAuth = tls.VerifyClientCertIfGiven
+		}
+		
+		// Set up custom verification if allowed subjects are specified
+		if len(m.config.MTLS.AllowedSubjects) > 0 {
+			config.VerifyPeerCertificate = m.verifyClientCertificate
+		}
+	}
+	
+	// Configure cipher suites if specified
+	if len(m.config.Ciphers) > 0 {
+		config.CipherSuites = m.getCipherSuites()
+	}
+	
+	return config, nil
+}
+
+// GetClientTLSConfig returns TLS configuration for gRPC clients
+func (m *TLSManager) GetClientTLSConfig() (*tls.Config, error) {
+	if !m.config.Enabled {
+		return nil, nil
+	}
+	
+	config := &tls.Config{
+		ServerName: m.config.ServerName,
+		MinVersion: m.getTLSVersion(m.config.MinVersion),
+		MaxVersion: m.getTLSVersion(m.config.MaxVersion),
+	}
+	
+	// Load server CA if specified
+	if m.config.CAFile != "" {
+		caCert, err := os.ReadFile(m.config.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read CA file: %w", err)
+		}
+		
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
+		config.RootCAs = caCertPool
+	}
+	
+	// Configure client certificate for mutual TLS
+	if m.config.MTLS.Enabled && m.config.CertFile != "" && m.config.KeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(m.config.CertFile, m.config.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		}
+		config.Certificates = []tls.Certificate{cert}
+	}
+	
+	return config, nil
+}
+
+// loadOrGenerateCertificate loads existing certificate or generates a new one
+func (m *TLSManager) loadOrGenerateCertificate() (tls.Certificate, error) {
+	// Try to load existing certificate
+	if m.config.CertFile != "" && m.config.KeyFile != "" {
+		if _, err := os.Stat(m.config.CertFile); err == nil {
+			if _, err := os.Stat(m.config.KeyFile); err == nil {
+				return tls.LoadX509KeyPair(m.config.CertFile, m.config.KeyFile)
+			}
+		}
+	}
+	
+	// Generate certificate if auto-generation is enabled
+	if m.config.AutoGenerate {
+		return m.generateSelfSignedCertificate()
+	}
+	
+	return tls.Certificate{}, fmt.Errorf("no certificate found and auto-generation is disabled")
+}
+
+// generateSelfSignedCertificate generates a self-signed certificate
+func (m *TLSManager) generateSelfSignedCertificate() (tls.Certificate, error) {
+	// Generate private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to generate private key: %w", err)
+	}
+	
+	// Create certificate template
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			Country:            m.config.Subject.Country,
+			Organization:       m.config.Subject.Organization,
+			OrganizationalUnit: m.config.Subject.OrganizationalUnit,
+			Locality:           m.config.Subject.Locality,
+			Province:           m.config.Subject.Province,
+			CommonName:         m.config.Subject.CommonName,
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	
+	// Set validity period if configured
+	if m.config.Validity.NotBefore > 0 {
+		template.NotBefore = time.Now().Add(-m.config.Validity.NotBefore)
+	}
+	if m.config.Validity.NotAfter > 0 {
+		template.NotAfter = time.Now().Add(m.config.Validity.NotAfter)
+	}
+	
+	// Add Subject Alternative Names
+	for _, dnsName := range m.config.SANs.DNSNames {
+		template.DNSNames = append(template.DNSNames, dnsName)
+	}
+	
+	for _, ipAddr := range m.config.SANs.IPAddresses {
+		ip := net.ParseIP(ipAddr)
+		if ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		}
+	}
+	
+	// Default SANs if none specified
+	if len(template.DNSNames) == 0 && len(template.IPAddresses) == 0 {
+		template.DNSNames = []string{"localhost"}
+		template.IPAddresses = []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+	}
+	
+	// Generate certificate
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to create certificate: %w", err)
+	}
+	
+	// Save certificate and key if file paths are specified
+	if m.config.CertFile != "" && m.config.KeyFile != "" {
+		if err := m.saveCertificateFiles(certDER, privateKey); err != nil {
+			return tls.Certificate{}, fmt.Errorf("failed to save certificate files: %w", err)
+		}
+	}
+	
+	// Create TLS certificate
+	cert := tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  privateKey,
+	}
+	
+	return cert, nil
+}
+
+// saveCertificateFiles saves certificate and private key to files
+func (m *TLSManager) saveCertificateFiles(certDER []byte, privateKey *rsa.PrivateKey) error {
+	// Save certificate
+	certOut, err := os.Create(m.config.CertFile)
+	if err != nil {
+		return fmt.Errorf("failed to create cert file: %w", err)
+	}
+	defer certOut.Close()
+	
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return fmt.Errorf("failed to encode certificate: %w", err)
+	}
+	
+	// Save private key
+	keyOut, err := os.Create(m.config.KeyFile)
+	if err != nil {
+		return fmt.Errorf("failed to create key file: %w", err)
+	}
+	defer keyOut.Close()
+	
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to marshal private key: %w", err)
+	}
+	
+	if err := pem.Encode(keyOut, &pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER}); err != nil {
+		return fmt.Errorf("failed to encode private key: %w", err)
+	}
+	
+	return nil
+}
+
+// loadClientCAPool loads the client CA certificate pool for mutual TLS
+func (m *TLSManager) loadClientCAPool() (*x509.CertPool, error) {
+	if m.config.MTLS.CAFile == "" {
+		return nil, fmt.Errorf("client CA file not specified for mutual TLS")
+	}
+	
+	caCert, err := os.ReadFile(m.config.MTLS.CAFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read client CA file: %w", err)
+	}
+	
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return nil, fmt.Errorf("failed to parse client CA certificate")
+	}
+	
+	return caCertPool, nil
+}
+
+// verifyClientCertificate performs custom client certificate verification
+func (m *TLSManager) verifyClientCertificate(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("no client certificate provided")
+	}
+	
+	cert, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse client certificate: %w", err)
+	}
+	
+	// Check if the certificate subject is in the allowed list
+	certSubject := cert.Subject.String()
+	for _, allowedSubject := range m.config.MTLS.AllowedSubjects {
+		if certSubject == allowedSubject {
+			return nil
+		}
+	}
+	
+	return fmt.Errorf("client certificate subject %s not in allowed list", certSubject)
+}
+
+// getTLSVersion converts string version to tls.Version constant
+func (m *TLSManager) getTLSVersion(version string) uint16 {
+	switch version {
+	case "1.0":
+		return tls.VersionTLS10
+	case "1.1":
+		return tls.VersionTLS11
+	case "1.2":
+		return tls.VersionTLS12
+	case "1.3":
+		return tls.VersionTLS13
+	default:
+		return tls.VersionTLS12 // Default to TLS 1.2
+	}
+}
+
+// getCipherSuites converts cipher suite names to constants
+func (m *TLSManager) getCipherSuites() []uint16 {
+	cipherMap := map[string]uint16{
+		"TLS_RSA_WITH_AES_128_GCM_SHA256":       tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+		"TLS_RSA_WITH_AES_256_GCM_SHA384":       tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+		"TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256": tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		"TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384": tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+	}
+	
+	var suites []uint16
+	for _, cipher := range m.config.Ciphers {
+		if suite, ok := cipherMap[cipher]; ok {
+			suites = append(suites, suite)
+		}
+	}
+	
+	return suites
+}
+
+// IsEnabled returns whether TLS is enabled
+func (m *TLSManager) IsEnabled() bool {
+	return m.config.Enabled
+}
+
+// IsMutualTLSEnabled returns whether mutual TLS is enabled
+func (m *TLSManager) IsMutualTLSEnabled() bool {
+	return m.config.Enabled && m.config.MTLS.Enabled
+}

@@ -1,0 +1,136 @@
+{{- if ne .DatabaseDriver ""}}
+{
+  "users": [
+    {
+      "id": 1,
+      "name": "Test User 1",
+      "email": "testuser1@example.com",
+      "password": "$2a$10$JvqLjwYVPR8K4nKJ3YZxXOPLPmN8eBmNDZBBzK8MxqKhCZlGp.3Ky",
+      "created_at": "2024-01-01T00:00:00Z",
+      "updated_at": "2024-01-01T00:00:00Z"
+    },
+    {
+      "id": 2,
+      "name": "Test User 2",
+      "email": "testuser2@example.com",
+      "password": "$2a$10$JvqLjwYVPR8K4nKJ3YZxXOPLPmN8eBmNDZBBzK8MxqKhCZlGp.3Ky",
+      "created_at": "2024-01-02T00:00:00Z",
+      "updated_at": "2024-01-02T00:00:00Z"
+    },
+    {
+      "id": 3,
+      "name": "Admin User",
+      "email": "admin@example.com",
+      "password": "$2a$10$JvqLjwYVPR8K4nKJ3YZxXOPLPmN8eBmNDZBBzK8MxqKhCZlGp.3Ky",
+      "created_at": "2024-01-03T00:00:00Z",
+      "updated_at": "2024-01-03T00:00:00Z"
+    }
+  ],
+  {{- if eq .AuthType "jwt"}}
+  "tokens": [
+    {
+      "user_id": 1,
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJlbWFpbCI6InRlc3R1c2VyMUBleGFtcGxlLmNvbSIsImV4cCI6OTk5OTk5OTk5OX0.test",
+      "description": "Valid test token for user 1"
+    },
+    {
+      "user_id": 2,
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoyLCJlbWFpbCI6InRlc3R1c2VyMkBleGFtcGxlLmNvbSIsImV4cCI6MTAwMDAwMDAwMH0.test",
+      "description": "Expired test token for user 2"
+    }
+  ],
+  {{- else if eq .AuthType "api-key"}}
+  "api_keys": [
+    {
+      "id": 1,
+      "user_id": 1,
+      "key": "test_api_key_user1_1234567890abcdef",
+      "name": "Test API Key 1",
+      "created_at": "2024-01-01T00:00:00Z",
+      "expires_at": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": 2,
+      "user_id": 2,
+      "key": "test_api_key_user2_abcdef1234567890",
+      "name": "Test API Key 2",
+      "created_at": "2024-01-02T00:00:00Z",
+      "expires_at": "2025-01-02T00:00:00Z"
+    }
+  ],
+  {{- else if eq .AuthType "session"}}
+  "sessions": [
+    {
+      "id": "session_user1_1234567890",
+      "user_id": 1,
+      "data": {
+        "email": "testuser1@example.com",
+        "name": "Test User 1"
+      },
+      "created_at": "2024-01-01T00:00:00Z",
+      "expires_at": "2025-01-01T00:00:00Z"
+    },
+    {
+      "id": "session_user2_abcdef123456",
+      "user_id": 2,
+      "data": {
+        "email": "testuser2@example.com",
+        "name": "Test User 2"
+      },
+      "created_at": "2024-01-02T00:00:00Z",
+      "expires_at": "2025-01-02T00:00:00Z"
+    }
+  ],
+  {{- end}}
+  "test_data": {
+    "passwords": {
+      "default": "password123",
+      "hashed": "$2a$10$JvqLjwYVPR8K4nKJ3YZxXOPLPmN8eBmNDZBBzK8MxqKhCZlGp.3Ky"
+    },
+    "endpoints": {
+      "health": "/api/v1/health",
+      "users": "/api/v1/users",
+      {{- if ne .AuthType ""}}
+      "auth": {
+        {{- if eq .AuthType "jwt"}}
+        "login": "/api/v1/auth/login",
+        "refresh": "/api/v1/auth/refresh",
+        "logout": "/api/v1/auth/logout"
+        {{- else if eq .AuthType "oauth2"}}
+        "login": "/api/v1/auth/oauth/login",
+        "callback": "/api/v1/auth/oauth/callback",
+        "logout": "/api/v1/auth/logout"
+        {{- else if eq .AuthType "session"}}
+        "login": "/api/v1/auth/login",
+        "logout": "/api/v1/auth/logout",
+        "me": "/api/v1/auth/me"
+        {{- end}}
+      },
+      {{- end}}
+      "swagger": "/swagger/index.html"
+    },
+    "headers": {
+      {{- if eq .AuthType "jwt"}}
+      "authorization": "Bearer {{.Token}}",
+      {{- else if eq .AuthType "api-key"}}
+      "x-api-key": "{{.ApiKey}}",
+      {{- else if eq .AuthType "session"}}
+      "cookie": "session_id={{.SessionID}}",
+      {{- end}}
+      "content_type": "application/json"
+    }
+  }
+}
+{{- else}}
+{
+  "test_data": {
+    "endpoints": {
+      "health": "/api/v1/health",
+      "swagger": "/swagger/index.html"
+    },
+    "headers": {
+      "content_type": "application/json"
+    }
+  }
+}
+{{- end}}

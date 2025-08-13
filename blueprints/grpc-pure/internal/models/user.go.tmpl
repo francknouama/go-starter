@@ -1,0 +1,336 @@
+package models
+
+import (
+	"time"
+{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+{{- end}}
+)
+
+// User represents a user in the system
+type User struct {
+{{- if eq .DatabaseORM "gorm"}}
+	ID        uint           `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"deleted_at,omitempty"`
+{{- else}}
+	ID        int64     `db:"id" json:"id"`
+	CreatedAt time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
+{{- end}}
+	
+	// User fields
+	Username string `{{if eq .DatabaseORM "gorm"}}gorm:"uniqueIndex;not null"{{else}}db:"username"{{end}} json:"username"`
+	Email    string `{{if eq .DatabaseORM "gorm"}}gorm:"uniqueIndex;not null"{{else}}db:"email"{{end}} json:"email"`
+	Name     string `{{if eq .DatabaseORM "gorm"}}gorm:"not null"{{else}}db:"name"{{end}} json:"name"`
+	
+	// Authentication fields
+	PasswordHash string `{{if eq .DatabaseORM "gorm"}}gorm:"not null"{{else}}db:"password_hash"{{end}} json:"-"`
+	Active       bool   `{{if eq .DatabaseORM "gorm"}}gorm:"default:true"{{else}}db:"active"{{end}} json:"active"`
+	Verified     bool   `{{if eq .DatabaseORM "gorm"}}gorm:"default:false"{{else}}db:"verified"{{end}} json:"verified"`
+	
+	// Profile fields
+	FirstName   string     `{{if eq .DatabaseORM "gorm"}}gorm:"size:100"{{else}}db:"first_name"{{end}} json:"first_name"`
+	LastName    string     `{{if eq .DatabaseORM "gorm"}}gorm:"size:100"{{else}}db:"last_name"{{end}} json:"last_name"`
+	PhoneNumber string     `{{if eq .DatabaseORM "gorm"}}gorm:"size:20"{{else}}db:"phone_number"{{end}} json:"phone_number"`
+	DateOfBirth *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:date"{{else}}db:"date_of_birth"{{end}} json:"date_of_birth"`
+	
+	// Metadata
+	LastLoginAt  *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:timestamp"{{else}}db:"last_login_at"{{end}} json:"last_login_at"`
+	LoginCount   int64      `{{if eq .DatabaseORM "gorm"}}gorm:"default:0"{{else}}db:"login_count"{{end}} json:"login_count"`
+	FailedLogins int        `{{if eq .DatabaseORM "gorm"}}gorm:"default:0"{{else}}db:"failed_logins"{{end}} json:"failed_logins"`
+	LockedUntil  *time.Time `{{if eq .DatabaseORM "gorm"}}gorm:"type:timestamp"{{else}}db:"locked_until"{{end}} json:"locked_until"`
+	
+	// External authentication
+	Provider     string `{{if eq .DatabaseORM "gorm"}}gorm:"size:50"{{else}}db:"provider"{{end}} json:"provider"`
+	ProviderID   string `{{if eq .DatabaseORM "gorm"}}gorm:"size:255"{{else}}db:"provider_id"{{end}} json:"provider_id"`
+	
+	// Roles and permissions (simplified - in real apps might be separate tables)
+	Roles       string `{{if eq .DatabaseORM "gorm"}}gorm:"size:500"{{else}}db:"roles"{{end}} json:"roles"` // JSON array as string
+	Permissions string `{{if eq .DatabaseORM "gorm"}}gorm:"size:1000"{{else}}db:"permissions"{{end}} json:"permissions"` // JSON array as string
+}
+
+{{- if eq .DatabaseORM "gorm"}}
+
+// TableName returns the table name for the User model
+func (User) TableName() string {
+	return "users"
+}
+
+// BeforeCreate sets default values before creating a user
+func (u *User) BeforeCreate(tx *gorm.DB) error {
+	if u.Active {
+		// Default to true if not set
+		u.Active = true
+	}
+	return nil
+}
+
+// BeforeUpdate sets updated_at before updating
+func (u *User) BeforeUpdate(tx *gorm.DB) error {
+	u.UpdatedAt = time.Now()
+	return nil
+}
+
+{{- end}}
+
+// IsLocked checks if the user account is currently locked
+func (u *User) IsLocked() bool {
+	return u.LockedUntil != nil && u.LockedUntil.After(time.Now())
+}
+
+// CanLogin checks if the user can login (active, verified, not locked)
+func (u *User) CanLogin() bool {
+	return u.Active && u.Verified && !u.IsLocked()
+}
+
+// IncrementLoginCount increments the login count and updates last login time
+func (u *User) IncrementLoginCount() {
+	u.LoginCount++
+	now := time.Now()
+	u.LastLoginAt = &now
+	u.FailedLogins = 0 // Reset failed logins on successful login
+}
+
+// IncrementFailedLogins increments failed login attempts
+func (u *User) IncrementFailedLogins(maxAttempts int, lockDuration time.Duration) {
+	u.FailedLogins++
+	
+	// Lock account if max attempts reached
+	if u.FailedLogins >= maxAttempts {
+		lockUntil := time.Now().Add(lockDuration)
+		u.LockedUntil = &lockUntil
+	}
+}
+
+// UnlockAccount unlocks the user account
+func (u *User) UnlockAccount() {
+	u.LockedUntil = nil
+	u.FailedLogins = 0
+}
+
+// GetRoles returns user roles as a slice
+func (u *User) GetRoles() []string {
+	if u.Roles == "" {
+		return []string{}
+	}
+	
+	// Simple comma-separated parsing
+	// In production, you might use JSON unmarshaling
+	roles := []string{}
+	for _, role := range parseCommaSeparated(u.Roles) {
+		if role != "" {
+			roles = append(roles, role)
+		}
+	}
+	return roles
+}
+
+// SetRoles sets user roles from a slice
+func (u *User) SetRoles(roles []string) {
+	u.Roles = joinCommaSeparated(roles)
+}
+
+// HasRole checks if user has a specific role
+func (u *User) HasRole(role string) bool {
+	for _, r := range u.GetRoles() {
+		if r == role {
+			return true
+		}
+	}
+	return false
+}
+
+// GetPermissions returns user permissions as a slice
+func (u *User) GetPermissions() []string {
+	if u.Permissions == "" {
+		return []string{}
+	}
+	
+	permissions := []string{}
+	for _, permission := range parseCommaSeparated(u.Permissions) {
+		if permission != "" {
+			permissions = append(permissions, permission)
+		}
+	}
+	return permissions
+}
+
+// SetPermissions sets user permissions from a slice
+func (u *User) SetPermissions(permissions []string) {
+	u.Permissions = joinCommaSeparated(permissions)
+}
+
+// HasPermission checks if user has a specific permission
+func (u *User) HasPermission(permission string) bool {
+	for _, p := range u.GetPermissions() {
+		if p == permission {
+			return true
+		}
+	}
+	return false
+}
+
+// IsExternal checks if this is an external authentication user
+func (u *User) IsExternal() bool {
+	return u.Provider != "" && u.ProviderID != ""
+}
+
+// GetFullName returns the user's full name
+func (u *User) GetFullName() string {
+	if u.FirstName != "" && u.LastName != "" {
+		return u.FirstName + " " + u.LastName
+	}
+	if u.Name != "" {
+		return u.Name
+	}
+	return u.Username
+}
+
+// Sanitize removes sensitive information for public APIs
+func (u *User) Sanitize() *User {
+	sanitized := *u
+	sanitized.PasswordHash = ""
+	return &sanitized
+}
+
+// CreateUserRequest represents the request to create a new user
+type CreateUserRequest struct {
+	Username    string `json:"username" validate:"required,min=3,max=50"`
+	Email       string `json:"email" validate:"required,email"`
+	Name        string `json:"name" validate:"required,min=1,max=100"`
+	Password    string `json:"password" validate:"required,min=8"`
+	FirstName   string `json:"first_name" validate:"max=100"`
+	LastName    string `json:"last_name" validate:"max=100"`
+	PhoneNumber string `json:"phone_number" validate:"max=20"`
+}
+
+// UpdateUserRequest represents the request to update a user
+type UpdateUserRequest struct {
+	Name        *string `json:"name" validate:"omitempty,min=1,max=100"`
+	FirstName   *string `json:"first_name" validate:"omitempty,max=100"`
+	LastName    *string `json:"last_name" validate:"omitempty,max=100"`
+	PhoneNumber *string `json:"phone_number" validate:"omitempty,max=20"`
+	Active      *bool   `json:"active"`
+	Verified    *bool   `json:"verified"`
+}
+
+// ChangePasswordRequest represents the request to change user password
+type ChangePasswordRequest struct {
+	CurrentPassword string `json:"current_password" validate:"required"`
+	NewPassword     string `json:"new_password" validate:"required,min=8"`
+}
+
+// UserFilter represents filtering options for user queries
+type UserFilter struct {
+	Active   *bool   `json:"active"`
+	Verified *bool   `json:"verified"`
+	Provider *string `json:"provider"`
+	Role     *string `json:"role"`
+	Search   *string `json:"search"` // Search in username, email, name
+	
+	// Pagination
+	Limit  int `json:"limit" validate:"min=1,max=100"`
+	Offset int `json:"offset" validate:"min=0"`
+	
+	// Sorting
+	SortBy    string `json:"sort_by" validate:"oneof=id username email name created_at updated_at last_login_at"`
+	SortOrder string `json:"sort_order" validate:"oneof=asc desc"`
+}
+
+// DefaultUserFilter returns default filter values
+func DefaultUserFilter() UserFilter {
+	return UserFilter{
+		Limit:     20,
+		Offset:    0,
+		SortBy:    "created_at",
+		SortOrder: "desc",
+	}
+}
+
+// Helper functions for comma-separated string handling
+func parseCommaSeparated(s string) []string {
+	if s == "" {
+		return []string{}
+	}
+	
+	parts := make([]string, 0)
+	for _, part := range splitAndTrim(s, ",") {
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
+func joinCommaSeparated(items []string) string {
+	validItems := make([]string, 0, len(items))
+	for _, item := range items {
+		if item != "" {
+			validItems = append(validItems, item)
+		}
+	}
+	return joinStrings(validItems, ",")
+}
+
+// Simple string utility functions
+func splitAndTrim(s, sep string) []string {
+	if s == "" {
+		return []string{}
+	}
+	
+	parts := []string{}
+	start := 0
+	for i, r := range s {
+		if string(r) == sep {
+			part := trimSpace(s[start:i])
+			if part != "" {
+				parts = append(parts, part)
+			}
+			start = i + 1
+		}
+	}
+	
+	// Add the last part
+	if start < len(s) {
+		part := trimSpace(s[start:])
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	
+	return parts
+}
+
+func joinStrings(items []string, sep string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	if len(items) == 1 {
+		return items[0]
+	}
+	
+	result := items[0]
+	for i := 1; i < len(items); i++ {
+		result += sep + items[i]
+	}
+	return result
+}
+
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	
+	// Trim leading spaces
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+	
+	// Trim trailing spaces
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+	
+	return s[start:end]
+}

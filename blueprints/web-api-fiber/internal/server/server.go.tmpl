@@ -1,0 +1,243 @@
+package server
+
+import (
+	"fmt"
+	"time"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/compress"
+	"github.com/gofiber/fiber/v2/middleware/etag"
+	"github.com/gofiber/fiber/v2/middleware/favicon"
+	"github.com/gofiber/fiber/v2/middleware/helmet"
+	"github.com/gofiber/fiber/v2/middleware/idempotency"
+	"github.com/gofiber/fiber/v2/middleware/monitor"
+	"github.com/gofiber/fiber/v2/middleware/requestid"
+{{- if .EnableWebSocket}}
+	"github.com/gofiber/contrib/websocket"
+{{- end}}
+
+	"{{.ModulePath}}/internal/config"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+{{- end}}
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/middleware"
+{{- if or (ne .DatabaseDriver "") (ne .AuthType "")}}
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/services"
+{{- end}}
+)
+
+// Dependencies holds all server dependencies
+type Dependencies struct {
+	Config *config.Config
+	Logger logger.Logger
+{{- if ne .DatabaseDriver ""}}
+	DB     database.DB
+{{- end}}
+}
+
+// New creates a new Fiber server instance
+func New(deps *Dependencies) *fiber.App {
+	// Create Fiber app with custom config
+	app := fiber.New(fiber.Config{
+		AppName:               deps.Config.App.Name,
+		ServerHeader:          "Fiber",
+		DisableStartupMessage: false,
+		EnablePrintRoutes:     deps.Config.Environment == "development",
+		ErrorHandler:          errorHandler(deps.Logger),
+		ReadTimeout:           time.Duration(deps.Config.Server.ReadTimeout) * time.Second,
+		WriteTimeout:          time.Duration(deps.Config.Server.WriteTimeout) * time.Second,
+		IdleTimeout:           time.Duration(deps.Config.Server.IdleTimeout) * time.Second,
+		BodyLimit:             deps.Config.Server.MaxRequestSize,
+		Concurrency:           deps.Config.Server.Concurrency,
+		ProxyHeader:           fiber.HeaderXForwardedFor,
+		EnableTrustedProxyCheck: true,
+		TrustedProxies:        deps.Config.Server.TrustedProxies,
+	})
+
+	// Setup middleware
+	setupMiddleware(app, deps)
+
+	// Setup routes
+	setupRoutes(app, deps)
+
+	return app
+}
+
+// setupMiddleware configures all middleware
+func setupMiddleware(app *fiber.App, deps *Dependencies) {
+	// Request ID middleware - should be first
+	app.Use(requestid.New())
+
+	// Security headers
+	app.Use(helmet.New())
+
+	// Logger middleware
+	app.Use(middleware.Logger(deps.Logger))
+
+	// Recovery middleware
+	app.Use(middleware.Recovery(deps.Logger))
+
+	// CORS middleware
+	app.Use(middleware.CORS(deps.Config))
+
+	// Compression middleware
+	app.Use(compress.New(compress.Config{
+		Level: compress.LevelBestSpeed,
+	}))
+
+	// ETag middleware for caching
+	app.Use(etag.New())
+
+	// Favicon middleware
+	app.Use(favicon.New())
+
+	// Rate limiting
+	app.Use(middleware.RateLimiter(deps.Config))
+
+	// Cache middleware
+	app.Use(middleware.Cache(deps.Config))
+
+	// Security middleware
+	app.Use(middleware.Security())
+
+{{- if .EnableMetrics}}
+	// Metrics middleware
+	app.Use(middleware.Metrics())
+{{- end}}
+
+{{- if .EnableTracing}}
+	// Tracing middleware
+	app.Use(middleware.Tracing(deps.Config))
+{{- end}}
+
+	// Idempotency middleware for POST requests
+	app.Use(idempotency.New())
+}
+
+// setupRoutes configures all routes
+func setupRoutes(app *fiber.App, deps *Dependencies) {
+{{- if or (ne .DatabaseDriver "") (ne .AuthType "")}}
+	// Initialize repositories
+{{- if ne .DatabaseDriver ""}}
+	userRepo := repository.NewUserRepository(deps.DB, deps.Logger)
+{{- end}}
+
+	// Initialize services
+{{- if or (ne .DatabaseDriver "") (ne .AuthType "")}}
+	userService := services.NewUserService(userRepo, deps.Logger)
+{{- end}}
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	authService := services.NewAuthService(userService, deps.Config, deps.Logger)
+{{- end}}
+{{- end}}
+
+	// Health check routes
+	app.Get("/health", handlers.HealthCheck)
+	app.Get("/ready", handlers.ReadinessCheck(deps))
+	app.Get("/live", handlers.LivenessCheck)
+
+	// Metrics endpoint (Fiber's built-in dashboard)
+	if deps.Config.Environment == "development" {
+		app.Get("/metrics", monitor.New(monitor.Config{
+			Title: fmt.Sprintf("%s Metrics", deps.Config.App.Name),
+		}))
+	}
+
+{{- if .EnableWebSocket}}
+	// WebSocket endpoint
+	app.Get("/ws", websocket.New(handlers.WebSocketHandler(deps.Logger)))
+{{- end}}
+
+	// API v1 routes
+	v1 := app.Group("/api/v1")
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	// Auth routes (public)
+	auth := v1.Group("/auth")
+	auth.Post("/register", handlers.Register(authService))
+	auth.Post("/login", handlers.Login(authService))
+{{- if eq .AuthType "jwt"}}
+	auth.Post("/refresh", handlers.RefreshToken(authService))
+{{- end}}
+{{- if eq .AuthType "oauth2"}}
+	auth.Get("/oauth/:provider", handlers.OAuthLogin(authService))
+	auth.Get("/oauth/:provider/callback", handlers.OAuthCallback(authService))
+{{- end}}
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+	// Protected routes
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	protected := v1.Use(middleware.Auth(deps.Config))
+{{- else}}
+	protected := v1
+{{- end}}
+
+	// User routes
+	users := protected.Group("/users")
+	users.Get("/", handlers.GetUsers(userService))
+	users.Get("/:id", handlers.GetUser(userService))
+	users.Post("/", handlers.CreateUser(userService))
+	users.Put("/:id", handlers.UpdateUser(userService))
+	users.Delete("/:id", handlers.DeleteUser(userService))
+
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	// Current user routes
+	users.Get("/me", handlers.GetCurrentUser(userService))
+	users.Put("/me", handlers.UpdateCurrentUser(userService))
+	users.Delete("/me", handlers.DeleteCurrentUser(userService))
+{{- end}}
+{{- end}}
+
+	// 404 handler
+	app.Use(notFoundHandler)
+}
+
+// errorHandler handles errors globally
+func errorHandler(log logger.Logger) fiber.ErrorHandler {
+	return func(c *fiber.Ctx, err error) error {
+		// Default to 500 status code
+		code := fiber.StatusInternalServerError
+		message := "Internal Server Error"
+
+		// Check if it's a Fiber error
+		if e, ok := err.(*fiber.Error); ok {
+			code = e.Code
+			message = e.Message
+		}
+
+		// Log error
+		log.Error("Request error",
+			"error", err,
+			"status", code,
+			"path", c.Path(),
+			"method", c.Method(),
+			"ip", c.IP(),
+		)
+
+		// Return error response
+		return c.Status(code).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    code,
+				"message": message,
+			},
+			"timestamp": time.Now().Unix(),
+			"path":      c.Path(),
+		})
+	}
+}
+
+// notFoundHandler handles 404 errors
+func notFoundHandler(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+		"error": fiber.Map{
+			"code":    fiber.StatusNotFound,
+			"message": "Resource not found",
+		},
+		"timestamp": time.Now().Unix(),
+		"path":      c.Path(),
+	})
+}

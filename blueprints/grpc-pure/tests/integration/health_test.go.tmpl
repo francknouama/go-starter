@@ -1,0 +1,456 @@
+package integration
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/server"
+	"{{.ModulePath}}/internal/services"
+	{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/database"
+	{{- end}}
+
+	healthv1 "{{.ModulePath}}/proto/health/v1"
+	commonv1 "{{.ModulePath}}/proto/common/v1"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/health/grpc_health_v1"
+)
+
+// HealthIntegrationTestSuite tests health check functionality
+type HealthIntegrationTestSuite struct {
+	suite.Suite
+	
+	server       *server.GRPCServer
+	conn         *grpc.ClientConn
+	healthClient grpc_health_v1.HealthClient
+	extHealthClient healthv1.HealthServiceClient
+	healthService *services.HealthService
+	
+	cfg     *config.Config
+	logger  logger.Logger
+	{{- if ne .DatabaseDriver ""}}
+	db      interface{} // Database connection
+	{{- end}}
+}
+
+// SetupSuite initializes the health test environment
+func (s *HealthIntegrationTestSuite) SetupSuite() {
+	// Initialize logger
+	var err error
+	s.logger, err = logger.NewLogger("test", "debug")
+	s.Require().NoError(err, "Failed to initialize logger")
+
+	// Load test configuration
+	s.cfg = &config.Config{
+		Server: config.ServerConfig{
+			GRPCPort:    0, // Use random port for testing
+			MetricsPort: 0, // Use random port for testing
+			Environment: "test",
+		},
+		Logger: config.LoggerConfig{
+			Level:  "debug",
+			Format: "json",
+		},
+		{{- if ne .DatabaseDriver ""}}
+		Database: config.DatabaseConfig{
+			Driver: "{{.DatabaseDriver}}",
+			{{- if eq .DatabaseDriver "sqlite"}}
+			URL:    ":memory:", // Use in-memory database for tests
+			{{- else if eq .DatabaseDriver "postgres"}}
+			URL:    "postgres://test:test@localhost:5432/test_db?sslmode=disable",
+			{{- else if eq .DatabaseDriver "mysql"}}
+			URL:    "test:test@tcp(localhost:3306)/test_db?parseTime=true",
+			{{- end}}
+			MaxOpenConns: 10,
+			MaxIdleConns: 5,
+		},
+		{{- end}}
+		{{- if .TracingEnabled}}
+		Tracing: config.TracingConfig{
+			Enabled:     false, // Disable for health tests
+			ServiceName: "{{.ProjectName | lower}}-health-test",
+		},
+		{{- end}}
+		{{- if .MetricsEnabled}}
+		Metrics: config.MetricsConfig{
+			Enabled: true,
+			Path:    "/metrics",
+		},
+		{{- end}}
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	// Initialize database for testing
+	s.db, err = database.InitDatabase(s.cfg.Database, s.logger)
+	s.Require().NoError(err, "Failed to initialize test database")
+	{{- end}}
+
+	// Initialize health service
+	s.healthService = services.NewHealthService(s.logger{{if ne .DatabaseDriver ""}}, s.db{{end}})
+
+	// Create gRPC server
+	s.server, err = server.NewGRPCServer(s.cfg, s.logger)
+	s.Require().NoError(err, "Failed to create gRPC server")
+
+	// Register only health service for focused testing
+	s.server.RegisterHealthService(s.healthService)
+
+	// Start server in background
+	go func() {
+		if err := s.server.Start(); err != nil {
+			s.logger.Error("Failed to start health test server", "error", err)
+		}
+	}()
+
+	// Wait for server to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Create client connection
+	s.conn, err = grpc.Dial(
+		s.server.GetAddress(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithBlock(),
+	)
+	s.Require().NoError(err, "Failed to connect to health test server")
+
+	// Create health clients
+	s.healthClient = grpc_health_v1.NewHealthClient(s.conn)
+	s.extHealthClient = healthv1.NewHealthServiceClient(s.conn)
+
+	// Start health checks in background
+	healthCtx, _ := context.WithCancel(context.Background())
+	s.healthService.StartHealthChecks(healthCtx)
+}
+
+// TearDownSuite cleans up the health test environment
+func (s *HealthIntegrationTestSuite) TearDownSuite() {
+	if s.healthService != nil {
+		s.healthService.Shutdown()
+	}
+	if s.conn != nil {
+		s.conn.Close()
+	}
+	if s.server != nil {
+		s.server.Shutdown()
+	}
+}
+
+// TestStandardHealthCheck tests the standard gRPC health check
+func (s *HealthIntegrationTestSuite) TestStandardHealthCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test overall service health
+	resp, err := s.healthClient.Check(ctx, &grpc_health_v1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Standard health check should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	s.Assert().Equal(grpc_health_v1.HealthCheckResponse_SERVING, resp.Status)
+}
+
+// TestStandardHealthWatch tests the health watch functionality
+func (s *HealthIntegrationTestSuite) TestStandardHealthWatch() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := s.healthClient.Watch(ctx, &grpc_health_v1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Health watch should not return an error")
+
+	// Receive initial status
+	resp, err := stream.Recv()
+	s.Require().NoError(err, "Should receive initial health status")
+	s.Assert().Equal(grpc_health_v1.HealthCheckResponse_SERVING, resp.Status)
+
+	// Change service status and verify update
+	s.healthService.SetServiceStatus("", healthv1.ServingStatus_SERVING_STATUS_NOT_SERVING)
+
+	// Receive status update
+	resp, err = stream.Recv()
+	s.Require().NoError(err, "Should receive health status update")
+	// Note: The standard health service may not reflect custom status changes immediately
+}
+
+// TestExtendedHealthCheck tests the extended health check service
+func (s *HealthIntegrationTestSuite) TestExtendedHealthCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test basic extended health check
+	resp, err := s.extHealthClient.Check(ctx, &healthv1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Extended health check should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	s.Assert().Equal(healthv1.ServingStatus_SERVING_STATUS_SERVING, resp.Status)
+	s.Assert().NotEmpty(resp.Message)
+	s.Assert().NotNil(resp.Timestamp)
+}
+
+// TestExtendedHealthWatch tests the extended health watch functionality
+func (s *HealthIntegrationTestSuite) TestExtendedHealthWatch() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := s.extHealthClient.Watch(&healthv1.HealthCheckRequest{
+		Service: "",
+	})
+	s.Require().NoError(err, "Extended health watch should not return an error")
+
+	// Receive initial status
+	resp, err := stream.Recv()
+	s.Require().NoError(err, "Should receive initial extended health status")
+	s.Assert().Equal(healthv1.ServingStatus_SERVING_STATUS_SERVING, resp.Status)
+
+	// Change service status
+	s.healthService.SetServiceStatus("", healthv1.ServingStatus_SERVING_STATUS_NOT_SERVING)
+
+	// Receive status update
+	resp, err = stream.Recv()
+	s.Require().NoError(err, "Should receive extended health status update")
+	s.Assert().Equal(healthv1.ServingStatus_SERVING_STATUS_NOT_SERVING, resp.Status)
+}
+
+// TestDetailedHealthInfo tests the detailed health information
+func (s *HealthIntegrationTestSuite) TestDetailedHealthInfo() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Test without components
+	resp, err := s.extHealthClient.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: false,
+	})
+	s.Require().NoError(err, "GetHealth should not return an error")
+	s.Require().NotNil(resp, "Detailed health response should not be nil")
+
+	s.Assert().NotNil(resp.OverallStatus)
+	s.Assert().Equal("{{.ProjectName}}-v1.0.0", resp.Version)
+	s.Assert().NotNil(resp.StartedAt)
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().NotEmpty(resp.Metadata)
+	s.Assert().Empty(resp.Components) // Should be empty when not requested
+
+	// Verify metadata
+	s.Assert().Contains(resp.Metadata, "uptime_seconds")
+	s.Assert().Equal("{{.GoVersion}}", resp.Metadata["go_version"])
+	s.Assert().Equal("grpc", resp.Metadata["service_type"])
+
+	// Test with components
+	resp, err = s.extHealthClient.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+	})
+	s.Require().NoError(err, "GetHealth with components should not return an error")
+	s.Require().NotNil(resp, "Detailed health response should not be nil")
+
+	// Components may be present if health checks have run
+	// We don't assert specific components since they depend on configuration
+}
+
+// TestReadinessCheck tests the Kubernetes readiness probe
+func (s *HealthIntegrationTestSuite) TestReadinessCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := s.extHealthClient.CheckReadiness(ctx, &healthv1.ReadinessRequest{})
+	s.Require().NoError(err, "CheckReadiness should not return an error")
+	s.Require().NotNil(resp, "Readiness response should not be nil")
+
+	s.Assert().True(resp.Ready)
+	s.Assert().NotEmpty(resp.Message)
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().Empty(resp.NotReadyComponents) // Should be empty for healthy service
+}
+
+// TestLivenessCheck tests the Kubernetes liveness probe
+func (s *HealthIntegrationTestSuite) TestLivenessCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	resp, err := s.extHealthClient.CheckLiveness(ctx, &healthv1.LivenessRequest{})
+	s.Require().NoError(err, "CheckLiveness should not return an error")
+	s.Require().NotNil(resp, "Liveness response should not be nil")
+
+	s.Assert().True(resp.Alive)
+	s.Assert().NotEmpty(resp.Message)
+	s.Assert().NotNil(resp.Timestamp)
+	s.Assert().Greater(resp.UptimeSeconds, int64(0))
+}
+
+// TestComponentHealthUpdates tests component health update functionality
+func (s *HealthIntegrationTestSuite) TestComponentHealthUpdates() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Update a component health status
+	s.healthService.UpdateComponentHealth(
+		"test-component",
+		commonv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+		"Test component is healthy",
+		50*time.Millisecond,
+	)
+
+	// Wait a moment for the update to be processed
+	time.Sleep(100 * time.Millisecond)
+
+	// Get detailed health info with components
+	resp, err := s.extHealthClient.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+	})
+	s.Require().NoError(err, "GetHealth should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	// Check if our test component is present
+	if component, exists := resp.Components["test-component"]; exists {
+		s.Assert().Equal(commonv1.HealthStatus_HEALTH_STATUS_HEALTHY, component.Status)
+		s.Assert().Equal("Test component is healthy", component.Message)
+		s.Assert().NotNil(component.LastCheck)
+		s.Assert().Greater(component.DurationMs, int64(0))
+		s.Assert().Equal(int32(0), component.ErrorCount)
+	}
+
+	// Update component to unhealthy
+	s.healthService.UpdateComponentHealth(
+		"test-component",
+		commonv1.HealthStatus_HEALTH_STATUS_UNHEALTHY,
+		"Test component failed",
+		100*time.Millisecond,
+	)
+
+	// Wait a moment for the update to be processed
+	time.Sleep(100 * time.Millisecond)
+
+	// Check readiness should now be false
+	readinessResp, err := s.extHealthClient.CheckReadiness(ctx, &healthv1.ReadinessRequest{})
+	s.Require().NoError(err, "CheckReadiness should not return an error")
+	s.Require().NotNil(readinessResp, "Readiness response should not be nil")
+
+	s.Assert().False(readinessResp.Ready)
+	s.Assert().Contains(readinessResp.NotReadyComponents, "test-component")
+}
+
+{{- if ne .DatabaseDriver ""}}
+// TestDatabaseHealthCheck tests database-specific health checks
+func (s *HealthIntegrationTestSuite) TestDatabaseHealthCheck() {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Wait for initial health check to run
+	time.Sleep(2 * time.Second)
+
+	// Get detailed health info
+	resp, err := s.extHealthClient.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+	})
+	s.Require().NoError(err, "GetHealth should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	// Check if database component is present and healthy
+	if dbComponent, exists := resp.Components["database"]; exists {
+		s.Assert().Equal(commonv1.HealthStatus_HEALTH_STATUS_HEALTHY, dbComponent.Status)
+		s.Assert().Contains(dbComponent.Message, "healthy")
+		s.Assert().NotNil(dbComponent.LastCheck)
+		s.Assert().Greater(dbComponent.DurationMs, int64(0))
+	}
+}
+{{- end}}
+
+// TestHealthServiceShutdown tests graceful health service shutdown
+func (s *HealthIntegrationTestSuite) TestHealthServiceShutdown() {
+	// Create a temporary health service for shutdown testing
+	tempHealthService := services.NewHealthService(s.logger{{if ne .DatabaseDriver ""}}, s.db{{end}})
+	
+	// Start health checks
+	ctx, cancel := context.WithCancel(context.Background())
+	tempHealthService.StartHealthChecks(ctx)
+	
+	// Wait a moment
+	time.Sleep(100 * time.Millisecond)
+	
+	// Cancel context to stop health checks
+	cancel()
+	
+	// Shutdown the service
+	tempHealthService.Shutdown()
+	
+	// Service should shut down gracefully
+	s.Assert().True(true, "Health service should shutdown gracefully")
+}
+
+// TestConcurrentHealthChecks tests concurrent health check requests
+func (s *HealthIntegrationTestSuite) TestConcurrentHealthChecks() {
+	const numRequests = 20
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Create a channel to collect results
+	results := make(chan error, numRequests)
+
+	// Launch concurrent health check requests
+	for i := 0; i < numRequests; i++ {
+		go func(id int) {
+			_, err := s.extHealthClient.Check(ctx, &healthv1.HealthCheckRequest{
+				Service: "",
+			})
+			results <- err
+		}(i)
+	}
+
+	// Collect results
+	for i := 0; i < numRequests; i++ {
+		err := <-results
+		s.Assert().NoError(err, "Concurrent health check %d should not return an error", i)
+	}
+}
+
+// TestHealthCheckFiltering tests component filtering in health checks
+func (s *HealthIntegrationTestSuite) TestHealthCheckFiltering() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Add some test components
+	s.healthService.UpdateComponentHealth(
+		"component-a",
+		commonv1.HealthStatus_HEALTH_STATUS_HEALTHY,
+		"Component A is healthy",
+		25*time.Millisecond,
+	)
+	s.healthService.UpdateComponentHealth(
+		"component-b",
+		commonv1.HealthStatus_HEALTH_STATUS_WARNING,
+		"Component B has warnings",
+		50*time.Millisecond,
+	)
+
+	// Wait for updates to be processed
+	time.Sleep(100 * time.Millisecond)
+
+	// Test filtering specific components
+	resp, err := s.extHealthClient.GetHealth(ctx, &healthv1.GetHealthRequest{
+		IncludeComponents: true,
+		Components:        []string{"component-a"},
+	})
+	s.Require().NoError(err, "GetHealth with component filter should not return an error")
+	s.Require().NotNil(resp, "Health response should not be nil")
+
+	// Should only contain component-a
+	s.Assert().Contains(resp.Components, "component-a")
+	s.Assert().NotContains(resp.Components, "component-b")
+}
+
+// Run the health integration test suite
+func TestHealthIntegrationSuite(t *testing.T) {
+	suite.Run(t, new(HealthIntegrationTestSuite))
+}

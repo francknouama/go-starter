@@ -1,0 +1,119 @@
+package resolvers
+
+import (
+	{{- if ne .DatabaseDriver ""}}
+	{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+	{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+	{{- else if eq .DatabaseORM "ent"}}
+	"{{.ModulePath}}/ent"
+	{{- else}}
+	"database/sql"
+	{{- end}}
+	{{- end}}
+	"{{.ModulePath}}/internal/logger"
+	{{- if .EnableSubscriptions}}
+	"sync"
+	{{- end}}
+)
+
+// This file will not be regenerated automatically.
+//
+// It serves as dependency injection for your app, add any dependencies you require here.
+
+// Resolver is the root resolver
+type Resolver struct {
+	{{- if ne .DatabaseDriver ""}}
+	{{- if eq .DatabaseORM "gorm"}}
+	DB *gorm.DB
+	{{- else if eq .DatabaseORM "sqlx"}}
+	DB *sqlx.DB
+	{{- else if eq .DatabaseORM "ent"}}
+	DB *ent.Client
+	{{- else}}
+	DB *sql.DB
+	{{- end}}
+	{{- end}}
+	Logger logger.Logger
+	{{- if .EnableSubscriptions}}
+	// Subscription management
+	subscribers sync.Map
+	mu          sync.RWMutex
+	{{- end}}
+}
+
+{{- if .EnableSubscriptions}}
+// TodoUpdate represents a todo update event
+type TodoUpdate struct {
+	Type   string // "created", "updated", "deleted"
+	TodoID string
+	UserID string
+	Todo   interface{}
+}
+
+// Subscribe adds a new subscriber for todo updates
+func (r *Resolver) Subscribe(userID string, ch chan<- *TodoUpdate) func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// Get or create subscriber list for user
+	var subs []chan<- *TodoUpdate
+	if val, ok := r.subscribers.Load(userID); ok {
+		subs = val.([]chan<- *TodoUpdate)
+	}
+	
+	subs = append(subs, ch)
+	r.subscribers.Store(userID, subs)
+
+	// Return unsubscribe function
+	return func() {
+		r.Unsubscribe(userID, ch)
+	}
+}
+
+// Unsubscribe removes a subscriber
+func (r *Resolver) Unsubscribe(userID string, ch chan<- *TodoUpdate) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	val, ok := r.subscribers.Load(userID)
+	if !ok {
+		return
+	}
+
+	subs := val.([]chan<- *TodoUpdate)
+	for i, sub := range subs {
+		if sub == ch {
+			// Remove the subscriber
+			subs = append(subs[:i], subs[i+1:]...)
+			if len(subs) == 0 {
+				r.subscribers.Delete(userID)
+			} else {
+				r.subscribers.Store(userID, subs)
+			}
+			break
+		}
+	}
+}
+
+// Publish sends an update to all subscribers for a user
+func (r *Resolver) Publish(update *TodoUpdate) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	val, ok := r.subscribers.Load(update.UserID)
+	if !ok {
+		return
+	}
+
+	subs := val.([]chan<- *TodoUpdate)
+	for _, ch := range subs {
+		select {
+		case ch <- update:
+		default:
+			// Channel is full or closed, skip
+		}
+	}
+}
+{{- end}}

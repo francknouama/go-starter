@@ -1,0 +1,192 @@
+# Development configuration for {{.ProjectName}}
+server:
+  name: "{{.ProjectName}}"
+  version: "{{.GoVersion}}"
+  environment: "development"
+  grpc:
+    port: {{.GrpcPort}}
+    host: "0.0.0.0"
+    reflection_enabled: {{.ReflectionEnabled}}
+    max_recv_msg_size: 4194304  # 4MB
+    max_send_msg_size: 4194304  # 4MB
+    keepalive:
+      time: 30s
+      timeout: 5s
+      min_time: 10s
+      permit_without_stream: true
+  metrics:
+    port: {{.MetricsPort}}
+    host: "0.0.0.0"
+    path: "/metrics"
+    enabled: {{.MetricsEnabled}}
+  health:
+    enabled: true
+    path: "/health"
+
+logging:
+  level: "debug"
+  format: "text"
+  output: "stdout"
+  structured: true
+  {{- if eq .Logger "zap"}}
+  encoder: "console"
+  enable_caller: true
+  enable_stacktrace: true
+  {{- else if eq .Logger "logrus"}}
+  timestamp_format: "2006-01-02T15:04:05.000Z07:00"
+  {{- else if eq .Logger "zerolog"}}
+  timestamp_field: "timestamp"
+  level_field: "level"
+  message_field: "message"
+  {{- end}}
+
+{{- if .TracingEnabled}}
+tracing:
+  enabled: {{.TracingEnabled}}
+  service_name: "{{.ProjectName}}"
+  service_version: "1.0.0"
+  endpoint: "http://localhost:14268/api/traces"
+  sampler_type: "const"
+  sampler_param: 1
+  tags:
+    environment: "development"
+    region: "local"
+{{- end}}
+
+{{- if .MetricsEnabled}}
+metrics:
+  enabled: {{.MetricsEnabled}}
+  namespace: "{{.ProjectName | lower}}"
+  subsystem: "grpc"
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10]
+  collect_interval: "15s"
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  driver: "{{.DatabaseDriver}}"
+  host: "localhost"
+  {{- if eq .DatabaseDriver "postgres"}}
+  port: 5432
+  name: "{{.ProjectName | lower}}_dev"
+  user: "{{.ProjectName | lower}}_user"
+  password: "{{.ProjectName | lower}}_pass"
+  sslmode: "disable"
+  max_open_conns: 25
+  max_idle_conns: 25
+  conn_max_lifetime: "5m"
+  {{- else if eq .DatabaseDriver "mysql"}}
+  port: 3306
+  name: "{{.ProjectName | lower}}_dev"
+  user: "{{.ProjectName | lower}}_user"
+  password: "{{.ProjectName | lower}}_pass"
+  charset: "utf8mb4"
+  parse_time: true
+  loc: "Local"
+  max_open_conns: 25
+  max_idle_conns: 25
+  conn_max_lifetime: "5m"
+  {{- else if eq .DatabaseDriver "sqlite"}}
+  path: "./data/{{.ProjectName | lower}}_dev.db"
+  pragma:
+    foreign_keys: "ON"
+    journal_mode: "WAL"
+    synchronous: "NORMAL"
+  {{- end}}
+  {{- if eq .DatabaseORM "gorm"}}
+  auto_migrate: true
+  log_level: "info"
+  {{- end}}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+auth:
+  {{- if eq .AuthType "jwt"}}
+  jwt:
+    secret: "dev-jwt-secret-change-in-production"
+    issuer: "{{.ProjectName}}"
+    audience: "{{.ProjectName}}-users"
+    expiry: "24h"
+    refresh_expiry: "168h"  # 7 days
+    algorithm: "HS256"
+  {{- else if eq .AuthType "oauth2"}}
+  oauth2:
+    providers:
+      google:
+        client_id: "your-google-client-id"
+        client_secret: "your-google-client-secret"
+        redirect_url: "http://localhost:{{.MetricsPort}}/auth/google/callback"
+        scopes: ["openid", "profile", "email"]
+      github:
+        client_id: "your-github-client-id"
+        client_secret: "your-github-client-secret"
+        redirect_url: "http://localhost:{{.MetricsPort}}/auth/github/callback"
+        scopes: ["user:email"]
+  {{- else if eq .AuthType "mtls"}}
+  mtls:
+    ca_cert_file: "./certs/ca-cert.pem"
+    server_cert_file: "./certs/server-cert.pem"
+    server_key_file: "./certs/server-key.pem"
+    verify_client_cert: true
+    client_ca_file: "./certs/client-ca.pem"
+  {{- end}}
+{{- end}}
+
+{{- if ne .ServiceDiscovery ""}}
+service_discovery:
+  {{- if eq .ServiceDiscovery "consul"}}
+  consul:
+    address: "localhost:8500"
+    scheme: "http"
+    datacenter: "dc1"
+    service:
+      name: "{{.ProjectName | lower}}"
+      tags: ["grpc", "v1", "development"]
+      check:
+        grpc: "localhost:{{.GrpcPort}}"
+        interval: "10s"
+        timeout: "3s"
+  {{- else if eq .ServiceDiscovery "etcd"}}
+  etcd:
+    endpoints: ["localhost:2379"]
+    dial_timeout: "5s"
+    service:
+      name: "{{.ProjectName | lower}}"
+      ttl: 30
+      prefix: "/services"
+  {{- else if eq .ServiceDiscovery "kubernetes"}}
+  kubernetes:
+    namespace: "default"
+    service:
+      name: "{{.ProjectName | lower}}"
+      port: {{.GrpcPort}}
+      labels:
+        app: "{{.ProjectName | lower}}"
+        version: "v1"
+  {{- end}}
+{{- end}}
+
+# Rate limiting configuration
+rate_limiting:
+  enabled: true
+  requests_per_second: 1000
+  burst: 100
+  cleanup_interval: "10m"
+
+# Circuit breaker configuration
+circuit_breaker:
+  enabled: true
+  max_requests: 3
+  interval: "60s"
+  timeout: "60s"
+  ready_to_trip_func: "consecutive_failures"
+  on_state_change_log: true
+
+# Development specific settings
+dev:
+  auto_reload: true
+  debug_endpoints: true
+  cors_enabled: true
+  allowed_origins: ["*"]
+  profiling_enabled: true
+  mock_external_services: true

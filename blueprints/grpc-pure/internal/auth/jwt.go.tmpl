@@ -1,0 +1,502 @@
+{{if eq .AuthType "jwt"}}package auth
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"time"
+{{if eq .Logger "slog"}}
+	"log/slog"{{else if eq .Logger "zap"}}
+	"go.uber.org/zap"{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"{{end}}
+
+	"github.com/golang-jwt/jwt/v5"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
+
+// JWTConfig holds JWT authentication configuration
+type JWTConfig struct {
+	SecretKey       string        `yaml:"secret_key" mapstructure:"secret_key"`
+	PublicKey       string        `yaml:"public_key" mapstructure:"public_key"`
+	PrivateKey      string        `yaml:"private_key" mapstructure:"private_key"`
+	Algorithm       string        `yaml:"algorithm" mapstructure:"algorithm"`
+	Issuer          string        `yaml:"issuer" mapstructure:"issuer"`
+	Audience        string        `yaml:"audience" mapstructure:"audience"`
+	ExpiryDuration  time.Duration `yaml:"expiry_duration" mapstructure:"expiry_duration"`
+	RefreshDuration time.Duration `yaml:"refresh_duration" mapstructure:"refresh_duration"`
+	SkipPaths       []string      `yaml:"skip_paths" mapstructure:"skip_paths"`
+}
+
+// DefaultJWTConfig returns default JWT configuration
+func DefaultJWTConfig() *JWTConfig {
+	return &JWTConfig{
+		Algorithm:       "HS256",
+		Issuer:          "{{.ProjectName | lower}}-service",
+		Audience:        "{{.ProjectName | lower}}-users",
+		ExpiryDuration:  24 * time.Hour,
+		RefreshDuration: 7 * 24 * time.Hour,
+		SkipPaths: []string{
+			"/grpc.health.v1.Health/Check",
+			"/grpc.health.v1.Health/Watch",
+		},
+	}
+}
+
+// Claims represents JWT claims
+type Claims struct {
+	UserID   string   `json:"user_id"`
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Roles    []string `json:"roles"`
+	jwt.RegisteredClaims
+}
+
+// User represents an authenticated user
+type User struct {
+	ID       string   `json:"id"`
+	Username string   `json:"username"`
+	Email    string   `json:"email"`
+	Roles    []string `json:"roles"`
+}
+
+// JWTManager manages JWT authentication
+type JWTManager struct {
+	config     *JWTConfig
+	logger     {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}
+	signingKey interface{}
+	verifyKey  interface{}
+}
+
+// NewJWTManager creates a new JWT manager
+func NewJWTManager(config *JWTConfig, logger {{if eq .Logger "slog"}}*slog.Logger{{else if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}*zerolog.Logger{{end}}) (*JWTManager, error) {
+	if config == nil {
+		config = DefaultJWTConfig()
+	}
+	
+	jm := &JWTManager{
+		config: config,
+		logger: logger,
+	}
+	
+	if err := jm.initializeKeys(); err != nil {
+		return nil, fmt.Errorf("failed to initialize JWT keys: %w", err)
+	}
+	
+	{{if eq .Logger "slog"}}logger.Info("JWT manager initialized", "algorithm", config.Algorithm, "issuer", config.Issuer){{else if eq .Logger "zap"}}logger.Info("JWT manager initialized", zap.String("algorithm", config.Algorithm), zap.String("issuer", config.Issuer)){{else if eq .Logger "logrus"}}logger.WithFields(logrus.Fields{"algorithm": config.Algorithm, "issuer": config.Issuer}).Info("JWT manager initialized"){{else if eq .Logger "zerolog"}}logger.Info().Str("algorithm", config.Algorithm).Str("issuer", config.Issuer).Msg("JWT manager initialized"){{end}}
+	
+	return jm, nil
+}
+
+// initializeKeys sets up signing and verification keys based on algorithm
+func (jm *JWTManager) initializeKeys() error {
+	switch jm.config.Algorithm {
+	case "HS256", "HS384", "HS512":
+		// HMAC algorithms use symmetric keys
+		if jm.config.SecretKey == "" {
+			return fmt.Errorf("secret key is required for HMAC algorithms")
+		}
+		jm.signingKey = []byte(jm.config.SecretKey)
+		jm.verifyKey = []byte(jm.config.SecretKey)
+		
+	case "RS256", "RS384", "RS512":
+		// RSA algorithms use asymmetric keys
+		if jm.config.PrivateKey == "" || jm.config.PublicKey == "" {
+			return fmt.Errorf("private and public keys are required for RSA algorithms")
+		}
+		
+		// Parse private key
+		privateKeyBlock, _ := pem.Decode([]byte(jm.config.PrivateKey))
+		if privateKeyBlock == nil {
+			return fmt.Errorf("failed to decode private key PEM")
+		}
+		
+		privateKey, err := x509.ParsePKCS1PrivateKey(privateKeyBlock.Bytes)
+		if err != nil {
+			return fmt.Errorf("failed to parse private key: %w", err)
+		}
+		jm.signingKey = privateKey
+		
+		// Parse public key
+		publicKeyBlock, _ := pem.Decode([]byte(jm.config.PublicKey))
+		if publicKeyBlock == nil {
+			return fmt.Errorf("failed to decode public key PEM")
+		}
+		
+		publicKey, err := x509.ParsePKCS1PublicKey(publicKeyBlock.Bytes)
+		if err != nil {
+			return fmt.Errorf("failed to parse public key: %w", err)
+		}
+		jm.verifyKey = publicKey
+		
+	default:
+		return fmt.Errorf("unsupported algorithm: %s", jm.config.Algorithm)
+	}
+	
+	return nil
+}
+
+// GenerateToken generates a JWT token for a user
+func (jm *JWTManager) GenerateToken(user User) (string, error) {
+	now := time.Now()
+	claims := Claims{
+		UserID:   user.ID,
+		Username: user.Username,
+		Email:    user.Email,
+		Roles:    user.Roles,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    jm.config.Issuer,
+			Audience:  jwt.ClaimStrings{jm.config.Audience},
+			Subject:   user.ID,
+			ExpiresAt: jwt.NewNumericDate(now.Add(jm.config.ExpiryDuration)),
+			NotBefore: jwt.NewNumericDate(now),
+			IssuedAt:  jwt.NewNumericDate(now),
+		},
+	}
+	
+	var token *jwt.Token
+	switch jm.config.Algorithm {
+	case "HS256":
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	case "HS384":
+		token = jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
+	case "HS512":
+		token = jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
+	case "RS256":
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	case "RS384":
+		token = jwt.NewWithClaims(jwt.SigningMethodRS384, claims)
+	case "RS512":
+		token = jwt.NewWithClaims(jwt.SigningMethodRS512, claims)
+	default:
+		return "", fmt.Errorf("unsupported algorithm: %s", jm.config.Algorithm)
+	}
+	
+	tokenString, err := token.SignedString(jm.signingKey)
+	if err != nil {
+		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+	
+	{{if eq .Logger "slog"}}jm.logger.Debug("Generated JWT token", "user_id", user.ID, "expires_at", claims.ExpiresAt.Time){{else if eq .Logger "zap"}}jm.logger.Debug("Generated JWT token", zap.String("user_id", user.ID), zap.Time("expires_at", claims.ExpiresAt.Time)){{else if eq .Logger "logrus"}}jm.logger.WithFields(logrus.Fields{"user_id": user.ID, "expires_at": claims.ExpiresAt.Time}).Debug("Generated JWT token"){{else if eq .Logger "zerolog"}}jm.logger.Debug().Str("user_id", user.ID).Time("expires_at", claims.ExpiresAt.Time).Msg("Generated JWT token"){{end}}
+	
+	return tokenString, nil
+}
+
+// ValidateToken validates a JWT token and returns the claims
+func (jm *JWTManager) ValidateToken(tokenString string) (*Claims, error) {
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{}, func(token *jwt.Token) (interface{}, error) {
+		// Verify signing method
+		expectedMethod := jm.getSigningMethod()
+		if token.Method != expectedMethod {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+		
+		return jm.verifyKey, nil
+	})
+	
+	if err != nil {
+		{{if eq .Logger "slog"}}jm.logger.Debug("Token validation failed", "error", err){{else if eq .Logger "zap"}}jm.logger.Debug("Token validation failed", zap.Error(err)){{else if eq .Logger "logrus"}}jm.logger.WithError(err).Debug("Token validation failed"){{else if eq .Logger "zerolog"}}jm.logger.Debug().Err(err).Msg("Token validation failed"){{end}}
+		return nil, fmt.Errorf("invalid token: %w", err)
+	}
+	
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+	
+	// Additional validation
+	if claims.Issuer != jm.config.Issuer {
+		return nil, fmt.Errorf("invalid issuer")
+	}
+	
+	if !claims.VerifyAudience(jm.config.Audience, true) {
+		return nil, fmt.Errorf("invalid audience")
+	}
+	
+	{{if eq .Logger "slog"}}jm.logger.Debug("Token validated successfully", "user_id", claims.UserID, "username", claims.Username){{else if eq .Logger "zap"}}jm.logger.Debug("Token validated successfully", zap.String("user_id", claims.UserID), zap.String("username", claims.Username)){{else if eq .Logger "logrus"}}jm.logger.WithFields(logrus.Fields{"user_id": claims.UserID, "username": claims.Username}).Debug("Token validated successfully"){{else if eq .Logger "zerolog"}}jm.logger.Debug().Str("user_id", claims.UserID).Str("username", claims.Username).Msg("Token validated successfully"){{end}}
+	
+	return claims, nil
+}
+
+// RefreshToken generates a new token for a user with extended expiry
+func (jm *JWTManager) RefreshToken(tokenString string) (string, error) {
+	// Parse the existing token without validation (to get claims even if expired)
+	token, _, err := new(jwt.Parser).ParseUnverified(tokenString, &Claims{})
+	if err != nil {
+		return "", fmt.Errorf("failed to parse token: %w", err)
+	}
+	
+	claims, ok := token.Claims.(*Claims)
+	if !ok {
+		return "", fmt.Errorf("invalid token claims")
+	}
+	
+	// Create a new token with updated timestamps
+	user := User{
+		ID:       claims.UserID,
+		Username: claims.Username,
+		Email:    claims.Email,
+		Roles:    claims.Roles,
+	}
+	
+	return jm.GenerateToken(user)
+}
+
+// GetUnaryInterceptor returns a gRPC unary interceptor for JWT authentication
+func (jm *JWTManager) GetUnaryInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Check if the method should skip authentication
+		if jm.shouldSkipAuth(info.FullMethod) {
+			return handler(ctx, req)
+		}
+		
+		// Authenticate the request
+		newCtx, err := jm.authenticate(ctx)
+		if err != nil {
+			{{if eq .Logger "slog"}}jm.logger.Warn("Authentication failed", "method", info.FullMethod, "error", err){{else if eq .Logger "zap"}}jm.logger.Warn("Authentication failed", zap.String("method", info.FullMethod), zap.Error(err)){{else if eq .Logger "logrus"}}jm.logger.WithFields(logrus.Fields{"method": info.FullMethod, "error": err}).Warn("Authentication failed"){{else if eq .Logger "zerolog"}}jm.logger.Warn().Str("method", info.FullMethod).Err(err).Msg("Authentication failed"){{end}}
+			return nil, status.Errorf(codes.Unauthenticated, "authentication failed: %v", err)
+		}
+		
+		return handler(newCtx, req)
+	}
+}
+
+// GetStreamInterceptor returns a gRPC stream interceptor for JWT authentication
+func (jm *JWTManager) GetStreamInterceptor() grpc.StreamServerInterceptor {
+	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		// Check if the method should skip authentication
+		if jm.shouldSkipAuth(info.FullMethod) {
+			return handler(srv, stream)
+		}
+		
+		// Authenticate the request
+		newCtx, err := jm.authenticate(stream.Context())
+		if err != nil {
+			{{if eq .Logger "slog"}}jm.logger.Warn("Authentication failed", "method", info.FullMethod, "error", err){{else if eq .Logger "zap"}}jm.logger.Warn("Authentication failed", zap.String("method", info.FullMethod), zap.Error(err)){{else if eq .Logger "logrus"}}jm.logger.WithFields(logrus.Fields{"method": info.FullMethod, "error": err}).Warn("Authentication failed"){{else if eq .Logger "zerolog"}}jm.logger.Warn().Str("method", info.FullMethod).Err(err).Msg("Authentication failed"){{end}}
+			return status.Errorf(codes.Unauthenticated, "authentication failed: %v", err)
+		}
+		
+		// Create a new stream with the authenticated context
+		wrappedStream := &wrappedServerStream{
+			ServerStream: stream,
+			ctx:          newCtx,
+		}
+		
+		return handler(srv, wrappedStream)
+	}
+}
+
+// authenticate extracts and validates the JWT token from the request context
+func (jm *JWTManager) authenticate(ctx context.Context) (context.Context, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("missing metadata")
+	}
+	
+	// Try different authorization header formats
+	var token string
+	if values := md.Get("authorization"); len(values) > 0 {
+		authHeader := values[0]
+		if len(authHeader) > 7 && authHeader[:7] == "Bearer " {
+			token = authHeader[7:]
+		} else {
+			token = authHeader
+		}
+	}
+	
+	if token == "" {
+		return nil, fmt.Errorf("missing authorization token")
+	}
+	
+	claims, err := jm.ValidateToken(token)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Add user information to context
+	user := User{
+		ID:       claims.UserID,
+		Username: claims.Username,
+		Email:    claims.Email,
+		Roles:    claims.Roles,
+	}
+	
+	ctx = context.WithValue(ctx, "user", user)
+	ctx = context.WithValue(ctx, "claims", claims)
+	
+	return ctx, nil
+}
+
+// shouldSkipAuth checks if a method should skip authentication
+func (jm *JWTManager) shouldSkipAuth(fullMethod string) bool {
+	for _, skipPath := range jm.config.SkipPaths {
+		if fullMethod == skipPath {
+			return true
+		}
+	}
+	return false
+}
+
+// getSigningMethod returns the JWT signing method based on algorithm
+func (jm *JWTManager) getSigningMethod() jwt.SigningMethod {
+	switch jm.config.Algorithm {
+	case "HS256":
+		return jwt.SigningMethodHS256
+	case "HS384":
+		return jwt.SigningMethodHS384
+	case "HS512":
+		return jwt.SigningMethodHS512
+	case "RS256":
+		return jwt.SigningMethodRS256
+	case "RS384":
+		return jwt.SigningMethodRS384
+	case "RS512":
+		return jwt.SigningMethodRS512
+	default:
+		return jwt.SigningMethodHS256
+	}
+}
+
+// Helper functions
+
+// GetUserFromContext extracts the authenticated user from context
+func GetUserFromContext(ctx context.Context) (*User, bool) {
+	user, ok := ctx.Value("user").(User)
+	return &user, ok
+}
+
+// GetClaimsFromContext extracts the JWT claims from context
+func GetClaimsFromContext(ctx context.Context) (*Claims, bool) {
+	claims, ok := ctx.Value("claims").(*Claims)
+	return claims, ok
+}
+
+// HasRole checks if the authenticated user has a specific role
+func HasRole(ctx context.Context, role string) bool {
+	user, ok := GetUserFromContext(ctx)
+	if !ok {
+		return false
+	}
+	
+	for _, userRole := range user.Roles {
+		if userRole == role {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// RequireRole returns an error if the user doesn't have the required role
+func RequireRole(ctx context.Context, role string) error {
+	if !HasRole(ctx, role) {
+		return status.Errorf(codes.PermissionDenied, "insufficient permissions: role '%s' required", role)
+	}
+	return nil
+}
+
+// RequireAnyRole returns an error if the user doesn't have any of the required roles
+func RequireAnyRole(ctx context.Context, roles ...string) error {
+	for _, role := range roles {
+		if HasRole(ctx, role) {
+			return nil
+		}
+	}
+	return status.Errorf(codes.PermissionDenied, "insufficient permissions: one of roles %v required", roles)
+}
+
+// GenerateRSAKeyPair generates a new RSA key pair for JWT signing
+func GenerateRSAKeyPair(keySize int) (privateKeyPEM, publicKeyPEM string, err error) {
+	if keySize < 2048 {
+		keySize = 2048 // Minimum secure key size
+	}
+	
+	// Generate private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, keySize)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate private key: %w", err)
+	}
+	
+	// Encode private key to PEM
+	privateKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	privateKeyPEMBlock := &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privateKeyBytes,
+	}
+	privateKeyPEM = string(pem.EncodeToMemory(privateKeyPEMBlock))
+	
+	// Generate public key
+	publicKey := &privateKey.PublicKey
+	publicKeyBytes := x509.MarshalPKCS1PublicKey(publicKey)
+	publicKeyPEMBlock := &pem.Block{
+		Type:  "RSA PUBLIC KEY",
+		Bytes: publicKeyBytes,
+	}
+	publicKeyPEM = string(pem.EncodeToMemory(publicKeyPEMBlock))
+	
+	return privateKeyPEM, publicKeyPEM, nil
+}
+
+// wrappedServerStream wraps a gRPC server stream with a custom context
+type wrappedServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (w *wrappedServerStream) Context() context.Context {
+	return w.ctx
+}
+
+// TokenInfo holds information about a JWT token
+type TokenInfo struct {
+	Valid     bool      `json:"valid"`
+	UserID    string    `json:"user_id,omitempty"`
+	Username  string    `json:"username,omitempty"`
+	Email     string    `json:"email,omitempty"`
+	Roles     []string  `json:"roles,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	IssuedAt  time.Time `json:"issued_at,omitempty"`
+}
+
+// GetTokenInfo returns information about a JWT token
+func (jm *JWTManager) GetTokenInfo(tokenString string) *TokenInfo {
+	claims, err := jm.ValidateToken(tokenString)
+	if err != nil {
+		return &TokenInfo{Valid: false}
+	}
+	
+	return &TokenInfo{
+		Valid:     true,
+		UserID:    claims.UserID,
+		Username:  claims.Username,
+		Email:     claims.Email,
+		Roles:     claims.Roles,
+		ExpiresAt: claims.ExpiresAt.Time,
+		IssuedAt:  claims.IssuedAt.Time,
+	}
+}
+
+// IsTokenExpired checks if a token is expired
+func (jm *JWTManager) IsTokenExpired(tokenString string) bool {
+	info := jm.GetTokenInfo(tokenString)
+	if !info.Valid {
+		return true
+	}
+	return time.Now().After(info.ExpiresAt)
+}
+
+// GetTokenTimeToExpiry returns the time until token expiry
+func (jm *JWTManager) GetTokenTimeToExpiry(tokenString string) time.Duration {
+	info := jm.GetTokenInfo(tokenString)
+	if !info.Valid {
+		return 0
+	}
+	return time.Until(info.ExpiresAt)
+}
+{{end}}

@@ -1,0 +1,163 @@
+# GraphQL schema for {{.ProjectName}}
+
+scalar Time
+
+# User represents a user in the system
+type User {
+  id: ID!
+  username: String!
+  email: String!
+  firstName: String
+  lastName: String
+  createdAt: Time!
+  updatedAt: Time!
+  todos: [Todo!]!
+}
+
+# Todo represents a todo item
+type Todo {
+  id: ID!
+  title: String!
+  description: String
+  completed: Boolean!
+  priority: Priority!
+  dueDate: Time
+  user: User!
+  userId: ID!
+  createdAt: Time!
+  updatedAt: Time!
+}
+
+# Priority level for todos
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+# Input for creating a new user
+input CreateUserInput {
+  username: String!
+  email: String!
+  firstName: String
+  lastName: String
+  {{- if eq .AuthType "jwt"}}
+  password: String!
+  {{- end}}
+}
+
+# Input for updating a user
+input UpdateUserInput {
+  firstName: String
+  lastName: String
+  email: String
+}
+
+# Input for creating a new todo
+input CreateTodoInput {
+  title: String!
+  description: String
+  priority: Priority!
+  dueDate: Time
+  userId: ID!
+}
+
+# Input for updating a todo
+input UpdateTodoInput {
+  title: String
+  description: String
+  completed: Boolean
+  priority: Priority
+  dueDate: Time
+}
+
+{{- if eq .AuthType "jwt"}}
+# Authentication input
+input LoginInput {
+  username: String!
+  password: String!
+}
+
+# Authentication response
+type AuthPayload {
+  token: String!
+  user: User!
+}
+{{- end}}
+
+# Query root
+type Query {
+  # Get current user
+  me: User
+  
+  # Get a user by ID
+  user(id: ID!): User
+  
+  # List all users with pagination
+  users(limit: Int = 10, offset: Int = 0): [User!]!
+  
+  # Get a todo by ID
+  todo(id: ID!): Todo
+  
+  # List todos with filters
+  todos(
+    userId: ID
+    completed: Boolean
+    priority: Priority
+    limit: Int = 20
+    offset: Int = 0
+  ): [Todo!]!
+  
+  # Search todos by title or description
+  searchTodos(query: String!, limit: Int = 20): [Todo!]!
+}
+
+# Mutation root
+type Mutation {
+  {{- if eq .AuthType "jwt"}}
+  # Authentication
+  login(input: LoginInput!): AuthPayload!
+  
+  # Register a new user
+  register(input: CreateUserInput!): AuthPayload!
+  {{- else}}
+  # Create a new user
+  createUser(input: CreateUserInput!): User!
+  {{- end}}
+  
+  # Update user information
+  updateUser(id: ID!, input: UpdateUserInput!): User!
+  
+  # Delete a user
+  deleteUser(id: ID!): Boolean!
+  
+  # Create a new todo
+  createTodo(input: CreateTodoInput!): Todo!
+  
+  # Update a todo
+  updateTodo(id: ID!, input: UpdateTodoInput!): Todo!
+  
+  # Delete a todo
+  deleteTodo(id: ID!): Boolean!
+  
+  # Mark todo as completed
+  completeTodo(id: ID!): Todo!
+  
+  # Mark todo as incomplete
+  incompleteTodo(id: ID!): Todo!
+}
+
+{{- if .EnableSubscriptions}}
+# Subscription root
+type Subscription {
+  # Subscribe to todo updates for a specific user
+  todoUpdated(userId: ID!): Todo!
+  
+  # Subscribe to new todos for a specific user
+  todoCreated(userId: ID!): Todo!
+  
+  # Subscribe to todo deletions for a specific user
+  todoDeleted(userId: ID!): ID!
+}
+{{- end}}

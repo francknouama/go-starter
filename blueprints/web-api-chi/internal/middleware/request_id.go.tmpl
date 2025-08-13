@@ -1,0 +1,50 @@
+package middleware
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"net/http"
+)
+
+const RequestIDHeader = "X-Request-ID"
+
+// RequestID creates a Chi-compatible request ID middleware
+// Note: Chi already provides middleware.RequestID, but this shows how to create custom ones
+func RequestID() func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if request ID already exists (from upstream proxy)
+			requestID := r.Header.Get(RequestIDHeader)
+			if requestID == "" {
+				// Generate a new request ID
+				requestID = generateRequestID()
+			}
+
+			// Add request ID to response header
+			w.Header().Set(RequestIDHeader, requestID)
+
+			// Add request ID to context for downstream handlers
+			ctx := context.WithValue(r.Context(), "requestID", requestID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// generateRequestID creates a random request ID
+func generateRequestID() string {
+	bytes := make([]byte, 16)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to a simple timestamp-based ID if random generation fails
+		return "req-fallback"
+	}
+	return hex.EncodeToString(bytes)
+}
+
+// GetRequestID extracts the request ID from context
+func GetRequestID(ctx context.Context) string {
+	if reqID, ok := ctx.Value("requestID").(string); ok {
+		return reqID
+	}
+	return ""
+}

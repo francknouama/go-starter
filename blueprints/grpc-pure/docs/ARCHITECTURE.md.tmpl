@@ -1,0 +1,452 @@
+# {{.ProjectName}} Architecture Documentation
+
+This document describes the architecture and design principles of the {{.ProjectName}} gRPC microservice.
+
+## Overview
+
+{{.ProjectName}} is a high-performance gRPC microservice built with Go, designed for scalability, reliability, and maintainability. The service follows microservice architecture patterns with a focus on:
+
+- **Performance**: High-throughput gRPC communication
+- **Security**: TLS encryption, authentication, and authorization
+- **Observability**: Comprehensive metrics, tracing, and logging
+- **Reliability**: Health checks, graceful shutdown, and error handling
+- **Scalability**: Horizontal scaling and load balancing support
+
+## High-Level Architecture
+
+```
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│     Client      │    │   Load Balancer │    │    {{.ProjectName}}    │
+│   Applications  │◄──►│   (Optional)    │◄──►│   gRPC Service  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+                                                       │
+                                               ┌─────────────────┐
+                                               │    Database     │
+                                               │   (Optional)    │
+                                               └─────────────────┘
+```
+
+## Service Architecture
+
+### Core Components
+
+#### 1. gRPC Server (`internal/server/`)
+The main gRPC server implementation that handles:
+- Protocol Buffer service definitions
+- Request routing and processing
+- Connection management
+- TLS termination
+
+**Key Files:**
+- `grpc.go` - Main gRPC server configuration and startup
+- `health.go` - Health check service implementation
+{{- if .MetricsEnabled}}
+- `metrics.go` - Metrics HTTP server (Prometheus)
+{{- end}}
+
+#### 2. Service Layer (`internal/services/`)
+Business logic implementation for gRPC services:
+- `{{.ProjectName | lower}}.go` - Main service implementation
+- `health.go` - Health check logic
+
+**Responsibilities:**
+- Business logic processing
+- Data validation and transformation
+- External service integration
+- Error handling and status codes
+
+#### 3. Interceptor Layer (`internal/interceptors/`)
+Middleware components that process requests and responses:
+
+- `logging.go` - Request/response logging
+- `recovery.go` - Panic recovery and error handling
+{{- if ne .AuthType ""}}
+- `auth.go` - Authentication and authorization
+{{- end}}
+{{- if .MetricsEnabled}}
+- `metrics.go` - Metrics collection
+{{- end}}
+{{- if .TracingEnabled}}
+- `tracing.go` - Distributed tracing
+{{- end}}
+- `ratelimit.go` - Rate limiting protection
+
+**Processing Flow:**
+```
+Request → Auth → Rate Limit → Tracing → Logging → Service → Response
+```
+
+{{- if ne .DatabaseDriver ""}}
+#### 4. Data Layer (`internal/database/`, `internal/repository/`)
+Database integration and data access:
+
+- `connection.go` - Database connection management
+- `migrations.go` - Schema migrations
+- `repository/` - Data access patterns
+- `models/` - Data structures
+
+**Supported Databases:**
+{{- if eq .DatabaseDriver "postgres"}}
+- PostgreSQL with {{if eq .DatabaseORM "gorm"}}GORM ORM{{else}}SQL driver{{end}}
+{{- else if eq .DatabaseDriver "mysql"}}
+- MySQL with {{if eq .DatabaseORM "gorm"}}GORM ORM{{else}}SQL driver{{end}}
+{{- else if eq .DatabaseDriver "sqlite"}}
+- SQLite with {{if eq .DatabaseORM "gorm"}}GORM ORM{{else}}SQL driver{{end}}
+{{- end}}
+{{- end}}
+
+#### 5. Configuration (`internal/config/`)
+Centralized configuration management:
+- Environment-based configuration
+- YAML configuration files
+- Runtime configuration validation
+
+#### 6. Observability
+{{- if .MetricsEnabled}}
+**Metrics** (`internal/observability/metrics.go`):
+- Prometheus metrics exposition
+- Custom business metrics
+- gRPC method metrics
+- System performance metrics
+{{- end}}
+
+{{- if .TracingEnabled}}
+**Tracing** (`internal/observability/tracing.go`):
+- OpenTelemetry integration
+- Distributed request tracing
+- Performance profiling
+- Debugging support
+{{- end}}
+
+**Logging** (`internal/logger/`):
+- Structured logging with {{.Logger}}
+- Configurable log levels
+- Request correlation IDs
+- Performance logging
+
+### Security Architecture
+
+#### 1. Transport Security
+- **TLS 1.3**: Encrypted communication by default
+- **Certificate Management**: Automated certificate rotation
+- **mTLS**: Optional mutual TLS for service-to-service communication
+
+#### 2. Authentication & Authorization
+{{- if eq .AuthType "jwt"}}
+- **JWT Tokens**: Stateless authentication
+- **Token Validation**: Signature verification and expiry checks
+- **Claims-based Authorization**: Role and permission-based access
+{{- else if eq .AuthType "oauth2"}}
+- **OAuth 2.0**: Industry-standard authorization framework
+- **Token Introspection**: Real-time token validation
+- **Scope-based Access**: Fine-grained permission control
+{{- else if eq .AuthType "mtls"}}
+- **Mutual TLS**: Client certificate-based authentication
+- **Certificate Validation**: CA-signed certificate verification
+- **Identity Extraction**: Client identity from certificate CN/SAN
+{{- else}}
+- **Configurable**: Authentication can be added as needed
+- **Interceptor-based**: Pluggable authentication mechanisms
+{{- end}}
+
+#### 3. Input Validation
+- **Protocol Buffer Validation**: Built-in type safety
+- **Business Logic Validation**: Custom validation rules
+- **Rate Limiting**: Protection against abuse
+
+### Service Discovery
+{{- if eq .ServiceDiscovery "consul"}}
+#### Consul Integration
+- **Service Registration**: Automatic service registration
+- **Health Checks**: Consul health check integration
+- **Load Balancing**: Client-side load balancing
+- **Configuration**: Distributed configuration management
+{{- else if eq .ServiceDiscovery "etcd"}}
+#### etcd Integration
+- **Service Registration**: Key-value based service registry
+- **Lease Management**: TTL-based service health
+- **Watch Mechanism**: Real-time service discovery
+- **Distributed Coordination**: Leader election and locking
+{{- else if eq .ServiceDiscovery "kubernetes"}}
+#### Kubernetes Integration
+- **Service Discovery**: Native Kubernetes service discovery
+- **Endpoint Management**: Automatic endpoint updates
+- **Pod Health**: Kubernetes health check integration
+- **ConfigMaps**: Configuration management
+{{- else}}
+#### Static Configuration
+- **Direct Connection**: Client connects directly to service
+- **Load Balancer**: External load balancer for high availability
+- **DNS-based**: DNS-based service discovery
+{{- end}}
+
+## Protocol Buffer Schema
+
+### Service Definition
+```protobuf
+service {{.ProjectName}}Service {
+  // Example RPC methods
+  rpc GetVersion(google.protobuf.Empty) returns (VersionResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  
+  // Add your business methods here
+}
+```
+
+### Message Types
+- **Request/Response Messages**: Strongly typed API contracts
+- **Common Types**: Reusable message definitions
+- **Error Types**: Standardized error responses
+
+### Versioning Strategy
+- **Backward Compatibility**: Additive changes only
+- **Version Prefix**: Service versions in package names (`v1`, `v2`)
+- **Deprecation Path**: Gradual deprecation of old versions
+
+## Data Flow
+
+### Request Processing Flow
+```
+1. Client Request
+   ↓
+2. TLS Termination
+   ↓
+3. gRPC Server
+   ↓
+4. Interceptor Chain
+   ├── Authentication
+   ├── Rate Limiting
+   ├── Tracing
+   └── Logging
+   ↓
+5. Service Layer
+   ├── Business Logic
+   ├── Validation
+   └── Data Access
+   ↓
+6. Response Processing
+   ↓
+7. Client Response
+```
+
+### Error Handling Flow
+```
+Error Occurs
+     ↓
+Service Layer Error Handling
+     ↓
+gRPC Status Code Mapping
+     ↓
+Interceptor Error Processing
+     ↓
+Client Error Response
+```
+
+## Performance Characteristics
+
+### Benchmarks
+- **Throughput**: Target {{if .MetricsEnabled}}10,000{{else}}5,000{{end}} RPS
+- **Latency**: P99 < 100ms for simple operations
+- **Memory**: < 100MB baseline memory usage
+- **CPU**: < 50% CPU at target throughput
+
+### Optimization Strategies
+1. **Connection Pooling**: Efficient connection reuse
+2. **Message Pooling**: Reduce garbage collection
+3. **Streaming**: Use gRPC streaming for large datasets
+4. **Compression**: gzip compression for large messages
+5. **Caching**: In-memory caching for frequently accessed data
+
+## Scalability Patterns
+
+### Horizontal Scaling
+- **Stateless Design**: No local state dependencies
+- **Load Balancing**: Multiple service instances
+- **Database Sharding**: Partition data across multiple databases
+- **Caching Layer**: Distributed caching (Redis, Memcached)
+
+### Vertical Scaling
+- **Resource Tuning**: CPU and memory optimization
+- **Connection Limits**: Optimal connection pool sizing
+- **Garbage Collection**: GC tuning for low latency
+
+## Development Patterns
+
+### Project Structure
+```
+{{.ProjectName}}/
+├── cmd/server/          # Application entry point
+├── internal/            # Private application code
+│   ├── server/          # gRPC server implementation
+│   ├── services/        # Business logic
+│   ├── interceptors/    # Middleware
+│   ├── config/          # Configuration
+│   ├── logger/          # Logging utilities
+{{- if ne .DatabaseDriver ""}}
+│   ├── database/        # Database connection
+│   ├── repository/      # Data access layer
+│   ├── models/          # Data models
+{{- end}}
+{{- if ne .AuthType ""}}
+│   └── auth/            # Authentication
+{{- end}}
+├── proto/               # Protocol Buffer definitions
+├── configs/             # Configuration files
+├── scripts/             # Build and utility scripts
+├── tests/               # Test files
+│   ├── unit/            # Unit tests
+│   ├── integration/     # Integration tests
+│   └── load/            # Load tests
+└── docs/                # Documentation
+```
+
+### Code Organization Principles
+1. **Separation of Concerns**: Clear layer boundaries
+2. **Dependency Injection**: Loose coupling between components
+3. **Interface-Based Design**: Mockable dependencies
+4. **Configuration-Driven**: Environment-specific behavior
+5. **Test Coverage**: Comprehensive test suite
+
+## Testing Strategy
+
+### Unit Tests
+- **Service Layer**: Business logic testing
+- **Repository Layer**: Data access testing
+- **Utility Functions**: Helper function testing
+- **Coverage Target**: > 80% code coverage
+
+### Integration Tests
+- **gRPC Client Tests**: End-to-end API testing
+- **Database Tests**: Data persistence testing
+- **External Service Tests**: Dependency integration testing
+
+### Load Tests
+- **Performance Testing**: Throughput and latency measurement
+- **Stress Testing**: Service behavior under load
+- **Capacity Planning**: Resource requirement analysis
+
+## Deployment Architecture
+
+### Container Strategy
+- **Docker**: Multi-stage builds for optimal image size
+- **Base Images**: Minimal base images (Alpine, Distroless)
+- **Security**: Non-root user execution
+- **Health Checks**: Container health check endpoints
+
+### Orchestration
+- **Kubernetes**: Production deployment platform
+- **Service Mesh**: Istio/Linkerd for advanced networking
+- **Config Management**: ConfigMaps and Secrets
+- **Auto-scaling**: HPA and VPA for resource management
+
+### Monitoring and Alerting
+- **Health Checks**: Liveness and readiness probes
+- **Metrics**: Prometheus metrics collection
+- **Alerting**: Critical threshold alerts
+- **Dashboards**: Grafana visualization
+
+## Security Considerations
+
+### Network Security
+- **TLS**: All communications encrypted
+- **Network Policies**: Kubernetes network isolation
+- **Firewall Rules**: Minimal port exposure
+- **VPC**: Private network deployment
+
+### Application Security
+- **Input Validation**: Comprehensive input sanitization
+- **Authentication**: Strong authentication mechanisms
+- **Authorization**: Fine-grained access control
+- **Audit Logging**: Security event logging
+
+### Data Security
+{{- if ne .DatabaseDriver ""}}
+- **Encryption at Rest**: Database encryption
+- **Encryption in Transit**: TLS for database connections
+- **Access Control**: Database user permissions
+- **Backup Security**: Encrypted backup storage
+{{- end}}
+
+## Best Practices
+
+### Development
+1. **Code Reviews**: Mandatory peer review process
+2. **Static Analysis**: Automated code quality checks
+3. **Dependency Management**: Regular dependency updates
+4. **Documentation**: Keep documentation current
+
+### Operations
+1. **Monitoring**: Comprehensive observability
+2. **Backup Strategy**: Regular backup procedures
+3. **Disaster Recovery**: Recovery plan and testing
+4. **Capacity Planning**: Proactive resource management
+
+### Security
+1. **Regular Updates**: Keep dependencies updated
+2. **Vulnerability Scanning**: Automated security scans
+3. **Access Control**: Principle of least privilege
+4. **Incident Response**: Security incident procedures
+
+## Migration and Upgrade Strategy
+
+### Version Compatibility
+- **API Versioning**: Backward-compatible API changes
+- **Rolling Updates**: Zero-downtime deployments
+- **Feature Flags**: Gradual feature rollout
+- **A/B Testing**: Safe feature validation
+
+### Data Migration
+{{- if ne .DatabaseDriver ""}}
+- **Schema Migrations**: Automated database updates
+- **Data Validation**: Migration verification
+- **Rollback Procedures**: Safe rollback mechanisms
+- **Backup Strategy**: Pre-migration backups
+{{- end}}
+
+## Troubleshooting Guide
+
+### Common Issues
+1. **Connection Timeouts**: Network or resource issues
+2. **Authentication Failures**: Token or certificate problems
+3. **High Latency**: Performance bottlenecks
+4. **Memory Leaks**: Resource management issues
+
+### Debugging Tools
+- **Logs**: Structured logging analysis
+- **Metrics**: Performance metrics review
+- **Tracing**: Request flow analysis
+- **Profiling**: CPU and memory profiling
+
+### Performance Tuning
+1. **Connection Pool Tuning**: Optimize database connections
+2. **Memory Management**: GC tuning and memory allocation
+3. **CPU Optimization**: Algorithm optimization
+4. **Network Optimization**: Message size and compression
+
+## Future Enhancements
+
+### Planned Features
+- **GraphQL Gateway**: GraphQL to gRPC translation
+- **WebSocket Support**: Real-time communication
+- **Event Streaming**: Kafka integration
+- **Machine Learning**: AI/ML service integration
+
+### Scalability Improvements
+- **Microservice Decomposition**: Service splitting strategies
+- **Event-Driven Architecture**: Asynchronous processing
+- **CQRS**: Command Query Responsibility Segregation
+- **Event Sourcing**: Event-based state management
+
+## References
+
+- [gRPC Documentation](https://grpc.io/docs/)
+- [Protocol Buffers Guide](https://developers.google.com/protocol-buffers)
+- [Go Best Practices](https://golang.org/doc/effective_go.html)
+- [Microservice Patterns](https://microservices.io/patterns/)
+- [OpenTelemetry Specification](https://opentelemetry.io/docs/)
+
+---
+
+**Last Updated**: {{`{{ printf "%s" .Generated }}`}}
+**Version**: 1.0.0
+**Authors**: {{.ProjectName}} Development Team

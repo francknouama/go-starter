@@ -1,0 +1,98 @@
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+	"time"
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// HealthHandler handles health check endpoints
+type HealthHandler struct {
+	logger logger.Logger
+}
+
+// NewHealthHandler creates a new health handler
+func NewHealthHandler(log logger.Logger) *HealthHandler {
+	return &HealthHandler{
+		logger: log,
+	}
+}
+
+// HealthResponse represents the health check response
+type HealthResponse struct {
+	Status    string            `json:"status"`
+	Timestamp time.Time         `json:"timestamp"`
+	Version   string            `json:"version,omitempty"`
+	Checks    map[string]string `json:"checks,omitempty"`
+}
+
+// HealthCheck handles GET /health
+// @Summary Health check endpoint
+// @Description Returns the health status of the service
+// @Tags health
+// @Produce json
+// @Success 200 {object} HealthResponse
+// @Router /health [get]
+func (h *HealthHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Health check endpoint called", "method", r.Method, "path", r.URL.Path)
+
+	response := HealthResponse{
+		Status:    "healthy",
+		Timestamp: time.Now(),
+		Version:   "1.0.0", // This should come from build info
+	}
+
+	h.writeJSONResponse(w, http.StatusOK, response)
+}
+
+// ReadinessCheck handles GET /ready
+// @Summary Readiness check endpoint
+// @Description Returns whether the service is ready to accept requests
+// @Tags health
+// @Produce json
+// @Success 200 {object} HealthResponse
+// @Failure 503 {object} HealthResponse
+// @Router /ready [get]
+func (h *HealthHandler) ReadinessCheck(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("Readiness check endpoint called", "method", r.Method, "path", r.URL.Path)
+
+	checks := make(map[string]string)
+	allHealthy := true
+
+{{- if ne .DatabaseDriver ""}}
+	// Check database connection
+	// This should be implemented with actual database health check
+	checks["database"] = "healthy"
+{{- end}}
+
+	// Add more checks as needed (Redis, external APIs, etc.)
+
+	status := "ready"
+	httpStatus := http.StatusOK
+
+	if !allHealthy {
+		status = "not ready"
+		httpStatus = http.StatusServiceUnavailable
+	}
+
+	response := HealthResponse{
+		Status:    status,
+		Timestamp: time.Now(),
+		Checks:    checks,
+	}
+
+	h.writeJSONResponse(w, httpStatus, response)
+}
+
+// writeJSONResponse is a helper method to write JSON responses consistently
+func (h *HealthHandler) writeJSONResponse(w http.ResponseWriter, statusCode int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		h.logger.Error("Failed to encode JSON response", "error", err)
+		// Don't try to write another response, just log the error
+	}
+}

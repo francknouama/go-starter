@@ -1,0 +1,70 @@
+package middleware
+
+import (
+	"github.com/gofiber/fiber/v2"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+	"go.opentelemetry.io/otel/trace"
+	"{{.ModulePath}}/internal/config"
+)
+
+var tracer = otel.Tracer("fiber-server")
+
+// Tracing returns an OpenTelemetry tracing middleware
+func Tracing(cfg *config.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Extract trace context from headers
+		ctx := otel.GetTextMapPropagator().Extract(c.Context(), propagation.HeaderCarrier(c.GetReqHeaders()))
+
+		// Start span
+		spanName := c.Method() + " " + c.Path()
+		ctx, span := tracer.Start(ctx, spanName,
+			trace.WithSpanKind(trace.SpanKindServer),
+			trace.WithAttributes(
+				semconv.HTTPMethod(c.Method()),
+				semconv.HTTPTarget(c.Path()),
+				semconv.HTTPScheme(c.Protocol()),
+				semconv.NetHostName(c.Hostname()),
+				semconv.NetPeerIP(c.IP()),
+				semconv.UserAgentOriginal(string(c.Request().Header.UserAgent())),
+			),
+		)
+		defer span.End()
+
+		// Add request ID to span
+		if requestID := c.Locals("requestid"); requestID != nil {
+			span.SetAttributes(attribute.String("request.id", requestID.(string)))
+		}
+
+		// Store context in Fiber context
+		c.SetUserContext(ctx)
+
+		// Process request
+		err := c.Next()
+
+		// Set response attributes
+		statusCode := c.Response().StatusCode()
+		span.SetAttributes(
+			semconv.HTTPStatusCode(statusCode),
+			attribute.Int("http.response_size", len(c.Response().Body())),
+		)
+
+		// Record error if present
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(trace.Status{
+				Code:        trace.StatusCodeError,
+				Description: err.Error(),
+			})
+		} else if statusCode >= 400 {
+			span.SetStatus(trace.Status{
+				Code:        trace.StatusCodeError,
+				Description: "HTTP " + c.Response().Status(),
+			})
+		}
+
+		return err
+	}
+}

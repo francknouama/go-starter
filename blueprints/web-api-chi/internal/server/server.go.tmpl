@@ -1,0 +1,202 @@
+package server
+
+import (
+	"context"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/logger"
+	chiMiddleware "{{.ModulePath}}/internal/middleware"
+{{- if ne .DatabaseDriver ""}}
+	"{{.ModulePath}}/internal/repository"
+	"{{.ModulePath}}/internal/services"
+{{- if eq .DatabaseORM "gorm"}}
+	"gorm.io/gorm"
+{{- else if eq .DatabaseORM "sqlx"}}
+	"github.com/jmoiron/sqlx"
+{{- else}}
+	"database/sql"
+{{- end}}
+{{- end}}
+)
+
+// Server represents the HTTP server
+type Server struct {
+	router chi.Router
+	server *http.Server
+	logger logger.Logger
+}
+
+// New creates a new server instance
+{{- if ne .DatabaseDriver ""}}
+{{- if eq .DatabaseORM "gorm"}}
+func New(cfg *config.Config, log logger.Logger, db *gorm.DB) (*Server, error) {
+{{- else if eq .DatabaseORM "sqlx"}}
+func New(cfg *config.Config, log logger.Logger, db *sqlx.DB) (*Server, error) {
+{{- else}}
+func New(cfg *config.Config, log logger.Logger, db *sql.DB) (*Server, error) {
+{{- end}}
+{{- else}}
+func New(cfg *config.Config, log logger.Logger) (*Server, error) {
+{{- end}}
+	router := chi.NewRouter()
+
+	// Configure CORS
+	corsConfig := cors.Options{
+		AllowedOrigins:   cfg.CORS.AllowedOrigins,
+		AllowedMethods:   cfg.CORS.AllowedMethods,
+		AllowedHeaders:   cfg.CORS.AllowedHeaders,
+		ExposedHeaders:   cfg.CORS.ExposedHeaders,
+		AllowCredentials: cfg.CORS.AllowCredentials,
+		MaxAge:          cfg.CORS.MaxAge,
+	}
+
+	// Global middleware stack
+	router.Use(middleware.RequestID)
+	router.Use(middleware.RealIP)
+	router.Use(chiMiddleware.Logger(log))
+	router.Use(chiMiddleware.Recovery(log))
+	router.Use(cors.Handler(corsConfig))
+	router.Use(chiMiddleware.Security())
+{{- if .EnableMetrics}}
+	router.Use(chiMiddleware.Metrics())
+{{- end}}
+{{- if .EnableTracing}}
+	router.Use(chiMiddleware.Tracing())
+{{- end}}
+
+	// Request timeout middleware
+	router.Use(middleware.Timeout(time.Duration(cfg.Server.Timeout) * time.Second))
+
+	// Content type middleware for JSON APIs
+	router.Use(middleware.SetHeader("Content-Type", "application/json"))
+
+{{- if ne .DatabaseDriver ""}}
+	// Initialize repositories
+	userRepo := repository.NewUserRepository(db, log)
+
+	// Initialize services
+	userService := services.NewUserService(userRepo, log)
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	authService := services.NewAuthService(userRepo, log)
+{{- end}}
+
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler(log)
+	userHandler := handlers.NewUserHandler(userService, log)
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+	authHandler := handlers.NewAuthHandler(authService, log)
+{{- end}}
+{{- else}}
+	// Initialize handlers
+	healthHandler := handlers.NewHealthHandler(log)
+{{- end}}
+
+	// Setup routes
+	setupRoutes(router, cfg, log{{- if ne .DatabaseDriver ""}}, healthHandler, userHandler{{- if and (ne .AuthType "") (ne .AuthType "none")}}, authHandler{{- end}}{{- else}}, healthHandler{{- end}})
+
+	server := &http.Server{
+		Addr:         cfg.Server.Address,
+		Handler:      router,
+		ReadTimeout:  time.Duration(cfg.Server.ReadTimeout) * time.Second,
+		WriteTimeout: time.Duration(cfg.Server.WriteTimeout) * time.Second,
+		IdleTimeout:  time.Duration(cfg.Server.IdleTimeout) * time.Second,
+	}
+
+	return &Server{
+		router: router,
+		server: server,
+		logger: log,
+	}, nil
+}
+
+// setupRoutes configures all application routes
+{{- if ne .DatabaseDriver ""}}
+func setupRoutes(router chi.Router, cfg *config.Config, log logger.Logger, healthHandler *handlers.HealthHandler, userHandler *handlers.UserHandler{{- if and (ne .AuthType "") (ne .AuthType "none")}}, authHandler *handlers.AuthHandler{{- end}}) {
+{{- else}}
+func setupRoutes(router chi.Router, cfg *config.Config, log logger.Logger, healthHandler *handlers.HealthHandler) {
+{{- end}}
+	// Health check routes (no authentication required)
+	router.Get("/health", healthHandler.HealthCheck)
+	router.Get("/ready", healthHandler.ReadinessCheck)
+
+{{- if ne .DatabaseDriver ""}}
+	// API routes
+	router.Route("/api", func(r chi.Router) {
+		// API v1 routes
+		r.Route("/v1", func(r chi.Router) {
+{{- if and (ne .AuthType "") (ne .AuthType "none")}}
+			// Authentication routes (public)
+			r.Route("/auth", func(r chi.Router) {
+				r.Post("/login", authHandler.Login)
+				r.Post("/register", authHandler.Register)
+				r.Post("/refresh", authHandler.RefreshToken)
+			})
+
+			// Protected routes
+			r.Group(func(r chi.Router) {
+				// Apply authentication middleware for protected routes
+				r.Use(chiMiddleware.Auth(cfg))
+
+				// User routes
+				r.Route("/users", func(r chi.Router) {
+					r.Get("/", userHandler.GetUsers)
+					r.Post("/", userHandler.CreateUser)
+					r.Get("/{id}", userHandler.GetUser)
+					r.Put("/{id}", userHandler.UpdateUser)
+					r.Delete("/{id}", userHandler.DeleteUser)
+				})
+
+				// Auth routes (protected)
+				r.Route("/auth", func(r chi.Router) {
+					r.Post("/logout", authHandler.Logout)
+					r.Get("/me", authHandler.GetCurrentUser)
+				})
+			})
+{{- else}}
+			// User routes (no authentication)
+			r.Route("/users", func(r chi.Router) {
+				r.Get("/", userHandler.GetUsers)
+				r.Post("/", userHandler.CreateUser)
+				r.Get("/{id}", userHandler.GetUser)
+				r.Put("/{id}", userHandler.UpdateUser)
+				r.Delete("/{id}", userHandler.DeleteUser)
+			})
+{{- end}}
+		})
+	})
+{{- end}}
+
+	// Static files (if needed)
+	// router.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("./static/"))))
+
+	// API documentation route
+	router.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/", http.StatusMovedPermanently)
+	})
+	router.Handle("/docs/*", http.StripPrefix("/docs/", http.FileServer(http.Dir("./api/"))))
+}
+
+// Start starts the HTTP server
+func (s *Server) Start(addr string) error {
+	s.server.Addr = addr
+	s.logger.Info("Starting Chi server", "address", addr)
+	return s.server.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the server
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.logger.Info("Shutting down Chi server")
+	return s.server.Shutdown(ctx)
+}
+
+// Handler returns the Chi router (useful for testing)
+func (s *Server) Handler() http.Handler {
+	return s.router
+}

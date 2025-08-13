@@ -1,0 +1,140 @@
+package middleware
+
+import (
+	"strings"
+
+	"github.com/gofiber/fiber/v2"
+{{- if eq .AuthType "jwt"}}
+	jwtware "github.com/gofiber/contrib/jwt"
+	"github.com/golang-jwt/jwt/v5"
+{{- end}}
+	"{{.ModulePath}}/internal/config"
+)
+
+{{- if eq .AuthType "jwt"}}
+// Auth returns JWT authentication middleware
+func Auth(cfg *config.Config) fiber.Handler {
+	return jwtware.New(jwtware.Config{
+		SigningKey: jwtware.SigningKey{
+			Key: []byte(cfg.Auth.Secret),
+		},
+		ErrorHandler: jwtError,
+		SuccessHandler: jwtSuccess,
+		ContextKey: "user",
+		TokenLookup: "header:Authorization",
+		AuthScheme: "Bearer",
+		Claims: jwt.MapClaims{},
+	})
+}
+
+// jwtError handles JWT errors
+func jwtError(c *fiber.Ctx, err error) error {
+	// Handle different JWT errors
+	if err.Error() == "Missing or malformed JWT" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": fiber.Map{
+				"code":    fiber.StatusBadRequest,
+				"message": "Missing or malformed JWT",
+			},
+		})
+	}
+
+	// Default to unauthorized
+	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+		"error": fiber.Map{
+			"code":    fiber.StatusUnauthorized,
+			"message": "Invalid or expired JWT",
+		},
+	})
+}
+
+// jwtSuccess handles successful JWT validation
+func jwtSuccess(c *fiber.Ctx) error {
+	return c.Next()
+}
+
+// GetUserIDFromToken extracts user ID from JWT token
+func GetUserIDFromToken(c *fiber.Ctx) (string, error) {
+	user := c.Locals("user").(*jwt.Token)
+	claims := user.Claims.(jwt.MapClaims)
+	
+	userID, ok := claims["sub"].(string)
+	if !ok {
+		return "", fiber.NewError(fiber.StatusUnauthorized, "Invalid token claims")
+	}
+	
+	return userID, nil
+}
+
+{{- else if eq .AuthType "session"}}
+// Auth returns session authentication middleware
+func Auth(cfg *config.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Get session from cookie
+		sessionID := c.Cookies(cfg.Auth.SessionOptions.Name)
+		if sessionID == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusUnauthorized,
+					"message": "Authentication required",
+				},
+			})
+		}
+
+		// TODO: Validate session from session store
+		// This is a placeholder - implement actual session validation
+		
+		return c.Next()
+	}
+}
+
+{{- else if eq .AuthType "oauth2"}}
+// Auth returns OAuth2 authentication middleware
+func Auth(cfg *config.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Get access token from header
+		authHeader := c.Get("Authorization")
+		if authHeader == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusUnauthorized,
+					"message": "Missing authorization header",
+				},
+			})
+		}
+
+		// Extract bearer token
+		parts := strings.Split(authHeader, " ")
+		if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    fiber.StatusUnauthorized,
+					"message": "Invalid authorization header format",
+				},
+			})
+		}
+
+		token := parts[1]
+
+		// TODO: Validate OAuth2 token
+		// This is a placeholder - implement actual OAuth2 token validation
+		_ = token
+
+		return c.Next()
+	}
+}
+{{- end}}
+
+// OptionalAuth returns optional authentication middleware
+func OptionalAuth(cfg *config.Config) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		// Try to authenticate but don't fail if not authenticated
+		authHeader := c.Get("Authorization")
+		if authHeader != "" {
+			// Try to validate token but continue even if it fails
+			// This allows endpoints to work for both authenticated and anonymous users
+		}
+		
+		return c.Next()
+	}
+}

@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Development startup script for {{.ProjectName}}
+
+set -e
+
+echo "🚀 Starting {{.ProjectName}} development environment..."
+
+# Check if required tools are installed
+command -v go >/dev/null 2>&1 || { echo "❌ Go is required but not installed. Aborting." >&2; exit 1; }
+
+# Set development environment
+export ENVIRONMENT=development
+
+# Load environment variables from .env file if it exists
+if [ -f .env ]; then
+    echo "📄 Loading environment variables from .env"
+    set -a
+    source .env
+    set +a
+fi
+
+{{- if ne .DatabaseDriver ""}}
+# Check database connection
+echo "🔌 Checking database connection..."
+{{- if eq .DatabaseDriver "postgres"}}
+if ! pg_isready -h ${DB_HOST:-localhost} -p ${DB_PORT:-5432} -U ${DB_USER:-postgres} >/dev/null 2>&1; then
+    echo "❌ PostgreSQL is not ready. Please start PostgreSQL first."
+    echo "   docker run --name {{.ProjectName}}-postgres -e POSTGRES_PASSWORD=postgres -p 5432:5432 -d postgres:15-alpine"
+    exit 1
+fi
+{{- else if eq .DatabaseDriver "mysql"}}
+if ! mysqladmin ping -h ${DB_HOST:-localhost} -P ${DB_PORT:-3306} -u ${DB_USER:-root} -p${DB_PASSWORD:-root} --silent >/dev/null 2>&1; then
+    echo "❌ MySQL is not ready. Please start MySQL first."
+    echo "   docker run --name {{.ProjectName}}-mysql -e MYSQL_ROOT_PASSWORD=root -p 3306:3306 -d mysql:8.0"
+    exit 1
+fi
+{{- end}}
+echo "✅ Database connection successful"
+
+# Run migrations
+echo "🗃️  Running database migrations..."
+go run cmd/server/main.go migrate || {
+    echo "❌ Migration failed"
+    exit 1
+}
+echo "✅ Migrations completed"
+{{- end}}
+
+# Install dependencies if go.mod has changed
+if [ go.mod -nt go.sum ]; then
+    echo "📦 Installing dependencies..."
+    go mod download
+    go mod tidy
+fi
+
+# Check if air is installed for live reload
+if command -v air >/dev/null 2>&1; then
+    echo "🔄 Starting development server with live reload..."
+    air
+else
+    echo "💡 Install air for live reload: go install github.com/cosmtrek/air@latest"
+    echo "🏃 Starting development server..."
+    go run cmd/server/main.go
+fi

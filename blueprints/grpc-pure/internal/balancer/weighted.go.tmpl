@@ -1,0 +1,410 @@
+package balancer
+
+import (
+	"context"
+	"fmt"
+	"math/rand"
+	"sync"
+	"time"
+
+	"google.golang.org/grpc/balancer"
+	"google.golang.org/grpc/balancer/base"
+	"google.golang.org/grpc/grpclog"
+)
+
+// WeightedConnection represents a connection with an associated weight
+type WeightedConnection struct {
+	SubConn balancer.SubConn
+	Weight  int
+	Address string
+}
+
+// weightedPickerBuilder implements the PickerBuilder interface for weighted load balancing
+type weightedPickerBuilder struct{}
+
+// Build creates a new weighted picker
+func (wpb *weightedPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
+	grpclog.Infof("weightedPicker: Build called with info: %v", info)
+	
+	if len(info.ReadySCs) == 0 {
+		return base.NewErrPicker(balancer.ErrNoSubConnAvailable)
+	}
+	
+	var wcs []WeightedConnection
+	for sc, scInfo := range info.ReadySCs {
+		// Default weight is 1, can be configured via attributes
+		weight := 1
+		if scInfo.Address.Attributes != nil {
+			if w, ok := scInfo.Address.Attributes.Value("weight").(int); ok && w > 0 {
+				weight = w
+			}
+		}
+		
+		wcs = append(wcs, WeightedConnection{
+			SubConn: sc,
+			Weight:  weight,
+			Address: scInfo.Address.Addr,
+		})
+	}
+	
+	return &weightedPicker{
+		connections: wcs,
+		rand:        rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+}
+
+// weightedPicker implements the Picker interface for weighted selection
+type weightedPicker struct {
+	connections []WeightedConnection
+	mu          sync.RWMutex
+	rand        *rand.Rand
+}
+
+// Pick selects a SubConn using weighted random algorithm
+func (wp *weightedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	wp.mu.RLock()
+	defer wp.mu.RUnlock()
+	
+	if len(wp.connections) == 0 {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
+	
+	// Calculate total weight
+	totalWeight := 0
+	for _, conn := range wp.connections {
+		totalWeight += conn.Weight
+	}
+	
+	if totalWeight == 0 {
+		return balancer.PickResult{}, fmt.Errorf("total weight is zero")
+	}
+	
+	// Select connection based on weight
+	randWeight := wp.rand.Intn(totalWeight)
+	currentWeight := 0
+	
+	for _, conn := range wp.connections {
+		currentWeight += conn.Weight
+		if randWeight < currentWeight {
+			return balancer.PickResult{
+				SubConn: conn.SubConn,
+				Done: func(info balancer.DoneInfo) {
+					if info.Err != nil {
+						grpclog.Warningf("weightedPicker: Request to %s failed with error: %v", conn.Address, info.Err)
+					}
+				},
+			}, nil
+		}
+	}
+	
+	// Fallback to last connection (should not happen)
+	lastConn := wp.connections[len(wp.connections)-1]
+	return balancer.PickResult{
+		SubConn: lastConn.SubConn,
+	}, nil
+}
+
+// WeightedBalancer is a custom weighted balancer
+type WeightedBalancer struct {
+	name string
+}
+
+// NewWeightedBalancer creates a new weighted balancer
+func NewWeightedBalancer() *WeightedBalancer {
+	return &WeightedBalancer{
+		name: "{{.ProjectName | lower}}_weighted",
+	}
+}
+
+// Name returns the name of the balancer
+func (wb *WeightedBalancer) Name() string {
+	return wb.name
+}
+
+// Register registers the weighted balancer with gRPC
+func (wb *WeightedBalancer) Register() {
+	balancer.Register(base.NewBalancerBuilder(wb.name, &weightedPickerBuilder{}, base.Config{HealthCheck: true}))
+}
+
+// SmoothWeightedPicker implements smooth weighted round-robin algorithm
+type SmoothWeightedPicker struct {
+	connections []SmoothWeightedConnection
+	mu          sync.RWMutex
+}
+
+// SmoothWeightedConnection represents a connection with smooth weighted round-robin state
+type SmoothWeightedConnection struct {
+	SubConn       balancer.SubConn
+	Weight        int
+	CurrentWeight int
+	Address       string
+}
+
+// NewSmoothWeightedPicker creates a new smooth weighted picker
+func NewSmoothWeightedPicker(connections []WeightedConnection) *SmoothWeightedPicker {
+	var swcs []SmoothWeightedConnection
+	for _, conn := range connections {
+		swcs = append(swcs, SmoothWeightedConnection{
+			SubConn:       conn.SubConn,
+			Weight:        conn.Weight,
+			CurrentWeight: 0,
+			Address:       conn.Address,
+		})
+	}
+	
+	return &SmoothWeightedPicker{
+		connections: swcs,
+	}
+}
+
+// Pick selects a SubConn using smooth weighted round-robin algorithm
+func (swp *SmoothWeightedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	swp.mu.Lock()
+	defer swp.mu.Unlock()
+	
+	if len(swp.connections) == 0 {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
+	
+	// Calculate total weight
+	totalWeight := 0
+	for _, conn := range swp.connections {
+		totalWeight += conn.Weight
+	}
+	
+	if totalWeight == 0 {
+		return balancer.PickResult{}, fmt.Errorf("total weight is zero")
+	}
+	
+	// Find connection with highest current weight
+	var selected *SmoothWeightedConnection
+	for i := range swp.connections {
+		conn := &swp.connections[i]
+		conn.CurrentWeight += conn.Weight
+		
+		if selected == nil || conn.CurrentWeight > selected.CurrentWeight {
+			selected = conn
+		}
+	}
+	
+	// Decrease current weight of selected connection
+	selected.CurrentWeight -= totalWeight
+	
+	return balancer.PickResult{
+		SubConn: selected.SubConn,
+		Done: func(info balancer.DoneInfo) {
+			if info.Err != nil {
+				grpclog.Warningf("smoothWeightedPicker: Request to %s failed with error: %v", selected.Address, info.Err)
+			}
+		},
+	}, nil
+}
+
+// AdaptiveWeightedPicker automatically adjusts weights based on performance
+type AdaptiveWeightedPicker struct {
+	connections []AdaptiveWeightedConnection
+	mu          sync.RWMutex
+	stats       *LoadBalancerStats
+}
+
+// AdaptiveWeightedConnection represents a connection with adaptive weighting
+type AdaptiveWeightedConnection struct {
+	SubConn       balancer.SubConn
+	BaseWeight    int
+	CurrentWeight float64
+	Address       string
+	SuccessRate   float64
+	AvgLatency    float64
+	LastUpdate    time.Time
+}
+
+// NewAdaptiveWeightedPicker creates a new adaptive weighted picker
+func NewAdaptiveWeightedPicker(connections []WeightedConnection, stats *LoadBalancerStats) *AdaptiveWeightedPicker {
+	var awcs []AdaptiveWeightedConnection
+	for _, conn := range connections {
+		awcs = append(awcs, AdaptiveWeightedConnection{
+			SubConn:       conn.SubConn,
+			BaseWeight:    conn.Weight,
+			CurrentWeight: float64(conn.Weight),
+			Address:       conn.Address,
+			SuccessRate:   1.0,
+			AvgLatency:    1.0,
+			LastUpdate:    time.Now(),
+		})
+	}
+	
+	return &AdaptiveWeightedPicker{
+		connections: awcs,
+		stats:       stats,
+	}
+}
+
+// Pick selects a SubConn using adaptive weighted algorithm
+func (awp *AdaptiveWeightedPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	awp.mu.Lock()
+	defer awp.mu.Unlock()
+	
+	if len(awp.connections) == 0 {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
+	
+	// Update weights based on current performance
+	awp.updateWeights()
+	
+	// Calculate total weight
+	totalWeight := 0.0
+	for _, conn := range awp.connections {
+		totalWeight += conn.CurrentWeight
+	}
+	
+	if totalWeight == 0 {
+		return balancer.PickResult{}, fmt.Errorf("total weight is zero")
+	}
+	
+	// Select connection based on current weight
+	randWeight := rand.Float64() * totalWeight
+	currentWeight := 0.0
+	
+	for _, conn := range awp.connections {
+		currentWeight += conn.CurrentWeight
+		if randWeight < currentWeight {
+			return balancer.PickResult{
+				SubConn: conn.SubConn,
+				Done: func(doneInfo balancer.DoneInfo) {
+					success := doneInfo.Err == nil
+					latency := time.Since(time.Now()).Seconds() // Placeholder for actual latency
+					awp.stats.RecordRequest(conn.Address, success, latency)
+					
+					if doneInfo.Err != nil {
+						grpclog.Warningf("adaptiveWeightedPicker: Request to %s failed with error: %v", conn.Address, doneInfo.Err)
+					}
+				},
+			}, nil
+		}
+	}
+	
+	// Fallback to last connection
+	lastConn := awp.connections[len(awp.connections)-1]
+	return balancer.PickResult{
+		SubConn: lastConn.SubConn,
+	}, nil
+}
+
+// updateWeights adjusts connection weights based on performance metrics
+func (awp *AdaptiveWeightedPicker) updateWeights() {
+	now := time.Now()
+	stats := awp.stats.GetStats()
+	connStatsMap, ok := stats["connections"].(map[string]*ConnectionStats)
+	if !ok {
+		return
+	}
+	
+	for i := range awp.connections {
+		conn := &awp.connections[i]
+		
+		// Update weights every 10 seconds
+		if now.Sub(conn.LastUpdate) < 10*time.Second {
+			continue
+		}
+		
+		if connStats, exists := connStatsMap[conn.Address]; exists && connStats.TotalRequests > 0 {
+			// Calculate success rate
+			successRate := float64(connStats.SuccessRequests) / float64(connStats.TotalRequests)
+			
+			// Normalize latency (inverse relationship - lower latency = higher weight)
+			normalizedLatency := 1.0
+			if connStats.AvgLatency > 0 {
+				normalizedLatency = 1.0 / (1.0 + connStats.AvgLatency)
+			}
+			
+			// Calculate adaptive weight
+			// Weight = BaseWeight * SuccessRate * (1 / normalized_latency)
+			adaptiveFactor := successRate * normalizedLatency
+			conn.CurrentWeight = float64(conn.BaseWeight) * adaptiveFactor
+			
+			// Ensure minimum weight
+			if conn.CurrentWeight < 0.1 {
+				conn.CurrentWeight = 0.1
+			}
+			
+			conn.SuccessRate = successRate
+			conn.AvgLatency = connStats.AvgLatency
+			conn.LastUpdate = now
+			
+			grpclog.Infof("Updated weight for %s: base=%d, current=%.2f, success_rate=%.2f, avg_latency=%.2f",
+				conn.Address, conn.BaseWeight, conn.CurrentWeight, successRate, connStats.AvgLatency)
+		}
+	}
+}
+
+// WeightedRoundRobinPicker implements weighted round-robin with current weight tracking
+type WeightedRoundRobinPicker struct {
+	connections []WeightedRoundRobinConnection
+	mu          sync.RWMutex
+}
+
+// WeightedRoundRobinConnection represents a connection for weighted round-robin
+type WeightedRoundRobinConnection struct {
+	SubConn       balancer.SubConn
+	Weight        int
+	CurrentWeight int
+	Address       string
+}
+
+// NewWeightedRoundRobinPicker creates a new weighted round-robin picker
+func NewWeightedRoundRobinPicker(connections []WeightedConnection) *WeightedRoundRobinPicker {
+	var wrcs []WeightedRoundRobinConnection
+	for _, conn := range connections {
+		wrcs = append(wrcs, WeightedRoundRobinConnection{
+			SubConn:       conn.SubConn,
+			Weight:        conn.Weight,
+			CurrentWeight: conn.Weight,
+			Address:       conn.Address,
+		})
+	}
+	
+	return &WeightedRoundRobinPicker{
+		connections: wrcs,
+	}
+}
+
+// Pick selects a SubConn using weighted round-robin algorithm
+func (wrrp *WeightedRoundRobinPicker) Pick(info balancer.PickInfo) (balancer.PickResult, error) {
+	wrrp.mu.Lock()
+	defer wrrp.mu.Unlock()
+	
+	if len(wrrp.connections) == 0 {
+		return balancer.PickResult{}, balancer.ErrNoSubConnAvailable
+	}
+	
+	// Find connection with highest current weight
+	var selected *WeightedRoundRobinConnection
+	maxWeight := -1
+	
+	for i := range wrrp.connections {
+		conn := &wrrp.connections[i]
+		if conn.CurrentWeight > maxWeight {
+			maxWeight = conn.CurrentWeight
+			selected = conn
+		}
+	}
+	
+	if selected == nil {
+		return balancer.PickResult{}, fmt.Errorf("no connection selected")
+	}
+	
+	// Decrease current weight and reset if necessary
+	selected.CurrentWeight--
+	if selected.CurrentWeight <= 0 {
+		selected.CurrentWeight = selected.Weight
+	}
+	
+	return balancer.PickResult{
+		SubConn: selected.SubConn,
+		Done: func(info balancer.DoneInfo) {
+			if info.Err != nil {
+				grpclog.Warningf("weightedRoundRobinPicker: Request to %s failed with error: %v", selected.Address, info.Err)
+			}
+		},
+	}, nil
+}

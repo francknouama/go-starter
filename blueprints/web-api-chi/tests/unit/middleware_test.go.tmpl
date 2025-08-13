@@ -1,0 +1,279 @@
+package unit
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"{{.ModulePath}}/internal/logger"
+	"{{.ModulePath}}/internal/middleware"
+)
+
+// testHandler is a simple handler for testing middleware
+func testHandler(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("test response"))
+}
+
+// TestSecurityMiddleware tests the security headers middleware
+func TestSecurityMiddleware(t *testing.T) {
+	// Create middleware
+	securityMiddleware := middleware.Security()
+
+	// Create test handler
+	handler := securityMiddleware(http.HandlerFunc(testHandler))
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute handler
+	handler.ServeHTTP(rec, req)
+
+	// Assert security headers are set
+	assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+	assert.Equal(t, "DENY", rec.Header().Get("X-Frame-Options"))
+	assert.Equal(t, "1; mode=block", rec.Header().Get("X-XSS-Protection"))
+	assert.Contains(t, rec.Header().Get("Strict-Transport-Security"), "max-age=31536000")
+	assert.Equal(t, "strict-origin-when-cross-origin", rec.Header().Get("Referrer-Policy"))
+	assert.Equal(t, "default-src 'self'", rec.Header().Get("Content-Security-Policy"))
+
+	// Assert response is still correct
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "test response", rec.Body.String())
+}
+
+// TestSecurityMiddlewareWithCustomHeaders tests security middleware with custom headers
+func TestSecurityMiddlewareWithCustomHeaders(t *testing.T) {
+	customHeaders := map[string]string{
+		"X-Custom-Header": "custom-value",
+		"X-Frame-Options": "SAMEORIGIN", // Override default
+	}
+
+	// Create middleware with custom headers
+	securityMiddleware := middleware.SecureWithConfig(customHeaders)
+
+	// Create test handler
+	handler := securityMiddleware(http.HandlerFunc(testHandler))
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute handler
+	handler.ServeHTTP(rec, req)
+
+	// Assert custom headers are set
+	assert.Equal(t, "custom-value", rec.Header().Get("X-Custom-Header"))
+	assert.Equal(t, "SAMEORIGIN", rec.Header().Get("X-Frame-Options"))
+
+	// Assert response is still correct
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "test response", rec.Body.String())
+}
+
+// TestLoggerMiddleware tests the logging middleware
+func TestLoggerMiddleware(t *testing.T) {
+	// Initialize test logger
+	testLogger, err := logger.New(logger.Config{Level: "debug"})
+	require.NoError(t, err)
+
+	// Create middleware
+	loggerMiddleware := middleware.Logger(testLogger)
+
+	// Create test handler
+	handler := loggerMiddleware(http.HandlerFunc(testHandler))
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute handler
+	handler.ServeHTTP(rec, req)
+
+	// Assert response is correct
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "test response", rec.Body.String())
+
+	// Note: In a real test, you might want to capture log output to verify
+	// that the middleware is actually logging. This would require setting up
+	// a test logger that captures output.
+}
+
+// TestRecoveryMiddleware tests the panic recovery middleware
+func TestRecoveryMiddleware(t *testing.T) {
+	// Initialize test logger
+	testLogger, err := logger.New(logger.Config{Level: "error"})
+	require.NoError(t, err)
+
+	// Create middleware
+	recoveryMiddleware := middleware.Recovery(testLogger)
+
+	// Create panicking handler
+	panicHandler := func(w http.ResponseWriter, r *http.Request) {
+		panic("test panic")
+	}
+
+	// Create test handler with recovery middleware
+	handler := recoveryMiddleware(http.HandlerFunc(panicHandler))
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute handler (should not panic)
+	assert.NotPanics(t, func() {
+		handler.ServeHTTP(rec, req)
+	})
+
+	// Assert error response
+	assert.Equal(t, http.StatusInternalServerError, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+	assert.Contains(t, rec.Body.String(), "Internal server error")
+}
+
+// TestRecoveryMiddlewareWithNormalHandler tests that recovery middleware doesn't interfere with normal handlers
+func TestRecoveryMiddlewareWithNormalHandler(t *testing.T) {
+	// Initialize test logger
+	testLogger, err := logger.New(logger.Config{Level: "error"})
+	require.NoError(t, err)
+
+	// Create middleware
+	recoveryMiddleware := middleware.Recovery(testLogger)
+
+	// Create test handler
+	handler := recoveryMiddleware(http.HandlerFunc(testHandler))
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute handler
+	handler.ServeHTTP(rec, req)
+
+	// Assert normal response
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "test response", rec.Body.String())
+}
+
+// TestRequestIDMiddleware tests the request ID middleware
+func TestRequestIDMiddleware(t *testing.T) {
+	// Create middleware
+	requestIDMiddleware := middleware.RequestID()
+
+	// Create test handler that checks for request ID in context
+	testHandlerWithContext := func(w http.ResponseWriter, r *http.Request) {
+		requestID := middleware.GetRequestID(r.Context())
+		w.Header().Set("X-Test-Request-ID", requestID)
+		w.WriteHeader(http.StatusOK)
+	}
+
+	// Create test handler with middleware
+	handler := requestIDMiddleware(http.HandlerFunc(testHandlerWithContext))
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	rec := httptest.NewRecorder()
+
+	// Execute handler
+	handler.ServeHTTP(rec, req)
+
+	// Assert request ID is generated and set
+	requestID := rec.Header().Get("X-Request-ID")
+	assert.NotEmpty(t, requestID)
+	assert.Len(t, requestID, 32) // Should be 32-character hex string
+
+	// Assert request ID is available in context
+	contextRequestID := rec.Header().Get("X-Test-Request-ID")
+	assert.Equal(t, requestID, contextRequestID)
+}
+
+// TestRequestIDMiddlewareWithExistingID tests that existing request IDs are preserved
+func TestRequestIDMiddlewareWithExistingID(t *testing.T) {
+	// Create middleware
+	requestIDMiddleware := middleware.RequestID()
+
+	// Create test handler
+	handler := requestIDMiddleware(http.HandlerFunc(testHandler))
+
+	// Create request with existing request ID
+	existingID := "existing-request-id-123"
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("X-Request-ID", existingID)
+	rec := httptest.NewRecorder()
+
+	// Execute handler
+	handler.ServeHTTP(rec, req)
+
+	// Assert existing request ID is preserved
+	requestID := rec.Header().Get("X-Request-ID")
+	assert.Equal(t, existingID, requestID)
+}
+
+// TestCORSMiddleware tests the CORS middleware
+func TestCORSMiddleware(t *testing.T) {
+	// Create middleware
+	corsMiddleware := middleware.CORS()
+
+	// Create test handler
+	handler := corsMiddleware(http.HandlerFunc(testHandler))
+
+	t.Run("Preflight request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/test", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+		req.Header.Set("Access-Control-Request-Method", "POST")
+		req.Header.Set("Access-Control-Request-Headers", "Content-Type")
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		// Check CORS headers
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Origin"))
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Methods"))
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Headers"))
+	})
+
+	t.Run("Simple request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/test", nil)
+		req.Header.Set("Origin", "http://localhost:3000")
+
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		// Check CORS headers
+		assert.NotEmpty(t, rec.Header().Get("Access-Control-Allow-Origin"))
+		
+		// Assert normal response
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.Equal(t, "test response", rec.Body.String())
+	})
+}
+
+// BenchmarkSecurityMiddleware benchmarks the security middleware performance
+func BenchmarkSecurityMiddleware(b *testing.B) {
+	securityMiddleware := middleware.Security()
+	handler := securityMiddleware(http.HandlerFunc(testHandler))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+	}
+}
+
+// BenchmarkRequestIDMiddleware benchmarks the request ID middleware performance
+func BenchmarkRequestIDMiddleware(b *testing.B) {
+	requestIDMiddleware := middleware.RequestID()
+	handler := requestIDMiddleware(http.HandlerFunc(testHandler))
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+	}
+}

@@ -1,0 +1,1193 @@
+# {{.ProjectName}} Deployment Guide
+
+This guide covers deployment strategies and configurations for the {{.ProjectName}} gRPC service across different environments and platforms.
+
+## Overview
+
+{{.ProjectName}} is designed for deployment in various environments:
+
+- **Development**: Local development with Docker Compose
+- **Staging**: Container orchestration with basic monitoring
+- **Production**: Kubernetes with full observability and high availability
+- **Cloud Platforms**: AWS, GCP, Azure with managed services
+
+## Prerequisites
+
+### Required Tools
+- **Docker**: Container runtime and image building
+- **Docker Compose**: Multi-container orchestration (development)
+- **Kubernetes**: Container orchestration (production)
+- **kubectl**: Kubernetes CLI tool
+- **Helm**: Kubernetes package manager (recommended)
+
+### Build Requirements
+- **Go**: {{.GoVersion}} or later
+- **Protocol Buffers**: protoc compiler
+- **Buf**: Protocol buffer tooling
+- **Make**: Build automation
+
+## Local Development
+
+### Docker Compose Setup
+
+**1. Start Services:**
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f {{.ProjectName | lower}}
+
+# Stop services
+docker-compose down
+```
+
+**2. Configuration:**
+The `docker-compose.yml` includes:
+- {{.ProjectName}} service
+{{- if ne .DatabaseDriver ""}}
+- {{title .DatabaseDriver}} database
+{{- end}}
+{{- if .MetricsEnabled}}
+- Prometheus (metrics)
+- Grafana (dashboards)
+{{- end}}
+{{- if .TracingEnabled}}
+- Jaeger (tracing)
+{{- end}}
+{{- if eq .ServiceDiscovery "consul"}}
+- Consul (service discovery)
+{{- end}}
+
+**3. Environment Variables:**
+```bash
+# Copy environment template
+cp .env.example .env
+
+# Edit configuration
+vim .env
+```
+
+**4. Database Migration** (if database is enabled):
+{{- if ne .DatabaseDriver ""}}
+```bash
+# Run migrations
+docker-compose exec {{.ProjectName | lower}} ./scripts/migrate.sh up
+
+# Or manually
+docker-compose exec {{.ProjectName | lower}} go run cmd/migrate/main.go up
+```
+{{- end}}
+
+### Local Binary
+
+**1. Build and Run:**
+```bash
+# Generate protobuf files
+make generate
+
+# Build binary
+make build
+
+# Run with development config
+./bin/{{.ProjectName}} --config configs/config.dev.yaml
+
+# Or with environment variables
+export GRPC_PORT={{.GrpcPort | default 50051}}
+export LOG_LEVEL=debug
+./bin/{{.ProjectName}}
+```
+
+**2. Testing Local Deployment:**
+```bash
+# Test health endpoint
+{{- if .MetricsEnabled}}
+curl http://localhost:{{.MetricsPort | default 8080}}/health
+{{- end}}
+
+# Test gRPC service
+grpcurl -plaintext localhost:{{.GrpcPort | default 50051}} \
+  {{.ProjectName | lower}}.v1.{{.ProjectName}}Service/GetVersion
+```
+
+## Container Deployment
+
+### Docker Image
+
+**1. Build Image:**
+```bash
+# Build with default settings
+docker build -t {{.ProjectName | lower}}:latest .
+
+# Build with specific version
+docker build -t {{.ProjectName | lower}}:v1.0.0 .
+
+# Multi-platform build
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t {{.ProjectName | lower}}:latest .
+```
+
+**2. Image Optimization:**
+```dockerfile
+# Multi-stage build for minimal image size
+FROM golang:{{.GoVersion}}-alpine AS builder
+# ... build steps ...
+
+FROM alpine:latest
+RUN apk --no-cache add ca-certificates tzdata
+# ... runtime setup ...
+```
+
+**3. Run Container:**
+```bash
+# Basic run
+docker run -p {{.GrpcPort | default 50051}}:{{.GrpcPort | default 50051}} {{.ProjectName | lower}}:latest
+
+# With environment variables
+docker run \
+  -e GRPC_PORT={{.GrpcPort | default 50051}} \
+  -e LOG_LEVEL=info \
+  {{- if ne .DatabaseDriver ""}}
+  -e DATABASE_URL=postgres://user:pass@host:5432/db \
+  {{- end}}
+  -p {{.GrpcPort | default 50051}}:{{.GrpcPort | default 50051}} \
+  {{.ProjectName | lower}}:latest
+
+# With volume mounts
+docker run \
+  -v $(pwd)/configs:/app/configs:ro \
+  -v $(pwd)/certs:/app/certs:ro \
+  -p {{.GrpcPort | default 50051}}:{{.GrpcPort | default 50051}} \
+  {{.ProjectName | lower}}:latest
+```
+
+### Container Registry
+
+**1. Push to Registry:**
+```bash
+# Docker Hub
+docker tag {{.ProjectName | lower}}:latest username/{{.ProjectName | lower}}:latest
+docker push username/{{.ProjectName | lower}}:latest
+
+# AWS ECR
+aws ecr get-login-password --region us-west-2 | \
+  docker login --username AWS --password-stdin 123456789012.dkr.ecr.us-west-2.amazonaws.com
+docker tag {{.ProjectName | lower}}:latest 123456789012.dkr.ecr.us-west-2.amazonaws.com/{{.ProjectName | lower}}:latest
+docker push 123456789012.dkr.ecr.us-west-2.amazonaws.com/{{.ProjectName | lower}}:latest
+
+# Google Container Registry
+docker tag {{.ProjectName | lower}}:latest gcr.io/project-id/{{.ProjectName | lower}}:latest
+docker push gcr.io/project-id/{{.ProjectName | lower}}:latest
+```
+
+## Kubernetes Deployment
+
+### Basic Deployment
+
+**1. Namespace:**
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{.ProjectName | lower}}
+  labels:
+    app.kubernetes.io/name: {{.ProjectName | lower}}
+    app.kubernetes.io/version: "v1.0.0"
+```
+
+**2. ConfigMap:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{.ProjectName | lower}}-config
+  namespace: {{.ProjectName | lower}}
+data:
+  config.yaml: |
+    server:
+      grpc_port: {{.GrpcPort | default 50051}}
+      {{- if .MetricsEnabled}}
+      metrics_port: {{.MetricsPort | default 8080}}
+      {{- end}}
+    logging:
+      level: info
+      format: json
+```
+
+**3. Secret:**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{.ProjectName | lower}}-secrets
+  namespace: {{.ProjectName | lower}}
+type: Opaque
+data:
+  {{- if eq .AuthType "jwt"}}
+  jwt-secret: <base64-encoded-jwt-secret>
+  {{- end}}
+  {{- if ne .DatabaseDriver ""}}
+  database-url: <base64-encoded-database-url>
+  {{- end}}
+  # TLS certificates
+  tls.crt: <base64-encoded-cert>
+  tls.key: <base64-encoded-key>
+```
+
+**4. Deployment:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.ProjectName | lower}}
+  namespace: {{.ProjectName | lower}}
+  labels:
+    app.kubernetes.io/name: {{.ProjectName | lower}}
+    app.kubernetes.io/component: grpc-service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{.ProjectName | lower}}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{.ProjectName | lower}}
+        app.kubernetes.io/component: grpc-service
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      containers:
+      - name: {{.ProjectName | lower}}
+        image: {{.ProjectName | lower}}:v1.0.0
+        ports:
+        - containerPort: {{.GrpcPort | default 50051}}
+          name: grpc
+          protocol: TCP
+        {{- if .MetricsEnabled}}
+        - containerPort: {{.MetricsPort | default 8080}}
+          name: metrics
+          protocol: TCP
+        {{- end}}
+        env:
+        - name: GRPC_PORT
+          value: "{{.GrpcPort | default 50051}}"
+        {{- if .MetricsEnabled}}
+        - name: METRICS_PORT
+          value: "{{.MetricsPort | default 8080}}"
+        {{- end}}
+        {{- if ne .DatabaseDriver ""}}
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{.ProjectName | lower}}-secrets
+              key: database-url
+        {{- end}}
+        {{- if eq .AuthType "jwt"}}
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: {{.ProjectName | lower}}-secrets
+              key: jwt-secret
+        {{- end}}
+        volumeMounts:
+        - name: config
+          mountPath: /app/config.yaml
+          subPath: config.yaml
+          readOnly: true
+        - name: tls-certs
+          mountPath: /app/certs
+          readOnly: true
+        livenessProbe:
+          exec:
+            command:
+            - grpc_health_probe
+            - -addr=:{{.GrpcPort | default 50051}}
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - grpc_health_probe
+            - -addr=:{{.GrpcPort | default 50051}}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            cpu: 500m
+            memory: 512Mi
+          requests:
+            cpu: 250m
+            memory: 256Mi
+      volumes:
+      - name: config
+        configMap:
+          name: {{.ProjectName | lower}}-config
+      - name: tls-certs
+        secret:
+          secretName: {{.ProjectName | lower}}-secrets
+          items:
+          - key: tls.crt
+            path: server.crt
+          - key: tls.key
+            path: server.key
+```
+
+**5. Service:**
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{.ProjectName | lower}}
+  namespace: {{.ProjectName | lower}}
+  labels:
+    app.kubernetes.io/name: {{.ProjectName | lower}}
+    app.kubernetes.io/component: grpc-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: {{.GrpcPort | default 50051}}
+    targetPort: grpc
+    protocol: TCP
+    name: grpc
+  {{- if .MetricsEnabled}}
+  - port: {{.MetricsPort | default 8080}}
+    targetPort: metrics
+    protocol: TCP
+    name: metrics
+  {{- end}}
+  selector:
+    app.kubernetes.io/name: {{.ProjectName | lower}}
+```
+
+### Helm Chart
+
+**1. Chart Structure:**
+```
+helm/{{.ProjectName | lower}}/
+├── Chart.yaml
+├── values.yaml
+├── templates/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── configmap.yaml
+│   ├── secret.yaml
+│   ├── ingress.yaml
+│   └── hpa.yaml
+└── charts/
+```
+
+**2. Install with Helm:**
+```bash
+# Add custom values
+helm install {{.ProjectName | lower}} ./helm/{{.ProjectName | lower}} \
+  --namespace {{.ProjectName | lower}} \
+  --create-namespace \
+  --values values-production.yaml
+
+# Upgrade deployment
+helm upgrade {{.ProjectName | lower}} ./helm/{{.ProjectName | lower}} \
+  --namespace {{.ProjectName | lower}} \
+  --values values-production.yaml
+
+# Rollback deployment
+helm rollback {{.ProjectName | lower}} 1 --namespace {{.ProjectName | lower}}
+```
+
+**3. Production Values:**
+```yaml
+# values-production.yaml
+replicaCount: 5
+
+image:
+  repository: {{.ProjectName | lower}}
+  tag: "v1.0.0"
+  pullPolicy: IfNotPresent
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+{{- if .MetricsEnabled}}
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+{{- end}}
+
+{{- if ne .DatabaseDriver ""}}
+database:
+  enabled: true
+  url: "postgres://user:pass@postgres:5432/{{.ProjectName | lower}}"
+{{- end}}
+```
+
+### Service Mesh (Istio)
+
+**1. Enable Istio:**
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{.ProjectName | lower}}
+  labels:
+    istio-injection: enabled
+```
+
+**2. Virtual Service:**
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: {{.ProjectName | lower}}
+  namespace: {{.ProjectName | lower}}
+spec:
+  hosts:
+  - {{.ProjectName | lower}}.local
+  gateways:
+  - {{.ProjectName | lower}}-gateway
+  http:
+  - match:
+    - uri:
+        prefix: /{{.ProjectName | lower}}.v1.{{.ProjectName}}Service/
+    route:
+    - destination:
+        host: {{.ProjectName | lower}}
+        port:
+          number: {{.GrpcPort | default 50051}}
+```
+
+**3. Destination Rule:**
+```yaml
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: {{.ProjectName | lower}}
+  namespace: {{.ProjectName | lower}}
+spec:
+  host: {{.ProjectName | lower}}
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 10
+        maxRequestsPerConnection: 2
+```
+
+## Cloud Platform Deployment
+
+### AWS Deployment
+
+**1. ECS (Elastic Container Service):**
+```json
+{
+  "family": "{{.ProjectName | lower}}",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "arn:aws:iam::account:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::account:role/{{.ProjectName | lower}}TaskRole",
+  "containerDefinitions": [
+    {
+      "name": "{{.ProjectName | lower}}",
+      "image": "account.dkr.ecr.region.amazonaws.com/{{.ProjectName | lower}}:latest",
+      "portMappings": [
+        {
+          "containerPort": {{.GrpcPort | default 50051}},
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "GRPC_PORT",
+          "value": "{{.GrpcPort | default 50051}}"
+        }
+      ],
+      "secrets": [
+        {
+          "name": "DATABASE_URL",
+          "valueFrom": "arn:aws:ssm:region:account:parameter/{{.ProjectName | lower}}/database-url"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/{{.ProjectName | lower}}",
+          "awslogs-region": "us-west-2",
+          "awslogs-stream-prefix": "ecs"
+        }
+      },
+      "healthCheck": {
+        "command": [
+          "CMD-SHELL",
+          "grpc_health_probe -addr=:{{.GrpcPort | default 50051}} || exit 1"
+        ],
+        "interval": 30,
+        "timeout": 5,
+        "retries": 3
+      }
+    }
+  ]
+}
+```
+
+**2. EKS (Elastic Kubernetes Service):**
+```bash
+# Create cluster
+eksctl create cluster --name {{.ProjectName | lower}} --region us-west-2
+
+# Deploy application
+kubectl apply -f k8s/
+```
+
+**3. Lambda (for lightweight services):**
+```yaml
+# serverless.yml
+service: {{.ProjectName | lower}}
+
+provider:
+  name: aws
+  runtime: provided.al2
+  architecture: arm64
+
+functions:
+  grpc:
+    handler: bootstrap
+    events:
+      - httpApi:
+          path: /{proxy+}
+          method: ANY
+
+package:
+  patterns:
+    - '!./**'
+    - './bootstrap'
+```
+
+### Google Cloud Platform
+
+**1. Cloud Run:**
+```yaml
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{.ProjectName | lower}}
+  annotations:
+    run.googleapis.com/ingress: all
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "100"
+        run.googleapis.com/cpu-throttling: "false"
+    spec:
+      containerConcurrency: 80
+      containers:
+      - image: gcr.io/project-id/{{.ProjectName | lower}}:latest
+        ports:
+        - containerPort: {{.GrpcPort | default 50051}}
+        env:
+        - name: GRPC_PORT
+          value: "{{.GrpcPort | default 50051}}"
+        resources:
+          limits:
+            cpu: "2"
+            memory: "2Gi"
+```
+
+**2. GKE (Google Kubernetes Engine):**
+```bash
+# Create cluster
+gcloud container clusters create {{.ProjectName | lower}} \
+  --zone us-central1-a \
+  --num-nodes 3
+
+# Deploy application
+kubectl apply -f k8s/
+```
+
+### Azure Deployment
+
+**1. Container Instances:**
+```yaml
+apiVersion: 2019-12-01
+location: eastus
+name: {{.ProjectName | lower}}
+properties:
+  containers:
+  - name: {{.ProjectName | lower}}
+    properties:
+      image: registry.azurecr.io/{{.ProjectName | lower}}:latest
+      resources:
+        requests:
+          cpu: 1
+          memoryInGb: 2
+      ports:
+      - port: {{.GrpcPort | default 50051}}
+        protocol: TCP
+  osType: Linux
+  ipAddress:
+    type: Public
+    ports:
+    - protocol: TCP
+      port: {{.GrpcPort | default 50051}}
+tags:
+  Environment: Production
+type: Microsoft.ContainerInstance/containerGroups
+```
+
+**2. AKS (Azure Kubernetes Service):**
+```bash
+# Create cluster
+az aks create \
+  --resource-group {{.ProjectName | lower}} \
+  --name {{.ProjectName | lower}} \
+  --node-count 3
+
+# Deploy application
+kubectl apply -f k8s/
+```
+
+## Load Balancing
+
+### gRPC Load Balancing
+
+**1. Client-Side Load Balancing:**
+```go
+// Go client with load balancing
+conn, err := grpc.Dial(
+    "dns:///{{.ProjectName | lower}}.default.svc.cluster.local:{{.GrpcPort | default 50051}}",
+    grpc.WithDefaultServiceConfig(`{
+        "loadBalancingPolicy": "round_robin",
+        "healthCheckConfig": {
+            "serviceName": "{{.ProjectName | lower}}.v1.{{.ProjectName}}Service"
+        }
+    }`),
+)
+```
+
+**2. Nginx Load Balancer:**
+```nginx
+upstream {{.ProjectName | lower}}_backend {
+    server {{.ProjectName | lower}}-1:{{.GrpcPort | default 50051}};
+    server {{.ProjectName | lower}}-2:{{.GrpcPort | default 50051}};
+    server {{.ProjectName | lower}}-3:{{.GrpcPort | default 50051}};
+}
+
+server {
+    listen {{.GrpcPort | default 50051}} http2;
+    
+    location / {
+        grpc_pass grpc://{{.ProjectName | lower}}_backend;
+        grpc_set_header Host $host;
+    }
+}
+```
+
+**3. HAProxy Load Balancer:**
+```
+backend {{.ProjectName | lower}}_backend
+    mode tcp
+    balance roundrobin
+    option tcp-check
+    server {{.ProjectName | lower}}-1 {{.ProjectName | lower}}-1:{{.GrpcPort | default 50051}} check
+    server {{.ProjectName | lower}}-2 {{.ProjectName | lower}}-2:{{.GrpcPort | default 50051}} check
+    server {{.ProjectName | lower}}-3 {{.ProjectName | lower}}-3:{{.GrpcPort | default 50051}} check
+
+frontend {{.ProjectName | lower}}_frontend
+    bind *:{{.GrpcPort | default 50051}}
+    mode tcp
+    default_backend {{.ProjectName | lower}}_backend
+```
+
+## Monitoring and Observability
+
+{{- if .MetricsEnabled}}
+### Prometheus Configuration
+
+**1. ServiceMonitor:**
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{.ProjectName | lower}}
+  namespace: {{.ProjectName | lower}}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{.ProjectName | lower}}
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+```
+
+**2. PrometheusRule:**
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{.ProjectName | lower}}
+  namespace: {{.ProjectName | lower}}
+spec:
+  groups:
+  - name: {{.ProjectName | lower}}.rules
+    rules:
+    - alert: HighErrorRate
+      expr: rate(grpc_server_requests_total{grpc_code!="OK"}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate detected"
+    - alert: HighLatency
+      expr: histogram_quantile(0.95, rate(grpc_server_request_duration_seconds_bucket[5m])) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High latency detected"
+```
+{{- end}}
+
+{{- if .TracingEnabled}}
+### Jaeger Configuration
+
+**1. Jaeger Agent:**
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: jaeger-agent
+  namespace: {{.ProjectName | lower}}
+spec:
+  selector:
+    matchLabels:
+      app: jaeger-agent
+  template:
+    metadata:
+      labels:
+        app: jaeger-agent
+    spec:
+      containers:
+      - name: jaeger-agent
+        image: jaegertracing/jaeger-agent:latest
+        ports:
+        - containerPort: 6831
+          protocol: UDP
+        - containerPort: 6832
+          protocol: UDP
+        - containerPort: 14271
+          protocol: TCP
+```
+{{- end}}
+
+### Logging Configuration
+
+**1. Fluentd Configuration:**
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentd-config
+  namespace: {{.ProjectName | lower}}
+data:
+  fluent.conf: |
+    <source>
+      @type tail
+      path /var/log/containers/*{{.ProjectName | lower}}*.log
+      pos_file /var/log/fluentd-{{.ProjectName | lower}}.log.pos
+      tag kubernetes.*
+      format json
+    </source>
+    
+    <match kubernetes.**>
+      @type elasticsearch
+      host elasticsearch.logging.svc.cluster.local
+      port 9200
+      index_name {{.ProjectName | lower}}
+    </match>
+```
+
+## Security Configuration
+
+### TLS/SSL Configuration
+
+**1. Certificate Management:**
+```bash
+# Generate development certificates
+openssl req -x509 -newkey rsa:4096 -keyout server.key -out server.crt \
+  -days 365 -nodes -subj "/CN=localhost"
+
+# Production with Let's Encrypt
+certbot certonly --standalone -d api.yourdomian.com
+```
+
+**2. Kubernetes TLS:**
+```yaml
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{.ProjectName | lower}}-tls
+  namespace: {{.ProjectName | lower}}
+spec:
+  secretName: {{.ProjectName | lower}}-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - api.yourdomain.com
+```
+
+### Network Policies
+
+**1. Kubernetes Network Policy:**
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{.ProjectName | lower}}-netpol
+  namespace: {{.ProjectName | lower}}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{.ProjectName | lower}}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: {{.GrpcPort | default 50051}}
+  egress:
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 53
+    - protocol: UDP
+      port: 53
+  {{- if ne .DatabaseDriver ""}}
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: database
+    ports:
+    - protocol: TCP
+      port: 5432
+  {{- end}}
+```
+
+## Backup and Disaster Recovery
+
+{{- if ne .DatabaseDriver ""}}
+### Database Backup
+
+**1. Automated Backup:**
+```bash
+#!/bin/bash
+# backup-database.sh
+DATE=$(date +%Y%m%d_%H%M%S)
+BACKUP_FILE="{{.ProjectName | lower}}_backup_$DATE.sql"
+
+{{- if eq .DatabaseDriver "postgres"}}
+pg_dump $DATABASE_URL > $BACKUP_FILE
+{{- else if eq .DatabaseDriver "mysql"}}
+mysqldump --single-transaction --routines --triggers $DATABASE_NAME > $BACKUP_FILE
+{{- end}}
+
+# Upload to cloud storage
+aws s3 cp $BACKUP_FILE s3://backups/{{.ProjectName | lower}}/
+```
+
+**2. Kubernetes CronJob:**
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{.ProjectName | lower}}-backup
+  namespace: {{.ProjectName | lower}}
+spec:
+  schedule: "0 2 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: postgres:13
+            command:
+            - /bin/bash
+            - -c
+            - pg_dump $DATABASE_URL | gzip > /backup/{{.ProjectName | lower}}_$(date +%Y%m%d_%H%M%S).sql.gz
+            env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{.ProjectName | lower}}-secrets
+                  key: database-url
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+          restartPolicy: OnFailure
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-pvc
+```
+{{- end}}
+
+### Service Recovery
+
+**1. Health Check Endpoints:**
+```bash
+# gRPC health check
+grpc_health_probe -addr=:{{.GrpcPort | default 50051}}
+
+{{- if .MetricsEnabled}}
+# HTTP health check
+curl -f http://localhost:{{.MetricsPort | default 8080}}/health
+{{- end}}
+```
+
+**2. Readiness and Liveness Probes:**
+```yaml
+livenessProbe:
+  exec:
+    command:
+    - grpc_health_probe
+    - -addr=:{{.GrpcPort | default 50051}}
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  
+readinessProbe:
+  exec:
+    command:
+    - grpc_health_probe
+    - -addr=:{{.GrpcPort | default 50051}}
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+## Performance Tuning
+
+### Kubernetes Resource Optimization
+
+**1. Resource Requests and Limits:**
+```yaml
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+```
+
+**2. Horizontal Pod Autoscaler:**
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{.ProjectName | lower}}-hpa
+  namespace: {{.ProjectName | lower}}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{.ProjectName | lower}}
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+### gRPC Performance Tuning
+
+**1. Server Configuration:**
+```go
+server := grpc.NewServer(
+    grpc.MaxRecvMsgSize(4*1024*1024), // 4MB
+    grpc.MaxSendMsgSize(4*1024*1024), // 4MB
+    grpc.MaxConcurrentStreams(1000),
+    grpc.KeepaliveParams(keepalive.ServerParameters{
+        Time:    30 * time.Second,
+        Timeout: 5 * time.Second,
+    }),
+    grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+        MinTime:             10 * time.Second,
+        PermitWithoutStream: true,
+    }),
+)
+```
+
+**2. Client Configuration:**
+```go
+conn, err := grpc.Dial(target,
+    grpc.WithDefaultServiceConfig(`{
+        "methodConfig": [{
+            "name": [{"service": "{{.ProjectName | lower}}.v1.{{.ProjectName}}Service"}],
+            "retryPolicy": {
+                "MaxAttempts": 4,
+                "InitialBackoff": ".01s",
+                "MaxBackoff": ".01s",
+                "BackoffMultiplier": 1.0,
+                "RetryableStatusCodes": [ "UNAVAILABLE" ]
+            }
+        }]
+    }`),
+    grpc.WithKeepaliveParams(keepalive.ClientParameters{
+        Time:                10 * time.Second,
+        Timeout:             time.Second,
+        PermitWithoutStream: true,
+    }),
+)
+```
+
+## Troubleshooting
+
+### Common Deployment Issues
+
+**1. Image Pull Errors:**
+```bash
+# Check image exists
+docker pull {{.ProjectName | lower}}:latest
+
+# Check registry authentication
+kubectl get secret regcred --output="jsonpath={.data.\.dockerconfigjson}" | base64 --decode
+```
+
+**2. Pod Startup Issues:**
+```bash
+# Check pod logs
+kubectl logs -f deployment/{{.ProjectName | lower}} -n {{.ProjectName | lower}}
+
+# Check pod events
+kubectl describe pod <pod-name> -n {{.ProjectName | lower}}
+
+# Check resource usage
+kubectl top pod -n {{.ProjectName | lower}}
+```
+
+**3. Service Discovery Issues:**
+```bash
+# Test service connectivity
+kubectl run test-pod --image=busybox --rm -it -- \
+  nslookup {{.ProjectName | lower}}.{{.ProjectName | lower}}.svc.cluster.local
+
+# Test gRPC connectivity
+kubectl run grpc-test --image=fullstorydev/grpcurl --rm -it -- \
+  grpcurl -plaintext {{.ProjectName | lower}}:{{.GrpcPort | default 50051}} list
+```
+
+### Performance Issues
+
+**1. High Latency:**
+```bash
+# Check resource usage
+kubectl top pod -n {{.ProjectName | lower}}
+
+# Check network latency
+kubectl run netshoot --image=nicolaka/netshoot --rm -it -- \
+  curl -w "@curl-format.txt" -s -o /dev/null http://{{.ProjectName | lower}}:{{.MetricsPort | default 8080}}/health
+```
+
+**2. Memory Leaks:**
+```bash
+# Check memory usage over time
+kubectl top pod -n {{.ProjectName | lower}} --sort-by=memory
+
+# Get heap profile
+kubectl port-forward svc/{{.ProjectName | lower}} 6060:6060 -n {{.ProjectName | lower}}
+go tool pprof http://localhost:6060/debug/pprof/heap
+```
+
+### Security Issues
+
+**1. TLS Configuration:**
+```bash
+# Test TLS connection
+openssl s_client -connect {{.ProjectName | lower}}:{{.GrpcPort | default 50051}} -servername {{.ProjectName | lower}}
+
+# Check certificate expiration
+openssl x509 -in /path/to/cert.crt -noout -enddate
+```
+
+**2. Authentication Issues:**
+```bash
+# Test with authentication
+grpcurl -H "authorization: Bearer $TOKEN" \
+  -plaintext localhost:{{.GrpcPort | default 50051}} \
+  {{.ProjectName | lower}}.v1.{{.ProjectName}}Service/GetVersion
+```
+
+## Best Practices
+
+### Deployment Best Practices
+
+1. **Use Multi-stage Docker Builds**: Minimize image size and attack surface
+2. **Run as Non-root User**: Improve container security
+3. **Set Resource Limits**: Prevent resource exhaustion
+4. **Use Health Checks**: Enable proper load balancer behavior
+5. **Implement Graceful Shutdown**: Handle termination signals properly
+6. **Use ConfigMaps and Secrets**: Externalize configuration
+7. **Version Your Deployments**: Enable easy rollbacks
+8. **Monitor Everything**: Comprehensive observability
+
+### Security Best Practices
+
+1. **Enable TLS**: Encrypt all communications
+2. **Use Network Policies**: Limit network access
+3. **Scan Images**: Regular vulnerability scanning
+4. **Update Dependencies**: Keep dependencies current
+5. **Principle of Least Privilege**: Minimal required permissions
+6. **Secret Management**: Use proper secret storage
+7. **Audit Logging**: Track access and changes
+8. **Regular Security Reviews**: Periodic security assessments
+
+### Operational Best Practices
+
+1. **Infrastructure as Code**: Version control infrastructure
+2. **Automated Testing**: Test deployments before production
+3. **Blue-Green Deployments**: Zero-downtime deployments
+4. **Rollback Strategy**: Plan for quick rollbacks
+5. **Capacity Planning**: Monitor and plan for growth
+6. **Disaster Recovery**: Test recovery procedures
+7. **Documentation**: Keep deployment docs current
+8. **Team Training**: Ensure team understands procedures
+
+---
+
+**Last Updated**: {{`{{ printf "%s" .Generated }}`}}
+**Version**: 1.0.0
+**Authors**: {{.ProjectName}} DevOps Team

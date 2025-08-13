@@ -1,0 +1,64 @@
+package logger
+
+import "io"
+
+// Fields represents structured logging fields
+type Fields map[string]interface{}
+
+// Logger defines the minimal interface for logging
+// This keeps the codebase flexible while avoiding over-engineering
+type Logger interface {
+	Debug(msg string, args ...interface{})
+	Info(msg string, args ...interface{})
+	Warn(msg string, args ...interface{})
+	Error(msg string, args ...interface{})
+	
+	// For structured logging
+	WithFields(fields Fields) func(string, ...interface{})
+}
+
+// defaultLogger wraps our package-level functions to implement the Logger interface
+type defaultLogger struct{}
+
+// GetLogger returns a Logger interface implementation
+func GetLogger() Logger {
+	return &defaultLogger{}
+}
+
+// GetWriter returns an io.Writer for Echo middleware integration
+func GetWriter() io.Writer {
+	return &loggerWriter{}
+}
+
+// loggerWriter implements io.Writer to route Echo logs through our logger
+type loggerWriter struct{}
+
+func (w *loggerWriter) Write(p []byte) (n int, err error) {
+	// Remove trailing newline if present
+	msg := string(p)
+	if len(msg) > 0 && msg[len(msg)-1] == '\n' {
+		msg = msg[:len(msg)-1]
+	}
+	Info(msg)
+	return len(p), nil
+}
+
+func (l *defaultLogger) Debug(msg string, args ...interface{}) {
+	Debug(msg, args...)
+}
+
+func (l *defaultLogger) Info(msg string, args ...interface{}) {
+	Info(msg, args...)
+}
+
+func (l *defaultLogger) Warn(msg string, args ...interface{}) {
+	Warn(msg, args...)
+}
+
+func (l *defaultLogger) Error(msg string, args ...interface{}) {
+	Error(msg, args...)
+}
+
+func (l *defaultLogger) WithFields(fields Fields) func(string, ...interface{}) {
+	return WithFields(fields)
+}

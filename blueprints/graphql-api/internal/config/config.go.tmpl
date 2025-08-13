@@ -1,0 +1,156 @@
+package config
+
+import (
+	"os"
+	"strconv"
+)
+
+// Config holds the application configuration
+type Config struct {
+	ServerPort          string
+	LogLevel           string
+	{{- if ne .DatabaseDriver ""}}
+	Database           DatabaseConfig
+	{{- end}}
+	{{- if ne .AuthType ""}}
+	Auth               AuthConfig
+	{{- end}}
+	{{- if .EnableIntrospection}}
+	EnableIntrospection bool
+	{{- end}}
+	{{- if .EnablePlayground}}
+	EnablePlayground    bool
+	{{- end}}
+}
+
+{{- if ne .DatabaseDriver ""}}
+// DatabaseConfig holds database configuration
+type DatabaseConfig struct {
+	Driver   string
+	Host     string
+	Port     string
+	User     string
+	Password string
+	Name     string
+	SSLMode  string
+}
+{{- end}}
+
+{{- if ne .AuthType ""}}
+// AuthConfig holds authentication configuration
+type AuthConfig struct {
+	Type      string
+	{{- if eq .AuthType "jwt"}}
+	JWTSecret string
+	{{- end}}
+	{{- if eq .AuthType "oauth2"}}
+	OAuthProviders map[string]OAuthProvider
+	{{- end}}
+}
+
+{{- if eq .AuthType "oauth2"}}
+// OAuthProvider holds OAuth provider configuration
+type OAuthProvider struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+}
+{{- end}}
+{{- end}}
+
+// Load loads configuration from environment variables
+func Load() *Config {
+	cfg := &Config{
+		ServerPort: getEnv("SERVER_PORT", "{{.ServerPort}}"),
+		LogLevel:   getEnv("LOG_LEVEL", "info"),
+		{{- if .EnableIntrospection}}
+		EnableIntrospection: getBoolEnv("ENABLE_INTROSPECTION", {{.EnableIntrospection}}),
+		{{- end}}
+		{{- if .EnablePlayground}}
+		EnablePlayground: getBoolEnv("ENABLE_PLAYGROUND", {{.EnablePlayground}}),
+		{{- end}}
+	}
+
+	{{- if ne .DatabaseDriver ""}}
+	cfg.Database = DatabaseConfig{
+		Driver:   getEnv("DB_DRIVER", "{{.DatabaseDriver}}"),
+		Host:     getEnv("DB_HOST", "localhost"),
+		Port:     getEnv("DB_PORT", getDefaultDBPort("{{.DatabaseDriver}}")),
+		User:     getEnv("DB_USER", "{{.ProjectName}}"),
+		Password: getEnv("DB_PASSWORD", ""),
+		Name:     getEnv("DB_NAME", "{{.ProjectName}}_db"),
+		SSLMode:  getEnv("DB_SSL_MODE", "disable"),
+	}
+	{{- end}}
+
+	{{- if ne .AuthType ""}}
+	cfg.Auth = AuthConfig{
+		Type: "{{.AuthType}}",
+		{{- if eq .AuthType "jwt"}}
+		JWTSecret: getEnv("JWT_SECRET", "your-secret-key"),
+		{{- end}}
+		{{- if eq .AuthType "oauth2"}}
+		OAuthProviders: loadOAuthProviders(),
+		{{- end}}
+	}
+	{{- end}}
+
+	return cfg
+}
+
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+func getBoolEnv(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+{{- if ne .DatabaseDriver ""}}
+func getDefaultDBPort(driver string) string {
+	switch driver {
+	case "postgres":
+		return "5432"
+	case "mysql":
+		return "3306"
+	case "mongodb":
+		return "27017"
+	default:
+		return ""
+	}
+}
+{{- end}}
+
+{{- if eq .AuthType "oauth2"}}
+func loadOAuthProviders() map[string]OAuthProvider {
+	providers := make(map[string]OAuthProvider)
+	
+	// Load Google OAuth
+	if clientID := os.Getenv("GOOGLE_CLIENT_ID"); clientID != "" {
+		providers["google"] = OAuthProvider{
+			ClientID:     clientID,
+			ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
+			RedirectURL:  os.Getenv("GOOGLE_REDIRECT_URL"),
+		}
+	}
+	
+	// Load GitHub OAuth
+	if clientID := os.Getenv("GITHUB_CLIENT_ID"); clientID != "" {
+		providers["github"] = OAuthProvider{
+			ClientID:     clientID,
+			ClientSecret: os.Getenv("GITHUB_CLIENT_SECRET"),
+			RedirectURL:  os.Getenv("GITHUB_REDIRECT_URL"),
+		}
+	}
+	
+	return providers
+}
+{{- end}}
