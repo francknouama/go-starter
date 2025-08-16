@@ -1,183 +1,188 @@
 # go-starter Documentation
 
-Welcome to the comprehensive go-starter documentation. Find everything you need to master Go project generation.
-
-## 📁 Documentation Structure
-
-```
-docs/
-├── guides/           # User and developer guides
-├── references/       # API and command references  
-├── project-plans/    # Project roadmaps and plans
-├── migration-guides/ # Migration and transition guides
-├── audits/           # Blueprint audits and reports
-├── analysis/         # Technical analysis and research
-├── releases/         # Release notes and distribution
-└── maintenance/      # Project maintenance and admin
-```
-
-## 🚀 Getting Started
-
-**New to go-starter?** Start here:
-
-- 📖 **[Getting Started Guide](guides/GETTING_STARTED.md)** - Your first project in 5 minutes
-- ⚙️ **[Installation Guide](guides/INSTALLATION.md)** - All installation methods
-- 🏃‍♂️ **[Quick Reference](references/QUICK_REFERENCE_CARD.md)** - Common commands and patterns
-
-## 📚 User Guides
-
-### Essential Guides
-- 🏗️ **[Development Guide](guides/DEVELOPMENT.md)** - Setting up your development environment
-- ⚙️ **[Configuration Guide](guides/CONFIGURATION.md)** - Global settings and profiles
-- 🧪 **[Testing Guide](guides/TESTING_GUIDE.md)** - Test your generated projects
-- 🔧 **[Troubleshooting Guide](guides/TROUBLESHOOTING.md)** - Solve common issues
-- ❓ **[FAQ](guides/FAQ.md)** - Frequently asked questions
-
-## 📖 References
-
-### Project Creation
-- 📖 **[Project Types Guide](references/PROJECT_TYPES.md)** - Choose the right template (Web API, CLI, Library, Lambda)
-- 🏗️ **[Blueprint Guide](references/BLUEPRINTS.md)** - Deep dive into project templates
-- 📊 **[Blueprint Comparison](references/BLUEPRINT_COMPARISON.md)** - Side-by-side feature comparison
-
-### Configuration & Customization
-- 📊 **[Logger Guide](references/LOGGER_GUIDE.md)** - Master the unique logger selector system
-- 🗃️ **[ORM Guide](references/ORM_GUIDE.md)** - Database and ORM selection
-- 📝 **[Quick Reference](references/QUICK_REFERENCE.md)** - Command cheatsheet
-
-## 🗺️ Project Plans
-
-- 🎯 **[Phase 2 Completion Plan](project-plans/PHASE_2_COMPLETION_PLAN.md)** - Current development status ✅ Complete
-- 🌐 **[Phase 3 Web UI Plan](project-plans/PHASE_3_WEB_UI_DEVELOPMENT_PLAN.md)** - Web interface development roadmap  
-- 🚀 **[CI/CD Infrastructure Plan](project-plans/CI_CD_INFRASTRUCTURE_IMPROVEMENT_PLAN.md)** - Deployment automation plans
-- 📋 **[Project Roadmap](project-plans/PROJECT_ROADMAP.md)** - Long-term vision and milestones
-- 🧪 **[TDD Implementation Plan](project-plans/TDD_IMPLEMENTATION_PLAN.md)** - Test-driven development strategy
-- 📊 **[Test Coverage Plan](project-plans/TEST_COVERAGE_PLAN.md)** - Comprehensive testing strategy
-- 🌐 **[Web Tool Backlog](project-plans/WEB_TOOL_BACKLOG.md)** - Web interface features
-- 🏢 **[SaaS Backlog](project-plans/SAAS_BACKLOG.md)** - SaaS platform development
-- 📋 **[Demo Project Review Plan](project-plans/DEMO_PROJECT_REVIEW_PLAN.md)** - Generated project validation
-- 🔧 **[Workspace Implementation Plan](project-plans/WORKSPACE_IMPLEMENTATION_PLAN.md)** - Go workspace blueprint development
-
-## 🔄 Migration Guides
-
-- 🛠️ **[CLI Migration Guide](migration-guides/CLI_MIGRATION_GUIDE.md)** - Upgrading CLI blueprints
-- ⚡ **[CLI Over-Engineering Resolution](migration-guides/CLI_OVER_ENGINEERING_COMPLETE_RESOLUTION.md)** - Simplification strategies
-- 📝 **[TDD Enforcement](migration-guides/TDD-ENFORCEMENT.md)** - Test-driven development practices
-- 📋 **[Task Master Guide](migration-guides/TASK_MASTER_GUIDE.md)** - AI-powered task management
-
-## 🔍 Audit Reports
-
-Comprehensive blueprint quality assessments and improvement reports are available in the [audits/](audits/) directory.
-
-## 📊 Technical Analysis
-
-- 🏗️ **[Blueprint Review Report](analysis/BLUEPRINT_REVIEW_REPORT.md)** - Comprehensive quality analysis
-- 🤖 **[AI Design Tools Evaluation](analysis/AI_DESIGN_TOOLS_EVALUATION.md)** - AI tooling research
-- 📋 **[Blueprint Externalization Plan](analysis/BLUEPRINT_EXTERNALIZATION_PLAN.md)** - External blueprint system
-- 🔧 **[CLI Enhancement Analysis](analysis/CLI_ENHANCEMENT_TICKET.md)** - CLI system improvements
-- 🏗️ **[Hexagonal Architecture Tasks](analysis/HEXAGONAL_ARCHITECTURE_REMEDIATION_TASKS.md)** - Architecture improvements
-
-## 📦 Release Information
-
-- 📋 **[Release Notes](releases/RELEASE_NOTES.md)** - Version history and changes
-- 🍺 **[Homebrew Setup](releases/HOMEBREW_SETUP.md)** - Distribution configuration
-- 📖 **[v1.0.0 Release Notes](releases/RELEASE_NOTES_v1.0.0.md)** - Detailed v1.0.0 documentation
-
-## 🔧 Project Maintenance
-
-- 📋 **[Blueprint Backlog](maintenance/BLUEPRINT_BACKLOG.md)** - Development priorities
-- 🐛 **[Issues to Close](maintenance/ISSUES_TO_CLOSE.md)** - Issue cleanup tasks
-- 🤖 **[Gemini Configuration](maintenance/GEMINI.md)** - AI assistant setup
-
-## 🆘 Help & Support
-
-- 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** - Found a bug?
-- 💬 **[Discussions](https://github.com/francknouama/go-starter/discussions)** - Community support
+Welcome to the comprehensive documentation for go-starter - the AI-powered Go project generator that combines simplicity with power through progressive disclosure.
 
 ## 🚀 Quick Start
 
-```bash
-# Install go-starter (using Go install - recommended)
-go install github.com/francknouama/go-starter@latest
+**New to go-starter?** Get started in 5 minutes:
 
-# Alternative: Download binary from GitHub releases
-# Homebrew currently unavailable due to PAT issues
+1. **[Installation](01-getting-started/installation.md)** - Install go-starter on your system
+2. **[Quick Start](01-getting-started/quick-start.md)** - Generate your first project 
+3. **[Getting Started](01-getting-started/getting-started.md)** - Complete tutorial with examples
 
-# Generate your first project
-go-starter new my-awesome-api
+## 📚 Documentation Sections
 
-# Navigate and run
-cd my-awesome-api
-make run
+### 🎯 **[Getting Started](01-getting-started/)**
+Perfect for first-time users and those wanting to get up and running quickly.
+
+| Guide | Purpose | Time |
+|-------|---------|------|
+| [Quick Start](01-getting-started/quick-start.md) | Generate your first project | 5 min |
+| [Installation](01-getting-started/installation.md) | Install on any platform | 10 min |
+| [Getting Started](01-getting-started/getting-started.md) | Complete tutorial | 30 min |
+
+### 📖 **[User Guides](02-user-guides/)**
+Comprehensive guides for real-world usage scenarios.
+
+| Guide | Purpose | Best For |
+|-------|---------|----------|
+| [Blueprint Selection](02-user-guides/blueprint-selection.md) | Choose the right project type | Decision making |
+| [Configuration](02-user-guides/configuration.md) | Team setup & standards | Teams & organizations |
+| [Troubleshooting](02-user-guides/troubleshooting.md) | Solve problems quickly | Problem solving |
+| [FAQ](02-user-guides/faq.md) | Quick answers | Quick reference |
+
+### 📋 **[Reference](03-reference/)**
+Detailed technical documentation and specifications.
+
+| Reference | Purpose |
+|-----------|---------|
+| [CLI Commands](03-reference/cli-commands.md) | Complete command reference |
+| [Blueprints](03-reference/blueprints.md) | Blueprint specifications |
+| [Configuration](03-reference/configuration.md) | Config file reference |
+| [API Reference](03-reference/api.md) | Web API documentation |
+
+### 🛠️ **[Developer Guide](04-developers/)**
+For contributors and those wanting to extend go-starter.
+
+| Guide | Purpose |
+|-------|---------|
+| [Development Setup](04-developers/setup.md) | Set up development environment |
+| [Architecture](04-developers/architecture.md) | Project architecture overview |
+| [Testing](04-developers/testing.md) | Testing strategies and guidelines |
+| [Contributing](04-developers/contributing.md) | How to contribute |
+
+### 🌟 **[Community](05-community/)**
+Examples, showcases, and community resources.
+
+| Resource | Purpose |
+|----------|---------|
+| [Showcases](05-community/showcases.md) | Real-world project examples |
+| [Examples](05-community/examples.md) | Sample projects and patterns |
+| [Best Practices](05-community/best-practices.md) | Community wisdom |
+
+## 🎯 Choose Your Path
+
+### 🆕 **Complete Beginner**
+```
+Installation → Quick Start → Getting Started → Blueprint Selection
 ```
 
-## 📊 Available Templates
-
-| Template | Use Case | Key Features |
-|----------|----------|--------------|
-| **Web API** | REST services, microservices | Gin framework, middleware, database |
-| **CLI** | Command-line tools | Cobra framework, subcommands |
-| **Library** | Reusable packages | Clean API, examples, minimal deps |
-| **Lambda** | Serverless functions | AWS integration, CloudWatch logging |
-
-## 🪵 Logger Options
-
-| Logger | Performance | Best For |
-|--------|-------------|----------|
-| **slog** | Good | Standard library choice |
-| **zap** | Excellent | High-performance applications |
-| **logrus** | Good | Feature-rich requirements |
-| **zerolog** | Excellent | JSON-heavy, cloud-native |
-
-## 🎯 Common Use Cases
-
-### Building a High-Performance API
-```bash
-go-starter new api --type=web-api --logger=zap
+### 👨‍💻 **Experienced Developer**
+```
+Quick Start → Blueprint Selection → CLI Reference
 ```
 
-### Creating a Developer Tool
-```bash
-go-starter new tool --type=cli --logger=logrus
+### 👥 **Team Lead**
+```
+Getting Started → Configuration → Blueprint Selection → Best Practices
 ```
 
-### Developing a Reusable Library
-```bash
-go-starter new sdk --type=library --logger=slog
+### 🔧 **Contributor**
+```
+Development Setup → Architecture → Testing → Contributing
 ```
 
-### Deploying Serverless Functions
-```bash
-go-starter new function --type=lambda --logger=zerolog
-```
+## 📊 What's New in go-starter v2.0
 
-## 📖 Documentation Structure
+### 🌟 **Progressive Disclosure System**
+- **Basic Mode**: Essential options for beginners (14 flags)
+- **Advanced Mode**: Full feature set for power users (18+ flags)
+- **Smart Defaults**: Intelligent flag handling and complexity detection
 
-```
-docs/
-├── README.md                    # This file
-├── GETTING_STARTED.md          # Installation and first steps
-├── BLUEPRINT_COMPARISON.md      # Choosing the right blueprint
-├── BLUEPRINTS.md                # Detailed blueprint documentation
-├── LOGGER_GUIDE.md             # Logger selector deep dive
-├── ORM_GUIDE.md                # Database interaction patterns
-├── QUICK_REFERENCE_CARD.md     # Commands and patterns reference
-├── FAQ.md                      # Frequently asked questions
-└── TROUBLESHOOTING.md          # Problem-solving guide
-```
+### 🎨 **Complete Web Interface**
+- **React + TypeScript**: Modern web UI with live preview
+- **Real-time Generation**: WebSocket-powered project generation
+- **Mobile-First Design**: WCAG 2.1 AA accessible interface
+- **Progressive UX**: Complexity scales with user expertise
 
-## 🤝 Contributing
+### 🏗️ **Enhanced Blueprint System**
+- **12+ Blueprint Types**: From simple CLI to enterprise architectures
+- **Two-Tier CLI**: Simple (8 files) vs Standard (29 files) CLI blueprints
+- **Architecture Patterns**: Standard, Clean, DDD, Hexagonal support
+- **4 Logger Types**: slog, zap, logrus, zerolog with simplified implementation
 
-We welcome contributions! Please see:
-- [Contributing Guide](../CONTRIBUTING.md)
-- [Project Roadmap](project-plans/PROJECT_ROADMAP.md)
+### 🤖 **AI-Powered Advisor**
+- **Intelligent Recommendations**: Project analysis and architecture suggestions
+- **Best Practices**: Context-aware guidance and validation
+- **Progressive Complexity**: Complexity assessment and blueprint recommendations
 
-## 🔗 Links
+## 🔍 Finding What You Need
 
-- **Repository**: [github.com/francknouama/go-starter](https://github.com/francknouama/go-starter)
-- **Issues**: [GitHub Issues](https://github.com/francknouama/go-starter/issues)
-- **Releases**: [Latest Releases](https://github.com/francknouama/go-starter/releases)
+### By Use Case
+- **Building a REST API?** → [Blueprint Selection](02-user-guides/blueprint-selection.md) → Web API section
+- **Creating a CLI tool?** → [CLI Blueprints](02-user-guides/blueprint-selection.md#cli-blueprints)
+- **Setting up for a team?** → [Configuration Guide](02-user-guides/configuration.md)
+- **Having problems?** → [Troubleshooting](02-user-guides/troubleshooting.md)
+- **Quick questions?** → [FAQ](02-user-guides/faq.md)
+
+### By Experience Level
+- **Beginner**: Start with [Getting Started](01-getting-started/)
+- **Intermediate**: Jump to [User Guides](02-user-guides/)
+- **Advanced**: Go to [Reference](03-reference/) or [Developer Guide](04-developers/)
+
+### By Role
+- **Developer**: [Getting Started](01-getting-started/) + [User Guides](02-user-guides/)
+- **Architect**: [Blueprint Selection](02-user-guides/blueprint-selection.md) + [Best Practices](05-community/best-practices.md)
+- **Team Lead**: [Configuration](02-user-guides/configuration.md) + [Community](05-community/)
+- **Contributor**: [Developer Guide](04-developers/)
+
+## 🎓 Learning Resources
+
+### Video Content
+- **[Getting Started Video](https://youtube.com/watch?v=example)** - 15-minute overview
+- **[Blueprint Deep Dive](https://youtube.com/watch?v=example)** - Architecture patterns explained
+- **[Team Setup Guide](https://youtube.com/watch?v=example)** - Configuration for teams
+
+### Example Projects
+- **[CLI Tool Examples](05-community/examples.md#cli-tools)**
+- **[Web API Examples](05-community/examples.md#web-apis)**
+- **[Enterprise Patterns](05-community/examples.md#enterprise)**
+
+### Community
+- **[GitHub Discussions](https://github.com/francknouama/go-starter/discussions)** - Community Q&A
+- **[Discord Server](https://discord.gg/go-starter)** - Real-time chat
+- **[Examples Repository](https://github.com/go-starter-examples)** - Community examples
+
+## 🆘 Getting Help
+
+### Quick Help
+1. **Check [FAQ](02-user-guides/faq.md)** for common questions
+2. **Search [Troubleshooting](02-user-guides/troubleshooting.md)** for known issues  
+3. **Browse [GitHub Discussions](https://github.com/francknouama/go-starter/discussions)** for community help
+
+### Report Issues
+- **Bugs**: [GitHub Issues](https://github.com/francknouama/go-starter/issues) with `bug` label
+- **Feature Requests**: [GitHub Issues](https://github.com/francknouama/go-starter/issues) with `enhancement` label
+- **Documentation**: [GitHub Issues](https://github.com/francknouama/go-starter/issues) with `documentation` label
+
+### Contributing
+- **Code**: See [Contributing Guide](04-developers/contributing.md)
+- **Documentation**: Submit PRs for documentation improvements
+- **Examples**: Share your projects in [Community Showcases](05-community/showcases.md)
+
+## 📈 What's Coming Next
+
+### 🚀 **Phase 3: Enhanced Web Interface**
+- Advanced project customization UI
+- Real-time collaborative editing
+- Blueprint marketplace integration
+
+### 🤖 **Phase 4: AI-Powered Features**
+- Intelligent code generation
+- Automated refactoring suggestions
+- Smart dependency management
+
+### 🌍 **Community Growth**
+- Multi-language documentation
+- Enterprise support options
+- Training and certification programs
 
 ---
 
-**Need help?** Check the [FAQ](FAQ.md) or [Troubleshooting Guide](TROUBLESHOOTING.md) first. If you can't find an answer, please [open an issue](https://github.com/francknouama/go-starter/issues/new).
+## 🎯 Ready to Start?
+
+**New to go-starter?** → Start with [Quick Start Guide](01-getting-started/quick-start.md)  
+**Returning user?** → Jump to [Blueprint Selection](02-user-guides/blueprint-selection.md)  
+**Building for teams?** → Check out [Configuration Guide](02-user-guides/configuration.md)
+
+**Build something amazing with go-starter!** 🚀
