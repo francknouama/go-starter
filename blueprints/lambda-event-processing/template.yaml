@@ -101,16 +101,45 @@ files:
   - source: "internal/handler/sqs_handler.go.tmpl"
     destination: "internal/handler/sqs_handler.go"
     description: "SQS message processing with batch support"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"sqs\")) (and (kindIs \"slice\" .EventSources) (has \"sqs\" .EventSources))}}"
 
   # Domain Models and Events
   - source: "internal/domain/event.go.tmpl"
     destination: "internal/domain/event.go"
     description: "Event domain models and interfaces"
 
+  - source: "internal/domain/message.go.tmpl"
+    destination: "internal/domain/message.go"
+    description: "Message types and processing results"
+
+  # Configuration
+  - source: "internal/config/config.go.tmpl"
+    destination: "internal/config/config.go"
+    description: "Configuration management for Lambda"
+
   # Enhanced Observability Stack
   - source: "internal/observability/logger.go.tmpl"
     destination: "internal/observability/logger.go"
     description: "Structured logging with correlation IDs"
+
+  - source: "internal/observability/metrics.go.tmpl"
+    destination: "internal/observability/metrics.go"
+    description: "CloudWatch metrics collection"
+
+  - source: "internal/observability/tracing.go.tmpl"
+    destination: "internal/observability/tracing.go"
+    description: "AWS X-Ray tracing integration"
+
+  # Performance Optimization
+  - source: "internal/performance/cold_start.go.tmpl"
+    destination: "internal/performance/cold_start.go"
+    description: "Cold start optimization patterns"
+
+  # Security Features
+  - source: "internal/security/secrets_manager.go.tmpl"
+    destination: "internal/security/secrets_manager.go"
+    description: "AWS Secrets Manager integration"
+    condition: "{{or (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"secrets-manager\")) (and (kindIs \"slice\" .SecurityFeatures) (has \"secrets-manager\" .SecurityFeatures))}}"
 
   # Documentation
   - source: "README.md.tmpl"
@@ -130,22 +159,22 @@ dependencies:
     version: "v1.26.1"
   - module: "github.com/aws/aws-sdk-go-v2/service/sqs"
     version: "v1.29.0"
-    condition: "{{contains .EventSources \"sqs\"}}"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"sqs\")) (and (kindIs \"slice\" .EventSources) (has \"sqs\" .EventSources))}}"
   - module: "github.com/aws/aws-sdk-go-v2/service/sns"
     version: "v1.26.0"
-    condition: "{{contains .EventSources \"sns\"}}"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"sns\")) (and (kindIs \"slice\" .EventSources) (has \"sns\" .EventSources))}}"
   - module: "github.com/aws/aws-sdk-go-v2/service/eventbridge"
     version: "v1.25.0"
-    condition: "{{contains .EventSources \"eventbridge\"}}"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"eventbridge\")) (and (kindIs \"slice\" .EventSources) (has \"eventbridge\" .EventSources))}}"
   - module: "github.com/aws/aws-sdk-go-v2/service/dynamodb"
     version: "v1.26.0"
-    condition: "{{contains .EventSources \"dynamodb-streams\"}}"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"dynamodb-streams\")) (and (kindIs \"slice\" .EventSources) (has \"dynamodb-streams\" .EventSources))}}"
   - module: "github.com/aws/aws-sdk-go-v2/service/kinesis"
     version: "v1.24.0"
-    condition: "{{contains .EventSources \"kinesis\"}}"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"kinesis\")) (and (kindIs \"slice\" .EventSources) (has \"kinesis\" .EventSources))}}"
   - module: "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
     version: "v1.25.0"
-    condition: "{{contains .SecurityFeatures \"secrets-manager\"}}"
+    condition: "{{or (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"secrets-manager\")) (and (kindIs \"slice\" .SecurityFeatures) (has \"secrets-manager\" .SecurityFeatures))}}"
   - module: "github.com/aws/aws-sdk-go-v2/service/cloudwatch"
     version: "v1.32.0"
 
@@ -167,7 +196,7 @@ dependencies:
   # Validation and utilities
   - module: "github.com/go-playground/validator/v10"
     version: "v10.16.0"
-    condition: "{{contains .SecurityFeatures \"input-validation\"}}"
+    condition: "{{or (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"input-validation\")) (and (kindIs \"slice\" .SecurityFeatures) (has \"input-validation\" .SecurityFeatures))}}"
   - module: "github.com/google/uuid"
     version: "v1.5.0"
 
@@ -179,7 +208,7 @@ dependencies:
     condition: "{{eq .TestingLevel \"comprehensive\"}}"
   - module: "github.com/aws/aws-sdk-go-v2/feature/dynamodb/attributevalue"
     version: "v1.12.0"
-    condition: "{{contains .EventSources \"dynamodb-streams\"}}"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"dynamodb-streams\")) (and (kindIs \"slice\" .EventSources) (has \"dynamodb-streams\" .EventSources))}}"
 
 # Post-generation hooks
 post_hooks:
@@ -200,7 +229,7 @@ features:
     
   - name: "advanced_security"
     description: "Enterprise security features with secrets management and input validation"
-    enabled_when: "{{or (contains .SecurityFeatures \"secrets-manager\") (contains .SecurityFeatures \"input-validation\")}}"
+    enabled_when: "{{or (and (kindIs \"slice\" .SecurityFeatures) (or (has \"secrets-manager\" .SecurityFeatures) (has \"input-validation\" .SecurityFeatures))) (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"secrets-manager\")) (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"input-validation\"))}}"
     
   - name: "resilience_patterns"
     description: "Production resilience patterns with circuit breakers, retries, and DLQ"
@@ -235,4 +264,4 @@ quality_gates:
   - name: "security_scan"
     description: "Security vulnerabilities scan"
     command: "gosec ./..."
-    condition: "{{contains .SecurityFeatures \"input-validation\"}}"
+    condition: "{{or (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"input-validation\")) (and (kindIs \"slice\" .SecurityFeatures) (has \"input-validation\" .SecurityFeatures))}}"

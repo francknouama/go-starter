@@ -18,10 +18,10 @@ import (
 {{- if eq .ProcessingPattern "batch"}}
 	"{{.ModulePath}}/internal/processor"
 {{- end}}
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 	"{{.ModulePath}}/internal/resilience"
 {{- end}}
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 	"{{.ModulePath}}/internal/security"
 {{- end}}
 )
@@ -34,10 +34,10 @@ type SQSHandler struct {
 {{- if eq .ProcessingPattern "batch"}}
 	processor *processor.BatchProcessor
 {{- end}}
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 	dlqHandler *resilience.DLQHandler
 {{- end}}
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 	validator *security.InputValidator
 {{- end}}
 }
@@ -68,7 +68,7 @@ func NewSQSHandler(cfg *appConfig.Config) (*SQSHandler, error) {
 	}
 {{- end}}
 
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 	// Initialize DLQ handler
 	handler.dlqHandler, err = resilience.NewDLQHandler(cfg.Resilience.DLQ, handler.sqsClient)
 	if err != nil {
@@ -76,7 +76,7 @@ func NewSQSHandler(cfg *appConfig.Config) (*SQSHandler, error) {
 	}
 {{- end}}
 
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 	// Initialize input validator
 	handler.validator = security.NewInputValidator(cfg.Security.Validation)
 {{- end}}
@@ -84,10 +84,10 @@ func NewSQSHandler(cfg *appConfig.Config) (*SQSHandler, error) {
 	logger.Info("SQS handler initialized", map[string]interface{}{
 		"processing_pattern": "{{.ProcessingPattern}}",
 		"region":            cfg.AWS.Region,
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 		"dlq_enabled":       cfg.Resilience.DLQ.Enabled,
 {{- end}}
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 		"validation_enabled": cfg.Security.Validation.Enabled,
 {{- end}}
 	})
@@ -162,7 +162,7 @@ func (h *SQSHandler) processIndividual(ctx context.Context, records []events.SQS
 				"message_id": record.MessageId,
 				"error":      err.Error(),
 			})
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 			// Send to DLQ if processing fails
 			if dlqErr := h.dlqHandler.SendToDLQ(ctx, record, err); dlqErr != nil {
 				h.logger.Error("Failed to send message to DLQ", map[string]interface{}{
@@ -235,7 +235,7 @@ func (h *SQSHandler) processMessage(ctx context.Context, record events.SQSMessag
 			return fmt.Errorf("failed to parse message body: %w", err)
 		}
 
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 		// Validate message input
 		if h.validator != nil {
 			if err := h.validator.ValidateMessage(messageBody); err != nil {

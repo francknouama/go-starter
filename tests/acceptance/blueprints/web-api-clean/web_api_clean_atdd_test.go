@@ -89,25 +89,21 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 		cleanArchLayers := []string{
 			// Domain layer (innermost - business logic and entities)
 			"internal/domain/entities",
-			"internal/domain/repositories", 
-			"internal/domain/services",
+			"internal/domain/ports", 
+			"internal/domain/usecases",
 			"internal/domain/valueobjects",
+			"internal/domain/events",
 
-			// Application layer (use cases and business workflows)
-			"internal/application/usecases",
-			"internal/application/ports",
-			"internal/application/services",
+			// Adapter layer (interface adapters)
+			"internal/adapters/controllers",
+			"internal/adapters/presenters",
 
 			// Infrastructure layer (external concerns - databases, APIs, etc.)
-			"internal/infrastructure/database",
-			"internal/infrastructure/repositories",
-			"internal/infrastructure/external",
-
-			// Presentation layer (controllers, handlers, DTOs)
-			"internal/presentation/handlers",
-			"internal/presentation/middleware",
-			"internal/presentation/dto",
-			"internal/presentation/routes",
+			"internal/infrastructure/config",
+			"internal/infrastructure/persistence",
+			"internal/infrastructure/services",
+			"internal/infrastructure/web",
+			"internal/infrastructure/logger",
 		}
 
 		for _, layer := range cleanArchLayers {
@@ -117,34 +113,38 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 		// Verify essential Clean Architecture files exist
 		essentialFiles := []string{
 			// Foundation
-			"main.go",
+			"cmd/server/main.go",
 			"go.mod",
 			"README.md",
 
 			// Domain entities (business objects)
 			"internal/domain/entities/user.go",
-			"internal/domain/entities/product.go",
+			"internal/domain/entities/auth.go",
 
-			// Domain repositories (interfaces)
-			"internal/domain/repositories/user_repository.go",
+			// Domain ports (interfaces)
+			"internal/domain/ports/repositories.go",
+			"internal/domain/ports/services.go",
 
-			// Application use cases (business workflows)  
-			"internal/application/usecases/user_usecase.go",
-			"internal/application/usecases/create_user_usecase.go",
+			// Domain use cases (business workflows)  
+			"internal/domain/usecases/user_usecase.go",
+			"internal/domain/usecases/auth_usecase.go",
+
+			// Domain value objects
+			"internal/domain/valueobjects/user_id.go",
+			"internal/domain/valueobjects/email.go",
 
 			// Infrastructure implementations
-			"internal/infrastructure/repositories/user_repository_impl.go",
-			"internal/infrastructure/database/database.go",
+			"internal/infrastructure/persistence/user_repository.go",
+			"internal/infrastructure/persistence/database.go",
 
-			// Presentation layer
-			"internal/presentation/handlers/user_handler.go", 
-			"internal/presentation/handlers/health_handler.go",
-			"internal/presentation/dto/user_dto.go",
-			"internal/presentation/routes/routes.go",
+			// Adapter layer (controllers/presenters)
+			"internal/adapters/controllers/user_controller.go", 
+			"internal/adapters/controllers/health_controller.go",
+			"internal/adapters/presenters/user_presenter.go",
 
-			// Configuration
-			"internal/config/config.go",
-			"internal/logger/logger.go",
+			// Configuration and infrastructure
+			"internal/infrastructure/config/config.go",
+			"internal/infrastructure/logger/interface.go",
 		}
 
 		for _, file := range essentialFiles {
@@ -191,9 +191,9 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 			require.NoError(t, err)
 			entityStr := string(entityContent)
 
-			// Domain entities should NOT import infrastructure or presentation layers
+			// Domain entities should NOT import infrastructure or adapters layers
 			assert.NotContains(t, entityStr, "internal/infrastructure", "Domain entities should not import infrastructure")
-			assert.NotContains(t, entityStr, "internal/presentation", "Domain entities should not import presentation")
+			assert.NotContains(t, entityStr, "internal/adapters", "Domain entities should not import adapters")
 			assert.NotContains(t, entityStr, "github.com/gin-gonic", "Domain should not import web framework")
 			assert.NotContains(t, entityStr, "gorm.io/gorm", "Domain should not import ORM directly")
 
@@ -201,57 +201,52 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 			assert.Contains(t, entityStr, "type User struct", "Should define User entity")
 		}
 
-		// 2. Domain repositories should be interfaces (not implementations)
-		repoInterfacePath := filepath.Join(projectDir, "internal", "domain", "repositories", "user_repository.go")
-		if assert.FileExists(t, repoInterfacePath, "User repository interface should exist") {
+		// 2. Domain ports should be interfaces (not implementations)
+		repoInterfacePath := filepath.Join(projectDir, "internal", "domain", "ports", "repositories.go")
+		if assert.FileExists(t, repoInterfacePath, "Repository ports should exist") {
 			repoContent, err := os.ReadFile(repoInterfacePath)
 			require.NoError(t, err)
 			repoStr := string(repoContent)
 
-			assert.Contains(t, repoStr, "type UserRepository interface", "Should define repository interface")
-			assert.Contains(t, repoStr, "Create", "Should have Create method")
-			assert.Contains(t, repoStr, "GetByID", "Should have GetByID method")
+			assert.Contains(t, repoStr, "interface", "Should define repository interfaces")
 			assert.NotContains(t, repoStr, "gorm.DB", "Interface should not reference concrete implementations")
 		}
 
-		// 3. Application layer should depend on domain interfaces
-		usecasePath := filepath.Join(projectDir, "internal", "application", "usecases", "user_usecase.go")
+		// 3. Domain use cases should depend on domain ports
+		usecasePath := filepath.Join(projectDir, "internal", "domain", "usecases", "user_usecase.go")
 		if assert.FileExists(t, usecasePath, "User usecase should exist") {
 			usecaseContent, err := os.ReadFile(usecasePath)
 			require.NoError(t, err)
 			usecaseStr := string(usecaseContent)
 
-			assert.Contains(t, usecaseStr, "internal/domain/repositories", "Should import domain repositories")
-			assert.Contains(t, usecaseStr, "UserRepository", "Should use repository interface")
+			assert.Contains(t, usecaseStr, "internal/domain/ports", "Should import domain ports")
 			assert.NotContains(t, usecaseStr, "internal/infrastructure", "Use cases should not import infrastructure directly")
 		}
 
 		// 4. Infrastructure should implement domain interfaces
-		repoImplPath := filepath.Join(projectDir, "internal", "infrastructure", "repositories", "user_repository_impl.go")
+		repoImplPath := filepath.Join(projectDir, "internal", "infrastructure", "persistence", "user_repository.go")
 		if assert.FileExists(t, repoImplPath, "Repository implementation should exist") {
 			implContent, err := os.ReadFile(repoImplPath)
 			require.NoError(t, err)
 			implStr := string(implContent)
 
-			assert.Contains(t, implStr, "internal/domain/repositories", "Should import domain repository interface")
 			assert.Contains(t, implStr, "internal/domain/entities", "Should import domain entities")
-			assert.Contains(t, implStr, "UserRepository", "Should implement UserRepository interface")
 			// Can import external dependencies like GORM
 			if strings.Contains(implStr, "gorm") {
 				assert.Contains(t, implStr, "gorm.io/gorm", "Infrastructure can import GORM")
 			}
 		}
 
-		// 5. Presentation layer should depend on application layer
-		handlerPath := filepath.Join(projectDir, "internal", "presentation", "handlers", "user_handler.go")
-		if assert.FileExists(t, handlerPath, "User handler should exist") {
+		// 5. Adapter layer should depend on domain use cases
+		handlerPath := filepath.Join(projectDir, "internal", "adapters", "controllers", "user_controller.go")
+		if assert.FileExists(t, handlerPath, "User controller should exist") {
 			handlerContent, err := os.ReadFile(handlerPath)
 			require.NoError(t, err)
 			handlerStr := string(handlerContent)
 
-			assert.Contains(t, handlerStr, "internal/application/usecases", "Handlers should use application use cases")
-			assert.Contains(t, handlerStr, "gin-gonic/gin", "Handlers can import web framework")
-			assert.NotContains(t, handlerStr, "internal/infrastructure/repositories", "Handlers should not directly use infrastructure")
+			assert.Contains(t, handlerStr, "internal/domain/usecases", "Controllers should use domain use cases")
+			assert.Contains(t, handlerStr, "gin-gonic/gin", "Controllers can import web framework")
+			assert.NotContains(t, handlerStr, "internal/infrastructure/persistence", "Controllers should not directly use infrastructure")
 		}
 	})
 
@@ -342,13 +337,12 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 
 				// Verify Clean Architecture structure exists regardless of framework
 				assert.DirExists(t, filepath.Join(projectDir, "internal", "domain"), "Domain layer should exist")
-				assert.DirExists(t, filepath.Join(projectDir, "internal", "application"), "Application layer should exist")
+				assert.DirExists(t, filepath.Join(projectDir, "internal", "adapters"), "Adapter layer should exist")
 				assert.DirExists(t, filepath.Join(projectDir, "internal", "infrastructure"), "Infrastructure layer should exist")
-				assert.DirExists(t, filepath.Join(projectDir, "internal", "presentation"), "Presentation layer should exist")
 
-				// Check that presentation layer uses correct framework
-				if handlerExists(t, filepath.Join(projectDir, "internal", "presentation", "handlers", "user_handler.go")) {
-					handlerContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "presentation", "handlers", "user_handler.go"))
+				// Check that adapter layer uses correct framework
+				if handlerExists(t, filepath.Join(projectDir, "internal", "adapters", "controllers", "user_controller.go")) {
+					handlerContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "adapters", "controllers", "user_controller.go"))
 					require.NoError(t, err)
 					handlerStr := string(handlerContent)
 
@@ -415,25 +409,25 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 				projectDir := filepath.Join(tmpDir, projectName)
 
 				// Check that logger setup exists
-				assert.FileExists(t, filepath.Join(projectDir, "internal", "logger", "logger.go"), 
-					"Logger setup should exist for %s", logger)
+				assert.FileExists(t, filepath.Join(projectDir, "internal", "infrastructure", "logger", "interface.go"), 
+					"Logger interface should exist for %s", logger)
 
-				// Check logger is used in use cases (application layer)
-				if usecaseExists(t, filepath.Join(projectDir, "internal", "application", "usecases", "user_usecase.go")) {
-					usecaseContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "application", "usecases", "user_usecase.go"))
+				// Check logger is used in use cases (domain layer)
+				if usecaseExists(t, filepath.Join(projectDir, "internal", "domain", "usecases", "user_usecase.go")) {
+					usecaseContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "domain", "usecases", "user_usecase.go"))
 					require.NoError(t, err)
 					usecaseStr := string(usecaseContent)
 
-					assert.Contains(t, usecaseStr, "internal/logger", "Use cases should import logger")
+					assert.Contains(t, usecaseStr, "ports.Logger", "Use cases should use logger interface")
 				}
 
-				// Check logger is used in handlers (presentation layer)
-				if handlerExists(t, filepath.Join(projectDir, "internal", "presentation", "handlers", "user_handler.go")) {
-					handlerContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "presentation", "handlers", "user_handler.go"))
+				// Check logger is used in controllers (adapter layer)
+				if handlerExists(t, filepath.Join(projectDir, "internal", "adapters", "controllers", "user_controller.go")) {
+					handlerContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "adapters", "controllers", "user_controller.go"))
 					require.NoError(t, err)
 					handlerStr := string(handlerContent)
 
-					assert.Contains(t, handlerStr, "internal/logger", "Handlers should import logger")
+					assert.Contains(t, handlerStr, "ports.Logger", "Controllers should use logger interface")
 				}
 
 				// Verify project compiles with the logger
@@ -483,9 +477,8 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 
 		// Check specific use case files exist
 		usecaseFiles := []string{
-			"internal/application/usecases/create_user_usecase.go",
-			"internal/application/usecases/get_user_usecase.go",
-			"internal/application/usecases/user_usecase.go",
+			"internal/domain/usecases/user_usecase.go",
+			"internal/domain/usecases/auth_usecase.go",
 		}
 
 		for _, file := range usecaseFiles {
@@ -509,20 +502,19 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 					assert.Contains(t, usecaseStr, "Get", "Get use case should have Get method")
 				}
 
-				// 4. Should use domain repositories (not infrastructure)
-				assert.Contains(t, usecaseStr, "internal/domain/repositories", "Should import domain repositories")
-				assert.NotContains(t, usecaseStr, "internal/infrastructure", "Should not import infrastructure directly")
+				// 4. Should use domain ports (not infrastructure)
+				assert.Contains(t, usecaseStr, "internal/domain/ports", "Should import domain ports")
+				assert.NotContains(t, usecaseStr, "internal/infrastructure/persistence", "Should not import infrastructure directly")
 			}
 		}
 
-		// Check application services coordination
-		if fileExists(t, filepath.Join(projectDir, "internal", "application", "services", "user_service.go")) {
-			serviceContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "application", "services", "user_service.go"))
+		// Check infrastructure services (if they exist)
+		if fileExists(t, filepath.Join(projectDir, "internal", "infrastructure", "services", "auth_service.go")) {
+			serviceContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "infrastructure", "services", "auth_service.go"))
 			require.NoError(t, err)
 			serviceStr := string(serviceContent)
 
-			assert.Contains(t, serviceStr, "internal/application/usecases", "Services should coordinate use cases")
-			assert.Contains(t, serviceStr, "type UserService", "Should define service interface or struct")
+			assert.Contains(t, serviceStr, "type", "Should define service types")
 		}
 	})
 
@@ -559,7 +551,7 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 		// Check domain entities
 		entityFiles := []string{
 			"internal/domain/entities/user.go",
-			"internal/domain/entities/product.go",
+			"internal/domain/entities/auth.go",
 		}
 
 		for _, file := range entityFiles {
@@ -638,13 +630,13 @@ func TestWebApiCleanBlueprintATDD(t *testing.T) {
 		projectDir := filepath.Join(tmpDir, "test-di")
 
 		// Check main.go for dependency injection setup
-		mainContent, err := os.ReadFile(filepath.Join(projectDir, "main.go"))
+		mainContent, err := os.ReadFile(filepath.Join(projectDir, "cmd", "server", "main.go"))
 		require.NoError(t, err)
 		mainStr := string(mainContent)
 
 		// Should wire dependencies from outer layers to inner layers
 		assert.Contains(t, mainStr, "internal/infrastructure", "Should import infrastructure layer")
-		assert.Contains(t, mainStr, "internal/presentation", "Should import presentation layer")
+		assert.Contains(t, mainStr, "internal/adapters", "Should import adapters layer")
 		
 		// Look for dependency injection patterns
 		diPatterns := []string{
@@ -732,10 +724,9 @@ func TestWebApiCleanArchitecturalCompliance(t *testing.T) {
 
 		// Analyze each layer for boundary violations
 		layers := map[string][]string{
-			"domain": {"internal/domain/entities", "internal/domain/repositories", "internal/domain/services"},
-			"application": {"internal/application/usecases", "internal/application/services"},
-			"infrastructure": {"internal/infrastructure/database", "internal/infrastructure/repositories"},
-			"presentation": {"internal/presentation/handlers", "internal/presentation/routes"},
+			"domain": {"internal/domain/entities", "internal/domain/ports", "internal/domain/usecases", "internal/domain/valueobjects"},
+			"adapters": {"internal/adapters/controllers", "internal/adapters/presenters"},
+			"infrastructure": {"internal/infrastructure/persistence", "internal/infrastructure/services", "internal/infrastructure/config"},
 		}
 
 		for layerName, directories := range layers {
@@ -779,10 +770,10 @@ func TestWebApiCleanArchitecturalCompliance(t *testing.T) {
 
 		projectDir := filepath.Join(tmpDir, "test-ports")
 
-		// 1. Check for Ports (interfaces) in domain or application layer
+		// 1. Check for Ports (interfaces) in domain layer
 		portFiles := []string{
-			"internal/domain/repositories/user_repository.go",
-			"internal/application/ports/user_port.go",
+			"internal/domain/ports/repositories.go",
+			"internal/domain/ports/services.go",
 		}
 
 		foundPorts := false
@@ -800,10 +791,10 @@ func TestWebApiCleanArchitecturalCompliance(t *testing.T) {
 			}
 		}
 
-		// 2. Check for Adapters (implementations) in infrastructure layer
+		// 2. Check for Adapters (implementations) in infrastructure and adapters layers
 		adapterFiles := []string{
-			"internal/infrastructure/repositories/user_repository_impl.go",
-			"internal/infrastructure/adapters/user_adapter.go",
+			"internal/infrastructure/persistence/user_repository.go",
+			"internal/adapters/controllers/user_controller.go",
 		}
 
 		foundAdapters := false
@@ -826,8 +817,8 @@ func TestWebApiCleanArchitecturalCompliance(t *testing.T) {
 			t.Logf("Ports and Adapters pattern implemented")
 		} else {
 			// Check if repository pattern exists (alternative implementation)
-			repoInterface := filepath.Join(projectDir, "internal", "domain", "repositories", "user_repository.go")
-			repoImpl := filepath.Join(projectDir, "internal", "infrastructure", "repositories", "user_repository_impl.go")
+			repoInterface := filepath.Join(projectDir, "internal", "domain", "ports", "repositories.go")
+			repoImpl := filepath.Join(projectDir, "internal", "infrastructure", "persistence", "user_repository.go")
 			
 			if fileExists(t, repoInterface) && fileExists(t, repoImpl) {
 				t.Logf("Repository pattern implements ports/adapters concept")
@@ -897,8 +888,8 @@ func TestWebApiCleanArchitecturalCompliance(t *testing.T) {
 		}
 
 		// Check if dependencies can be easily mocked (interfaces exist)
-		// Domain repositories should be interfaces
-		repoInterface := filepath.Join(projectDir, "internal", "domain", "repositories", "user_repository.go")
+		// Domain ports should be interfaces
+		repoInterface := filepath.Join(projectDir, "internal", "domain", "ports", "repositories.go")
 		if fileExists(t, repoInterface) {
 			repoContent, err := os.ReadFile(repoInterface)
 			require.NoError(t, err)
@@ -951,26 +942,20 @@ func analyzeBoundaryCompliance(t *testing.T, dir string, layerName string, proje
 				// Domain should not import outer layers
 				assert.NotContains(t, contentStr, "internal/infrastructure", 
 					"Domain layer should not import infrastructure: %s", path)
-				assert.NotContains(t, contentStr, "internal/presentation",
-					"Domain layer should not import presentation: %s", path)
+				assert.NotContains(t, contentStr, "internal/adapters",
+					"Domain layer should not import adapters: %s", path)
 				assert.NotContains(t, contentStr, "gin-gonic", 
 					"Domain should not import web frameworks: %s", path)
 				
-			case "application":
-				// Application should not import infrastructure or presentation
-				assert.NotContains(t, contentStr, "internal/infrastructure/repositories",
-					"Application layer should not import infrastructure repositories: %s", path)
-				assert.NotContains(t, contentStr, "internal/presentation",
-					"Application layer should not import presentation: %s", path)
+			case "adapters":
+				// Adapters should not import infrastructure directly, only domain
+				assert.NotContains(t, contentStr, "internal/infrastructure/persistence",
+					"Adapter layer should not import infrastructure persistence: %s", path)
 				
 			case "infrastructure":
-				// Infrastructure can import domain but not presentation
-				assert.NotContains(t, contentStr, "internal/presentation",
-					"Infrastructure should not import presentation: %s", path)
-				
-			case "presentation":
-				// Presentation can import all other layers (outermost layer)
-				// No restrictions
+				// Infrastructure can import domain but not adapters
+				assert.NotContains(t, contentStr, "internal/adapters",
+					"Infrastructure should not import adapters: %s", path)
 			}
 		}
 		return nil

@@ -10,7 +10,7 @@ import (
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/domain"
 	"{{.ModulePath}}/internal/observability"
-{{- if contains .ResilienceFeatures "circuit-breaker"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
 	"{{.ModulePath}}/internal/resilience"
 {{- end}}
 )
@@ -20,7 +20,7 @@ type EventRouter struct {
 	cfg      *config.Config
 	handlers map[string]EventHandler
 	logger   observability.Logger
-{{- if contains .ResilienceFeatures "circuit-breaker"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
 	cb       *resilience.CircuitBreaker
 {{- end}}
 }
@@ -47,7 +47,7 @@ func NewEventRouter(cfg *config.Config) (*EventRouter, error) {
 		logger:   logger,
 	}
 
-{{- if contains .ResilienceFeatures "circuit-breaker"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
 	// Initialize circuit breaker
 	var err error
 	router.cb, err = resilience.NewCircuitBreaker(cfg.Resilience.CircuitBreaker)
@@ -57,31 +57,31 @@ func NewEventRouter(cfg *config.Config) (*EventRouter, error) {
 {{- end}}
 
 	// Register handlers based on configured event sources
-{{- if contains .EventSources "sqs"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
 	if err := router.registerSQSHandler(); err != nil {
 		return nil, fmt.Errorf("failed to register SQS handler: %w", err)
 	}
 {{- end}}
 
-{{- if contains .EventSources "sns"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
 	if err := router.registerSNSHandler(); err != nil {
 		return nil, fmt.Errorf("failed to register SNS handler: %w", err)
 	}
 {{- end}}
 
-{{- if contains .EventSources "eventbridge"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
 	if err := router.registerEventBridgeHandler(); err != nil {
 		return nil, fmt.Errorf("failed to register EventBridge handler: %w", err)
 	}
 {{- end}}
 
-{{- if contains .EventSources "dynamodb-streams"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "dynamodb-streams")) (and (kindIs "slice" .EventSources) (has "dynamodb-streams" .EventSources))}}
 	if err := router.registerDynamoDBHandler(); err != nil {
 		return nil, fmt.Errorf("failed to register DynamoDB handler: %w", err)
 	}
 {{- end}}
 
-{{- if contains .EventSources "kinesis"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "kinesis")) (and (kindIs "slice" .EventSources) (has "kinesis" .EventSources))}}
 	if err := router.registerKinesisHandler(); err != nil {
 		return nil, fmt.Errorf("failed to register Kinesis handler: %w", err)
 	}
@@ -137,7 +137,7 @@ func (r *EventRouter) RouteEvent(ctx context.Context, event interface{}) (interf
 
 // processEventWithResilience processes an event with resilience patterns applied
 func (r *EventRouter) processEventWithResilience(ctx context.Context, handler EventHandler, event interface{}, eventType string) (interface{}, error) {
-{{- if contains .ResilienceFeatures "circuit-breaker"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
 	// Apply circuit breaker pattern
 	return r.cb.Execute(func() (interface{}, error) {
 		return r.processEvent(ctx, handler, event, eventType)
@@ -184,7 +184,7 @@ func (r *EventRouter) detectEventType(event interface{}) (string, error) {
 	}
 
 	// Check for SQS event
-{{- if contains .EventSources "sqs"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
 	var sqsEvent events.SQSEvent
 	if err := json.Unmarshal(eventBytes, &sqsEvent); err == nil && len(sqsEvent.Records) > 0 && sqsEvent.Records[0].EventSource == "aws:sqs" {
 		return "sqs", nil
@@ -192,7 +192,7 @@ func (r *EventRouter) detectEventType(event interface{}) (string, error) {
 {{- end}}
 
 	// Check for SNS event
-{{- if contains .EventSources "sns"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
 	var snsEvent events.SNSEvent
 	if err := json.Unmarshal(eventBytes, &snsEvent); err == nil && len(snsEvent.Records) > 0 && snsEvent.Records[0].EventSource == "aws:sns" {
 		return "sns", nil
@@ -200,7 +200,7 @@ func (r *EventRouter) detectEventType(event interface{}) (string, error) {
 {{- end}}
 
 	// Check for EventBridge event
-{{- if contains .EventSources "eventbridge"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
 	var eventBridgeEvent events.CloudWatchEvent
 	if err := json.Unmarshal(eventBytes, &eventBridgeEvent); err == nil && eventBridgeEvent.Source != "" {
 		return "eventbridge", nil
@@ -208,7 +208,7 @@ func (r *EventRouter) detectEventType(event interface{}) (string, error) {
 {{- end}}
 
 	// Check for DynamoDB Streams event
-{{- if contains .EventSources "dynamodb-streams"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "dynamodb-streams")) (and (kindIs "slice" .EventSources) (has "dynamodb-streams" .EventSources))}}
 	var dynamoEvent events.DynamoDBEvent
 	if err := json.Unmarshal(eventBytes, &dynamoEvent); err == nil && len(dynamoEvent.Records) > 0 && dynamoEvent.Records[0].EventSource == "aws:dynamodb" {
 		return "dynamodb", nil
@@ -216,7 +216,7 @@ func (r *EventRouter) detectEventType(event interface{}) (string, error) {
 {{- end}}
 
 	// Check for Kinesis event
-{{- if contains .EventSources "kinesis"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "kinesis")) (and (kindIs "slice" .EventSources) (has "kinesis" .EventSources))}}
 	var kinesisEvent events.KinesisEvent
 	if err := json.Unmarshal(eventBytes, &kinesisEvent); err == nil && len(kinesisEvent.Records) > 0 && kinesisEvent.Records[0].EventSource == "aws:kinesis" {
 		return "kinesis", nil
@@ -228,7 +228,7 @@ func (r *EventRouter) detectEventType(event interface{}) (string, error) {
 }
 
 // Handler registration methods
-{{- if contains .EventSources "sqs"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
 func (r *EventRouter) registerSQSHandler() error {
 	handler, err := NewSQSHandler(r.cfg)
 	if err != nil {
@@ -239,7 +239,7 @@ func (r *EventRouter) registerSQSHandler() error {
 }
 {{- end}}
 
-{{- if contains .EventSources "sns"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
 func (r *EventRouter) registerSNSHandler() error {
 	handler, err := NewSNSHandler(r.cfg)
 	if err != nil {
@@ -250,7 +250,7 @@ func (r *EventRouter) registerSNSHandler() error {
 }
 {{- end}}
 
-{{- if contains .EventSources "eventbridge"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
 func (r *EventRouter) registerEventBridgeHandler() error {
 	handler, err := NewEventBridgeHandler(r.cfg)
 	if err != nil {
@@ -261,7 +261,7 @@ func (r *EventRouter) registerEventBridgeHandler() error {
 }
 {{- end}}
 
-{{- if contains .EventSources "dynamodb-streams"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "dynamodb-streams")) (and (kindIs "slice" .EventSources) (has "dynamodb-streams" .EventSources))}}
 func (r *EventRouter) registerDynamoDBHandler() error {
 	handler, err := NewDynamoDBHandler(r.cfg)
 	if err != nil {
@@ -272,7 +272,7 @@ func (r *EventRouter) registerDynamoDBHandler() error {
 }
 {{- end}}
 
-{{- if contains .EventSources "kinesis"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "kinesis")) (and (kindIs "slice" .EventSources) (has "kinesis" .EventSources))}}
 func (r *EventRouter) registerKinesisHandler() error {
 	handler, err := NewKinesisHandler(r.cfg)
 	if err != nil {

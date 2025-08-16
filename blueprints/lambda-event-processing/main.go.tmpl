@@ -12,7 +12,7 @@ import (
 	"{{.ModulePath}}/internal/handler"
 	"{{.ModulePath}}/internal/observability"
 	"{{.ModulePath}}/internal/performance"
-{{- if contains .SecurityFeatures "secrets-manager"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
 	"{{.ModulePath}}/internal/security"
 {{- end}}
 )
@@ -49,7 +49,7 @@ func init() {
 	logger.Info("Initializing Lambda function", map[string]interface{}{
 		"project":        "{{.ProjectName}}",
 		"logger_type":    "{{.LoggerType}}",
-		"event_sources":  []string{ {{- range $i, $source := .EventSources}}{{if $i}}, {{end}}"{{$source}}"{{end}} },
+		"event_sources":  []string{ {{- if kindIs "slice" .EventSources}}{{range $i, $source := .EventSources}}{{if $i}}, {{end}}"{{$source}}"{{end}}{{else}}"{{.EventSources}}"{{end}} },
 		"processing":     "{{.ProcessingPattern}}",
 		"go_version":     "{{.GoVersion}}",
 	})
@@ -64,7 +64,7 @@ func init() {
 		})
 	}
 
-{{- if contains .SecurityFeatures "secrets-manager"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
 	// Initialize secrets manager
 	if err := security.InitializeSecretsManager(); err != nil {
 		logger.Error("Failed to initialize secrets manager", map[string]interface{}{

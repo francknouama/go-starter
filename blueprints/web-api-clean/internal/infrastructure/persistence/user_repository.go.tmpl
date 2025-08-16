@@ -48,14 +48,14 @@ func (r *UserRepository) Create(ctx context.Context, user *entities.User) error 
 	model := r.entityToModel(user)
 	
 	if err := r.db.WithContext(ctx).Create(model).Error; err != nil {
-		r.logger.Error("Failed to create user", "error", err, "email", user.Email)
+		r.logger.Error("Failed to create user", "error", err, "email", user.Email().String())
 		return err
 	}
 
-	// Update entity with generated ID
-	user.ID = model.ID
+	// Note: In Clean Architecture, entities are immutable after creation
+	// The ID is already set during entity creation via NewUser or NewUserFromPersistence
 	
-	r.logger.Info("User created successfully", "user_id", user.ID, "email", user.Email)
+	r.logger.Info("User created successfully", "user_id", user.ID().String(), "email", user.Email().String())
 	return nil
 }
 
@@ -71,7 +71,12 @@ func (r *UserRepository) GetByID(ctx context.Context, id string) (*entities.User
 		return nil, err
 	}
 
-	return r.modelToEntity(&model), nil
+	user, err := r.modelToEntity(&model)
+	if err != nil {
+		r.logger.Error("Failed to convert model to entity", "error", err)
+		return nil, err
+	}
+	return user, nil
 }
 
 // GetByEmail retrieves a user by their email address
@@ -86,7 +91,12 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*entitie
 		return nil, err
 	}
 
-	return r.modelToEntity(&model), nil
+	user, err := r.modelToEntity(&model)
+	if err != nil {
+		r.logger.Error("Failed to convert model to entity", "error", err)
+		return nil, err
+	}
+	return user, nil
 }
 
 // GetByUsername retrieves a user by their username
@@ -101,7 +111,12 @@ func (r *UserRepository) GetByUsername(ctx context.Context, username string) (*e
 		return nil, err
 	}
 
-	return r.modelToEntity(&model), nil
+	user, err := r.modelToEntity(&model)
+	if err != nil {
+		r.logger.Error("Failed to convert model to entity", "error", err)
+		return nil, err
+	}
+	return user, nil
 }
 
 // Update modifies an existing user
@@ -147,9 +162,14 @@ func (r *UserRepository) List(ctx context.Context, offset, limit int) ([]*entiti
 		return nil, err
 	}
 
-	users := make([]*entities.User, len(models))
-	for i, model := range models {
-		users[i] = r.modelToEntity(&model)
+	users := make([]*entities.User, 0, len(models))
+	for _, model := range models {
+		user, err := r.modelToEntity(&model)
+		if err != nil {
+			r.logger.Error("Failed to convert model to entity in list", "error", err)
+			continue // Skip invalid records rather than failing the entire operation
+		}
+		users = append(users, user)
 	}
 
 	return users, nil
@@ -182,31 +202,32 @@ func (r *UserRepository) ExistsByUsername(ctx context.Context, username string) 
 // entityToModel converts an entity.User to UserModel
 func (r *UserRepository) entityToModel(user *entities.User) *UserModel {
 	return &UserModel{
-		ID:        user.ID,
-		Email:     user.Email,
-		Username:  user.Username,
-		FirstName: user.FirstName,
-		LastName:  user.LastName,
-		Password:  user.Password,
-		IsActive:  user.IsActive,
-		CreatedAt: user.CreatedAt.Unix(),
-		UpdatedAt: user.UpdatedAt.Unix(),
+		ID:        user.ID().String(),
+		Email:     user.Email().String(),
+		Username:  user.Username(),
+		FirstName: user.FirstName(),
+		LastName:  user.LastName(),
+		Password:  user.GetPasswordHash(), // We need a method to get the hash
+		IsActive:  user.IsActive(),
+		CreatedAt: user.CreatedAt().Unix(),
+		UpdatedAt: user.UpdatedAt().Unix(),
 	}
 }
 
 // modelToEntity converts a UserModel to entities.User
-func (r *UserRepository) modelToEntity(model *UserModel) *entities.User {
-	return &entities.User{
-		ID:        model.ID,
-		Email:     model.Email,
-		Username:  model.Username,
-		FirstName: model.FirstName,
-		LastName:  model.LastName,
-		Password:  model.Password,
-		IsActive:  model.IsActive,
-		CreatedAt: timeFromUnix(model.CreatedAt),
-		UpdatedAt: timeFromUnix(model.UpdatedAt),
-	}
+func (r *UserRepository) modelToEntity(model *UserModel) (*entities.User, error) {
+	// Use the entity's constructor for persistence data
+	return entities.NewUserFromPersistence(
+		model.ID,
+		model.Email,
+		model.Username,
+		model.FirstName,
+		model.LastName,
+		model.Password, // Password hash
+		model.IsActive,
+		timeFromUnix(model.CreatedAt),
+		timeFromUnix(model.UpdatedAt),
+	)
 }
 
 // timeFromUnix converts unix timestamp to time.Time

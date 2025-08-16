@@ -6,17 +6,21 @@ A production-grade AWS Lambda function built with Go for comprehensive event pro
 
 This Lambda function implements advanced event-driven patterns with:
 
-- **Multi-Source Event Processing**: Handles {{range $i, $source := .EventSources}}{{if $i}}, {{end}}{{$source}}{{end}}
+- **Multi-Source Event Processing**: Handles {{if kindIs "slice" .EventSources}}{{range $i, $source := .EventSources}}{{if $i}}, {{end}}{{$source}}{{end}}{{else}}{{.EventSources}}{{end}}
 - **{{.ProcessingPattern | title}} Processing**: Optimized for {{.ProcessingPattern}} event processing patterns
 - **Comprehensive Observability**: X-Ray tracing, CloudWatch metrics, structured logging
-- **Production Resilience**: {{range $i, $feature := .ResilienceFeatures}}{{if $i}}, {{end}}{{$feature}}{{end}}
-- **Enterprise Security**: {{range $i, $feature := .SecurityFeatures}}{{if $i}}, {{end}}{{$feature}}{{end}}
+- **Production Resilience**: {{if kindIs "slice" .ResilienceFeatures}}{{range $i, $feature := .ResilienceFeatures}}{{if $i}}, {{end}}{{$feature}}{{end}}{{else}}{{.ResilienceFeatures}}{{end}}
+- **Enterprise Security**: {{if kindIs "slice" .SecurityFeatures}}{{range $i, $feature := .SecurityFeatures}}{{if $i}}, {{end}}{{$feature}}{{end}}{{else}}{{.SecurityFeatures}}{{end}}
 
 ## 🚀 Features
 
 ### Event Sources
+{{- if kindIs "slice" .EventSources}}
 {{- range .EventSources}}
 - **{{. | upper}}**: Production-ready {{.}} event processing with error handling
+{{- end}}
+{{- else}}
+- **{{.EventSources | upper}}**: Production-ready {{.EventSources}} event processing with error handling
 {{- end}}
 
 ### Processing Patterns
@@ -31,24 +35,24 @@ This Lambda function implements advanced event-driven patterns with:
 - **Performance Monitoring**: Cold start optimization and memory usage tracking
 
 ### Resilience & Reliability
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 - **Dead Letter Queues**: Automatic DLQ handling for failed messages
 {{- end}}
-{{- if contains .ResilienceFeatures "retry"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "retry")) (and (kindIs "slice" .ResilienceFeatures) (has "retry" .ResilienceFeatures))}}
 - **Exponential Backoff**: Configurable retry logic with jitter
 {{- end}}
-{{- if contains .ResilienceFeatures "circuit-breaker"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
 - **Circuit Breaker**: Fail-fast pattern for downstream service protection
 {{- end}}
-{{- if contains .ResilienceFeatures "timeout"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "timeout")) (and (kindIs "slice" .ResilienceFeatures) (has "timeout" .ResilienceFeatures))}}
 - **Timeout Management**: Context-aware processing with cleanup buffers
 {{- end}}
 
 ### Security
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 - **Input Validation**: Comprehensive message validation and sanitization
 {{- end}}
-{{- if contains .SecurityFeatures "secrets-manager"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
 - **Secrets Management**: AWS Secrets Manager integration for sensitive data
 {{- end}}
 - **IAM Least Privilege**: Minimal required permissions with resource-specific access
@@ -71,19 +75,19 @@ This Lambda function implements advanced event-driven patterns with:
 │   │   └── result.go               # Processing result models
 │   ├── handler/                     # Event handlers
 │   │   ├── event_router.go         # Intelligent event routing
-{{- if contains .EventSources "sqs"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
 │   │   ├── sqs_handler.go          # SQS message processing
 {{- end}}
-{{- if contains .EventSources "sns"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
 │   │   ├── sns_handler.go          # SNS notification processing
 {{- end}}
-{{- if contains .EventSources "eventbridge"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
 │   │   ├── eventbridge_handler.go  # EventBridge event processing
 {{- end}}
-{{- if contains .EventSources "dynamodb-streams"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "dynamodb-streams")) (and (kindIs "slice" .EventSources) (has "dynamodb-streams" .EventSources))}}
 │   │   ├── dynamodb_handler.go     # DynamoDB streams processing
 {{- end}}
-{{- if contains .EventSources "kinesis"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "kinesis")) (and (kindIs "slice" .EventSources) (has "kinesis" .EventSources))}}
 │   │   └── kinesis_handler.go      # Kinesis stream processing
 {{- end}}
 │   ├── observability/              # Observability stack
@@ -96,27 +100,27 @@ This Lambda function implements advanced event-driven patterns with:
 │   ├── processor/                   # Processing patterns
 │   │   └── batch_processor.go      # Batch processing implementation
 {{- end}}
-{{- if contains .ResilienceFeatures "dlq" "retry" "circuit-breaker" "timeout"}}
+{{- if and .ResilienceFeatures (or (or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))) (or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "retry")) (and (kindIs "slice" .ResilienceFeatures) (has "retry" .ResilienceFeatures))) (or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))) (or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "timeout")) (and (kindIs "slice" .ResilienceFeatures) (has "timeout" .ResilienceFeatures))))}}
 │   ├── resilience/                 # Resilience patterns
-{{- if contains .ResilienceFeatures "retry"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "retry")) (and (kindIs "slice" .ResilienceFeatures) (has "retry" .ResilienceFeatures))}}
 │   │   ├── retry.go                # Exponential backoff retry
 {{- end}}
-{{- if contains .ResilienceFeatures "circuit-breaker"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
 │   │   ├── circuit_breaker.go      # Circuit breaker pattern
 {{- end}}
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 │   │   ├── dlq_handler.go          # Dead letter queue handling
 {{- end}}
-{{- if contains .ResilienceFeatures "timeout"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "timeout")) (and (kindIs "slice" .ResilienceFeatures) (has "timeout" .ResilienceFeatures))}}
 │   │   └── timeout.go              # Timeout management
 {{- end}}
 {{- end}}
-{{- if contains .SecurityFeatures "input-validation" "secrets-manager"}}
+{{- if and .SecurityFeatures (or (or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))) (or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))))}}
 │   ├── security/                   # Security components
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 │   │   ├── input_validator.go      # Input validation
 {{- end}}
-{{- if contains .SecurityFeatures "secrets-manager"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
 │   │   └── secrets_manager.go      # Secrets management
 {{- end}}
 {{- end}}
@@ -134,12 +138,12 @@ This Lambda function implements advanced event-driven patterns with:
 │   ├── development.yaml            # Development settings
 │   ├── production.yaml             # Production settings
 │   └── testing.yaml                # Testing settings
-{{- if contains .DeploymentTargets "sam"}}
+{{- if has "sam" .DeploymentTargets}}
 ├── sam/                            # AWS SAM deployment
 │   ├── template.yaml               # SAM template
 │   └── parameters.json             # Deployment parameters
 {{- end}}
-{{- if contains .DeploymentTargets "terraform"}}
+{{- if has "terraform" .DeploymentTargets}}
 ├── terraform/                      # Terraform infrastructure
 │   ├── main.tf                     # Main Terraform config
 │   ├── variables.tf                # Variable definitions
@@ -161,10 +165,10 @@ This Lambda function implements advanced event-driven patterns with:
 
 - Go {{.GoVersion}}+ installed
 - AWS CLI configured with appropriate permissions
-{{- if contains .DeploymentTargets "sam"}}
+{{- if has "sam" .DeploymentTargets}}
 - AWS SAM CLI for deployment
 {{- end}}
-{{- if contains .DeploymentTargets "terraform"}}
+{{- if has "terraform" .DeploymentTargets}}
 - Terraform for infrastructure management
 {{- end}}
 
@@ -219,7 +223,7 @@ observability:
   metrics_enabled: true
   log_level: "debug"
 
-{{- if contains .ResilienceFeatures "retry"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "retry")) (and (kindIs "slice" .ResilienceFeatures) (has "retry" .ResilienceFeatures))}}
 resilience:
   retry:
     max_attempts: 3
@@ -227,7 +231,7 @@ resilience:
     max_backoff_seconds: 60
 {{- end}}
 
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 security:
   validation:
     enabled: true
@@ -253,12 +257,12 @@ METRICS_NAMESPACE={{.ProjectName}}
 PROCESSING_PATTERN={{.ProcessingPattern}}
 MAX_CONCURRENCY=10
 
-{{- if contains .SecurityFeatures "secrets-manager"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
 # Security
 SECRETS_MANAGER_ENABLED=true
 {{- end}}
 
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 # Resilience
 DLQ_ENABLED=true
 DLQ_URL=https://sqs.region.amazonaws.com/account/dlq-name
@@ -268,7 +272,7 @@ DLQ_URL=https://sqs.region.amazonaws.com/account/dlq-name
 ## 🚀 Deployment
 
 ### Using AWS SAM
-{{- if contains .DeploymentTargets "sam"}}
+{{- if has "sam" .DeploymentTargets}}
 
 ```bash
 # Build and deploy
@@ -281,7 +285,7 @@ sam deploy --guided
 {{- end}}
 
 ### Using Terraform
-{{- if contains .DeploymentTargets "terraform"}}
+{{- if has "terraform" .DeploymentTargets}}
 
 ```bash
 cd terraform
@@ -308,7 +312,7 @@ The function publishes custom metrics:
 - `ProcessingDuration`: Event processing time
 - `EventsProcessed`: Number of events processed
 - `ProcessingErrors`: Number of processing failures
-{{- if contains .EventSources "sqs"}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
 - `SQSMessagesProcessed`: SQS-specific message metrics
 {{- end}}
 - `ColdStartDuration`: Lambda cold start performance
@@ -366,7 +370,7 @@ make clean
 
 ### Error Handling Strategy
 
-{{- if contains .ResilienceFeatures "dlq"}}
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
 1. **Primary Processing**: Attempt normal event processing
 2. **Retry Logic**: Exponential backoff for transient failures
 3. **Dead Letter Queue**: Failed messages sent to DLQ for analysis
@@ -375,10 +379,10 @@ make clean
 
 ### Security Considerations
 
-{{- if contains .SecurityFeatures "input-validation"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
 - **Input Validation**: All event data validated before processing
 {{- end}}
-{{- if contains .SecurityFeatures "secrets-manager"}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
 - **Secrets Management**: No hardcoded secrets, AWS Secrets Manager integration
 {{- end}}
 - **IAM Least Privilege**: Minimal required permissions

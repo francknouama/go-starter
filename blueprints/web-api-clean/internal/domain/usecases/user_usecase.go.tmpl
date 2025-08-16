@@ -93,12 +93,12 @@ func (uc *UserUseCase) CreateUser(ctx context.Context, input UserUseCaseInput) (
 	if uc.emailService != nil {
 		go func() {
 			if err := uc.emailService.SendWelcomeEmail(context.Background(), user); err != nil {
-				uc.logger.Error("Failed to send welcome email", "error", err, "user_id", user.ID)
+				uc.logger.Error("Failed to send welcome email", "error", err, "user_id", user.ID().String())
 			}
 		}()
 	}
 
-	uc.logger.Info("User created successfully", "user_id", user.ID)
+	uc.logger.Info("User created successfully", "user_id", user.ID().String())
 
 	return &UserUseCaseOutput{
 		User:    user,
@@ -148,21 +148,15 @@ func (uc *UserUseCase) UpdateUser(ctx context.Context, userID string, input User
 		user.UpdateProfile(input.FirstName, input.LastName)
 	}
 
-	// Update password if provided
+	// Change password if provided
 	if input.Password != "" {
-		hashedPassword, err := uc.passwordService.Hash(input.Password)
-		if err != nil {
-			uc.logger.Error("Failed to hash password for update", "error", err)
+		if err := user.ChangePassword(input.Password); err != nil {
+			uc.logger.Error("Failed to change password for update", "error", err)
 			return nil, err
 		}
-		user.Password = hashedPassword
 	}
 
-	// Validate updated user
-	if err := user.Validate(); err != nil {
-		uc.logger.Error("User validation failed after update", "error", err)
-		return nil, err
-	}
+	// User entity validates itself during the update operations above
 
 	// Save updated user
 	if err := uc.userRepo.Update(ctx, user); err != nil {

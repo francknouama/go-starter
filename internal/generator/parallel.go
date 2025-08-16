@@ -34,6 +34,7 @@ type templateJob struct {
 	destPath     string
 	context      map[string]any
 	jobID        int
+	transaction  *GenerationTransaction
 }
 
 // templateResult represents the result of processing a template job
@@ -202,7 +203,7 @@ func (wp *WorkerPool) processJob(workerID int, job *templateJob) {
 
 	// Ensure destination directory exists
 	destDir := filepath.Dir(job.destPath)
-	if err := wp.dirCache.ensureDir(destDir, nil); err != nil {
+	if err := wp.dirCache.ensureDir(destDir, job.transaction); err != nil {
 		result.error = fmt.Errorf("worker %d: failed to create directory: %w", workerID, err)
 		wp.results <- result
 		return
@@ -211,6 +212,7 @@ func (wp *WorkerPool) processJob(workerID int, job *templateJob) {
 	// Create a temporary generator instance for processing
 	tempGen := &Generator{
 		loader: templates.NewTemplateLoader(), // Create a new instance for thread safety
+		currentTransaction: job.transaction, // Pass the transaction for tracking
 	}
 
 	// Process the template file (will use cached templates)
@@ -282,6 +284,7 @@ func (ptp *ParallelTemplateProcessor) ProcessTemplates(
 			destPath:     fullDestPath,
 			context:      context,
 			jobID:        jobCount,
+			transaction:  ptp.transaction,
 		}
 
 		ptp.pool.SubmitJob(job)

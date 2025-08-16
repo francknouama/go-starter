@@ -81,55 +81,55 @@ func (uc *AuthUseCase) Login(ctx context.Context, input LoginInput) (*LoginOutpu
 		return nil, entities.ErrInvalidCredentials
 	}
 
-	// Verify password
-	if err := uc.passwordService.Verify(input.Password, user.Password); err != nil {
-		uc.logger.Warn("Invalid password during login", "user_id", user.ID)
+	// Verify password using entity method
+	if !user.VerifyPassword(input.Password) {
+		uc.logger.Warn("Invalid password during login", "user_id", user.ID().String())
 		return nil, entities.ErrInvalidCredentials
 	}
 
 	// Check if user is active
-	if !user.IsActive {
-		uc.logger.Warn("Inactive user login attempt", "user_id", user.ID)
+	if !user.IsActive() {
+		uc.logger.Warn("Inactive user login attempt", "user_id", user.ID().String())
 		return nil, entities.ErrInvalidCredentials
 	}
 
 	// Generate tokens
-	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID)
+	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID().String())
 	if err != nil {
-		uc.logger.Error("Failed to generate access token", "error", err, "user_id", user.ID)
+		uc.logger.Error("Failed to generate access token", "error", err, "user_id", user.ID().String())
 		return nil, err
 	}
 
-	refreshToken, err := uc.tokenService.GenerateRefreshToken(user.ID)
+	refreshToken, err := uc.tokenService.GenerateRefreshToken(user.ID().String())
 	if err != nil {
-		uc.logger.Error("Failed to generate refresh token", "error", err, "user_id", user.ID)
+		uc.logger.Error("Failed to generate refresh token", "error", err, "user_id", user.ID().String())
 		return nil, err
 	}
 
 	// Create session
 	session := entities.NewAuthSession(
-		user.ID,
+		user.ID().String(),
 		accessToken.Token,
 		refreshToken.Token,
 		input.IPAddress,
 		input.UserAgent,
-		accessToken.ExpiresAt.Sub(accessToken.ExpiresAt),
+		time.Until(accessToken.ExpiresAt),
 	)
 
 	// Save session
 	if err := uc.sessionRepo.Create(ctx, session); err != nil {
-		uc.logger.Error("Failed to create session", "error", err, "user_id", user.ID)
+		uc.logger.Error("Failed to create session", "error", err, "user_id", user.ID().String())
 		return nil, err
 	}
 
-	uc.logger.Info("User logged in successfully", "user_id", user.ID, "session_id", session.ID)
+	uc.logger.Info("User logged in successfully", "user_id", user.ID().String(), "session_id", session.ID)
 
 	return &LoginOutput{
 		User:         user,
 		AccessToken:  accessToken.Token,
 		RefreshToken: refreshToken.Token,
 		TokenType:    accessToken.TokenType,
-		ExpiresIn:    int64(accessToken.ExpiresAt.Sub(accessToken.ExpiresAt).Seconds()),
+		ExpiresIn:    int64(time.Until(accessToken.ExpiresAt).Seconds()),
 		Session:      session,
 	}, nil
 }
@@ -161,22 +161,22 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, input RefreshTokenInput
 	}
 
 	// Check if user is still active
-	if !user.IsActive {
-		uc.logger.Warn("Token refresh for inactive user", "user_id", user.ID)
+	if !user.IsActive() {
+		uc.logger.Warn("Token refresh for inactive user", "user_id", user.ID().String())
 		_ = uc.sessionRepo.Delete(ctx, session.ID)
 		return nil, entities.ErrInvalidCredentials
 	}
 
 	// Generate new tokens
-	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID)
+	accessToken, err := uc.tokenService.GenerateAccessToken(user.ID().String())
 	if err != nil {
-		uc.logger.Error("Failed to generate new access token", "error", err, "user_id", user.ID)
+		uc.logger.Error("Failed to generate new access token", "error", err, "user_id", user.ID().String())
 		return nil, err
 	}
 
-	refreshToken, err := uc.tokenService.GenerateRefreshToken(user.ID)
+	refreshToken, err := uc.tokenService.GenerateRefreshToken(user.ID().String())
 	if err != nil {
-		uc.logger.Error("Failed to generate new refresh token", "error", err, "user_id", user.ID)
+		uc.logger.Error("Failed to generate new refresh token", "error", err, "user_id", user.ID().String())
 		return nil, err
 	}
 
@@ -184,7 +184,7 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, input RefreshTokenInput
 	session.Refresh(
 		accessToken.Token,
 		refreshToken.Token,
-		accessToken.ExpiresAt.Sub(accessToken.ExpiresAt),
+		time.Until(accessToken.ExpiresAt),
 	)
 
 	// Save updated session
@@ -193,14 +193,14 @@ func (uc *AuthUseCase) RefreshToken(ctx context.Context, input RefreshTokenInput
 		return nil, err
 	}
 
-	uc.logger.Info("Token refreshed successfully", "user_id", user.ID, "session_id", session.ID)
+	uc.logger.Info("Token refreshed successfully", "user_id", user.ID().String(), "session_id", session.ID)
 
 	return &LoginOutput{
 		User:         user,
 		AccessToken:  accessToken.Token,
 		RefreshToken: refreshToken.Token,
 		TokenType:    accessToken.TokenType,
-		ExpiresIn:    int64(accessToken.ExpiresAt.Sub(accessToken.ExpiresAt).Seconds()),
+		ExpiresIn:    int64(time.Until(accessToken.ExpiresAt).Seconds()),
 		Session:      session,
 	}, nil
 }
@@ -270,8 +270,8 @@ func (uc *AuthUseCase) ValidateSession(ctx context.Context, accessToken string) 
 	}
 
 	// Check if user is active
-	if !user.IsActive {
-		uc.logger.Warn("Session validation for inactive user", "user_id", user.ID)
+	if !user.IsActive() {
+		uc.logger.Warn("Session validation for inactive user", "user_id", user.ID().String())
 		_ = uc.sessionRepo.Delete(ctx, session.ID)
 		return nil, entities.ErrInvalidCredentials
 	}
