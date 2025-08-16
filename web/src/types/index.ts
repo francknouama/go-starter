@@ -70,26 +70,22 @@ export interface ProjectConfig {
   logger: LoggerType
   
   // Advanced configuration
-  database?: {
-    driver: DatabaseDriver
-    orm: DatabaseORM
-  }
-  
-  authentication?: {
-    type: AuthType
-    providers?: string[]
-  }
-  
-  deployment?: {
-    targets: string[]
-    cloudProvider?: CloudProvider
-  }
-  
   features?: {
-    testing?: boolean
-    monitoring?: boolean
-    logging?: boolean
-    caching?: boolean
+    database?: {
+      driver: DatabaseDriver
+      orm: DatabaseORM
+    }
+    authentication?: {
+      type: AuthType
+      providers: string[]
+    }
+    testing?: {
+      framework: string
+      coverage: boolean
+    }
+    deployment?: {
+      targets: string[]
+    }
   }
 }
 
