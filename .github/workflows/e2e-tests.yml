@@ -1,0 +1,292 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'web/**'
+      - 'cmd/web-server/**'
+      - 'internal/web/**'
+      - '.github/workflows/e2e-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'web/**'
+      - 'cmd/web-server/**'
+      - 'internal/web/**'
+      - '.github/workflows/e2e-tests.yml'
+
+jobs:
+  e2e-tests:
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        browser: [chromium, firefox, webkit]
+        
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+
+    - name: Install Go dependencies
+      run: go mod download
+
+    - name: Build Go web server
+      run: go build -o bin/web-server cmd/web-server/main.go
+
+    - name: Install Node.js dependencies
+      working-directory: ./web
+      run: npm ci
+
+    - name: Install Playwright browsers
+      working-directory: ./web
+      run: npx playwright install --with-deps ${{ matrix.browser }}
+
+    - name: Build web UI
+      working-directory: ./web
+      run: npm run build
+
+    - name: Run E2E tests
+      working-directory: ./web
+      run: npx playwright test --project=${{ matrix.browser }}
+      env:
+        CI: true
+
+    - name: Upload test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: playwright-report-${{ matrix.browser }}
+        path: web/playwright-report/
+        retention-days: 30
+
+    - name: Upload test videos
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: playwright-videos-${{ matrix.browser }}
+        path: web/test-results/
+        retention-days: 7
+
+  visual-regression:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        go mod download
+        cd web && npm ci
+
+    - name: Build applications
+      run: |
+        go build -o bin/web-server cmd/web-server/main.go
+        cd web && npm run build
+
+    - name: Install Playwright
+      working-directory: ./web
+      run: npx playwright install chromium
+
+    - name: Run visual regression tests
+      working-directory: ./web
+      run: npx playwright test --project=chromium --grep="visual|screenshot"
+      env:
+        CI: true
+
+    - name: Upload visual diffs
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: visual-regression-diffs
+        path: web/test-results/
+        retention-days: 14
+
+  performance-tests:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        go mod download
+        cd web && npm ci
+
+    - name: Build applications
+      run: |
+        go build -o bin/web-server cmd/web-server/main.go
+        cd web && npm run build
+
+    - name: Install Playwright
+      working-directory: ./web
+      run: npx playwright install chromium
+
+    - name: Run performance tests
+      working-directory: ./web
+      run: npx playwright test performance-accessibility.spec.ts --project=chromium
+      env:
+        CI: true
+
+    - name: Upload performance report
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: performance-report
+        path: web/playwright-report/
+        retention-days: 30
+
+  accessibility-tests:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        go mod download
+        cd web && npm ci
+
+    - name: Build applications
+      run: |
+        go build -o bin/web-server cmd/web-server/main.go
+        cd web && npm run build
+
+    - name: Install Playwright
+      working-directory: ./web
+      run: npx playwright install chromium
+
+    - name: Run accessibility tests
+      working-directory: ./web
+      run: npx playwright test --grep="accessibility|a11y|screen reader|keyboard" --project=chromium
+      env:
+        CI: true
+
+    - name: Upload accessibility report
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: accessibility-report
+        path: web/playwright-report/
+        retention-days: 30
+
+  mobile-tests:
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.21'
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        go mod download
+        cd web && npm ci
+
+    - name: Build applications
+      run: |
+        go build -o bin/web-server cmd/web-server/main.go
+        cd web && npm run build
+
+    - name: Install Playwright
+      working-directory: ./web
+      run: npx playwright install chromium
+
+    - name: Run mobile tests
+      working-directory: ./web
+      run: npx playwright test --project="Mobile Chrome" --project="Mobile Safari"
+      env:
+        CI: true
+
+    - name: Upload mobile test results
+      uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: mobile-test-report
+        path: web/playwright-report/
+        retention-days: 30
+
+  test-summary:
+    if: always()
+    needs: [e2e-tests, visual-regression, performance-tests, accessibility-tests, mobile-tests]
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Test Summary
+      run: |
+        echo "## E2E Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| E2E Tests | ${{ needs.e2e-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Visual Regression | ${{ needs.visual-regression.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Performance Tests | ${{ needs.performance-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Accessibility Tests | ${{ needs.accessibility-tests.result }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Mobile Tests | ${{ needs.mobile-tests.result }} |" >> $GITHUB_STEP_SUMMARY

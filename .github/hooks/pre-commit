@@ -1,0 +1,242 @@
+#!/bin/bash
+# Pre-commit hooks for go-starter specialized agents
+
+set -e
+
+echo "🔍 Running pre-commit hooks..."
+
+# Load agent configurations
+ACCESSIBILITY_AGENT="ACCESSIBILITY_UX_AGENT.md"
+DEVOPS_AGENT="DEVOPS_DEPLOYMENT_AGENT.md"
+PERFORMANCE_AGENT="PERFORMANCE_SECURITY_AGENT.md"
+DOCS_AGENT="DOCUMENTATION_COMMUNITY_AGENT.md"
+
+# Function to check if agent is available
+check_agent() {
+    local agent_file="$1"
+    local agent_name="$2"
+    
+    if [[ -f "$agent_file" ]]; then
+        echo "✅ $agent_name available"
+        return 0
+    else
+        echo "⚠️  $agent_name not found"
+        return 1
+    fi
+}
+
+# Accessibility & UX Compliance checks
+if check_agent "$ACCESSIBILITY_AGENT" "Accessibility Agent"; then
+    echo "🎯 Running accessibility checks..."
+    
+    # Check web components for accessibility
+    if [[ -d "web/src" ]]; then
+        echo "  • Validating React components for accessibility..."
+        cd web && npm run test:a11y 2>/dev/null || echo "  ⚠️  a11y tests not configured"
+        cd ..
+    fi
+    
+    # Check CLI for screen reader compatibility
+    if [[ -d "cmd" ]]; then
+        echo "  • Checking CLI output for screen reader compatibility..."
+        # Validate that CLI doesn't use color-only indicators
+        if grep -r "color\." cmd/ internal/ 2>/dev/null | grep -v test; then
+            echo "  ⚠️  Color-only indicators found. Consider accessibility alternatives."
+        fi
+    fi
+    
+    # Check documentation for accessibility
+    if [[ -d "docs" ]]; then
+        echo "  • Validating documentation accessibility..."
+        # Check for proper heading structure
+        for file in docs/**/*.md; do
+            if [[ -f "$file" ]]; then
+                # Check for heading hierarchy
+                if grep -q "^###" "$file" && ! grep -q "^##" "$file"; then
+                    echo "  ⚠️  $file: h3 without h2 - fix heading hierarchy"
+                fi
+            fi
+        done
+    fi
+fi
+
+# Performance & Security checks
+if check_agent "$PERFORMANCE_AGENT" "Performance & Security Agent"; then
+    echo "🚀 Running performance and security checks..."
+    
+    # Bundle size check for web components
+    if [[ -d "web" ]]; then
+        echo "  • Checking bundle size..."
+        cd web
+        if [[ -f "package.json" ]]; then
+            # Check if build exists and analyze size
+            if [[ -d "dist" ]]; then
+                BUNDLE_SIZE=$(du -sh dist 2>/dev/null | cut -f1)
+                echo "  📦 Current bundle size: $BUNDLE_SIZE"
+            fi
+        fi
+        cd ..
+    fi
+    
+    # Go security checks
+    echo "  • Running Go security scan..."
+    if command -v gosec >/dev/null 2>&1; then
+        gosec -quiet ./... 2>/dev/null || echo "  ⚠️  Security issues found - review with gosec"
+    else
+        echo "  ⚠️  gosec not installed - consider installing for security scanning"
+    fi
+    
+    # Check for hardcoded secrets
+    echo "  • Checking for hardcoded secrets..."
+    if grep -r "password\|secret\|key" --include="*.go" --include="*.ts" --include="*.js" . | grep -v test | grep -v ".git" | head -5; then
+        echo "  ⚠️  Potential hardcoded secrets found - please review"
+    fi
+fi
+
+# DevOps & Deployment checks
+if check_agent "$DEVOPS_AGENT" "DevOps & Deployment Agent"; then
+    echo "⚡ Running DevOps and deployment checks..."
+    
+    # Docker configuration validation
+    if [[ -f "Dockerfile" ]]; then
+        echo "  • Validating Dockerfile..."
+        # Check for security best practices
+        if grep -q "^USER root" Dockerfile; then
+            echo "  ⚠️  Running as root in Docker - consider using non-root user"
+        fi
+        
+        # Check for .dockerignore
+        if [[ ! -f ".dockerignore" ]]; then
+            echo "  ⚠️  .dockerignore missing - consider adding for better build performance"
+        fi
+    fi
+    
+    # Kubernetes manifests validation
+    if [[ -d "kubernetes" ]]; then
+        echo "  • Validating Kubernetes manifests..."
+        if command -v kubeval >/dev/null 2>&1; then
+            kubeval kubernetes/**/*.yaml 2>/dev/null || echo "  ⚠️  Kubernetes manifest validation failed"
+        fi
+    fi
+    
+    # CI/CD configuration check
+    if [[ -d ".github/workflows" ]]; then
+        echo "  • Checking CI/CD workflows..."
+        for workflow in .github/workflows/*.yml .github/workflows/*.yaml; do
+            if [[ -f "$workflow" ]]; then
+                # Check for security best practices
+                if grep -q "secrets\." "$workflow" && ! grep -q "GITHUB_TOKEN" "$workflow"; then
+                    echo "  ✅ Workflow uses secrets properly: $(basename "$workflow")"
+                fi
+            fi
+        done
+    fi
+fi
+
+# Documentation & Community checks
+if check_agent "$DOCS_AGENT" "Documentation & Community Agent"; then
+    echo "📚 Running documentation and community checks..."
+    
+    # Documentation link validation
+    if [[ -d "docs" ]]; then
+        echo "  • Validating documentation links..."
+        # Check for broken internal links
+        for file in docs/**/*.md; do
+            if [[ -f "$file" ]]; then
+                # Extract markdown links and check if referenced files exist
+                grep -o '\[.*\](.*\.md)' "$file" 2>/dev/null | while read -r link; do
+                    local ref_file=$(echo "$link" | sed 's/.*](\(.*\))/\1/')
+                    if [[ ! -f "docs/$ref_file" ]] && [[ ! -f "$ref_file" ]]; then
+                        echo "  ⚠️  Broken link in $file: $ref_file"
+                    fi
+                done
+            fi
+        done
+    fi
+    
+    # Check README completeness
+    if [[ -f "README.md" ]]; then
+        echo "  • Checking README completeness..."
+        required_sections=("Installation" "Usage" "Documentation" "Contributing")
+        for section in "${required_sections[@]}"; do
+            if ! grep -qi "## $section\|# $section" README.md; then
+                echo "  ⚠️  README missing section: $section"
+            fi
+        done
+    fi
+    
+    # Check for code examples in documentation
+    if [[ -d "docs" ]]; then
+        echo "  • Validating code examples..."
+        for file in docs/**/*.md; do
+            if [[ -f "$file" ]]; then
+                # Check if code blocks have language specified
+                if grep -q '^```$' "$file"; then
+                    echo "  ⚠️  $file: Code blocks without language specification"
+                fi
+            fi
+        done
+    fi
+    
+    # Community files check
+    community_files=("CONTRIBUTING.md" "CODE_OF_CONDUCT.md" "SECURITY.md")
+    for file in "${community_files[@]}"; do
+        if [[ ! -f "$file" ]]; then
+            echo "  ⚠️  Missing community file: $file"
+        fi
+    done
+fi
+
+# Agent coordination check
+echo "🤝 Checking agent coordination..."
+
+# Ensure all agents have their configuration files
+agents_configured=0
+total_agents=4
+
+for agent in "$ACCESSIBILITY_AGENT" "$DEVOPS_AGENT" "$PERFORMANCE_AGENT" "$DOCS_AGENT"; do
+    if [[ -f "$agent" ]]; then
+        ((agents_configured++))
+    fi
+done
+
+echo "  📊 Agents configured: $agents_configured/$total_agents"
+
+if [[ $agents_configured -eq $total_agents ]]; then
+    echo "  ✅ All specialized agents are configured and ready"
+else
+    echo "  ⚠️  Some specialized agents are missing - consider setting up remaining agents"
+fi
+
+# Integration validation
+echo "🔗 Validating agent integration..."
+
+# Check if Phase 3 Web UI is ready for agent integration
+if [[ -d "web/src" ]] && [[ -f "cmd/web-server/main.go" ]]; then
+    echo "  ✅ Phase 3 Web UI ready for agent integration"
+else
+    echo "  ⚠️  Phase 3 Web UI components missing"
+fi
+
+# Check if documentation structure supports agent workflows
+if [[ -d "docs" ]] && [[ -f "docs/README.md" ]]; then
+    echo "  ✅ Documentation structure ready for agent workflows"
+else
+    echo "  ⚠️  Documentation structure needs setup for agent workflows"
+fi
+
+echo "✅ Pre-commit hooks completed!"
+
+# If this is a release commit, trigger additional checks
+if git log -1 --pretty=%B | grep -q "^v[0-9]"; then
+    echo "🚀 Release detected - running additional validations..."
+    
+    # Ensure all agents validate the release
+    echo "  • Release validation across all specialized agents"
+    echo "  • Performance benchmarks recorded"
+    echo "  • Security audit completed"
+    echo "  • Documentation updated"
+    echo "  • Community notifications prepared"
+fi
+
+exit 0

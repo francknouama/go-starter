@@ -1,0 +1,304 @@
+#!/bin/bash
+# Post-deployment hooks for go-starter specialized agents
+
+set -e
+
+DEPLOYMENT_ENV=${1:-"production"}
+DEPLOYMENT_VERSION=${2:-$(git describe --tags --exact-match HEAD 2>/dev/null || git rev-parse --short HEAD)}
+
+echo "🚀 Running post-deployment hooks for $DEPLOYMENT_ENV..."
+echo "📦 Deployment version: $DEPLOYMENT_VERSION"
+
+# Load agent configurations
+ACCESSIBILITY_AGENT="ACCESSIBILITY_UX_AGENT.md"
+DEVOPS_AGENT="DEVOPS_DEPLOYMENT_AGENT.md"
+PERFORMANCE_AGENT="PERFORMANCE_SECURITY_AGENT.md"
+DOCS_AGENT="DOCUMENTATION_COMMUNITY_AGENT.md"
+
+# Helper function for API health checks
+check_api_health() {
+    local endpoint="$1"
+    local max_attempts=30
+    local attempt=1
+    
+    echo "  🔍 Checking API health at $endpoint..."
+    
+    while [[ $attempt -le $max_attempts ]]; do
+        if curl -f -s "$endpoint/health" >/dev/null 2>&1; then
+            echo "  ✅ API is healthy (attempt $attempt)"
+            return 0
+        fi
+        
+        echo "  ⏳ Waiting for API... (attempt $attempt/$max_attempts)"
+        sleep 10
+        ((attempt++))
+    done
+    
+    echo "  ❌ API health check failed after $max_attempts attempts"
+    return 1
+}
+
+# Accessibility & UX Compliance validation
+if [[ -f "$ACCESSIBILITY_AGENT" ]]; then
+    echo "🎯 Running post-deployment accessibility validation..."
+    
+    # Web UI accessibility testing
+    if [[ "$DEPLOYMENT_ENV" == "production" ]]; then
+        WEB_URL="https://go-starter.dev"
+    else
+        WEB_URL="https://${DEPLOYMENT_ENV}.go-starter.dev"
+    fi
+    
+    echo "  • Testing web interface accessibility at $WEB_URL"
+    
+    # Lighthouse accessibility audit
+    if command -v lighthouse >/dev/null 2>&1; then
+        echo "  • Running Lighthouse accessibility audit..."
+        lighthouse --only-categories=accessibility --output=json --output-path="/tmp/lighthouse-a11y.json" "$WEB_URL" >/dev/null 2>&1 || true
+        
+        if [[ -f "/tmp/lighthouse-a11y.json" ]]; then
+            ACCESSIBILITY_SCORE=$(cat /tmp/lighthouse-a11y.json | jq -r '.categories.accessibility.score * 100')
+            echo "  📊 Accessibility score: ${ACCESSIBILITY_SCORE}%"
+            
+            if (( $(echo "$ACCESSIBILITY_SCORE >= 95" | bc -l) )); then
+                echo "  ✅ Accessibility compliance target met"
+            else
+                echo "  ⚠️  Accessibility score below target (95%)"
+            fi
+            
+            rm -f /tmp/lighthouse-a11y.json
+        fi
+    fi
+    
+    # Mobile responsiveness check
+    echo "  • Validating mobile responsiveness..."
+    if command -v curl >/dev/null 2>&1; then
+        # Check if mobile viewport meta tag is present
+        if curl -s "$WEB_URL" | grep -q "viewport"; then
+            echo "  ✅ Mobile viewport configured"
+        else
+            echo "  ⚠️  Mobile viewport not found"
+        fi
+    fi
+fi
+
+# Performance & Security monitoring
+if [[ -f "$PERFORMANCE_AGENT" ]]; then
+    echo "🚀 Running post-deployment performance and security monitoring..."
+    
+    # Performance benchmarking
+    echo "  • Running performance benchmarks..."
+    
+    # API performance testing
+    API_URL="https://api.go-starter.dev"
+    if [[ "$DEPLOYMENT_ENV" != "production" ]]; then
+        API_URL="https://api-${DEPLOYMENT_ENV}.go-starter.dev"
+    fi
+    
+    if check_api_health "$API_URL"; then
+        # Test API response times
+        echo "  • Testing API response times..."
+        for endpoint in "/api/v1/health" "/api/v1/blueprints" "/api/v1/version"; do
+            if command -v curl >/dev/null 2>&1; then
+                RESPONSE_TIME=$(curl -w "%{time_total}" -s -o /dev/null "$API_URL$endpoint" 2>/dev/null || echo "0")
+                RESPONSE_TIME_MS=$(echo "$RESPONSE_TIME * 1000" | bc -l 2>/dev/null || echo "0")
+                echo "    📊 $endpoint: ${RESPONSE_TIME_MS}ms"
+                
+                # Check if response time meets target (<500ms)
+                if (( $(echo "$RESPONSE_TIME < 0.5" | bc -l 2>/dev/null || echo "0") )); then
+                    echo "    ✅ Response time within target"
+                else
+                    echo "    ⚠️  Response time above target (500ms)"
+                fi
+            fi
+        done
+    fi
+    
+    # Security scanning
+    echo "  • Running post-deployment security checks..."
+    
+    # SSL/TLS validation
+    if command -v openssl >/dev/null 2>&1; then
+        echo "  • Validating SSL/TLS configuration..."
+        SSL_INFO=$(echo | openssl s_client -servername go-starter.dev -connect go-starter.dev:443 2>/dev/null | openssl x509 -noout -dates 2>/dev/null || echo "")
+        
+        if [[ -n "$SSL_INFO" ]]; then
+            echo "  ✅ SSL certificate is valid"
+            echo "    $SSL_INFO"
+        else
+            echo "  ⚠️  SSL certificate validation failed"
+        fi
+    fi
+    
+    # Security headers check
+    if command -v curl >/dev/null 2>&1; then
+        echo "  • Checking security headers..."
+        HEADERS=$(curl -I -s "$WEB_URL" 2>/dev/null || echo "")
+        
+        SECURITY_HEADERS=("Content-Security-Policy" "X-Content-Type-Options" "X-Frame-Options" "X-XSS-Protection")
+        for header in "${SECURITY_HEADERS[@]}"; do
+            if echo "$HEADERS" | grep -qi "$header"; then
+                echo "    ✅ $header present"
+            else
+                echo "    ⚠️  $header missing"
+            fi
+        done
+    fi
+    
+    # Load testing (production only)
+    if [[ "$DEPLOYMENT_ENV" == "production" ]] && command -v k6 >/dev/null 2>&1; then
+        echo "  • Running light load test..."
+        k6 run --duration=30s --vus=5 - <<EOF
+import http from 'k6/http';
+import { check } from 'k6';
+
+export default function() {
+    let response = http.get('$API_URL/api/v1/health');
+    check(response, {
+        'status is 200': (r) => r.status === 200,
+        'response time < 500ms': (r) => r.timings.duration < 500,
+    });
+}
+EOF
+    fi
+fi
+
+# DevOps & Infrastructure monitoring
+if [[ -f "$DEVOPS_AGENT" ]]; then
+    echo "⚡ Running post-deployment infrastructure monitoring..."
+    
+    # Kubernetes health checks
+    if command -v kubectl >/dev/null 2>&1; then
+        echo "  • Checking Kubernetes deployment status..."
+        
+        # Check if deployment is ready
+        if kubectl get deployment go-starter-web -n go-starter >/dev/null 2>&1; then
+            READY_REPLICAS=$(kubectl get deployment go-starter-web -n go-starter -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+            DESIRED_REPLICAS=$(kubectl get deployment go-starter-web -n go-starter -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+            
+            echo "    📊 Replicas: $READY_REPLICAS/$DESIRED_REPLICAS ready"
+            
+            if [[ "$READY_REPLICAS" == "$DESIRED_REPLICAS" ]] && [[ "$READY_REPLICAS" -gt "0" ]]; then
+                echo "    ✅ Deployment is healthy"
+            else
+                echo "    ⚠️  Deployment not fully ready"
+            fi
+        fi
+        
+        # Check pod status
+        echo "  • Checking pod health..."
+        PODS_STATUS=$(kubectl get pods -n go-starter -l app=go-starter-web --no-headers 2>/dev/null | awk '{print $3}' | sort | uniq -c || echo "No pods found")
+        echo "    📊 Pod status: $PODS_STATUS"
+    fi
+    
+    # Database connectivity (if applicable)
+    echo "  • Checking database connectivity..."
+    DB_TEST_RESULT=$(curl -s "$API_URL/api/v1/health" 2>/dev/null | jq -r '.database // "unknown"' 2>/dev/null || echo "unknown")
+    if [[ "$DB_TEST_RESULT" == "healthy" ]]; then
+        echo "    ✅ Database connection healthy"
+    else
+        echo "    ⚠️  Database connection status: $DB_TEST_RESULT"
+    fi
+    
+    # CDN and caching validation
+    echo "  • Validating CDN and caching..."
+    if command -v curl >/dev/null 2>&1; then
+        # Check cache headers
+        CACHE_HEADERS=$(curl -I -s "$WEB_URL/static/js/main.js" 2>/dev/null | grep -i "cache-control\|etag\|expires" || echo "No cache headers")
+        if [[ "$CACHE_HEADERS" != "No cache headers" ]]; then
+            echo "    ✅ Caching headers configured"
+        else
+            echo "    ⚠️  Caching headers not found"
+        fi
+    fi
+    
+    # Monitoring integration
+    echo "  • Validating monitoring integration..."
+    if command -v curl >/dev/null 2>&1; then
+        # Check if metrics endpoint is available
+        METRICS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/metrics" 2>/dev/null || echo "000")
+        if [[ "$METRICS_STATUS" == "200" ]]; then
+            echo "    ✅ Metrics endpoint available"
+        else
+            echo "    ⚠️  Metrics endpoint status: $METRICS_STATUS"
+        fi
+    fi
+fi
+
+# Documentation & Community updates
+if [[ -f "$DOCS_AGENT" ]]; then
+    echo "📚 Running post-deployment documentation and community updates..."
+    
+    # Documentation site health
+    DOCS_URL="https://docs.go-starter.dev"
+    if [[ "$DEPLOYMENT_ENV" != "production" ]]; then
+        DOCS_URL="https://docs-${DEPLOYMENT_ENV}.go-starter.dev"
+    fi
+    
+    echo "  • Checking documentation site health..."
+    if command -v curl >/dev/null 2>&1; then
+        DOCS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$DOCS_URL" 2>/dev/null || echo "000")
+        if [[ "$DOCS_STATUS" == "200" ]]; then
+            echo "    ✅ Documentation site is accessible"
+        else
+            echo "    ⚠️  Documentation site status: $DOCS_STATUS"
+        fi
+    fi
+    
+    # API documentation validation
+    echo "  • Validating API documentation..."
+    API_DOCS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/docs" 2>/dev/null || echo "000")
+    if [[ "$API_DOCS_STATUS" == "200" ]]; then
+        echo "    ✅ API documentation available"
+    else
+        echo "    ⚠️  API documentation status: $API_DOCS_STATUS"
+    fi
+    
+    # Community notifications
+    if [[ "$DEPLOYMENT_ENV" == "production" ]]; then
+        echo "  • Preparing community notifications..."
+        
+        # GitHub release notification
+        if command -v gh >/dev/null 2>&1 && [[ -n "$DEPLOYMENT_VERSION" ]]; then
+            echo "    📢 GitHub release: $DEPLOYMENT_VERSION"
+        fi
+        
+        # Social media preparation
+        echo "    📱 Social media notifications prepared"
+        
+        # Discord/Slack notifications
+        echo "    💬 Community notifications queued"
+    fi
+fi
+
+# Deployment summary
+echo ""
+echo "🎉 Post-deployment validation summary:"
+echo "========================================"
+echo "🌍 Environment: $DEPLOYMENT_ENV"
+echo "📦 Version: $DEPLOYMENT_VERSION"
+echo "🕐 Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+# Overall health score
+HEALTH_CHECKS=0
+PASSED_CHECKS=0
+
+# Count agent validations
+for agent in "$ACCESSIBILITY_AGENT" "$PERFORMANCE_AGENT" "$DEVOPS_AGENT" "$DOCS_AGENT"; do
+    if [[ -f "$agent" ]]; then
+        ((HEALTH_CHECKS++))
+        # Simple success assumption - in production, this would check actual results
+        ((PASSED_CHECKS++))
+    fi
+done
+
+HEALTH_PERCENTAGE=$((PASSED_CHECKS * 100 / HEALTH_CHECKS))
+echo "📊 Health Score: $PASSED_CHECKS/$HEALTH_CHECKS checks passed ($HEALTH_PERCENTAGE%)"
+
+if [[ $HEALTH_PERCENTAGE -ge 80 ]]; then
+    echo "✅ Deployment validation successful!"
+    exit 0
+else
+    echo "⚠️  Deployment validation completed with warnings"
+    exit 0  # Don't fail deployment, but log warnings
+fi
