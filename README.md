@@ -145,18 +145,25 @@ go-starter new enterprise-api --type web-api --architecture hexagonal --advanced
 go-starter new my-workspace --type workspace
 ```
 
-**Alternative installation:** [Download binaries](docs/guides/INSTALLATION.md) • [All methods](docs/guides/INSTALLATION.md)
+**Alternative installation:** [Download binaries](docs/01-getting-started/installation.md) • [All methods](docs/01-getting-started/installation.md)
 
 ## 📚 Documentation
 
-| Guide | Description |
-|-------|-------------|
-| 🚀 **[Quick Start](docs/guides/GETTING_STARTED.md)** | Your first project in 5 minutes |
-| ⚙️ **[Installation](docs/guides/INSTALLATION.md)** | All installation methods |
-| 📖 **[Project Types](docs/references/PROJECT_TYPES.md)** | Choose the right template |
-| 📊 **[Logger Guide](docs/references/LOGGER_GUIDE.md)** | Master the logger selector |
-| 🔧 **[Configuration](docs/guides/CONFIGURATION.md)** | Customize your setup |
-| 📋 **[Complete Docs](docs/README.md)** | Full documentation index |
+### 🚀 **Quick Start** (5 minutes to success)
+- **[Installation Guide](docs/01-getting-started/installation.md)** - Install on any platform  
+- **[Quick Start](docs/01-getting-started/quick-start.md)** - Generate your first project in 5 minutes
+- **[Getting Started](docs/01-getting-started/getting-started.md)** - Complete tutorial with examples
+
+### 📖 **User Guides** (Real-world usage)
+- **[Blueprint Selection](docs/02-user-guides/blueprint-selection.md)** - Choose the perfect project type & architecture
+- **[Configuration Guide](docs/02-user-guides/configuration.md)** - Team setup & shared settings  
+- **[Troubleshooting](docs/02-user-guides/troubleshooting.md)** - Solve problems quickly
+- **[FAQ](docs/02-user-guides/faq.md)** - Quick answers to common questions
+
+### 📋 **Complete Documentation**
+- **[📚 Full Documentation Hub](docs/README.md)** - All guides organized by user type
+- **[🔧 Developer Guide](docs/04-developers/README.md)** - Contributing and development setup
+- **[🌟 Community Resources](docs/05-community/README.md)** - Examples and showcases
 
 ## 🛣️ Current Status & Roadmap
 
@@ -181,11 +188,22 @@ go-starter new my-workspace --type workspace
 - ☁️ **Cloud Platforms** - AWS, GCP, Azure deployment
 - 🏪 **Blueprint Marketplace** - Community templates
 
-## ❤️ Community
+## ❤️ Community & Support
 
-- 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** - Found a bug?
-- 💬 **[Discussions](https://github.com/francknouama/go-starter/discussions)** - Questions and ideas
-- 🤝 **[Contributing](CONTRIBUTING.md)** - Make go-starter better
+### 🆘 **Getting Help**
+- **[FAQ](docs/02-user-guides/faq.md)** - Quick answers to common questions
+- **[Troubleshooting](docs/02-user-guides/troubleshooting.md)** - Solve problems with proven solutions
+- **[GitHub Discussions](https://github.com/francknouama/go-starter/discussions)** - Community Q&A and ideas
+
+### 🤝 **Contributing**
+- **[Development Guide](docs/04-developers/README.md)** - Set up your development environment
+- **[Contributing Guide](CONTRIBUTING.md)** - How to contribute code and documentation
+- **[Report Issues](https://github.com/francknouama/go-starter/issues)** - Bug reports and feature requests
+
+### 🌟 **Community Resources**
+- **[Community Hub](docs/05-community/README.md)** - Examples, showcases, and best practices
+- **[GitHub Discussions](https://github.com/francknouama/go-starter/discussions)** - Share your projects and get help
+- **[Project Examples](docs/guides/README.md)** - Sample projects and proven patterns
 
 ## 📄 License
 
