@@ -85,9 +85,22 @@ func TestProgressiveDisclosureATDD(t *testing.T) {
 
 		outputStr := string(output)
 		
-		// THEN: Simple CLI blueprint should be used
-		assert.Contains(t, outputStr, "cli-simple", "Should use simple CLI blueprint")
-		assert.NotContains(t, outputStr, "cli-standard", "Should not use standard CLI blueprint")
+		// THEN: Simple CLI blueprint should be used (8 files generated)
+		lines := strings.Split(outputStr, "\n")
+		fileCount := 0
+		foundFilesSection := false
+		for _, line := range lines {
+			if strings.Contains(line, "Files to be generated:") {
+				foundFilesSection = true
+				continue
+			}
+			if foundFilesSection && strings.HasPrefix(line, "  ") && strings.TrimSpace(line) != "" {
+				fileCount++
+			} else if foundFilesSection && !strings.HasPrefix(line, "  ") {
+				break // End of files section
+			}
+		}
+		assert.Equal(t, 8, fileCount, "Should generate 8 files for simple CLI")
 	})
 
 	t.Run("complexity_standard_uses_full_blueprint", func(t *testing.T) {

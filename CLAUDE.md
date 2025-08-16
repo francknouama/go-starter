@@ -921,3 +921,143 @@ features:
 - **Monitoring Tools**: Observability and metrics integration
 
 This comprehensive project represents a significant advancement in Go developer tooling, filling critical gaps in the ecosystem while providing a foundation for future innovation.
+
+## 🤖 Specialized Agent Ecosystem
+
+go-starter utilizes a streamlined agent ecosystem designed for production readiness and enterprise-grade development. Each agent has distinct expertise areas with minimal overlap for efficient task completion.
+
+### Core Development Agents
+
+#### golang-fullstack-engineer
+**When to use**: Go development, ATDD implementation, code refactoring, unit testing
+- Primary for all Go codebase changes
+- ATDD test creation and validation
+- Backend API development and optimization
+- Code review and refactoring tasks
+- **Example**: "Create ATDD tests for the new user authentication flow"
+
+#### ux-design-expert  
+**When to use**: Mobile/web interface design, user experience optimization, design systems
+- Web UI component design and implementation
+- Mobile-first responsive design
+- User journey optimization and usability
+- Design system creation and maintenance
+- **Example**: "Improve the mobile onboarding flow for better user retention"
+
+#### senior-bug-resolver
+**When to use**: QA-identified bugs, critical production issues, complex debugging
+- Bugs identified by QA testing that need senior expertise
+- Critical production issues requiring immediate resolution
+- Complex debugging scenarios with multiple system interactions
+- **Example**: "QA found 3 critical bugs in our CLI help system - investigate and fix"
+
+#### cross-platform-tester
+**When to use**: Windows/macOS/Linux compatibility, platform-specific testing
+- Ensure go-starter works across all supported platforms
+- Platform-specific build and deployment testing
+- Cross-platform integration validation
+- **Example**: "Test the latest CLI changes across Windows, macOS, and Linux"
+
+### Production Readiness Agents
+
+#### accessibility-ux-specialist
+**When to use**: WCAG compliance, accessibility testing, assistive technology support
+- WCAG 2.1 AA compliance implementation and validation
+- Screen reader optimization and keyboard navigation
+- Accessibility audit and remediation
+- **Critical for**: Phase 3 production launch requirements
+- **Example**: "Audit the web interface for WCAG 2.1 AA compliance"
+
+#### devops-deployment-specialist
+**When to use**: Infrastructure, CI/CD pipelines, production deployment
+- Kubernetes deployment and infrastructure as code
+- CI/CD pipeline development and optimization
+- Production monitoring and observability setup
+- Multi-cloud deployment strategies
+- **Example**: "Set up production-ready Kubernetes deployment with CI/CD pipeline"
+
+#### performance-security-specialist
+**When to use**: Performance optimization, security compliance, load testing
+- Frontend bundle optimization and Core Web Vitals
+- Go application profiling and performance tuning
+- Security vulnerability assessment and remediation
+- Load testing and capacity planning
+- **Example**: "Optimize the web interface for sub-2-second load times"
+
+#### documentation-community-specialist
+**When to use**: Documentation creation, community building, educational content
+- Comprehensive technical documentation
+- Community engagement and growth strategies
+- Tutorial and educational content creation
+- API documentation and user guides
+- **Example**: "Create comprehensive getting started guide for new users"
+
+### Project Management Agents
+
+#### product-owner
+**When to use**: GitHub issue management, project roadmap, feature prioritization
+- GitHub issue triage and project planning
+- Feature prioritization and roadmap development
+- Stakeholder communication and requirements gathering
+- **Example**: "Analyze and prioritize the current GitHub issues backlog"
+
+#### general-purpose
+**When to use**: Complex multi-step tasks, research, file exploration
+- Fallback for tasks that don't clearly fit other agents
+- Complex research requiring multiple rounds of investigation
+- Multi-step workflows spanning different domains
+- **Example**: "Research and implement OAuth2 integration with multiple providers"
+
+## 🎯 Agent Selection Guidelines
+
+### Automatic Triggers
+- **Web UI development** → `ux-design-expert` or `accessibility-ux-specialist`
+- **Go code changes** → `golang-fullstack-engineer`
+- **QA bug reports** → `senior-bug-resolver`
+- **Infrastructure needs** → `devops-deployment-specialist`
+- **Performance issues** → `performance-security-specialist`
+- **Documentation requests** → `documentation-community-specialist`
+
+### Decision Framework
+1. **Primary Domain**: Choose agent by primary skill area needed
+2. **Production Readiness**: Use specialized agents for production requirements
+3. **Complexity**: Use `general-purpose` for multi-domain complex tasks
+4. **Urgency**: Use `senior-bug-resolver` for critical production issues
+
+### Integration Patterns
+- **Accessibility + UX**: `accessibility-ux-specialist` + `ux-design-expert`
+- **Performance + DevOps**: `performance-security-specialist` + `devops-deployment-specialist`
+- **Documentation + Community**: `documentation-community-specialist` + `product-owner`
+- **Full-Stack Development**: `golang-fullstack-engineer` + `ux-design-expert`
+
+### Example Task Mappings
+
+| Task Type | Primary Agent | Secondary Agent |
+|-----------|---------------|-----------------|
+| **Add new CLI command** | `golang-fullstack-engineer` | `cross-platform-tester` |
+| **Fix mobile responsiveness** | `ux-design-expert` | `accessibility-ux-specialist` |
+| **Production deployment** | `devops-deployment-specialist` | `performance-security-specialist` |
+| **Performance optimization** | `performance-security-specialist` | `golang-fullstack-engineer` |
+| **WCAG compliance** | `accessibility-ux-specialist` | `ux-design-expert` |
+| **API documentation** | `documentation-community-specialist` | `golang-fullstack-engineer` |
+| **Security audit** | `performance-security-specialist` | `devops-deployment-specialist` |
+| **Bug investigation** | `senior-bug-resolver` | `golang-fullstack-engineer` |
+
+## 🚀 Agent Ecosystem Benefits
+
+### Streamlined Selection
+- **10 focused agents** vs previous 15+ overlapping agents
+- **Clear domain boundaries** eliminate selection confusion
+- **33% reduction** in agent ecosystem complexity
+
+### Production Focus
+- **Enterprise-grade capabilities** for accessibility, security, performance
+- **Phase 3/4 alignment** with production launch requirements
+- **Quality emphasis** on compliance and professional standards
+
+### Efficient Coordination
+- **Minimal overlap** between agent responsibilities
+- **Clear escalation paths** for complex multi-domain tasks
+- **Integration patterns** for common agent combinations
+
+This agent ecosystem ensures go-starter development is efficient, production-ready, and aligned with enterprise requirements while maintaining clarity and avoiding confusion.

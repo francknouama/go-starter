@@ -174,10 +174,10 @@ func runNew(cmd *cobra.Command, args []string) error {
 	}
 
 	// Adjust blueprint type based on complexity level BEFORE prompting
-	actualProjectType := projectType
+	selectedBlueprintID := ""
 	actualFramework := framework
 	if complexity != "" && projectType != "" {
-		actualProjectType = prompts.SelectBlueprintForComplexity(projectType, complexityLevel)
+		selectedBlueprintID = prompts.SelectBlueprintForComplexity(projectType, complexityLevel)
 		
 		// Set defaults for CLI blueprints to avoid unnecessary prompts
 		if projectType == "cli" {
@@ -230,7 +230,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 	initialConfig := types.ProjectConfig{
 		Name:         projectName,
 		Module:       projectModule,
-		Type:         actualProjectType,
+		Type:         projectType, // Keep original type, not the blueprint-specific type
 		Architecture: architecture,
 		GoVersion:    goVersion,
 		Framework:    actualFramework,
@@ -253,6 +253,11 @@ func runNew(cmd *cobra.Command, args []string) error {
 			"AuthType":       authType,
 			"LoggerType":     logger,
 		},
+	}
+	
+	// Set blueprint ID if complexity-specific blueprint was selected
+	if selectedBlueprintID != "" && selectedBlueprintID != projectType {
+		initialConfig.Variables["blueprint_id"] = selectedBlueprintID
 	}
 
 	// Use new disclosure-aware method if available, fallback to old method

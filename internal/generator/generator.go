@@ -356,22 +356,24 @@ func (g *Generator) validateConfig(cfg types.ProjectConfig) error {
 		return types.NewValidationError(fmt.Sprintf("invalid logger: %v", err), nil)
 	}
 
-	// Validate features
-	if cfg.Features.Database.Driver != "" {
-		if err := config.ValidateDatabaseDriver(cfg.Features.Database.Driver); err != nil {
-			return types.NewValidationError(fmt.Sprintf("invalid database driver: %v", err), nil)
+	// Validate features (check for nil features first)
+	if cfg.Features != nil {
+		if cfg.Features.Database.Driver != "" {
+			if err := config.ValidateDatabaseDriver(cfg.Features.Database.Driver); err != nil {
+				return types.NewValidationError(fmt.Sprintf("invalid database driver: %v", err), nil)
+			}
 		}
-	}
 
-	if cfg.Features.Database.ORM != "" {
-		if err := config.ValidateORM(cfg.Features.Database.ORM); err != nil {
-			return types.NewValidationError(fmt.Sprintf("invalid ORM: %v", err), nil)
+		if cfg.Features.Database.ORM != "" {
+			if err := config.ValidateORM(cfg.Features.Database.ORM); err != nil {
+				return types.NewValidationError(fmt.Sprintf("invalid ORM: %v", err), nil)
+			}
 		}
-	}
 
-	if cfg.Features.Authentication.Type != "" {
-		if err := config.ValidateAuthType(cfg.Features.Authentication.Type); err != nil {
-			return types.NewValidationError(fmt.Sprintf("invalid authentication type: %v", err), nil)
+		if cfg.Features.Authentication.Type != "" {
+			if err := config.ValidateAuthType(cfg.Features.Authentication.Type); err != nil {
+				return types.NewValidationError(fmt.Sprintf("invalid authentication type: %v", err), nil)
+			}
 		}
 	}
 
