@@ -1,6 +1,6 @@
 # go-starter Documentation
 
-Welcome to the comprehensive documentation for go-starter - the AI-powered Go project generator that combines simplicity with power through progressive disclosure.
+Welcome to the comprehensive documentation for go-starter - the production-ready Go project generator with **enterprise observability**, **advanced resilience patterns**, and **progressive disclosure**.
 
 ## 🚀 Quick Start
 
@@ -9,6 +9,18 @@ Welcome to the comprehensive documentation for go-starter - the AI-powered Go pr
 1. **[Installation](01-getting-started/installation.md)** - Install go-starter on your system
 2. **[Quick Start](01-getting-started/quick-start.md)** - Generate your first project 
 3. **[Getting Started](01-getting-started/getting-started.md)** - Complete tutorial with examples
+
+## 🚀 Phase 2 Production Enhancements ✨
+
+**Major Update**: go-starter now includes enterprise-grade production features:
+
+- **🏗️ Enhanced Microservice**: OpenTelemetry tracing, rate limiting, circuit breakers
+- **🏢 Production Monolith**: Background job processing, multi-layer caching
+- **🌐 gRPC Gateway**: Enhanced interceptors, unified middleware, dual protocol support
+- **🔒 Security & Resilience**: Input validation, graceful error handling, monitoring
+- **📊 Enterprise Observability**: Prometheus metrics, distributed tracing, health checks
+
+👉 **[Learn More](04-developers/PHASE_2_ENHANCEMENTS.md)** | **[Blueprint Selection Guide](02-user-guides/BLUEPRINT_SELECTION_GUIDE.md)**
 
 ## 📚 Documentation Sections
 
@@ -53,6 +65,7 @@ For contributors and those wanting to extend go-starter.
 | [Template Documentation](04-developers/TEMPLATE_DOCUMENTATION.md) | Blueprint development guide |
 | [Testing Guide](04-developers/TESTING_GUIDE.md) | Testing strategies and guidelines |
 | [CI Integration](04-developers/CI_INTEGRATION.md) | Continuous integration setup |
+| [Phase 2 Enhancements](04-developers/PHASE_2_ENHANCEMENTS.md) ✨ **NEW** | Production enterprise features |
 
 ### 🌟 **[Community](05-community/)**
 Examples, showcases, and community resources.

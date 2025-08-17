@@ -32,6 +32,13 @@ Welcome to the go-starter developer documentation. Here you'll find everything n
 - Release automation
 - Quality gates and validation
 
+### 🚀 [Phase 2 Enhancements](PHASE_2_ENHANCEMENTS.md) ✨ **NEW**
+**Production-ready enterprise features**
+- Enhanced blueprints (Microservice, Monolith, gRPC Gateway)
+- Enterprise observability and monitoring
+- Security and resilience patterns
+- Performance optimization features
+
 ## 🚀 Quick Start for Contributors
 
 ### 1. Fork and Clone

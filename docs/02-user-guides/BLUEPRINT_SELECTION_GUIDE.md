@@ -2,6 +2,37 @@
 
 Comprehensive guide to choosing the right blueprint for your Go project. This guide helps you make informed decisions based on project requirements, team expertise, and architectural needs.
 
+## 🚀 Phase 2 Production Enhancements
+
+**Major Update**: Three blueprints have been significantly enhanced with enterprise production features:
+
+### ✨ Enhanced Blueprints
+
+| Blueprint | Enhancement Summary | Key Features Added |
+|-----------|--------------------|--------------------|
+| **Microservice** | Enterprise observability & resilience | OpenTelemetry tracing, rate limiting, circuit breakers, request deduplication |
+| **Monolith** | Background processing & caching | Job manager, multi-layer caching, performance monitoring |
+| **gRPC Gateway** | Advanced middleware & monitoring | Enhanced interceptors, unified metrics, dual-protocol support |
+
+### 🎯 When to Choose Enhanced Blueprints
+
+- **Production workloads** requiring enterprise-grade reliability
+- **High-traffic applications** needing performance optimization
+- **Distributed systems** requiring comprehensive observability
+- **Security-sensitive** applications with strict validation requirements
+- **Mission-critical** services needing resilience patterns
+
+### 🔧 Shared Production Components
+
+All enhanced blueprints include these production-ready components:
+
+- **Shared Error Handling System**: Consistent error handling across all enhanced blueprints with severity levels and structured responses
+- **OpenTelemetry Integration**: Distributed tracing with multiple exporters (Jaeger, OTLP, stdout)
+- **Prometheus Metrics**: Production-ready metrics collection and monitoring
+- **Security Middleware**: Input validation, CORS, security headers
+- **Graceful Shutdown**: Proper resource cleanup and connection handling
+- **Health Checks**: Kubernetes-ready health and readiness probes
+
 ## 🎯 Quick Decision Tree
 
 ```
@@ -47,8 +78,9 @@ Start Here: What are you building?
 | **Lambda Standard** | ⭐ | 12 | Easy | 1-2 | Low | Excellent |
 | **Lambda Proxy** | ⭐⭐ | 25 | Moderate | 2-4 | Medium | Excellent |
 | **Library** | ⭐ | 15 | Easy | 1-3 | Low | N/A |
-| **Microservice** | ⭐⭐⭐⭐ | 60 | Very Hard | 4-8 | High | Excellent |
-| **Monolith** | ⭐⭐⭐ | 65 | Hard | 3-8 | High | Good |
+| **Microservice** | ⭐⭐⭐⭐ | 47 | Very Hard | 4-8 | High | Excellent |
+| **gRPC Gateway** | ⭐⭐⭐⭐ | 45 | Very Hard | 4-8 | High | Excellent |
+| **Monolith** | ⭐⭐⭐ | 72 | Hard | 3-8 | High | Good |
 | **Workspace** | ⭐⭐⭐ | 40 | Hard | 3-10 | High | Good |
 
 ## 🏗️ Architecture Pattern Comparison
@@ -327,37 +359,64 @@ go-starter new my-api --type=web-api --architecture=hexagonal \
 
 **Command**: `go-starter new my-lib --type=library`
 
-#### Microservice
+#### Microservice ✨ Enhanced
 **Perfect for**:
-- Distributed systems
+- Enterprise distributed systems
 - Service mesh architectures
 - Cloud-native applications
-- Scalable backends
+- High-performance backends
 
-**Microservice Features**:
-- gRPC server/client
-- Health checks
-- Metrics collection
-- Distributed tracing
-- Kubernetes deployment
+**Production Features**:
+- **Observability**: OpenTelemetry tracing with multiple exporters (Jaeger, OTLP, stdout)
+- **Security**: Request validation with comprehensive input sanitization
+- **Performance**: In-memory caching, request deduplication, connection pooling
+- **Resilience**: Circuit breakers, retry mechanisms, bulkhead isolation
+- **Enhanced Error Handling**: Severity levels, structured error responses
+- **Monitoring**: Prometheus metrics, health checks, distributed tracing
+- gRPC server/client with enhanced interceptors
+- Kubernetes deployment with service mesh support
 
 **Command**: `go-starter new my-service --type=microservice`
 
-#### Monolith
+#### Monolith ✨ Enhanced
 **Perfect for**:
-- Traditional web applications
-- Rapid prototyping
-- Small teams
-- Simplified deployment
+- Production web applications
+- Enterprise monoliths
+- Full-stack applications
+- Traditional deployment patterns
 
-**Monolith Features**:
-- MVC architecture
-- HTML templates
-- Static assets
-- Database migrations
-- Admin interface
+**Production Features**:
+- **Background Job Processing**: Comprehensive job manager with queuing, scheduling, and monitoring
+- **Multi-layer Caching**: L1 in-memory + L2 Redis caching with intelligent cache invalidation
+- **Performance Monitoring**: Enhanced configuration for jobs and performance metrics
+- **Production-ready Architecture**: Modular monolith with clean separation
+- MVC architecture with enhanced middleware
+- HTML templates with multiple engine support
+- Static assets with build pipeline options
+- Database migrations and connection pooling
+- Admin interface with monitoring dashboard
 
 **Command**: `go-starter new my-app --type=monolith`
+
+#### gRPC Gateway ✨ New Enhanced Blueprint
+**Perfect for**:
+- API Gateway patterns
+- Dual HTTP/gRPC interfaces
+- Protocol translation services
+- Unified API endpoints
+
+**Production Features**:
+- **Enhanced gRPC Interceptors**: Monitoring, security, and performance interceptors
+- **Rate Limiting**: For both HTTP and gRPC requests with configurable limits
+- **Unified Middleware**: Consistent middleware across HTTP and gRPC protocols
+- **Metrics Collection**: Prometheus-compatible metrics for both protocols
+- **Security**: Input validation, CORS, security headers
+- **Observability**: OpenTelemetry tracing and structured logging
+- Dual protocol support (HTTP REST + gRPC)
+- Protocol buffer definitions and code generation
+- TLS support for secure communication
+
+**Command**: `go-starter new my-gateway --type=grpc-gateway`
 
 #### Workspace
 **Perfect for**:
@@ -401,6 +460,51 @@ go-starter new enterprise-system --type=web-api --architecture=clean \
   --auth-type=jwt \
   --logger=zap \
   --advanced
+```
+
+### Enterprise Microservice Platform ✨ Enhanced
+**Scenario**: Production microservice with high-traffic requirements
+**Recommendation**: Enhanced Microservice
+**Reasoning**: Built-in observability, resilience patterns, performance optimization
+
+```bash
+go-starter new payment-service --type=microservice \
+  --logger=zap \
+  --database-driver=postgres \
+  --enable-observability=true \
+  --enable-circuit-breaker=true \
+  --enable-rate-limiting=true \
+  --enable-request-deduplication=true
+```
+
+### Production Web Application ✨ Enhanced
+**Scenario**: High-traffic web application with background processing
+**Recommendation**: Enhanced Monolith
+**Reasoning**: Background job processing, multi-layer caching, performance monitoring
+
+```bash
+go-starter new ecommerce-platform --type=monolith \
+  --framework=gin \
+  --database-driver=postgres \
+  --enable-jobs=true \
+  --enable-caching=true \
+  --enable-performance-monitoring=true \
+  --logger=zap
+```
+
+### API Gateway Service ✨ Enhanced
+**Scenario**: Unified API gateway supporting both HTTP and gRPC clients
+**Recommendation**: Enhanced gRPC Gateway
+**Reasoning**: Dual protocol support, enhanced interceptors, unified monitoring
+
+```bash
+go-starter new api-gateway --type=grpc-gateway \
+  --grpc-port=50051 \
+  --http-port=8080 \
+  --enable-enhanced-interceptors=true \
+  --enable-rate-limiting=true \
+  --enable-metrics-collection=true \
+  --logger=zap
 ```
 
 ### Developer Tool
