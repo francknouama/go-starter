@@ -1,277 +1,644 @@
-# Frequently Asked Questions (FAQ)
+# Troubleshooting & FAQ
 
-Quick answers to the most common questions about go-starter. Can't find what you're looking for? Check our [troubleshooting guide](troubleshooting.md) or [get help](#getting-help).
+Common issues, solutions, and frequently asked questions for go-starter.
 
 ## Table of Contents
 
-- [Getting Started](#getting-started)
-- [Project Types & Blueprints](#project-types--blueprints)
-- [Logger Selection](#logger-selection)
-- [Configuration & Customization](#configuration--customization)
-- [Technical Questions](#technical-questions)
-- [Best Practices](#best-practices)
-- [Common Issues](#common-issues)
-- [Getting Help](#getting-help)
+- [Installation Issues](#installation-issues)
+- [Project Generation Issues](#project-generation-issues)
+- [Compilation Issues](#compilation-issues)
+- [Logger Issues](#logger-issues)
+- [Blueprint Issues](#blueprint-issues)
+- [Performance Issues](#performance-issues)
+- [Frequently Asked Questions](#frequently-asked-questions)
 
-## Getting Started
+---
 
-### What is go-starter?
+## Installation Issues
 
-go-starter is a comprehensive Go project generator that creates production-ready projects with modern best practices. It features:
+### Q: `go install` fails with permission error
 
-- **12 production-ready blueprints** (CLI, Web API, Lambda, etc.)
-- **Progressive disclosure system** that adapts to your experience level
-- **Simplified logger system** with unified interface across 4 popular loggers
-- **Multiple architecture patterns** (Standard, Clean, DDD, Hexagonal)
-- **Best practices built-in** including testing, Docker, CI/CD
-
-### How is go-starter different from other generators?
-
-**Unique Features**:
-- **Progressive Disclosure**: Beginner mode (14 options) vs Advanced mode (18+ options)
-- **Logger Selector**: Choose from slog, zap, logrus, zerolog with consistent interface
-- **Complexity Levels**: Simple (8 files) to Expert (60+ files) blueprints
-- **Architecture Patterns**: 4 different patterns for web APIs
-- **Production Ready**: All blueprints are tested and include deployment configs
-
-### What are the system requirements?
-
-**Minimum Requirements**:
-- **Go 1.21+** (recommended for slog support)
-- **Git** (optional but recommended)
-- **Make** (optional, for using Makefile commands)
-
-**Platform Support**:
-- ✅ Linux (all distributions)
-- ✅ macOS (Intel and Apple Silicon)
-- ✅ Windows (PowerShell and CMD)
-- ✅ Docker (all platforms)
-
-### How do I install go-starter?
-
-**Recommended Method**:
+**Problem**: 
 ```bash
 go install github.com/francknouama/go-starter@latest
-go-starter version
+# Error: permission denied
 ```
 
-**Alternative Methods**:
-- **Homebrew**: `brew install francknouama/go-starter/go-starter`
-- **Binary Download**: From [GitHub Releases](https://github.com/francknouama/go-starter/releases)
-- **Package Managers**: Available for Chocolatey, Scoop, Snap, AUR
+**Solutions**:
 
-See the [installation guide](../01-getting-started/installation.md) for detailed instructions.
+1. **Check GOPATH and GOBIN**:
+   ```bash
+   echo $GOPATH
+   echo $GOBIN
+   mkdir -p $GOPATH/bin
+   ```
 
-## Project Types & Blueprints
+2. **Use proper Go version**:
+   ```bash
+   go version  # Should be Go 1.19+
+   ```
 
-### Which project type should I choose?
+3. **Install to specific directory**:
+   ```bash
+   GOBIN=/usr/local/bin go install github.com/francknouama/go-starter@latest
+   ```
 
-**Quick Guide**:
+4. **Use sudo if necessary** (macOS/Linux):
+   ```bash
+   sudo go install github.com/francknouama/go-starter@latest
+   ```
 
-| Use Case | Recommended Type | Command |
-|----------|------------------|---------|
-| Learning Go | CLI Simple | `--type=cli --complexity=simple` |
-| REST API | Web API Standard | `--type=web-api` |
-| Enterprise System | Web API Clean | `--type=web-api --architecture=clean` |
-| Developer Tool | CLI Standard | `--type=cli --complexity=standard` |
-| Serverless Function | Lambda | `--type=lambda` |
-| Shared Library | Library | `--type=library` |
-| Complex Domain | Web API DDD | `--type=web-api --architecture=ddd` |
-| Maximum Testability | Web API Hexagonal | `--type=web-api --architecture=hexagonal` |
+### Q: Binary not found in PATH
 
-See the [blueprint selection guide](blueprint-selection.md) for detailed decision trees.
-
-### What's the difference between CLI Simple and Standard?
-
-**CLI Simple (8 files)**:
-- Perfect for learning Go
-- Single command with basic flags
-- Minimal structure and dependencies
-- Great for scripts and utilities
-
-**CLI Standard (29 files)**:
-- Production-ready CLI applications
-- Multiple subcommands support
-- Configuration files and advanced logging
-- Comprehensive testing framework
-- Shell completion scripts
-
-### What architecture patterns are available?
-
-**Web API Architectures**:
-
-1. **Standard** (35 files): Traditional layered architecture, fast development
-2. **Clean** (45 files): Clean Architecture principles, highly testable
-3. **DDD** (50 files): Domain-Driven Design, complex business logic
-4. **Hexagonal** (55 files): Ports & Adapters, maximum testability
-
-**When to Use Each**:
-- **Standard**: MVPs, simple APIs, rapid prototyping
-- **Clean**: Enterprise apps, complex business logic, long-term projects
-- **DDD**: Domain-rich applications, event-driven systems
-- **Hexagonal**: Multiple interfaces (HTTP, gRPC, CLI), maximum testability
-
-### Can I migrate between architectures later?
-
-**Scaling Up**: Yes, with effort
-- Simple → Standard: Straightforward refactoring
-- Standard → Clean: Requires restructuring business logic
-- Clean → DDD: Need to identify domain boundaries
-- Any → Hexagonal: Most complex, requires interface design
-
-**Scaling Down**: Easier
-- Complex architectures can be simplified by removing layers
-
-**Recommendation**: Start simple and migrate when complexity justifies it.
-
-## Logger Selection
-
-### Which logger should I choose?
-
-**Quick Comparison**:
-
-| Logger | Performance | Use Case | Dependencies |
-|--------|-------------|----------|-------------|
-| **slog** | Good | Default choice, Go 1.21+ | None (stdlib) |
-| **zap** | Excellent | High-performance APIs | go.uber.org/zap |
-| **logrus** | Good | Feature-rich apps | github.com/sirupsen/logrus |
-| **zerolog** | Excellent | JSON-heavy, cloud-native | github.com/rs/zerolog |
-
-**Recommendations**:
-- **New to Go**: Use `slog` (standard library)
-- **High-performance APIs**: Use `zap` or `zerolog`
-- **Rich formatting needs**: Use `logrus`
-- **Cloud/container environments**: Use `zerolog`
-
-### Can I switch loggers after generation?
-
-**Simplified Logger System**: go-starter uses a unified interface across all loggers, but the implementation differs.
-
-**Options**:
-1. **Regenerate project** with different logger (recommended)
-2. **Manual replacement** of logger implementation files
-3. **Copy business logic** to new project with desired logger
-
-**Note**: The application code using the logger remains the same due to the unified interface.
-
-### What's the unified logger interface?
-
-All loggers use the same simple API:
-
-```go
-// Same interface regardless of logger chosen
-logger.Info("User logged in", "user_id", userID, "ip", clientIP)
-logger.Error("Database error", "error", err)
-logger.Debug("Processing request", "request_id", reqID)
-logger.Warn("Rate limit approaching", "limit", rateLimit)
-```
-
-The implementation differs, but your application code stays consistent.
-
-## Configuration & Customization
-
-### How do I set default preferences?
-
-Create a configuration file at `~/.go-starter.yaml`:
-
-```yaml
-profiles:
-  default:
-    author: "Your Name"
-    email: "your.email@example.com"
-    license: "MIT"
-    defaults:
-      goVersion: "1.22"
-      framework: "gin"
-      logger: "slog"
-      complexity: "standard"
-current_profile: "default"
-```
-
-See the [configuration guide](configuration.md) for advanced setup.
-
-### Can I customize the generated projects?
-
-**After Generation**: ✅ Yes, modify any generated files
-**Blueprint Templates**: ❌ Templates are embedded in the binary
-**Configuration**: ✅ Use config files to influence generation
-
-**Customization Options**:
-- Modify generated code after creation
-- Use environment variables for settings
-- Fork the repository to modify blueprints
-- Use configuration profiles for team standards
-
-### How do I set up team standards?
-
-**Team Configuration File**:
-```yaml
-# team-standards.yaml
-profiles:
-  team:
-    author: "{{DEVELOPER_NAME}}"
-    email: "{{DEVELOPER_EMAIL}}"
-    license: "Proprietary"
-    defaults:
-      goVersion: "1.22"
-      framework: "gin"
-      logger: "zap"
-      architecture: "clean"
-      database: "postgres"
-```
-
-**Team Setup Script**:
+**Problem**: 
 ```bash
-# Download and apply team standards
-curl -o team-config.yaml https://company.com/go-starter-config.yaml
-go-starter config import team-config.yaml
-go-starter config set-profile team
+go-starter: command not found
 ```
 
-### Can I use go-starter in corporate environments?
+**Solutions**:
 
-**✅ Yes!** go-starter is designed for professional use:
+1. **Add GOBIN to PATH**:
+   ```bash
+   # Add to ~/.bashrc, ~/.zshrc, or ~/.profile
+   export PATH=$PATH:$(go env GOPATH)/bin
+   source ~/.bashrc  # or ~/.zshrc
+   ```
 
-- **License**: MIT license allows commercial use
-- **Security**: No external calls during generation
-- **Proxy Support**: Works with corporate proxies
-- **Air-gapped**: Can work offline after initial install
-- **Compliance**: Generates secure code following best practices
+2. **Verify installation location**:
+   ```bash
+   ls $(go env GOPATH)/bin/go-starter
+   ```
 
-## Technical Questions
+3. **Use full path temporarily**:
+   ```bash
+   $(go env GOPATH)/bin/go-starter new my-project
+   ```
 
-### What Go version is required?
+### Q: Download fails with network error
 
-**For go-starter tool**:
-- Minimum: Go 1.21+
-- Recommended: Go 1.22+
+**Problem**: 
+```bash
+go install: module github.com/francknouama/go-starter@latest: 
+Get "https://proxy.golang.org/...": dial tcp: lookup proxy.golang.org: no such host
+```
 
-**For generated projects**:
-- Depends on chosen logger and features
-- slog requires Go 1.21+
-- Other loggers work with Go 1.19+
+**Solutions**:
 
-### Is go-starter production-ready?
+1. **Configure Go proxy**:
+   ```bash
+   go env -w GOPROXY=https://proxy.golang.org,direct
+   go env -w GOSUMDB=sum.golang.org
+   ```
 
-**✅ Absolutely!** All blueprints include:
+2. **Use direct download**:
+   ```bash
+   go env -w GOPROXY=direct
+   go install github.com/francknouama/go-starter@latest
+   ```
 
-- Comprehensive test suites with high coverage
-- Production configuration examples
-- Docker and CI/CD configurations
-- Proper error handling and recovery
-- Security best practices
-- Performance optimizations
-- Monitoring and observability setup
+3. **Corporate proxy setup**:
+   ```bash
+   export GOPROXY=https://your-corporate-proxy.com
+   export GOSUMDB=off
+   ```
 
-### How do I handle secrets and environment variables?
+---
 
-**Generated projects include**:
-- Environment-based configuration
-- Config file structure for different environments
-- Examples for secret management
+## Project Generation Issues
 
+### Q: Generation fails with "blueprint not found" 
+
+**Problem**:
+```bash
+go-starter new my-project --type=web-api
+# Error: blueprint 'web-api' not found
+```
+
+**Solutions**:
+
+1. **Check available blueprints**:
+   ```bash
+   go-starter list  # Shows all available blueprints
+   ```
+
+2. **Use correct blueprint name**:
+   ```bash
+   go-starter new my-project --type=web-api    # Correct
+   go-starter new my-project --type=api        # Incorrect
+   ```
+
+3. **Update to latest version**:
+   ```bash
+   go install github.com/francknouama/go-starter@latest
+   ```
+
+### Q: Generation fails with "invalid module path"
+
+**Problem**:
+```bash
+go-starter new my-project --module=invalid-path
+# Error: invalid module path
+```
+
+**Solutions**:
+
+1. **Use valid Go module path**:
+   ```bash
+   # ✅ Good
+   go-starter new my-project --module=github.com/username/my-project
+   go-starter new my-project --module=example.com/my-project
+   
+   # ❌ Bad
+   go-starter new my-project --module=my-project
+   go-starter new my-project --module=../my-project
+   ```
+
+2. **Interactive mode for guidance**:
+   ```bash
+   go-starter new my-project
+   # Follow prompts for module path
+   ```
+
+### Q: Generation partially completes then fails
+
+**Problem**: Some files are created but generation fails mid-way.
+
+**Solutions**:
+
+1. **Check disk space**:
+   ```bash
+   df -h .  # Check available space
+   ```
+
+2. **Check permissions**:
+   ```bash
+   ls -la .  # Check directory permissions
+   mkdir test-dir  # Test write permissions
+   ```
+
+3. **Clean and retry**:
+   ```bash
+   rm -rf my-project  # Remove partial generation
+   go-starter new my-project --type=web-api
+   ```
+
+4. **Use different directory**:
+   ```bash
+   cd /tmp
+   go-starter new my-project --type=web-api
+   ```
+
+---
+
+## Compilation Issues
+
+### Q: Generated project doesn't compile
+
+**Problem**:
+```bash
+cd my-project
+go build
+# Error: cannot find module providing package
+```
+
+**Solutions**:
+
+1. **Initialize and download dependencies**:
+   ```bash
+   go mod tidy
+   go mod download
+   ```
+
+2. **Check Go version**:
+   ```bash
+   go version  # Should match go.mod requirements
+   ```
+
+3. **Clear module cache**:
+   ```bash
+   go clean -modcache
+   go mod download
+   ```
+
+4. **Check network connectivity**:
+   ```bash
+   go env GOPROXY
+   curl -I https://proxy.golang.org
+   ```
+
+### Q: Logger-related compilation errors
+
+**Problem**:
+```bash
+go build
+# Error: undefined: zap.Logger
+```
+
+**Solutions**:
+
+1. **Verify logger dependencies**:
+   ```bash
+   go mod tidy
+   cat go.mod  # Check if zap is listed
+   ```
+
+2. **Reinstall dependencies**:
+   ```bash
+   go mod download
+   go get go.uber.org/zap  # If using zap
+   ```
+
+3. **Check logger factory**:
+   ```bash
+   cat internal/logger/factory.go  # Verify correct implementation
+   ```
+
+### Q: Test compilation fails
+
+**Problem**:
+```bash
+go test ./...
+# Error: cannot find package in any of:
+```
+
+**Solutions**:
+
+1. **Update test dependencies**:
+   ```bash
+   go mod tidy
+   go get github.com/stretchr/testify/assert
+   ```
+
+2. **Check test imports**:
+   ```bash
+   grep -r "import" . --include="*_test.go"
+   ```
+
+3. **Run specific test**:
+   ```bash
+   go test -v ./internal/handlers/
+   ```
+
+---
+
+## Logger Issues
+
+### Q: No log output visible
+
+**Problem**: Application runs but no logs appear.
+
+**Solutions**:
+
+1. **Check log level**:
+   ```bash
+   LOG_LEVEL=debug go run cmd/server/main.go
+   ```
+
+2. **Check log output destination**:
+   ```bash
+   LOG_OUTPUT=stdout go run cmd/server/main.go
+   ```
+
+3. **Verify logger initialization**:
+   ```go
+   logger := logger.New()
+   logger.Info("Test message")  // Should appear
+   ```
+
+4. **Check configuration**:
+   ```bash
+   cat configs/config.yaml  # Verify logger config
+   ```
+
+### Q: Log format is incorrect
+
+**Problem**: Logs appear in wrong format (e.g., text instead of JSON).
+
+**Solutions**:
+
+1. **Set format explicitly**:
+   ```bash
+   LOG_FORMAT=json go run cmd/server/main.go
+   ```
+
+2. **Check configuration loading**:
+   ```go
+   // In main.go, add debug output
+   fmt.Printf("Config: %+v\n", config.Logger)
+   ```
+
+3. **Verify logger implementation**:
+   ```bash
+   cat internal/logger/factory.go  # Check format settings
+   ```
+
+### Q: Logger performance issues
+
+**Problem**: Application slows down significantly with logging.
+
+**Solutions**:
+
+1. **Use appropriate log level**:
+   ```bash
+   LOG_LEVEL=info go run cmd/server/main.go  # Avoid debug in production
+   ```
+
+2. **Switch to high-performance logger**:
+   ```bash
+   go-starter new my-project --logger=zap  # Fastest option
+   ```
+
+3. **Use conditional logging**:
+   ```go
+   if logger.IsDebugEnabled() {
+       logger.Debug("Expensive operation", "data", formatData(data))
+   }
+   ```
+
+---
+
+## Blueprint Issues
+
+### Q: Blueprint customization not working
+
+**Problem**: Changes to blueprints don't appear in generated projects.
+
+**Solutions**:
+
+1. **Blueprints are embedded**: go-starter uses embedded blueprints, so you can't modify them directly.
+
+2. **Generate fresh project**:
+   ```bash
+   go-starter new my-project --type=web-api
+   # Then customize the generated project
+   ```
+
+3. **Fork and modify** (advanced):
+   ```bash
+   git clone https://github.com/francknouama/go-starter.git
+   # Modify blueprints/ directory
+   # Build your own version
+   ```
+
+### Q: Missing files in generated project
+
+**Problem**: Expected files are missing from generated project.
+
+**Solutions**:
+
+1. **Check blueprint completeness**:
+   ```bash
+   go-starter new test-project --type=web-api
+   find test-project -type f  # List all generated files
+   ```
+
+2. **Compare with documentation**:
+   ```bash
+   # Check docs/BLUEPRINTS.md for expected structure
+   ```
+
+3. **Verify flags**:
+   ```bash
+   go-starter new my-project --type=web-api --logger=zap --verbose
+   ```
+
+---
+
+## Performance Issues
+
+### Q: Project generation is slow
+
+**Problem**: `go-starter new` takes a long time to complete.
+
+**Solutions**:
+
+1. **Check disk I/O**:
+   ```bash
+   time go-starter new test-project --type=web-api
+   ```
+
+2. **Use faster disk** (SSD vs HDD):
+   ```bash
+   cd /tmp  # Often faster than home directory
+   go-starter new test-project --type=web-api
+   ```
+
+3. **Update to latest version**:
+   ```bash
+   go install github.com/francknouama/go-starter@latest
+   ```
+
+### Q: Generated project has slow build times
+
+**Problem**: `go build` takes too long in generated project.
+
+**Solutions**:
+
+1. **Enable build cache**:
+   ```bash
+   go env GOCACHE
+   go clean -cache  # If cache is corrupted
+   ```
+
+2. **Use Go modules properly**:
+   ```bash
+   go mod tidy
+   go mod download
+   ```
+
+3. **Parallel builds**:
+   ```bash
+   go build -p 4  # Use 4 parallel builds
+   ```
+
+---
+
+## Frequently Asked Questions
+
+### General Questions
+
+#### Q: What's the difference between go-starter and other Go generators?
+
+**A**: go-starter uniquely combines:
+- **Logger selector system**: Choose from 4 logging libraries with consistent interface
+- **Production-ready blueprints**: All blueprints are fully tested and production-ready
+- **Best practices built-in**: Following Go community standards and patterns
+- **Zero vendor lock-in**: Switch loggers without changing code
+
+#### Q: Which project type should I choose?
+
+**A**: Choose based on your use case:
+- **Web API**: REST services, microservices, HTTP APIs
+- **CLI**: Command-line tools, utilities, automation scripts
+- **Library**: Reusable packages, SDKs, shared functionality
+- **Lambda**: AWS serverless functions, event-driven processing
+
+#### Q: Which logger should I choose?
+
+**A**: Choose based on your requirements:
+- **slog**: General purpose, no dependencies, Go 1.21+
+- **zap**: High performance, zero allocation, production apps
+- **logrus**: Feature-rich, large ecosystem, enterprise apps
+- **zerolog**: Cloud-native, zero allocation, clean API
+
+#### Q: Can I switch loggers after project generation?
+
+**A**: The logger interface is consistent, but the implementation files are different. You can:
+1. Generate a new project with the desired logger
+2. Copy your business logic to the new project
+3. Manually replace the logger implementation (advanced)
+
+#### Q: Is go-starter production-ready?
+
+**A**: Yes! All blueprints are:
+- ✅ Fully tested with comprehensive test suites
+- ✅ Follow Go best practices and idioms
+- ✅ Include production configurations
+- ✅ Have proper error handling and logging
+- ✅ Include Docker and CI/CD configurations
+
+### Technical Questions
+
+#### Q: What Go version is required?
+
+**A**: 
+- **Minimum**: Go 1.19 (for go-starter tool)
+- **Generated projects**: Go 1.19+ (Go 1.21+ for slog)
+- **Recommended**: Go 1.21+ for best experience
+
+#### Q: Can I use go-starter in corporate environments?
+
+**A**: Yes! go-starter is designed for professional use:
+- MIT license allows commercial use
+- No external dependencies in generated projects (except chosen logger)
+- Configurable for corporate proxies and air-gapped environments
+- Follows security best practices
+
+#### Q: How do I customize blueprints?
+
+**A**: Blueprints are embedded in the binary. For customization:
+1. **Post-generation**: Modify the generated project
+2. **Fork approach**: Fork the repository and modify blueprints
+3. **Configuration**: Use config files to customize behavior
+
+#### Q: Does go-starter support databases?
+
+**A**: Current blueprints include:
+- ✅ Database configuration structure
+- ✅ GORM integration examples
+- ✅ Migration setup
+- ✅ Connection pooling
+
+Future versions will include:
+- Database driver selection
+- Multiple ORM options
+- Migration tools
+
+#### Q: Can I add more blueprints?
+
+**A**: Currently, go-starter includes 4 core blueprints. Future versions will include:
+- Clean Architecture patterns
+- Domain-Driven Design (DDD)
+- Hexagonal Architecture
+- Microservice blueprints
+- Event-driven architectures
+
+### Troubleshooting Questions
+
+#### Q: My project won't start after generation
+
+**A**: Check the following:
+```bash
+# 1. Dependencies installed
+go mod tidy
+
+# 2. Configuration valid
+cat configs/config.yaml
+
+# 3. Run with debug logging
+LOG_LEVEL=debug make run
+
+# 4. Check port availability
+netstat -tulpn | grep :8080
+```
+
+#### Q: Tests are failing in generated project
+
+**A**: Common solutions:
+```bash
+# 1. Update test dependencies
+go mod tidy
+
+# 2. Run specific test
+go test -v ./internal/handlers/
+
+# 3. Check test environment
+go test -v -race ./...
+
+# 4. Update assertions
+go get github.com/stretchr/testify/assert@latest
+```
+
+#### Q: Docker build fails
+
+**A**: Check the following:
+```bash
+# 1. Verify Dockerfile exists
+ls -la Dockerfile
+
+# 2. Check Go version in Dockerfile
+grep "FROM golang" Dockerfile
+
+# 3. Build with more verbose output
+docker build -t my-app . --no-cache --progress=plain
+
+# 4. Check multi-stage build
+docker build --target builder -t my-app-builder .
+```
+
+### Best Practices Questions
+
+#### Q: How should I structure my generated project?
+
+**A**: The generated structure follows Go best practices:
+- `cmd/`: Application entry points
+- `internal/`: Private application code
+- `pkg/`: Public library code (if applicable)
+- `configs/`: Configuration files
+- `tests/`: Test files and test data
+
+#### Q: What's the recommended development workflow?
+
+**A**: Follow this workflow:
+1. **Generate project**: `go-starter new my-project`
+2. **Install dependencies**: `go mod tidy`
+3. **Run tests**: `make test`
+4. **Start development**: `make run`
+5. **Make changes**: Edit code and re-run tests
+6. **Build**: `make build`
+7. **Deploy**: Use provided Docker/CI configurations
+
+#### Q: How do I deploy generated projects?
+
+**A**: Multiple deployment options:
+```bash
+# Docker
+make docker
+docker run -p 8080:8080 my-app:latest
+
+# Binary
+make build
+./bin/server --config=configs/config.prod.yaml
+
+# Cloud platforms
+# (AWS Lambda, Google Cloud Run, etc.)
+```
+
+#### Q: How do I handle secrets and configuration?
+
+**A**: Use environment variables and configuration files:
 ```yaml
-# config/config.prod.yaml
+# configs/config.prod.yaml
 database:
   host: ${DB_HOST}
   password: ${DB_PASSWORD}
@@ -281,227 +648,34 @@ export DB_HOST=prod-db.example.com
 export DB_PASSWORD=secure-password
 ```
 
-### Can I add databases to my project?
-
-**Current Support**:
-- Database configuration structure
-- Connection examples for popular databases
-- GORM integration examples
-- Migration setup
-
-**Future Versions** will include:
-- Interactive database selection
-- Multiple ORM options (GORM, SQLx, SQLC, Ent)
-- Automatic migration generation
-- Database-specific optimizations
-
-### How do I deploy generated projects?
-
-**Multiple Options Available**:
-
-```bash
-# Docker deployment
-make docker
-docker run -p 8080:8080 my-app:latest
-
-# Binary deployment
-make build
-./bin/server --config=configs/config.prod.yaml
-
-# Cloud platforms
-# AWS Lambda, Google Cloud Run, Azure Container Instances
-```
-
-All blueprints include deployment configurations and examples.
-
-## Best Practices
-
-### What's the recommended development workflow?
-
-**Standard Workflow**:
-
-1. **Generate**: `go-starter new my-project --type=web-api`
-2. **Setup**: `cd my-project && go mod tidy`
-3. **Test**: `make test`
-4. **Develop**: `make run` (with hot reload)
-5. **Test Continuously**: `make test-watch`
-6. **Build**: `make build`
-7. **Deploy**: Use Docker or binary deployment
-
-### How should I structure my code in generated projects?
-
-**Generated Structure Follows Go Best Practices**:
-
-```
-my-project/
-├── cmd/                # Application entry points
-├── internal/           # Private application code
-│   ├── handlers/       # HTTP handlers
-│   ├── services/       # Business logic
-│   ├── repository/     # Data access
-│   └── logger/         # Logging implementation
-├── pkg/                # Public library code (if applicable)
-├── configs/            # Configuration files
-├── tests/              # Test files and test data
-├── Dockerfile          # Container configuration
-├── Makefile           # Build automation
-└── README.md          # Project documentation
-```
-
-### Should I start simple or advanced?
-
-**Recommendation: Start Simple, Grow as Needed**
-
-**Learning Path**:
-1. **Week 1**: CLI Simple for Go basics
-2. **Week 2**: CLI Standard for production patterns
-3. **Week 3**: Web API Standard for web development
-4. **Week 4**: Clean Architecture for advanced patterns
-
-**Project Evolution**:
-- Begin with Standard architecture
-- Migrate to Clean when complexity increases
-- Consider DDD for domain-rich applications
-- Use Hexagonal for maximum testability needs
-
-### How do I choose between frameworks?
-
-**Web Framework Comparison**:
-
-| Framework | Speed | Use Case | Learning Curve |
-|-----------|-------|----------|---------------|
-| **Gin** | Fastest | APIs, microservices | Easy |
-| **Echo** | Fast | Middleware-rich apps | Moderate |
-| **Fiber** | Very Fast | Express-like API | Easy |
-| **Chi** | Fast | Stdlib-focused | Easy |
-
-**Recommendation**: Start with Gin (default) unless you have specific requirements.
-
-## Common Issues
-
-### Command not found after installation
-
-**Quick Fix**:
-```bash
-# Add Go bin to PATH
-export PATH="$PATH:$(go env GOPATH)/bin"
-
-# Make permanent
-echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Generated project won't compile
-
-**Common Solutions**:
-```bash
-# 1. Update dependencies
-go mod tidy
-
-# 2. Download modules
-go mod download
-
-# 3. Clear cache if corrupted
-go clean -modcache && go mod download
-
-# 4. Check Go version
-go version  # Should be 1.21+
-```
-
-### No log output visible
-
-**Quick Fixes**:
-```bash
-# 1. Set log level
-LOG_LEVEL=debug go run cmd/server/main.go
-
-# 2. Check configuration
-cat configs/config.yaml
-
-# 3. Verify logger initialization
-grep -r "logger.New" internal/
-```
-
-### Docker build fails
-
-**Common Solutions**:
-```bash
-# 1. Check Dockerfile
-cat Dockerfile
-
-# 2. Build with verbose output
-docker build -t my-app . --no-cache --progress=plain
-
-# 3. Test dependencies
-go mod tidy && go build ./...
-```
-
-### Port already in use
-
-**Quick Fix**:
-```bash
-# Find and kill process
-kill -9 $(lsof -ti:8080)
-
-# Or use different port
-PORT=8081 go run cmd/server/main.go
-```
-
-For more detailed troubleshooting, see our [comprehensive troubleshooting guide](troubleshooting.md).
+---
 
 ## Getting Help
 
-### Where can I get support?
+### Community Support
 
-**Official Channels**:
-- **GitHub Issues**: [Bug reports and feature requests](https://github.com/francknouama/go-starter/issues)
-- **GitHub Discussions**: [Community support and questions](https://github.com/francknouama/go-starter/discussions)
-- **Documentation**: [Comprehensive guides](../01-getting-started/)
+- **GitHub Issues**: [Report bugs and request features](https://github.com/francknouama/go-starter/issues)
+- **GitHub Discussions**: [Ask questions and share ideas](https://github.com/francknouama/go-starter/discussions)
+- **Documentation**: [Read comprehensive guides](https://github.com/francknouama/go-starter/tree/main/docs)
 
-### How do I report a bug?
+### Reporting Issues
 
-**Include This Information**:
-1. **Version**: `go-starter version`
-2. **Go Version**: `go version`
-3. **OS**: `uname -a` (Linux/Mac) or system info (Windows)
-4. **Command**: Exact command that failed
-5. **Error**: Complete error message
-6. **Expected**: What you expected to happen
+When reporting issues, please include:
 
-### How do I request a feature?
+1. **go-starter version**: `go-starter version`
+2. **Go version**: `go version`
+3. **Operating system**: `uname -a` (Linux/Mac) or `ver` (Windows)
+4. **Command used**: Exact command that failed
+5. **Error output**: Complete error message
+6. **Expected behavior**: What you expected to happen
 
-**Feature Request Guidelines**:
-1. Search existing issues first
-2. Describe the use case clearly
-3. Explain why it would benefit others
-4. Provide examples if possible
-5. Consider contributing the feature yourself
+### Contributing
 
-### Can I contribute to go-starter?
-
-**✅ Yes! We welcome contributions**:
-
-- **Bug Fixes**: Always appreciated
-- **Documentation**: Help improve clarity
-- **Features**: Discuss in issues first
-- **Blueprints**: New project types and patterns
-- **Testing**: Improve test coverage
-
-See our [contributing guidelines](https://github.com/francknouama/go-starter/blob/main/CONTRIBUTING.md) for details.
-
-### How do I stay updated?
-
-**Stay Informed**:
-- ⭐ **Star** the [GitHub repository](https://github.com/francknouama/go-starter)
-- 👀 **Watch** for releases and updates
-- 💬 **Follow** discussions for community insights
-- 📚 **Check** documentation for new features
+We welcome contributions! See:
+- [Contributing Guidelines](https://github.com/francknouama/go-starter/blob/main/CONTRIBUTING.md)
+- [Code of Conduct](https://github.com/francknouama/go-starter/blob/main/CODE_OF_CONDUCT.md)
+- [Development Guide](https://github.com/francknouama/go-starter/blob/main/docs/DEVELOPMENT.md)
 
 ---
 
-**Can't find your answer?** 
-- Check the [troubleshooting guide](troubleshooting.md) for technical issues
-- Browse [GitHub Discussions](https://github.com/francknouama/go-starter/discussions) for community help
-- [Create an issue](https://github.com/francknouama/go-starter/issues/new) for bugs or feature requests
-
-**Happy coding with go-starter!** 🚀
+*This FAQ is regularly updated. If you don't find your question here, please check our [GitHub Discussions](https://github.com/francknouama/go-starter/discussions) or [create a new issue](https://github.com/francknouama/go-starter/issues/new).*

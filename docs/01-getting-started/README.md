@@ -36,6 +36,7 @@ Getting Started → Blueprint Comparison → Team Configuration
 | [Quick Start](quick-start.md) | Generate your first project | 5 min |
 | [Installation](installation.md) | Install go-starter (all platforms) | 10 min |
 | [Getting Started](getting-started.md) | Complete tutorial with examples | 30 min |
+| [Getting Started (Comprehensive)](GETTING_STARTED.md) | Detailed guide with all features | 45 min |
 
 ## 🔗 Next Steps
 

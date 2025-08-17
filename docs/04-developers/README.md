@@ -4,33 +4,33 @@ Welcome to the go-starter developer documentation. Here you'll find everything n
 
 ## 🛠️ Developer Guides
 
-### 🤝 [Contributing Guide](contributing.md)
-**How to contribute to go-starter**
-- Setting up development environment
-- Code style and standards
-- Pull request process
-- Issue reporting guidelines
-
-### 🏗️ [Development Setup](development.md)
-**Local development environment**
+### 🏗️ [Development Guide](DEVELOPMENT.md)
+**Local development environment and setup**
 - Required tools and dependencies
 - Building from source
 - Running tests and benchmarks
 - Debugging and profiling
 
-### 🏛️ [Architecture Overview](architecture.md)
-**Internal architecture and design decisions**
-- Code organization and structure
-- Key design patterns and principles
-- Component interactions
-- Extension points and interfaces
+### 📋 [Template Documentation](TEMPLATE_DOCUMENTATION.md)
+**Blueprint development and template system**
+- Creating new blueprints
+- Template syntax and variables
+- Conditional file generation
+- Best practices for templates
 
-### 🧪 [Testing Guide](testing.md)
+### 🧪 [Testing Guide](TESTING_GUIDE.md)
 **Testing strategy and implementation**
 - Unit testing patterns
 - Integration test framework
 - ATDD (Acceptance Test-Driven Development)
 - Performance testing and benchmarks
+
+### 🔧 [CI Integration](CI_INTEGRATION.md)
+**Continuous integration and deployment**
+- CI/CD pipeline setup
+- Automated testing strategies
+- Release automation
+- Quality gates and validation
 
 ## 🚀 Quick Start for Contributors
 

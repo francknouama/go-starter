@@ -7,6 +7,8 @@ Comprehensive guides for using go-starter in real-world scenarios. From choosing
 | Guide | Purpose | Best For |
 |-------|---------|----------|
 | [Blueprint Selection](blueprint-selection.md) | Choose the right project type & architecture | Decision making |
+| [Blueprint Selection Guide](BLUEPRINT_SELECTION_GUIDE.md) | Comprehensive blueprint decision guide | Deep understanding |
+| [User Guide](USER_GUIDE.md) | Complete user manual and feature guide | Full exploration |
 | [Configuration](configuration.md) | Set up team standards & shared settings | Teams & organizations |
 | [Troubleshooting](troubleshooting.md) | Solve common problems quickly | Problem solving |
 | [FAQ](faq.md) | Quick answers to common questions | Quick reference |

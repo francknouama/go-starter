@@ -4,39 +4,31 @@ Detailed technical documentation for go-starter. Complete specifications, API re
 
 ## 📋 Available References
 
-### 🏗️ [Blueprint Reference](blueprints.md)
-**Complete specifications for all blueprints**
-- Detailed file structures for all 12 blueprints
-- Template variables and conditional logic
-- Dependencies and requirements for each blueprint
-- Generated code examples and patterns
-
-### 🖥️ [CLI Reference](cli-reference.md)
-**Complete command-line interface documentation**
-- All commands with detailed descriptions
-- Complete flag reference with examples
-- Exit codes and error handling
-- Configuration file integration
-
-### 🪵 [Logger Guide](logger-guide.md)
+### 🪵 [Logger Comparison Guide](LOGGER_COMPARISON_GUIDE.md)
 **Deep dive into logger selection and optimization**
 - Performance benchmarks and comparisons
 - Configuration options for each logger
 - Best practices and optimization techniques
 - Migration strategies between loggers
 
-### ⚙️ [Configuration Reference](configuration-reference.md)
-**Complete configuration system documentation**
-- All configuration options with examples
-- Environment variable mappings
-- Profile system detailed specification
-- Validation rules and error handling
+### 🏗️ [Blueprint Reference](../references/BLUEPRINTS.md)
+**Complete specifications for all blueprints**
+- Detailed file structures for all 12 blueprints
+- Template variables and conditional logic
+- Dependencies and requirements for each blueprint
+- Generated code examples and patterns
 
-### 📚 [API Reference](api-reference.md)
-**Internal API documentation** (Future)
-- Go package documentation
-- Extension points and interfaces
-- Plugin system specification
+### 📊 [Blueprint Comparison](../references/BLUEPRINT_COMPARISON.md)
+**Feature and architecture comparison**
+- Side-by-side blueprint comparisons
+- Architecture pattern analysis
+- Use case recommendations
+
+### 📝 [Quick Reference](../references/QUICK_REFERENCE.md)
+**Commands and options cheatsheet**
+- Essential commands at a glance
+- Common usage patterns
+- Quick troubleshooting tips
 
 ## 🎯 Quick Navigation
 

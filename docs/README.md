@@ -20,6 +20,7 @@ Perfect for first-time users and those wanting to get up and running quickly.
 | [Quick Start](01-getting-started/quick-start.md) | Generate your first project | 5 min |
 | [Installation](01-getting-started/installation.md) | Install on any platform | 10 min |
 | [Getting Started](01-getting-started/getting-started.md) | Complete tutorial | 30 min |
+| [Getting Started (Comprehensive)](01-getting-started/GETTING_STARTED.md) | Detailed guide with all features | 45 min |
 
 ### 📖 **[User Guides](02-user-guides/)**
 Comprehensive guides for real-world usage scenarios.
@@ -27,6 +28,8 @@ Comprehensive guides for real-world usage scenarios.
 | Guide | Purpose | Best For |
 |-------|---------|----------|
 | [Blueprint Selection](02-user-guides/blueprint-selection.md) | Choose the right project type | Decision making |
+| [Blueprint Selection Guide](02-user-guides/BLUEPRINT_SELECTION_GUIDE.md) | Comprehensive blueprint guide | Deep understanding |
+| [User Guide](02-user-guides/USER_GUIDE.md) | Complete user manual | Full feature exploration |
 | [Configuration](02-user-guides/configuration.md) | Team setup & standards | Teams & organizations |
 | [Troubleshooting](02-user-guides/troubleshooting.md) | Solve problems quickly | Problem solving |
 | [FAQ](02-user-guides/faq.md) | Quick answers | Quick reference |
@@ -36,20 +39,20 @@ Detailed technical documentation and specifications.
 
 | Reference | Purpose |
 |-----------|---------|
-| [CLI Commands](03-reference/cli-commands.md) | Complete command reference |
-| [Blueprints](03-reference/blueprints.md) | Blueprint specifications |
-| [Configuration](03-reference/configuration.md) | Config file reference |
-| [API Reference](03-reference/api.md) | Web API documentation |
+| [Logger Comparison Guide](03-reference/LOGGER_COMPARISON_GUIDE.md) | Logger types and performance comparison |
+| [Blueprints Reference](references/BLUEPRINTS.md) | Complete blueprint specifications |
+| [Blueprint Comparison](references/BLUEPRINT_COMPARISON.md) | Blueprint feature comparison |
+| [Quick Reference](references/QUICK_REFERENCE.md) | Commands and options cheatsheet |
 
 ### 🛠️ **[Developer Guide](04-developers/)**
 For contributors and those wanting to extend go-starter.
 
 | Guide | Purpose |
 |-------|---------|
-| [Development Setup](04-developers/setup.md) | Set up development environment |
-| [Architecture](04-developers/architecture.md) | Project architecture overview |
-| [Testing](04-developers/testing.md) | Testing strategies and guidelines |
-| [Contributing](04-developers/contributing.md) | How to contribute |
+| [Development Guide](04-developers/DEVELOPMENT.md) | Set up development environment |
+| [Template Documentation](04-developers/TEMPLATE_DOCUMENTATION.md) | Blueprint development guide |
+| [Testing Guide](04-developers/TESTING_GUIDE.md) | Testing strategies and guidelines |
+| [CI Integration](04-developers/CI_INTEGRATION.md) | Continuous integration setup |
 
 ### 🌟 **[Community](05-community/)**
 Examples, showcases, and community resources.
