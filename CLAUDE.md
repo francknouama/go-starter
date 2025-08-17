@@ -1,1063 +1,309 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with this repository.
 
 ## Project Overview
 
-This is a comprehensive Go project generator called "go-starter" that generates Go project structures with modern best practices, multiple architecture patterns, and deployment configurations. It combines the simplicity of create-react-app with the flexibility of Spring Initializr, offering both CLI and web interfaces with progressive disclosure for beginners and advanced developers.
-
-## Development Commands
-
-### Building and Running
-- `go build -o bin/go-starter main.go` - Build the CLI tool
-- `go install .` - Install the CLI tool globally
-- `make build` - Build using Makefile
-- `make install` - Install the CLI tool
-- `make dev-build` - Development build with race detection
-- `make run` - Start development server (for web UI phase)
-
-### Progressive Disclosure System ✨
-
-**NEW**: go-starter now features a comprehensive progressive disclosure system that adapts the interface based on user experience level and project complexity needs.
-
-#### Basic Usage (Beginner-Friendly)
-- `go-starter new` - Interactive mode with basic options only
-- `go-starter new my-app --type=cli` - Simple direct generation
-- `go-starter new --help` - Shows essential flags only (14 flags)
-
-#### Advanced Usage (Expert Mode)
-- `go-starter new --advanced` - Interactive mode with all options
-- `go-starter new my-app --type=web-api --advanced` - Advanced direct generation
-- `go-starter new --advanced --help` - Shows all flags (18+ flags)
-
-#### Complexity-Aware Generation
-- `go-starter new --type=cli --complexity=simple` - Generate simple CLI (8 files)
-- `go-starter new --type=cli --complexity=standard` - Generate standard CLI (29 files)
-- `go-starter new --type=web-api --architecture=clean` - Generate Clean Architecture API
-- `go-starter new --complexity=advanced` - Advanced project structure
-
-#### Progressive Disclosure Flags
-- `--basic` - Show only essential options (default for new users)
-- `--advanced` - Enable advanced configuration with all options
-- `--complexity [simple|standard|advanced|expert]` - Specify project complexity level
-- `--dry-run` - Preview project structure without creating files
-- `--help` - Context-aware help (basic vs advanced mode)
-
-### Testing
-- `go test -v ./...` - Run all tests (unit, integration, acceptance)
-- `go test ./internal/prompts/... -v` - Run progressive disclosure tests
-- `go test ./tests/acceptance/cli/progressive_disclosure_test.go -v` - ATDD tests
-- `make test` - Run tests via Makefile
-
-#### Progressive Disclosure Specific Testing
-- **Unit Tests**: `go test ./internal/prompts/progressive_test.go -v`
-- **Blueprint Selection**: Test complexity-aware blueprint mapping
-- **Help Filtering**: Validate basic vs advanced flag visibility  
-- **Interactive Prevention**: Ensure no prompts when flags provided
-- **Default Application**: Test smart defaults for CLI blueprints
-
-#### Integration Testing Requirements
-- **Critical**: All complexity levels must generate working code
-- **Compilation**: Generated projects must compile with `go build`
-- **File Counts**: Simple CLI (11 files), Standard CLI (25-35 files)
-- **Blueprint Validation**: All blueprints parse without errors
-- **Cross-platform**: Test on Windows, macOS, Linux
-
-#### ATDD Test Infrastructure ✨
-
-**ENHANCED**: Comprehensive Acceptance Test-Driven Development (ATDD) system provides reliable validation of generated blueprints.
-
-**Path Resolution System**:
-- **Dynamic Project Root Detection**: Tests automatically locate project root by searching for `go.mod`
-- **Cross-Platform Compatibility**: Path resolution works consistently across Windows, macOS, Linux  
-- **Template Discovery**: Automatically finds and loads blueprint templates from `blueprints/` directory
-
-**Blueprint Validation**:
-- **CLI Blueprint Testing**: Validates both simple (11 files) and standard (25-35 files) CLI generations
-- **Logger Integration**: Tests all four logger types (slog, zap, logrus, zerolog) with blueprint generation
-- **Compilation Validation**: Ensures all generated projects compile successfully with `go build`
-- **Runtime Testing**: Validates CLI functionality, command execution, and error handling
-- **AWS SDK Compatibility**: Tests lambda blueprints with latest AWS SDK v2 and X-Ray SDK
-
-**Test Performance**:
-- **Build Time Monitoring**: Tracks compilation performance across blueprints
-- **Execution Speed**: Validates CLI startup time and command response  
-- **File Count Verification**: Ensures complexity tiers generate expected file counts
-
-#### Test Categories and Coverage
-- Test blueprint generation with various configurations  
-- Test conditional file generation logic
-- Test help filtering and flag visibility
-- Test CLI defaults and non-interactive mode
-- Test complexity flag validation and error handling
-- Test logger implementation compilation and runtime functionality
-- Test AWS SDK dependencies and X-Ray integration
-
-### Code Quality
-- `golangci-lint run` - Run linting (essential before commits)
-- `make lint` - Run linting via Makefile
-- `go generate ./...` - Generate embedded blueprints
-- `make generate` - Generate embedded blueprints via Makefile
-
-### Web Development (Phase 3)
-- `npm run dev` - Start React development server (Vite)
-- `npm run build` - Build web UI for production
-- `vite preview` - Preview production build
-
-## Architecture Overview
-
-### Four-Phase Implementation Strategy
-
-#### Phase 1: Core CLI Tool
-- **Goal**: Functional CLI with 4 basic blueprints (Web API, CLI, Library, Lambda)
-- **Key Components**: Cobra framework, interactive prompts, blueprint engine, basic generation
-- **Blueprints**: Standard Web API, CLI Application, Library, AWS Lambda
-- **Architecture Patterns**: Standard only
-
-#### Phase 2: Complete Blueprint System  
-- **Goal**: All 12 project types with multiple architecture patterns
-- **Blueprints**: web-api (4 architectures), cli, library, lambda, lambda-proxy, event-driven, microservice, monolith, workspace
-- **Architecture Patterns**: Standard, Clean Architecture, DDD, Hexagonal, Event-driven
-- **Features**: Conditional generation, blueprint validation, enhanced prompts
-
-#### Phase 3: Web UI
-- **Goal**: React-based web interface with live preview
-- **Tech Stack**: React + Vite, WebSocket for real-time updates
-- **Features**: Progressive disclosure, file structure visualization, live preview, project download
-- **API**: RESTful endpoints + WebSocket for real-time features
-
-#### Phase 4: Advanced Features
-- **Goal**: GitHub integration, blueprint marketplace, deployment platforms
-- **Features**: OAuth authentication, community blueprints, Vercel/Railway/Netlify deployment
-- **Enterprise**: Template marketplace, analytics, monitoring
-
-### Core Components Architecture
-
-#### CLI Framework (`cmd/`)
-- **Framework**: Cobra for command structure
-- **Commands**: `new`, `list`, `version`, `config`, `completion`  
-- **Interactive Mode**: AlecAivazis/survey for user prompts
-- **Progressive Disclosure**: Basic mode (essential options) vs Advanced mode (all features)
-
-#### Template Engine (`internal/templates/`)
-- **Storage**: Embedded blueprints using `embed.FS`
-- **Processing**: Go `text/template` with Sprig functions
-- **Registry**: Blueprint loading and management system
-- **Validation**: Template syntax and variable validation
-
-#### Generator Service (`internal/generator/`)
-- **Core Logic**: Project generation with conditional file creation
-- **Recovery**: Rollback mechanism for failed generations
-- **Hooks**: Post-generation scripts and commands
-- **Memory Mode**: In-memory generation for web interface
-
-#### Web Interface (`web/`)
-- **Frontend**: React with TypeScript, Tailwind CSS
-- **Build Tool**: Vite for fast development and building
-- **Real-time**: WebSocket for live preview updates
-- **API**: RESTful backend with Gin framework
-
-## Progressive Disclosure System Deep Dive ✨
-
-> **NEW**: Full progressive disclosure implementation with basic/advanced modes, complexity-aware generation, and intelligent help filtering.
-
-### Progressive Disclosure Features
-
-#### 🎯 Smart Help System
-- **Basic Mode**: Shows 14 essential flags for beginners
-- **Advanced Mode**: Shows 18+ flags for power users  
-- **Context-Aware**: Automatically detects user intent from flags
-- **No Duplicates**: Intelligent flag deduplication between local and persistent flags
-- **Visual Design**: Styled output with hints and tips
-
-#### 🚀 Complexity-Aware Blueprint Selection
-- **Automatic Selection**: `--complexity=simple` → `cli-simple` blueprint
-- **Smart Defaults**: CLI blueprints auto-set cobra + slog when complexity is specified
-- **No Prompting**: Sufficient flags prevent interactive prompts
-- **Default Module**: Auto-generates module path for testing scenarios
-
-#### 🛠️ Two-Tier CLI System
-- **Simple CLI**: 8 files, minimal structure, perfect for learning
-- **Standard CLI**: 29 files, production-ready, full feature set
-- **Clear Distinction**: Different use cases and complexity levels
-- **Migration Path**: Easy upgrade from simple to standard
-
-#### 📚 Progressive Learning Philosophy
-- **Start Simple**: Minimal viable structure for beginners
-- **Grow Organically**: Add complexity only when needed
-- **Clear Path**: Obvious progression from simple to advanced
-- **No Overwhelm**: Hide complexity until users are ready
-
-## Blueprint System Deep Dive
-
-> **Updated v2.1**: Blueprint Selection Guide, Complexity Levels, CLI Two-Tier Approach, Progressive Complexity Philosophy, and Progressive Disclosure System. See sections below for detailed guidance on choosing the right blueprint for your project.
-
-### Blueprint Structure
-Each blueprint consists of:
-1. **template.yaml** - Metadata, variables, file definitions, dependencies
-2. **Template files** - `.tmpl` files with Go template syntax
-3. **Conditional logic** - Files generated based on configuration
-
-### 12 Core Blueprints
-
-| Blueprint | Use Case | Key Features |
-|----------|----------|-------------|
-| **Standard Web API** | Basic REST APIs | Simple structure, fast setup |
-| **Clean Architecture** | Enterprise apps | Layered architecture, separation of concerns |
-| **DDD Web API** | Complex domains | Domain-focused, business logic emphasis |
-| **Hexagonal Architecture** | Testable apps | Ports & adapters, dependency inversion |
-| **CLI Application** | Command tools | Cobra framework, subcommands |
-| **Library** | Reusable packages | Public API focus, examples |
-| **AWS Lambda** | Serverless functions | Event processing, cloud-native |
-| **Lambda API Proxy** | API Gateway | Request routing, proxy patterns |
-| **Event-Driven** | CQRS/Event Sourcing | Scalable, distributed systems |
-| **Microservice** | Distributed systems | gRPC, containerized, service mesh ready |
-| **Monolith** | Traditional web apps | Modular structure, all-in-one deployment |
-| **Go Workspace** | Multi-module projects | Monorepo, shared dependencies |
-
-## Blueprint Selection Guide
-
-Choosing the right blueprint is crucial for project success. This guide helps you make informed decisions based on your project requirements and team expertise.
-
-### Blueprint Complexity Levels
-
-We categorize blueprints into four complexity levels to help you choose appropriately:
-
-| Complexity | Description | Typical Characteristics |
-|------------|-------------|------------------------|
-| **Beginner** | Simple, straightforward projects | < 10 files, minimal dependencies, standard patterns |
-| **Intermediate** | Moderate complexity with some patterns | 10-25 files, common patterns, standard dependencies |
-| **Advanced** | Complex architecture with multiple patterns | 25-50 files, advanced patterns, multiple dependencies |
-| **Expert** | Highly complex, enterprise-grade | 50+ files, complex patterns, extensive dependencies |
-
-### Blueprint Selection Matrix
-
-| Blueprint | Complexity | Use Case | When to Use | Architecture Pattern |
-|-----------|------------|----------|-------------|---------------------|
-| **Simple CLI** | Beginner | Basic command-line tools | Quick scripts, simple utilities | None (procedural) |
-| **Standard CLI** | Intermediate | Full-featured CLI apps | Complex CLI tools, multiple commands | MVC-lite |
-| **Library** | Beginner | Reusable packages | Shared code, utilities | Public API pattern |
-| **Standard Web API** | Intermediate | Basic REST APIs | Simple CRUD, microservices | Standard layered |
-| **Clean Architecture** | Advanced | Enterprise APIs | Complex business logic, testability | Clean Architecture |
-| **DDD Web API** | Advanced | Domain-complex APIs | Rich domain models, business rules | Domain-Driven Design |
-| **Hexagonal Architecture** | Expert | Highly testable APIs | Multiple adapters, high testability | Ports & Adapters |
-| **AWS Lambda** | Beginner | Simple serverless | Event handlers, webhooks | Functional |
-| **Lambda API Proxy** | Intermediate | API Gateway integration | RESTful serverless APIs | Proxy pattern |
-| **Event-Driven** | Expert | CQRS/Event Sourcing | Event-based systems, audit trails | Event Sourcing |
-| **Microservice** | Advanced | Distributed services | Service mesh, gRPC communication | Microservice patterns |
-| **Monolith** | Intermediate | Traditional web apps | All-in-one deployment | Modular monolith |
-| **Go Workspace** | Advanced | Multi-module projects | Monorepos, shared libraries | Workspace pattern |
-
-## CLI Blueprint Audit Findings
-
-Based on comprehensive analysis (Issue [#149](https://github.com/francknouama/go-starter/issues/149)), we've identified key improvements for CLI blueprints:
-
-### Two-Tier Approach
-
-The audit revealed a complexity mismatch between user expectations and the standard CLI blueprint. We've implemented a two-tier approach:
-
-1. **Simple CLI** (NEW)
-   - **Complexity**: Beginner
-   - **Files**: Reduced from 25 to 8 files
-   - **Purpose**: Quick command-line utilities
-   - **Features**: Basic flags, simple output, minimal structure
-
-2. **Standard CLI**
-   - **Complexity**: Intermediate
-   - **Files**: 25 files with full structure
-   - **Purpose**: Production-ready CLI applications
-   - **Features**: Subcommands, configuration, advanced patterns
-
-### When to use Simple CLI
-
-Choose the Simple CLI blueprint when:
-- Building quick utilities or scripts
-- Learning Go or exploring ideas
-- Creating internal tools with minimal requirements
-- Prototyping command-line interfaces
-- You need < 3 commands and < 5 flags
-
-### When to use Standard CLI
-
-Choose the Standard CLI blueprint when:
-- Building production CLI tools
-- Requiring multiple subcommands
-- Needing configuration file support
-- Implementing complex business logic
-- Building tools for distribution
-
-## Audit Findings Integration
-
-The blueprint audit (Issue [#149](https://github.com/francknouama/go-starter/issues/149)) revealed several critical insights:
-
-### Key Findings
-
-1. **Complexity mismatch**: The standard CLI blueprint was overly complex for simple use cases
-2. **File count concerns**: 25 files for a basic CLI tool discouraged beginners
-3. **Progressive learning**: Users need a stepping stone between "hello world" and production CLIs
-
-### Improvements Made
-
-1. **Two-tier approach**: Introduced Simple CLI blueprint (Issue [#56](https://github.com/francknouama/go-starter/issues/56))
-2. **Progressive disclosure**: ✅ **COMPLETED** - Implemented full progressive disclosure system (Issue [#150](https://github.com/francknouama/go-starter/issues/150))
-3. **Complexity reduction**: Simple CLI reduced from 29 to 8 files (73% reduction)
-4. **Clear guidance**: Added selection matrix and use case documentation
-5. **Smart help filtering**: Basic vs advanced help modes with context awareness
-6. **Interactive prompting fixes**: Eliminate prompts when sufficient flags provided
-7. **Default handling**: Smart defaults for CLI blueprints to improve UX
-8. **Comprehensive testing**: Unit, integration, and ATDD test coverage
-
-## Progressive Disclosure System Implementation 🔧
-
-### Architecture Overview
-
-The progressive disclosure system is implemented across multiple layers:
-
-#### Core Components
-
-1. **Complexity Level System** (`internal/prompts/progressive.go`)
-   ```go
-   type ComplexityLevel int
-   const (
-       ComplexitySimple   // Beginner-friendly, minimal structure
-       ComplexityStandard // Balanced, production-ready
-       ComplexityAdvanced // Enterprise patterns
-       ComplexityExpert   // Full-featured, all options
-   )
-   ```
-
-2. **Disclosure Mode System** (`internal/prompts/interfaces/types.go`)
-   ```go
-   type DisclosureMode int
-   const (
-       DisclosureModeBasic    // Essential options only
-       DisclosureModeAdvanced // All available options
-   )
-   ```
-
-3. **Custom Help Rendering** (`cmd/new.go`)
-   - Smart flag filtering based on disclosure mode
-   - Duplicate flag elimination
-   - Context-aware help hints
-   - Visual styling with lipgloss
-
-#### Progressive Help System Details
-
-**Basic Mode Help (Default)**:
-- Shows 14 essential flags: `--type`, `--name`, `--module`, `--framework`, `--logger`, etc.
-- Hides advanced flags: `--database-driver`, `--auth-type`, `--banner-style`, etc.
-- Includes hint: "💡 Use --advanced to see all available options"
-
-**Advanced Mode Help**:
-- Shows all 18+ flags including database, authentication, and deployment options
-- Includes hint: "💡 Use --basic to see only essential options"
-- No flag filtering - full feature exposure
+**go-starter** - A comprehensive Go project generator combining create-react-app simplicity with Spring Initializr flexibility. Features progressive disclosure for beginners and advanced developers.
+
+## 🎯 Interactive Mode (Primary Interface)
+
+go-starter features a **powerful interactive mode** that guides you through project creation with intelligent prompts:
+
+### Interactive Features
+- **Smart prompts** - Only asks relevant questions based on your choices
+- **Progressive disclosure** - Shows basic options by default, advanced when needed
+- **Contextual help** - Each prompt includes helpful descriptions
+- **Validation** - Ensures valid project names, module paths, and configurations
+- **Preview mode** - See what will be generated before creation
+
+### Interactive Usage
+```bash
+# Start interactive mode (recommended for all users)
+go-starter new
+
+# Interactive with advanced options
+go-starter new --advanced
+
+# Interactive for specific blueprint type
+go-starter new --type=web-api  # Still prompts for remaining options
+```
+
+### Interactive Flow Example
+1. **Project name** → Enter name or use random generator
+2. **Blueprint type** → Choose from 12 templates with descriptions
+3. **Complexity level** → Simple, Standard, Advanced, or Expert
+4. **Framework selection** → Context-aware options (e.g., Gin/Echo for web, Cobra for CLI)
+5. **Logger choice** → slog (default), zap, logrus, or zerolog
+6. **Additional features** → Database, authentication, deployment options (advanced mode)
+
+## Quick Reference
+
+### Essential Commands
+```bash
+# Build & Install
+go build -o bin/go-starter main.go
+make build && make install
+
+# Interactive Mode (Recommended)
+go-starter new                          # Start guided project creation
+go-starter new --advanced               # Interactive with all options
+
+# Direct Mode (Skip Interactive)
+go-starter new my-app --type=cli        # Non-interactive generation
+go-starter new --help                   # Essential flags (14)
+go-starter new --advanced --help        # All flags (18+)
+
+# Testing
+go test -v ./...                        # All tests
+make test                               # Via Makefile
+
+# Code Quality
+golangci-lint run                       # Before commits
+go generate ./...                       # Embed blueprints
+```
+
+### Progressive Disclosure Flags
+- `--complexity [simple|standard|advanced|expert]` - Project complexity
+- `--basic/--advanced` - Help mode toggle
+- `--dry-run` - Preview without creating
+
+### File Count by Complexity
+- **Simple CLI**: 8 files (learning/prototypes)
+- **Standard CLI**: 29 files (production-ready)
+- **Web API**: Varies by architecture pattern
+
+## 12 Core Blueprints
+
+| Blueprint | Complexity | Files | Use Case |
+|-----------|------------|-------|----------|
+| **Simple CLI** | Beginner | 8 | Quick utilities, learning |
+| **Standard CLI** | Intermediate | 29 | Production CLIs |
+| **Library** | Beginner | ~10 | Reusable packages |
+| **Standard Web API** | Intermediate | ~25 | REST APIs, CRUD |
+| **Clean Architecture** | Advanced | ~40 | Enterprise APIs |
+| **DDD Web API** | Advanced | ~40 | Complex domains |
+| **Hexagonal** | Expert | 50+ | High testability |
+| **AWS Lambda** | Beginner | ~15 | Serverless functions |
+| **Lambda Proxy** | Intermediate | ~20 | API Gateway |
+| **Event-Driven** | Expert | 50+ | CQRS/Event Sourcing |
+| **Microservice** | Advanced | ~35 | gRPC services |
+| **Monolith** | Intermediate | ~30 | Traditional apps |
+| **Workspace** | Advanced | Varies | Multi-module |
+
+## Architecture Components
+
+### Project Structure
+```
+/cmd            # CLI commands (Cobra)
+/internal       # Core logic
+  /generator    # Project generation engine
+  /prompts      # Interactive UI & progressive disclosure
+  /templates    # Blueprint engine (embed.FS)
+/blueprints     # Template definitions
+/web            # React UI (Phase 3)
+/tests          # ATDD & integration tests
+```
+
+### Progressive Disclosure System
+
+#### Core Implementation
+- **Location**: `internal/prompts/progressive.go`
+- **Complexity Levels**: Simple → Standard → Advanced → Expert
+- **Disclosure Modes**: Basic (14 flags) → Advanced (18+ flags)
+- **Smart Defaults**: Auto-sets framework & logger for CLI projects
 
 #### Blueprint Selection Logic
-
 ```go
-func SelectBlueprintForComplexity(blueprintType string, complexity ComplexityLevel) string {
-    if blueprintType == "cli" {
-        switch complexity {
-        case ComplexitySimple:
-            return "cli-simple"  // 8 files, minimal structure
-        default:
-            return "cli"         // 29 files, full structure
-        }
-    }
-    return blueprintType // Other blueprints unchanged
-}
-```
-
-#### Smart Defaults System
-
-When complexity and type are specified together, the system automatically sets defaults to prevent unnecessary prompting:
-
-- **CLI Projects**: 
-  - Framework: `cobra` (industry standard)
-  - Logger: `slog` (Go standard library)
-  - Module: `github.com/username/{project-name}` (for testing)
-
-#### Interactive Prompting Prevention
-
-The system uses a two-stage approach:
-
-1. **Pre-Prompt Analysis**: Check if sufficient flags are provided
-2. **Default Application**: Apply smart defaults based on blueprint type and complexity
-3. **Prompt Bypass**: Skip interactive prompts when configuration is complete
-
-### Implementation Files
-
-#### Core Logic Files
-- `internal/prompts/progressive.go` - Core progressive disclosure logic
-- `internal/prompts/interfaces/types.go` - Type definitions and interfaces
-- `cmd/new.go` - CLI command integration and help rendering
-
-#### Prompter Integration
-- `internal/prompts/bubbletea/prompter.go` - BubbleTea prompter with disclosure support
-- `internal/prompts/survey/prompter.go` - Survey prompter with disclosure support
-- Both implement `GetProjectConfigWithDisclosure` method
-
-#### Test Coverage
-- `internal/prompts/progressive_test.go` - Unit tests for core logic
-- `tests/acceptance/cli/progressive_disclosure_test.go` - ATDD tests
-- `tests/acceptance/blueprints/cli/cli_simple_atdd_test.go` - Simple CLI validation
-
-### Technical Decision Points
-
-#### Help System Architecture
-**Decision**: Custom help function vs. Cobra's built-in help
-**Rationale**: Cobra's built-in help doesn't support dynamic flag filtering
-**Implementation**: 
-```go
-newCmd.SetHelpFunc(progressiveHelpFunc)
-```
-
-#### Blueprint Naming Strategy
-**Decision**: `cli-simple` vs `cli` (not `cli-standard`)
-**Rationale**: Maintain existing blueprint registry while adding simple variant
-**Implementation**: Complexity-aware selection function maps appropriately
-
-#### Default Module Path
-**Decision**: Generate `github.com/username/{project}` for tests
-**Rationale**: Prevents test hangs while providing valid Go module syntax
-**Implementation**: Applied only when `--complexity` and `--type=cli` are specified
-
-#### Flag Categorization
-**Essential Flags** (Basic Mode):
-```go
-var essentialFlags = map[string]bool{
-    "name": true, "type": true, "module": true,
-    "framework": true, "logger": true, "go-version": true,
-    "output": true, "help": true, "quiet": true,
-    "dry-run": true, "no-git": true, "random-name": true,
-    "advanced": true, "basic": true, "complexity": true,
-}
-```
-
-**Advanced Flags** (Advanced Mode Only):
-- `--database-driver`, `--database-orm`
-- `--auth-type`, `--banner-style`
-- `--no-banner`, `--architecture`
-
-### Performance Characteristics
-
-- **Help Rendering**: O(n) where n = number of flags (~20ms for 18 flags)
-- **Blueprint Selection**: O(1) constant time lookup
-- **Default Application**: O(1) constant time assignments
-- **Flag Filtering**: O(n) linear scan with early termination
-
-### Error Handling
-
-- **Invalid Complexity**: Clear error message with valid options
-- **Missing Dependencies**: Smart defaults prevent most missing value errors
-- **Help Rendering Failures**: Graceful fallback to standard Cobra help
-- **Blueprint Loading Errors**: Detailed error messages with troubleshooting hints
-
-### Future Extensions
-
-1. **Blueprint-Specific Complexity**: Different complexity models per blueprint type
-2. **User Preference Learning**: Remember user's preferred disclosure mode
-3. **Dynamic Complexity Assessment**: Suggest complexity based on project requirements
-4. **Progressive Feature Unlocking**: Gradually expose features as users gain experience
-
-### Usage Examples and Workflows
-
-#### Beginner Workflow (Basic Mode)
-```bash
-# Step 1: See only essential help
-go-starter new --help
-# Shows: 14 essential flags with beginner-friendly descriptions
-
-# Step 2: Generate simple CLI
-go-starter new my-tool --type=cli --complexity=simple
-# Result: 8 files, minimal structure, no prompts
-
-# Step 3: Preview before creating
-go-starter new my-tool --type=cli --complexity=simple --dry-run
-# Shows: File list and structure preview
-```
-
-#### Expert Workflow (Advanced Mode)
-```bash
-# Step 1: See all available options
-go-starter new --advanced --help
-# Shows: 18+ flags including database, auth, deployment options
-
-# Step 2: Generate complex project with all options
-go-starter new enterprise-api \
-  --type=web-api \
-  --architecture=hexagonal \
-  --database-driver=postgres \
-  --database-orm=gorm \
-  --auth-type=jwt \
-  --logger=zap \
-  --advanced
-# Result: Full enterprise structure with all requested features
-```
-
-#### Progressive Learning Path
-```bash
-# Week 1: Start simple
-go-starter new hello-cli --complexity=simple
-
-# Week 2: Try standard CLI
-go-starter new todo-cli --complexity=standard
-
-# Week 3: Explore web APIs
-go-starter new rest-api --type=web-api
-
-# Week 4: Advanced patterns
-go-starter new enterprise-api --type=web-api --architecture=clean --advanced
-```
-
-#### Development and Testing Workflows
-```bash
-# Quick prototype testing
-go-starter new test-{1..5} --type=cli --complexity=simple --dry-run
-
-# Validate all complexity levels work
-for complexity in simple standard advanced expert; do
-  go-starter new test-$complexity --type=cli --complexity=$complexity --dry-run
-done
-
-# Test different architectures
-for arch in standard clean ddd hexagonal; do
-  go-starter new api-$arch --type=web-api --architecture=$arch --dry-run
-done
-```
-
-### Troubleshooting Progressive Disclosure
-
-#### Common Issues and Solutions
-
-**Problem**: Help shows too many options for beginners
-```bash
-# Wrong
-go-starter new --help  # Shows advanced flags
-
-# Right
-go-starter new --basic --help  # Shows only essential flags
-# Or just rely on default basic mode
-go-starter new --help  # Already defaults to basic
-```
-
-**Problem**: Interactive prompts appear even with flags
-```bash
-# Wrong - missing required flags
-go-starter new --type=cli --complexity=simple
-# Prompts for module path
-
-# Right - include all required flags
-go-starter new my-app --type=cli --complexity=simple --module=github.com/user/my-app
-```
-
-**Problem**: Can't find advanced options
-```bash
-# Solution: Use advanced mode
-go-starter new --advanced --help
-# Shows: database, auth, deployment options
-```
-
-**Problem**: Too many files generated for simple project
-```bash
-# Wrong - generates 29 files
-go-starter new my-tool --type=cli
-
-# Right - generates 8 files  
-go-starter new my-tool --type=cli --complexity=simple
-```
-
-**Problem**: Complexity level not working as expected
-```bash
-# Check valid complexity levels
-go-starter new --complexity=invalid  # Shows error with valid options
-go-starter new --complexity=simple   # ✓ Valid
-go-starter new --complexity=standard # ✓ Valid
-```
-
-#### Testing and Validation
-
-**Verify Progressive Disclosure Works**:
-```bash
-# Test basic help (should show ~14 flags)
-go-starter new --help | grep -c "^    --"
-
-# Test advanced help (should show ~18+ flags)
-go-starter new --advanced --help | grep -c "^    --"
-
-# Test complexity generation
-go-starter new test-simple --type=cli --complexity=simple --dry-run | grep -c "Files to be generated"
-# Should show 8 files
-
-go-starter new test-standard --type=cli --complexity=standard --dry-run | grep -c "Files to be generated"  
-# Should show 29 files
-```
-
-**Debug Help System**:
-```bash
-# Check flag filtering
-go-starter new --basic --help | grep "database-driver"
-# Should be empty (filtered out)
-
-go-starter new --advanced --help | grep "database-driver"
-# Should show the flag
-```
-
-## Progressive Complexity Philosophy
-
-go-starter embraces a "Start simple, grow as needed" philosophy:
-
-### Core Principles
-
-1. **Start Simple**: Begin with the minimal viable structure
-2. **Grow Organically**: Add complexity only when needed
-3. **Clear Progression**: Obvious path from simple to advanced
-4. **No Premature Optimization**: Avoid over-engineering from the start
-
-### Learning Path
-
-The recommended progression for CLI development:
-
-1. **Simple CLI** → Learn basics, understand flags and output
-2. **Standard CLI** → Add subcommands, configuration, and structure
-3. **Advanced patterns** → Integrate with web APIs, databases, or complex logic
-
-### Migrating Between Blueprints
-
-When your simple CLI outgrows its initial structure:
-
-1. **Identify pain points**: Multiple commands needed? Configuration required?
-2. **Plan the migration**: Map simple structure to standard structure
-3. **Incremental refactoring**: Move code piece by piece
-4. **Maintain compatibility**: Ensure existing functionality remains intact
-
-Example migration from simple to standard:
-- `main.go` → Split into `cmd/root.go` and command files
-- Inline logic → Move to `internal/` packages
-- Direct flag access → Configuration struct pattern
-- Simple output → Structured logging with levels
-
-### Complexity Criteria
-
-When evaluating blueprint complexity, we consider:
-
-1. **Number of files**: More files = higher complexity
-2. **Architecture patterns**: Advanced patterns increase complexity
-3. **Dependencies**: External dependencies add complexity
-4. **Abstraction levels**: More layers = higher complexity
-5. **Configuration options**: Flexibility adds complexity
-
-### Blueprint Variables
-Standard variables available in all blueprints:
-- `{{.ProjectName}}` - Project name
-- `{{.ModulePath}}` - Go module path (e.g., github.com/user/project)
-- `{{.GoVersion}}` - Go version (default: 1.21)
-- `{{.Framework}}` - Selected framework (gin, echo, cobra, etc.)
-- `{{.Architecture}}` - Architecture pattern (standard, clean, ddd, hexagonal)
-- `{{.LoggerType}}` - Logging library (slog, zap, logrus, zerolog)
-- `{{.Features}}` - Feature configuration object
-
-### Simplified Logger System ✨
-
-**ENHANCED**: go-starter now features a drastically simplified logger system that generates clean, maintainable logging code with minimal complexity while supporting multiple popular Go logging libraries.
-
-#### Complexity Reduction Achievements
-
-| Blueprint | Before | After | Reduction |
-|-----------|--------|-------|-----------|
-| **CLI-Standard** | 1,051 lines | 98 lines | **91% reduction** |
-| **Web-API-Standard** | 398 lines | 110 lines | **72% reduction** |
-| **Workspace** | 487 lines | 297 lines | **39% reduction** |
-| **Lambda-Standard** | 316 lines | 282 lines | **11% reduction** |
-
-#### Supported Loggers
-
-| Logger | Package | Performance | Use Case | Default |
-|--------|---------|-------------|----------|---------|
-| **slog** | `log/slog` | Good | Standard library, structured logging | ✅ |
-| **zap** | `go.uber.org/zap` | Excellent | High performance, zero allocation | |
-| **logrus** | `github.com/sirupsen/logrus` | Good | Feature-rich, popular choice | |
-| **zerolog** | `github.com/rs/zerolog` | Excellent | Zero allocation, chainable API | |
-
-#### Simplified Logger Benefits
-
-- ✅ **Minimal Interface**: Simple, focused logging API (5 methods)
-- ✅ **Single Implementation**: One file with conditional compilation  
-- ✅ **Reduced Complexity**: 60-90% fewer lines of logging code
-- ✅ **Conditional Dependencies**: Only selected logger dependencies included
-- ✅ **Production Ready**: All logger types validated and tested
-- ✅ **Easy Migration**: Clear upgrade path from legacy complex loggers
-
-#### Usage Examples
-
-**slog (Default)**:
-```go
-logger.Info("Server starting", "port", 8080, "env", "production")
-```
-
-**zap**:
-```go  
-logger.Info("Server starting", zap.Int("port", 8080), zap.String("env", "production"))
-```
-
-**logrus**:
-```go
-logger.WithFields(logrus.Fields{"port": 8080, "env": "production"}).Info("Server starting")
-```
-
-**zerolog**:
-```go
-logger.Info().Int("port", 8080).Str("env", "production").Msg("Server starting")
-```
-
-### Conditional Generation
-Blueprints use Go template conditions for optional files:
-```yaml
-files:
-  - source: database.go.tmpl
-    destination: internal/database/database.go
-    condition: "{{ne .Features.Database.Driver \"\"}}"
-  - source: auth.go.tmpl
-    destination: internal/middleware/auth.go
-    condition: "{{eq .Features.Authentication.Type \"jwt\"}}"
-  - source: logger/zap.go.tmpl
-    destination: internal/logger/zap.go
-    condition: "{{eq .LoggerType \"zap\"}}"
-```
-
-## Configuration Management
-
-### CLI Configuration
-```yaml
-# ~/.go-starter.yaml
-profiles:
-  default:
-    author: "John Doe"
-    email: "john@example.com"
-    license: "MIT"
-    defaults:
-      goVersion: "1.21"
-      framework: "gin"
-      logger: "slog"
-current_profile: "default"
-```
-
-### Project Configuration
-```yaml
-# project.yaml
-name: my-awesome-api
-module: github.com/myuser/my-awesome-api
-type: api                    # api, cli, library, lambda, lambda-proxy, microservice, monolith, workspace
-goVersion: "1.21"
-architecture: hexagonal     # standard, clean, ddd, hexagonal, event-driven
-framework: gin              # gin, echo, fiber, chi, cobra
-logger: slog                # slog, zap, logrus, zerolog
-
-features:
-  database:
-    driver: postgres         # postgres, mysql, mongodb, sqlite, redis
-    orm: gorm               # gorm, sqlx, sqlc, ent
-  authentication:
-    type: jwt               # jwt, oauth2, session, api-key
-    providers: ["google", "github"]
-  deployment:
-    targets: ["docker", "kubernetes", "lambda"]
-  testing:
-    framework: testify      # testify, ginkgo
-    coverage: true
-  logging:
-    level: info             # debug, info, warn, error
-    format: json            # json, text, console
+// CLI blueprints adapt to complexity
+--type=cli --complexity=simple  → cli-simple (8 files)
+--type=cli --complexity=standard → cli (29 files)
 ```
 
 ## Development Workflow
 
 ### Adding New Blueprints
-1. Create directory in `blueprints/` (e.g., `blueprints/new-type/`)
-2. Add `template.yaml` with metadata and file definitions
-3. Create template files with `.tmpl` extension using Go template syntax
-4. Update blueprint registry in `internal/templates/registry.go`
-5. Add prompts for new blueprint in `internal/prompts/interactive.go`
-6. Add tests to validate blueprint generation
+1. Create `blueprints/new-type/` directory
+2. Add `template.yaml` with metadata
+3. Create `.tmpl` files with Go templates
+4. Update `internal/templates/registry.go`
+5. Add prompts in `internal/prompts/interactive.go`
+6. Write tests for validation
 
-### Blueprint Development Best Practices
-- Use descriptive variable names in templates
-- Include conditional logic for optional features
-- Provide sensible defaults for all variables
-- Test blueprints with various configuration combinations
-- Include proper error handling in generated code
-- Follow Go best practices in generated project structure
+### Blueprint Variables
+- `{{.ProjectName}}` - Project name
+- `{{.ModulePath}}` - Go module path
+- `{{.GoVersion}}` - Go version (default: 1.21)
+- `{{.Framework}}` - Framework (gin, echo, cobra, etc.)
+- `{{.LoggerType}}` - Logger (slog, zap, logrus, zerolog)
+- `{{.Architecture}}` - Pattern (standard, clean, ddd, hexagonal)
+
+### Conditional Generation
+```yaml
+files:
+  - source: database.go.tmpl
+    destination: internal/database/database.go
+    condition: "{{ne .Features.Database.Driver \"\"}}"
+```
+
+## Logger System
+
+### Supported Loggers
+| Logger | Performance | Default | Use Case |
+|--------|-------------|---------|----------|
+| **slog** | Good | ✅ | Standard library |
+| **zap** | Excellent | | High performance |
+| **logrus** | Good | | Feature-rich |
+| **zerolog** | Excellent | | Zero allocation |
+
+### Complexity Reduction
+- CLI-Standard: 91% reduction (1,051 → 98 lines)
+- Web-API: 72% reduction (398 → 110 lines)
 
 ## Testing Strategy
 
-### Critical Testing Requirements
-- **Blueprint Validation**: All blueprints must parse without errors
-- **Generation Testing**: Generated projects must compile successfully with `go build`
-- **Logger Testing**: All logger types must generate working implementations and compile
-- **Integration Testing**: End-to-end CLI workflow testing
-- **Web UI Testing**: API endpoints and WebSocket functionality
-- **Cross-platform Testing**: Windows, macOS, Linux compatibility
-
 ### Test Categories
-1. **Unit Tests**: Individual component testing
-   - Progressive disclosure logic (`internal/prompts/progressive_test.go`)
-   - Complexity level parsing and blueprint selection
-   - Help filtering and flag management
-2. **Integration Tests**: Full project generation workflow
-   - End-to-end CLI generation with different complexity levels
-   - Blueprint compilation validation
-3. **Blueprint Tests**: Validate all blueprints generate working code
-   - CLI-simple (8 files) vs CLI-standard (29 files) generation
-   - Logger integration testing across all complexity levels
-4. **Logger Tests**: Test each logger implementation with various configurations
-5. **Acceptance Tests (ATDD)**: User-focused behavior validation
-   - Progressive disclosure acceptance criteria (`tests/acceptance/cli/progressive_disclosure_test.go`)
-   - Help system behavior validation
-   - Complexity flag validation and blueprint selection
-6. **Enhanced ATDD Quality Tests** ✨ **NEW**: Comprehensive quality validation system
-   - **Performance Optimized**: 60% improvement through intelligent project caching
-   - **Parallel Execution**: 5 concurrent test suites (compilation, imports, variables, configuration, framework-isolation)
-   - **Thread-Safe**: Concurrent-safe operations using `sync.RWMutex`
-   - **CI Integration**: Full GitHub Actions integration with quality gates
-   - **Detailed Reporting**: Comprehensive metrics and quality assessment
-   - **Documentation**: See `docs/CI_INTEGRATION.md` and `docs/ENHANCED_ATDD_QUICK_REFERENCE.md`
-7. **API Tests**: Web interface endpoint testing (Phase 3)
-8. **CLI Tests**: Command-line interface testing
-   - Flag parsing and validation
-   - Help output formatting
-   - Exit code verification
+1. **Unit Tests** - Component logic
+2. **Integration Tests** - Full workflow
+3. **Blueprint Tests** - Generation validation
+4. **ATDD Tests** - User behavior validation
+5. **Cross-platform** - Windows/macOS/Linux
 
-## Database Schema (Phases 3-4)
+### Critical Requirements
+- All blueprints must parse without errors
+- Generated projects must compile (`go build`)
+- All logger types must work
+- Tests run on all platforms
 
-### Core Tables
-- `users` - Authentication and user profiles
-- `projects` - Generated project metadata and sharing
-- `marketplace_blueprints` - Community-contributed blueprints
-- `blueprint_ratings` - Blueprint reviews and ratings
-- `analytics_events` - Usage analytics and metrics
-- `api_keys` - API access management
+### ATDD Infrastructure
+- Dynamic project root detection
+- Cross-platform compatibility
+- Template discovery from `blueprints/`
+- Compilation validation
+- Performance monitoring
 
-### Key Relationships
-- Users can create multiple projects
-- Projects reference blueprints used for generation
-- Blueprints can be rated and reviewed by users
-- Analytics track blueprint usage patterns
+## Common Issues & Solutions
 
-## Security Considerations
+### Progressive Disclosure
+```bash
+# Too many options for beginners?
+go-starter new --help  # Already defaults to basic
 
-### Input Validation
-- **Sanitize all inputs**: Project names, module paths, template variables
-- **Validate module paths**: Ensure proper Go module syntax
-- **Blueprint security**: Scan community blueprints for malicious code
-- **Path traversal protection**: Prevent blueprint files from accessing unauthorized paths
+# Can't find advanced options?
+go-starter new --advanced --help
 
-### Web Interface Security
-- **Authentication**: JWT-based authentication for user sessions
-- **CORS**: Proper cross-origin request handling
-- **Rate limiting**: Prevent abuse of generation endpoints
-- **Input sanitization**: All user inputs must be validated
+# Too many files for simple project?
+go-starter new my-tool --type=cli --complexity=simple
+```
 
-## Performance Considerations
+### Blueprint Generation
+- **Syntax errors**: Run `go generate ./...`
+- **Missing variables**: Check template definitions
+- **File conflicts**: Verify destinations don't overlap
 
-### Blueprint Engine Optimization
-- **Blueprint caching**: Cache parsed blueprints in memory
-- **Parallel generation**: Generate multiple files concurrently
-- **Memory management**: Efficient handling of large projects
-- **File I/O optimization**: Batch file operations when possible
+## Agent Ecosystem
 
-### Web Interface Performance
-- **Lazy loading**: Load blueprints and previews on demand
-- **WebSocket efficiency**: Debounce real-time preview updates
-- **Caching**: Cache generated previews and project structures
-- **Bundle optimization**: Minimize JavaScript bundle size
+### Core Development
+- **golang-fullstack-engineer** - Go development, ATDD, refactoring
+- **ux-design-expert** - Web/mobile UI, user experience
+- **senior-bug-resolver** - QA bugs, critical issues
+- **cross-platform-tester** - Platform compatibility
 
-## Deployment and Production
+### Production Readiness
+- **accessibility-ux-specialist** - WCAG compliance
+- **devops-deployment-specialist** - Infrastructure, CI/CD
+- **performance-security-specialist** - Optimization, security
+- **documentation-community-specialist** - Docs, tutorials
 
-### CLI Distribution
-- **GitHub Releases**: Binary distribution for multiple platforms
-- **Package managers**: Homebrew, Chocolatey, APT/YUM packages
-- **Auto-update**: Self-updating mechanism for CLI tool
-- **Docker**: Containerized version for CI/CD usage
+### Project Management
+- **product-owner** - GitHub issues, roadmap
+- **general-purpose** - Multi-domain tasks
 
-### Web Interface Deployment
-- **Static hosting**: Netlify, Vercel for frontend
-- **Backend hosting**: Railway, Render for API server
-- **Database**: PostgreSQL with connection pooling
-- **Monitoring**: Health checks, metrics, error tracking
+### Agent Selection
+1. Match primary skill area
+2. Consider production requirements
+3. Use general-purpose for complex multi-domain tasks
+4. Prioritize senior-bug-resolver for critical issues
 
-## Common Issues and Solutions
+## Phase Implementation
 
-### Blueprint Generation Failures
-- **Blueprint syntax errors**: Use `go generate ./...` to validate
-- **Missing variables**: Ensure all template variables are defined
-- **File conflicts**: Check for overlapping file destinations
-- **Rollback mechanism**: Use recovery system for partial failures
+### Phase 1: Core CLI ✅
+- Basic blueprints (Web API, CLI, Library, Lambda)
+- Cobra framework, interactive prompts
+- Blueprint engine
 
-### Performance Issues
-- **Large projects**: Use streaming for file downloads
-- **Memory usage**: Implement garbage collection for long-running sessions
-- **Database queries**: Use connection pooling and query optimization
-- **Blueprint loading**: Cache blueprints to avoid repeated parsing
+### Phase 2: Complete System ✅
+- All 12 project types
+- Multiple architecture patterns
+- Progressive disclosure
 
-### Cross-platform Compatibility
-- **File paths**: Use `filepath.Join()` for cross-platform paths
-- **Line endings**: Handle CRLF vs LF appropriately
-- **Permissions**: Set proper file permissions on Unix systems
-- **Shell commands**: Provide alternatives for different platforms
+### Phase 3: Web UI (In Progress)
+- React + Vite frontend
+- WebSocket real-time preview
+- RESTful API
 
-## Future Extensibility
+### Phase 4: Advanced Features (Future)
+- GitHub integration
+- Blueprint marketplace
+- Cloud deployments
 
-### Plugin System (Phase 4+)
-- **HashiCorp go-plugin**: Process isolation for custom generators
-- **Blueprint marketplace**: Community blueprint sharing and discovery
-- **Organization blueprints**: Private blueprint repositories for enterprises
-- **Custom hooks**: Pre/post generation custom scripts
+## Configuration
 
-### Integration Opportunities
-- **IDE Extensions**: VS Code, GoLand plugins
-- **CI/CD Integration**: GitHub Actions, GitLab CI blueprints
-- **Cloud Platforms**: AWS, GCP, Azure integration
-- **Monitoring Tools**: Observability and metrics integration
+### CLI Config (`~/.go-starter.yaml`)
+```yaml
+profiles:
+  default:
+    author: "John Doe"
+    defaults:
+      goVersion: "1.21"
+      framework: "gin"
+      logger: "slog"
+```
 
-This comprehensive project represents a significant advancement in Go developer tooling, filling critical gaps in the ecosystem while providing a foundation for future innovation.
+### Project Config (`project.yaml`)
+```yaml
+name: my-api
+module: github.com/user/my-api
+type: web-api
+architecture: hexagonal
+framework: gin
+logger: slog
+features:
+  database:
+    driver: postgres
+    orm: gorm
+```
 
-## 🤖 Specialized Agent Ecosystem
+## Security & Performance
 
-go-starter utilizes a streamlined agent ecosystem designed for production readiness and enterprise-grade development. Each agent has distinct expertise areas with minimal overlap for efficient task completion.
+### Security
+- Input sanitization (names, paths, templates)
+- Module path validation
+- Blueprint security scanning
+- Path traversal protection
 
-### Core Development Agents
+### Performance
+- Blueprint caching in memory
+- Parallel file generation
+- Efficient I/O batching
+- WebSocket debouncing
 
-#### golang-fullstack-engineer
-**When to use**: Go development, ATDD implementation, code refactoring, unit testing
-- Primary for all Go codebase changes
-- ATDD test creation and validation
-- Backend API development and optimization
-- Code review and refactoring tasks
-- **Example**: "Create ATDD tests for the new user authentication flow"
+## Quick Troubleshooting
 
-#### ux-design-expert  
-**When to use**: Mobile/web interface design, user experience optimization, design systems
-- Web UI component design and implementation
-- Mobile-first responsive design
-- User journey optimization and usability
-- Design system creation and maintenance
-- **Example**: "Improve the mobile onboarding flow for better user retention"
+| Problem | Solution |
+|---------|----------|
+| Interactive prompts with flags | Include all required flags |
+| Help shows too many options | Use default basic mode |
+| Too many files generated | Use `--complexity=simple` |
+| Blueprint syntax errors | Run `go generate ./...` |
+| Cross-platform issues | Use `filepath.Join()` |
 
-#### senior-bug-resolver
-**When to use**: QA-identified bugs, critical production issues, complex debugging
-- Bugs identified by QA testing that need senior expertise
-- Critical production issues requiring immediate resolution
-- Complex debugging scenarios with multiple system interactions
-- **Example**: "QA found 3 critical bugs in our CLI help system - investigate and fix"
+## Important Reminders
 
-#### cross-platform-tester
-**When to use**: Windows/macOS/Linux compatibility, platform-specific testing
-- Ensure go-starter works across all supported platforms
-- Platform-specific build and deployment testing
-- Cross-platform integration validation
-- **Example**: "Test the latest CLI changes across Windows, macOS, and Linux"
-
-### Production Readiness Agents
-
-#### accessibility-ux-specialist
-**When to use**: WCAG compliance, accessibility testing, assistive technology support
-- WCAG 2.1 AA compliance implementation and validation
-- Screen reader optimization and keyboard navigation
-- Accessibility audit and remediation
-- **Critical for**: Phase 3 production launch requirements
-- **Example**: "Audit the web interface for WCAG 2.1 AA compliance"
-
-#### devops-deployment-specialist
-**When to use**: Infrastructure, CI/CD pipelines, production deployment
-- Kubernetes deployment and infrastructure as code
-- CI/CD pipeline development and optimization
-- Production monitoring and observability setup
-- Multi-cloud deployment strategies
-- **Example**: "Set up production-ready Kubernetes deployment with CI/CD pipeline"
-
-#### performance-security-specialist
-**When to use**: Performance optimization, security compliance, load testing
-- Frontend bundle optimization and Core Web Vitals
-- Go application profiling and performance tuning
-- Security vulnerability assessment and remediation
-- Load testing and capacity planning
-- **Example**: "Optimize the web interface for sub-2-second load times"
-
-#### documentation-community-specialist
-**When to use**: Documentation creation, community building, educational content
-- Comprehensive technical documentation
-- Community engagement and growth strategies
-- Tutorial and educational content creation
-- API documentation and user guides
-- **Example**: "Create comprehensive getting started guide for new users"
-
-### Project Management Agents
-
-#### product-owner
-**When to use**: GitHub issue management, project roadmap, feature prioritization
-- GitHub issue triage and project planning
-- Feature prioritization and roadmap development
-- Stakeholder communication and requirements gathering
-- **Example**: "Analyze and prioritize the current GitHub issues backlog"
-
-#### general-purpose
-**When to use**: Complex multi-step tasks, research, file exploration
-- Fallback for tasks that don't clearly fit other agents
-- Complex research requiring multiple rounds of investigation
-- Multi-step workflows spanning different domains
-- **Example**: "Research and implement OAuth2 integration with multiple providers"
-
-## 🎯 Agent Selection Guidelines
-
-### Automatic Triggers
-- **Web UI development** → `ux-design-expert` or `accessibility-ux-specialist`
-- **Go code changes** → `golang-fullstack-engineer`
-- **QA bug reports** → `senior-bug-resolver`
-- **Infrastructure needs** → `devops-deployment-specialist`
-- **Performance issues** → `performance-security-specialist`
-- **Documentation requests** → `documentation-community-specialist`
-
-### Decision Framework
-1. **Primary Domain**: Choose agent by primary skill area needed
-2. **Production Readiness**: Use specialized agents for production requirements
-3. **Complexity**: Use `general-purpose` for multi-domain complex tasks
-4. **Urgency**: Use `senior-bug-resolver` for critical production issues
-
-### Integration Patterns
-- **Accessibility + UX**: `accessibility-ux-specialist` + `ux-design-expert`
-- **Performance + DevOps**: `performance-security-specialist` + `devops-deployment-specialist`
-- **Documentation + Community**: `documentation-community-specialist` + `product-owner`
-- **Full-Stack Development**: `golang-fullstack-engineer` + `ux-design-expert`
-
-### Example Task Mappings
-
-| Task Type | Primary Agent | Secondary Agent |
-|-----------|---------------|-----------------|
-| **Add new CLI command** | `golang-fullstack-engineer` | `cross-platform-tester` |
-| **Fix mobile responsiveness** | `ux-design-expert` | `accessibility-ux-specialist` |
-| **Production deployment** | `devops-deployment-specialist` | `performance-security-specialist` |
-| **Performance optimization** | `performance-security-specialist` | `golang-fullstack-engineer` |
-| **WCAG compliance** | `accessibility-ux-specialist` | `ux-design-expert` |
-| **API documentation** | `documentation-community-specialist` | `golang-fullstack-engineer` |
-| **Security audit** | `performance-security-specialist` | `devops-deployment-specialist` |
-| **Bug investigation** | `senior-bug-resolver` | `golang-fullstack-engineer` |
-
-## 🚀 Agent Ecosystem Benefits
-
-### Streamlined Selection
-- **10 focused agents** vs previous 15+ overlapping agents
-- **Clear domain boundaries** eliminate selection confusion
-- **33% reduction** in agent ecosystem complexity
-
-### Production Focus
-- **Enterprise-grade capabilities** for accessibility, security, performance
-- **Phase 3/4 alignment** with production launch requirements
-- **Quality emphasis** on compliance and professional standards
-
-### Efficient Coordination
-- **Minimal overlap** between agent responsibilities
-- **Clear escalation paths** for complex multi-domain tasks
-- **Integration patterns** for common agent combinations
-
-This agent ecosystem ensures go-starter development is efficient, production-ready, and aligned with enterprise requirements while maintaining clarity and avoiding confusion.
+- NEVER create files unless necessary
+- ALWAYS prefer editing over creating new files
+- NEVER create docs unless explicitly requested
+- Follow existing code conventions
+- Check for existing libraries before adding new ones
+- Test with `golangci-lint` before commits
+- Mark todos as completed immediately in TodoWrite
