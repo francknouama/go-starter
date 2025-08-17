@@ -1,9 +1,9 @@
 package generator
 
 import (
+	"fmt"
 	"testing"
 	"time"
-	"path/filepath"
 
 	"github.com/francknouama/go-starter/pkg/types"
 )
@@ -61,17 +61,18 @@ func TestWorkerPool(t *testing.T) {
 		
 		// Progress should work even without jobs
 		pool.totalJobs = 10
-		pool.completedJobs = 5
 		progress = pool.GetProgress()
-		if progress != 50.0 {
-			t.Errorf("Expected 50%% progress, got %f", progress)
+		if progress != 0 {
+			t.Errorf("Expected 0%% progress with no processed jobs, got %f", progress)
 		}
 	})
 }
 
 func TestParallelTemplateProcessor(t *testing.T) {
 	t.Run("processor creation", func(t *testing.T) {
-		processor := NewParallelTemplateProcessor(2)
+		// Create a mock transaction for testing
+		tx := &GenerationTransaction{}
+		processor := NewParallelTemplateProcessor(2, tx)
 		if processor == nil {
 			t.Error("Expected processor to not be nil")
 		}
@@ -81,34 +82,36 @@ func TestParallelTemplateProcessor(t *testing.T) {
 		}
 		
 		// Clean up
-		processor.Shutdown()
+		processor.pool.Stop()
 	})
 	
 	t.Run("processor lifecycle", func(t *testing.T) {
-		processor := NewParallelTemplateProcessor(1)
+		tx := &GenerationTransaction{}
+		processor := NewParallelTemplateProcessor(1, tx)
 		
-		// Should start successfully
-		processor.Start()
+		// Should start successfully (no explicit Start method needed)
+		// Pool starts when ProcessTemplates is called
 		
 		// Should shutdown gracefully
-		processor.Shutdown()
+		processor.pool.Stop()
 		
 		// Should handle multiple shutdowns
-		processor.Shutdown()
+		processor.pool.Stop()
 	})
 	
 	t.Run("empty job processing", func(t *testing.T) {
-		processor := NewParallelTemplateProcessor(1)
-		defer processor.Shutdown()
-		
-		processor.Start()
+		tx := &GenerationTransaction{}
+		processor := NewParallelTemplateProcessor(1, tx)
+		defer processor.pool.Stop()
 		
 		// Process empty job list
 		jobs := []types.TemplateFile{}
 		config := types.ProjectConfig{Name: "test"}
 		outputDir := t.TempDir()
+		context := make(map[string]any)
+		tmpl := &types.Template{}
 		
-		results, err := processor.ProcessTemplates(jobs, config, outputDir)
+		results, err := processor.ProcessTemplates(jobs, outputDir, outputDir, context, config, tmpl)
 		if err != nil {
 			t.Errorf("Expected no error for empty jobs, got %v", err)
 		}
@@ -119,10 +122,11 @@ func TestParallelTemplateProcessor(t *testing.T) {
 	})
 	
 	t.Run("progress monitoring", func(t *testing.T) {
-		processor := NewParallelTemplateProcessor(1)
-		defer processor.Shutdown()
+		tx := &GenerationTransaction{}
+		processor := NewParallelTemplateProcessor(1, tx)
+		defer processor.pool.Stop()
 		
-		progress := processor.GetProgress()
+		progress := processor.pool.GetProgress()
 		if progress != 0 {
 			t.Errorf("Expected 0 progress initially, got %f", progress)
 		}
@@ -136,29 +140,30 @@ func TestTemplateJob(t *testing.T) {
 			Destination: "test.go",
 		}
 		
-		config := types.ProjectConfig{
-			Name:   "test-project",
-			Module: "github.com/test/test-project",
-		}
-		
 		outputDir := t.TempDir()
+		destPath := outputDir + "/test.go"
+		context := make(map[string]any)
+		tx := &GenerationTransaction{}
 		
 		job := &templateJob{
-			file:      file,
-			config:    config,
-			outputDir: outputDir,
+			templateFile: file,
+			templateDir:  "/templates",
+			destPath:     destPath,
+			context:      context,
+			jobID:        1,
+			transaction:  tx,
 		}
 		
-		if job.file.Source != "test.tmpl" {
-			t.Errorf("Expected source 'test.tmpl', got '%s'", job.file.Source)
+		if job.templateFile.Source != "test.tmpl" {
+			t.Errorf("Expected source 'test.tmpl', got '%s'", job.templateFile.Source)
 		}
 		
-		if job.config.Name != "test-project" {
-			t.Errorf("Expected project name 'test-project', got '%s'", job.config.Name)
+		if job.destPath != destPath {
+			t.Errorf("Expected dest path '%s', got '%s'", destPath, job.destPath)
 		}
 		
-		if job.outputDir != outputDir {
-			t.Errorf("Expected output dir '%s', got '%s'", outputDir, job.outputDir)
+		if job.jobID != 1 {
+			t.Errorf("Expected job ID 1, got %d", job.jobID)
 		}
 	})
 }
@@ -166,33 +171,38 @@ func TestTemplateJob(t *testing.T) {
 func TestTemplateResult(t *testing.T) {
 	t.Run("successful result", func(t *testing.T) {
 		result := &templateResult{
-			file:        types.TemplateFile{Destination: "test.go"},
-			outputPath:  "/path/to/test.go",
-			err:         nil,
+			jobID:      1,
+			filePath:   "/path/to/test.go",
+			error:      nil,
+			wasSkipped: false,
 		}
 		
-		if result.err != nil {
+		if result.error != nil {
 			t.Error("Expected successful result to have no error")
 		}
 		
-		if result.outputPath != "/path/to/test.go" {
-			t.Errorf("Expected output path '/path/to/test.go', got '%s'", result.outputPath)
+		if result.filePath != "/path/to/test.go" {
+			t.Errorf("Expected file path '/path/to/test.go', got '%s'", result.filePath)
+		}
+		
+		if result.jobID != 1 {
+			t.Errorf("Expected job ID 1, got %d", result.jobID)
 		}
 	})
 	
 	t.Run("error result", func(t *testing.T) {
 		testErr := fmt.Errorf("test error")
 		result := &templateResult{
-			file: types.TemplateFile{Destination: "test.go"},
-			err:  testErr,
+			jobID: 2,
+			error: testErr,
 		}
 		
-		if result.err == nil {
+		if result.error == nil {
 			t.Error("Expected error result to have error")
 		}
 		
-		if result.err.Error() != "test error" {
-			t.Errorf("Expected error 'test error', got '%v'", result.err)
+		if result.error.Error() != "test error" {
+			t.Errorf("Expected error 'test error', got '%v'", result.error)
 		}
 	})
 }
@@ -243,10 +253,9 @@ func TestParallelProcessingConfiguration(t *testing.T) {
 
 func TestParallelProcessingIntegration(t *testing.T) {
 	t.Run("integration with temporary files", func(t *testing.T) {
-		processor := NewParallelTemplateProcessor(1)
-		defer processor.Shutdown()
-		
-		processor.Start()
+		tx := &GenerationTransaction{}
+		processor := NewParallelTemplateProcessor(1, tx)
+		defer processor.pool.Stop()
 		
 		// Create a temporary output directory
 		outputDir := t.TempDir()
@@ -259,8 +268,10 @@ func TestParallelProcessingIntegration(t *testing.T) {
 		
 		// Test with empty template files list
 		files := []types.TemplateFile{}
+		context := make(map[string]any)
+		tmpl := &types.Template{}
 		
-		results, err := processor.ProcessTemplates(files, config, outputDir)
+		results, err := processor.ProcessTemplates(files, outputDir, outputDir, context, config, tmpl)
 		if err != nil {
 			t.Errorf("Integration test failed: %v", err)
 		}
@@ -274,9 +285,9 @@ func TestParallelProcessingIntegration(t *testing.T) {
 		// Test that processor can be created and destroyed quickly
 		start := time.Now()
 		
-		processor := NewParallelTemplateProcessor(1)
-		processor.Start()
-		processor.Shutdown()
+		tx := &GenerationTransaction{}
+		processor := NewParallelTemplateProcessor(1, tx)
+		processor.pool.Stop()
 		
 		elapsed := time.Since(start)
 		if elapsed > time.Second {

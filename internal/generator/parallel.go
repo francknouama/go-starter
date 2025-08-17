@@ -176,6 +176,20 @@ func (wp *WorkerPool) GetProcessedCount() int64 {
 	return atomic.LoadInt64(wp.progressCounter)
 }
 
+// GetOptimalWorkerCount returns the optimal number of workers for the current system
+func GetOptimalWorkerCount() int {
+	cpuCount := runtime.NumCPU()
+	// Use CPU count for I/O-bound tasks like template processing
+	// Cap at 8 for reasonable resource usage
+	if cpuCount > 8 {
+		return 8
+	}
+	if cpuCount < 1 {
+		return 1
+	}
+	return cpuCount
+}
+
 // worker processes template jobs
 func (wp *WorkerPool) worker(workerID int) {
 	defer wp.wg.Done()

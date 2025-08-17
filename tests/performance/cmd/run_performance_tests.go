@@ -664,9 +664,9 @@ func generateMarkdownReport(results *TestResults, filePath string) error {
 }
 
 func printSummary(results *TestResults) {
-	fmt.Printf("\n" + strings.Repeat("=", 70) + "\n")
+	fmt.Printf("\n%s\n", strings.Repeat("=", 70))
 	fmt.Printf("🎯 PERFORMANCE & RELIABILITY TEST SUMMARY\n")
-	fmt.Printf(strings.Repeat("=", 70) + "\n")
+	fmt.Printf("%s\n", strings.Repeat("=", 70))
 	
 	fmt.Printf("Overall Score: %.1f/100", results.OverallScore)
 	if results.OverallScore >= 90 {
@@ -701,5 +701,5 @@ func printSummary(results *TestResults) {
 	}
 	
 	fmt.Printf("\nReports generated in: %s\n", config.OutputDir)
-	fmt.Printf(strings.Repeat("=", 70) + "\n")
+	fmt.Printf("%s\n", strings.Repeat("=", 70))
 }

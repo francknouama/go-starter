@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"time"
 )
 
@@ -68,7 +67,7 @@ func main() {
 		
 		// Calculate improvement
 		if coldTime > 0 && warmTime > 0 {
-			improvement := ((coldTime - warmTime) / coldTime) * 100
+			improvement := ((coldTime.Seconds() - warmTime.Seconds()) / coldTime.Seconds()) * 100
 			fmt.Printf("   Improvement: %.1f%% (%.3fs faster)\n", improvement, coldTime.Seconds()-warmTime.Seconds())
 		}
 		fmt.Println()

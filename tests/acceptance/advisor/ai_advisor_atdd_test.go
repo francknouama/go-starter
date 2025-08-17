@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/francknouama/go-starter/internal/advisor"
-	"github.com/francknouama/go-starter/internal/prompts/interfaces"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -176,8 +175,6 @@ func TestAIAdvisor_ATDD_CLIIntegration(t *testing.T) {
 }
 
 func TestAIAdvisor_ATDD_EdgeCases(t *testing.T) {
-	advisor := advisor.NewInteractiveAdvisor()
-
 	t.Run("Empty requirements should provide default recommendation", func(t *testing.T) {
 		// Given: Minimal requirements
 		req := advisor.ProjectRequirements{
@@ -219,7 +216,7 @@ func TestAIAdvisor_ATDD_EdgeCases(t *testing.T) {
 }
 
 func TestAIAdvisor_ATDD_PerformanceRequirements(t *testing.T) {
-	advisor := advisor.NewArchitectureAdvisor()
+	advisorInstance := advisor.NewArchitectureAdvisor()
 
 	t.Run("Recommendation generation should be fast", func(t *testing.T) {
 		// Given: Standard requirements
@@ -232,7 +229,7 @@ func TestAIAdvisor_ATDD_PerformanceRequirements(t *testing.T) {
 		// When: Measuring time for 100 recommendations
 		start := time.Now()
 		for i := 0; i < 100; i++ {
-			_, err := advisor.AnalyzeRequirements(req)
+			_, err := advisorInstance.AnalyzeRequirements(req)
 			require.NoError(t, err)
 		}
 		duration := time.Since(start)

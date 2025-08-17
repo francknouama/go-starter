@@ -209,6 +209,7 @@ go-starter new my-tool --type=cli --complexity=simple
 - **ux-design-expert** - Web/mobile UI, user experience
 - **senior-bug-resolver** - QA bugs, critical issues
 - **cross-platform-tester** - Platform compatibility
+- **devops-cicd-specialist** - CI/CD pipelines, GitHub Actions, automation
 
 ### Production Readiness
 - **accessibility-ux-specialist** - WCAG compliance
