@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
+	"time"
 
 {{if eq .Logger "zap"}}
 	"go.uber.org/zap"
@@ -24,8 +27,30 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
 	oteltrace "go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 
 	"{{.ModulePath}}/internal/config"
+)
+
+// TracerExporterType defines the type of trace exporter
+type TracerExporterType string
+
+const (
+	JaegerExporter TracerExporterType = "jaeger"
+	OTLPExporter   TracerExporterType = "otlp"
+	StdoutExporter TracerExporterType = "stdout"
+	NoopExporter   TracerExporterType = "noop"
+)
+
+// TracingSamplingStrategy defines sampling strategies
+type TracingSamplingStrategy string
+
+const (
+	AlwaysSample    TracingSamplingStrategy = "always"
+	NeverSample     TracingSamplingStrategy = "never"
+	TraceIDRatio    TracingSamplingStrategy = "traceid_ratio"
+	ParentBased     TracingSamplingStrategy = "parent_based"
 )
 
 // Tracer wraps OpenTelemetry tracer with configuration
@@ -42,9 +67,11 @@ type Tracer struct {
 {{else}}
 	logger   *slog.Logger
 {{end}}
+	exporterType TracerExporterType
+	samplingStrategy TracingSamplingStrategy
 }
 
-// NewTracer creates a new tracer instance
+// NewTracer creates a new tracer instance with configurable exporters
 func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) (*Tracer, error) {
 	if !cfg.Observability.Tracing.Enabled {
 		// Return a no-op tracer
@@ -54,13 +81,17 @@ func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{el
 {{if ne .Logger "zerolog"}}
 			logger: logger,
 {{end}}
+			exporterType: NoopExporter,
 		}, nil
 	}
 
-	// Create Jaeger exporter
-	exp, err := jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(cfg.Observability.Tracing.Endpoint)))
+	// Determine exporter type from configuration
+	exporterType := determineExporterType(cfg.Observability.Tracing.Endpoint)
+	
+	// Create appropriate exporter
+	exp, err := createTraceExporter(exporterType, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Jaeger exporter: %w", err)
+		return nil, fmt.Errorf("failed to create trace exporter: %w", err)
 	}
 
 	// Create resource
@@ -75,11 +106,25 @@ func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{el
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Create trace provider
+	// Determine sampling strategy
+	samplingStrategy := determineSamplingStrategy(cfg)
+	sampler := createSampler(samplingStrategy, cfg.Observability.Tracing.SampleRate)
+
+	// Create trace provider with enhanced configuration
 	tp := trace.NewTracerProvider(
-		trace.WithBatcher(exp),
+		trace.WithBatcher(exp,
+			trace.WithMaxExportBatchSize(512),
+			trace.WithExportTimeout(time.Second*30),
+			trace.WithMaxQueueSize(2048),
+		),
 		trace.WithResource(res),
-		trace.WithSampler(trace.TraceIDRatioBased(cfg.Observability.Tracing.SampleRate)),
+		trace.WithSampler(sampler),
+		trace.WithRawSpanLimits(trace.SpanLimits{
+			AttributeCountLimit:     128,
+			EventCountLimit:         128,
+			LinkCountLimit:          128,
+			AttributeValueLengthLimit: 4096,
+		}),
 	)
 
 	// Set global trace provider
@@ -124,6 +169,8 @@ func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{el
 {{if ne .Logger "zerolog"}}
 		logger:   logger,
 {{end}}
+		exporterType: exporterType,
+		samplingStrategy: samplingStrategy,
 	}, nil
 }
 
@@ -166,7 +213,7 @@ func (t *Tracer) StartGRPCServerSpan(ctx context.Context, method string) (contex
 	return t.tracer.Start(ctx, method,
 		oteltrace.WithSpanKind(oteltrace.SpanKindServer),
 		oteltrace.WithAttributes(
-			semconv.RPCSystem("grpc"),
+			semconv.RPCSystemGRPC,
 			semconv.RPCService("{{.ProjectName}}"),
 			semconv.RPCMethod(method),
 		),
@@ -178,7 +225,7 @@ func (t *Tracer) StartGRPCClientSpan(ctx context.Context, service, method string
 	return t.tracer.Start(ctx, fmt.Sprintf("%s/%s", service, method),
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
 		oteltrace.WithAttributes(
-			semconv.RPCSystem("grpc"),
+			semconv.RPCSystemGRPC,
 			semconv.RPCService(service),
 			semconv.RPCMethod(method),
 		),
@@ -191,8 +238,8 @@ func (t *Tracer) StartDatabaseSpan(ctx context.Context, operation, table string)
 	return t.tracer.Start(ctx, fmt.Sprintf("db.%s %s", operation, table),
 		oteltrace.WithSpanKind(oteltrace.SpanKindClient),
 		oteltrace.WithAttributes(
-			semconv.DBSystem("{{.DatabaseType}}"),
-			semconv.DBOperation(operation),
+			semconv.DBSystemPostgreSQL,
+			attribute.String("db.operation", operation),
 			attribute.String("db.table", table),
 		),
 	)
@@ -282,9 +329,9 @@ func (t *Tracer) TracingMiddleware(next http.Handler) http.Handler {
 
 		// Add request attributes
 		span.SetAttributes(
-			semconv.HTTPRequestContentLength(int(r.ContentLength)),
-			semconv.HTTPUserAgent(r.UserAgent()),
-			semconv.HTTPClientIP(r.RemoteAddr),
+			attribute.Int("http.request.body.size", int(r.ContentLength)),
+			semconv.UserAgentOriginal(r.UserAgent()),
+			attribute.String("client.address", r.RemoteAddr),
 		)
 
 		// Create a response recorder to capture the status code
@@ -335,4 +382,160 @@ func WithEntityID(entityID string) attribute.KeyValue {
 
 func WithTenantID(tenantID string) attribute.KeyValue {
 	return attribute.String("tenant.id", tenantID)
+}
+
+// determineExporterType determines the exporter type from endpoint URL
+func determineExporterType(endpoint string) TracerExporterType {
+	if endpoint == "" || endpoint == "noop" {
+		return NoopExporter
+	}
+	if endpoint == "stdout" {
+		return StdoutExporter
+	}
+	if strings.Contains(endpoint, "jaeger") || strings.Contains(endpoint, ":14268") {
+		return JaegerExporter
+	}
+	if strings.Contains(endpoint, "otlp") || strings.Contains(endpoint, ":4318") {
+		return OTLPExporter
+	}
+	// Default to OTLP
+	return OTLPExporter
+}
+
+// createTraceExporter creates the appropriate trace exporter
+func createTraceExporter(exporterType TracerExporterType, cfg *config.Config) (trace.SpanExporter, error) {
+	switch exporterType {
+	case JaegerExporter:
+		return jaeger.New(jaeger.WithCollectorEndpoint(jaeger.WithEndpoint(cfg.Observability.Tracing.Endpoint)))
+	
+	case OTLPExporter:
+		return otlptracehttp.New(context.Background(),
+			otlptracehttp.WithEndpoint(cfg.Observability.Tracing.Endpoint),
+			otlptracehttp.WithInsecure(), // Configure TLS in production
+			otlptracehttp.WithHeaders(map[string]string{
+				"Authorization": os.Getenv("OTEL_EXPORTER_OTLP_HEADERS_AUTHORIZATION"),
+			}),
+		)
+	
+	case StdoutExporter:
+		return stdouttrace.New(
+			stdouttrace.WithPrettyPrint(),
+			stdouttrace.WithoutTimestamps(),
+		)
+	
+	case NoopExporter:
+		return &noopExporter{}, nil
+	
+	default:
+		return nil, fmt.Errorf("unknown exporter type: %s", exporterType)
+	}
+}
+
+// determineSamplingStrategy determines sampling strategy from config
+func determineSamplingStrategy(cfg *config.Config) TracingSamplingStrategy {
+	if cfg.Observability.Tracing.SampleRate >= 1.0 {
+		return AlwaysSample
+	}
+	if cfg.Observability.Tracing.SampleRate <= 0.0 {
+		return NeverSample
+	}
+	return TraceIDRatio
+}
+
+// createSampler creates the appropriate sampler
+func createSampler(strategy TracingSamplingStrategy, rate float64) trace.Sampler {
+	switch strategy {
+	case AlwaysSample:
+		return trace.AlwaysSample()
+	case NeverSample:
+		return trace.NeverSample()
+	case TraceIDRatio:
+		return trace.TraceIDRatioBased(rate)
+	case ParentBased:
+		return trace.ParentBased(trace.TraceIDRatioBased(rate))
+	default:
+		return trace.TraceIDRatioBased(rate)
+	}
+}
+
+// noopExporter is a no-op trace exporter for testing
+type noopExporter struct{}
+
+func (e *noopExporter) ExportSpans(ctx context.Context, spans []trace.ReadOnlySpan) error {
+	return nil
+}
+
+func (e *noopExporter) Shutdown(ctx context.Context) error {
+	return nil
+}
+
+// InjectHTTPHeaders injects trace context into HTTP headers
+func (t *Tracer) InjectHTTPHeaders(ctx context.Context, headers http.Header) {
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(headers))
+}
+
+// ExtractHTTPHeaders extracts trace context from HTTP headers
+func (t *Tracer) ExtractHTTPHeaders(ctx context.Context, headers http.Header) context.Context {
+	return otel.GetTextMapPropagator().Extract(ctx, propagation.HeaderCarrier(headers))
+}
+
+// StartBusinessSpan starts a span for business operations with predefined attributes
+func (t *Tracer) StartBusinessSpan(ctx context.Context, operation, entity string, attrs ...attribute.KeyValue) (context.Context, oteltrace.Span) {
+	baseAttrs := []attribute.KeyValue{
+		attribute.String("span.kind", "business"),
+		attribute.String("business.operation", operation),
+		attribute.String("business.entity", entity),
+		attribute.String("service.name", t.config.Observability.Tracing.ServiceName),
+	}
+	
+	baseAttrs = append(baseAttrs, attrs...)
+	
+	return t.tracer.Start(ctx, fmt.Sprintf("business.%s.%s", entity, operation),
+		oteltrace.WithSpanKind(oteltrace.SpanKindInternal),
+		oteltrace.WithAttributes(baseAttrs...),
+	)
+}
+
+// RecordException records an exception in the current span with additional context
+func (t *Tracer) RecordException(ctx context.Context, err error, attrs ...attribute.KeyValue) {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil && err != nil {
+		exceptionAttrs := []attribute.KeyValue{
+			attribute.String("exception.type", fmt.Sprintf("%T", err)),
+			attribute.String("exception.message", err.Error()),
+		}
+		exceptionAttrs = append(exceptionAttrs, attrs...)
+		
+		span.RecordError(err, oteltrace.WithAttributes(exceptionAttrs...))
+		span.SetStatus(codes.Error, err.Error())
+	}
+}
+
+// AddCustomEvent adds a custom event with structured attributes
+func (t *Tracer) AddCustomEvent(ctx context.Context, name string, level string, attrs ...attribute.KeyValue) {
+	span := oteltrace.SpanFromContext(ctx)
+	if span != nil {
+		eventAttrs := []attribute.KeyValue{
+			attribute.String("event.level", level),
+			attribute.String("event.source", "application"),
+		}
+		eventAttrs = append(eventAttrs, attrs...)
+		
+		span.AddEvent(name, oteltrace.WithAttributes(eventAttrs...))
+	}
+}
+
+// GetTracingMetadata returns tracing metadata for logging correlation
+func (t *Tracer) GetTracingMetadata(ctx context.Context) map[string]string {
+	span := oteltrace.SpanFromContext(ctx)
+	if span == nil {
+		return map[string]string{}
+	}
+	
+	spanCtx := span.SpanContext()
+	return map[string]string{
+		"trace.id":   spanCtx.TraceID().String(),
+		"span.id":    spanCtx.SpanID().String(),
+		"trace.flags": fmt.Sprintf("%02x", spanCtx.TraceFlags()),
+	}
 }

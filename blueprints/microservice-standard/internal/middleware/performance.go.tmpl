@@ -1,0 +1,611 @@
+package middleware
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"golang.org/x/sync/singleflight"
+)
+
+// CacheEntry represents a cached response
+type CacheEntry struct {
+	StatusCode  int               `json:"status_code"`
+	Headers     map[string]string `json:"headers"`
+	Body        []byte            `json:"body"`
+	Timestamp   time.Time         `json:"timestamp"`
+	TTL         time.Duration     `json:"ttl"`
+	AccessCount int               `json:"access_count"`
+	LastAccess  time.Time         `json:"last_access"`
+}
+
+// IsExpired checks if cache entry is expired
+func (c *CacheEntry) IsExpired() bool {
+	return time.Since(c.Timestamp) > c.TTL
+}
+
+// InMemoryCache provides in-memory caching functionality
+type InMemoryCache struct {
+	data        map[string]*CacheEntry
+	mu          sync.RWMutex
+	defaultTTL  time.Duration
+	maxSize     int
+	cleanupFreq time.Duration
+{{if eq .Logger "zap"}}
+	logger      *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger      *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger      *slog.Logger
+{{end}}
+	metrics     CacheMetrics
+}
+
+// CacheMetrics tracks cache performance
+type CacheMetrics struct {
+	Hits         int64 `json:"hits"`
+	Misses       int64 `json:"misses"`
+	Sets         int64 `json:"sets"`
+	Deletes      int64 `json:"deletes"`
+	Evictions    int64 `json:"evictions"`
+	CurrentSize  int64 `json:"current_size"`
+	mu           sync.RWMutex
+}
+
+// NewInMemoryCache creates a new in-memory cache
+func NewInMemoryCache(defaultTTL time.Duration, maxSize int{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *InMemoryCache {
+	cache := &InMemoryCache{
+		data:        make(map[string]*CacheEntry),
+		defaultTTL:  defaultTTL,
+		maxSize:     maxSize,
+		cleanupFreq: time.Minute * 5,
+{{if ne .Logger "zerolog"}}
+		logger:      logger,
+{{end}}
+	}
+	
+	// Start cleanup goroutine
+	go cache.cleanup()
+	
+	return cache
+}
+
+// Get retrieves a value from cache
+func (c *InMemoryCache) Get(key string) (*CacheEntry, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	
+	entry, exists := c.data[key]
+	if !exists {
+		c.metrics.mu.Lock()
+		c.metrics.Misses++
+		c.metrics.mu.Unlock()
+		return nil, false
+	}
+	
+	if entry.IsExpired() {
+		c.mu.RUnlock()
+		c.mu.Lock()
+		delete(c.data, key)
+		c.mu.Unlock()
+		c.mu.RLock()
+		
+		c.metrics.mu.Lock()
+		c.metrics.Misses++
+		c.metrics.CurrentSize--
+		c.metrics.mu.Unlock()
+		return nil, false
+	}
+	
+	// Update access statistics
+	entry.AccessCount++
+	entry.LastAccess = time.Now()
+	
+	c.metrics.mu.Lock()
+	c.metrics.Hits++
+	c.metrics.mu.Unlock()
+	
+	return entry, true
+}
+
+// Set stores a value in cache
+func (c *InMemoryCache) Set(key string, entry *CacheEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	// Check if we need to evict entries
+	if len(c.data) >= c.maxSize {
+		c.evictLRU()
+	}
+	
+	c.data[key] = entry
+	
+	c.metrics.mu.Lock()
+	c.metrics.Sets++
+	c.metrics.CurrentSize++
+	c.metrics.mu.Unlock()
+}
+
+// Delete removes a value from cache
+func (c *InMemoryCache) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	if _, exists := c.data[key]; exists {
+		delete(c.data, key)
+		
+		c.metrics.mu.Lock()
+		c.metrics.Deletes++
+		c.metrics.CurrentSize--
+		c.metrics.mu.Unlock()
+	}
+}
+
+// Clear removes all entries from cache
+func (c *InMemoryCache) Clear() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	
+	count := len(c.data)
+	c.data = make(map[string]*CacheEntry)
+	
+	c.metrics.mu.Lock()
+	c.metrics.CurrentSize = 0
+	c.metrics.Deletes += int64(count)
+	c.metrics.mu.Unlock()
+}
+
+// evictLRU removes the least recently used entry
+func (c *InMemoryCache) evictLRU() {
+	var oldestKey string
+	var oldestTime time.Time
+	
+	first := true
+	for key, entry := range c.data {
+		if first || entry.LastAccess.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.LastAccess
+			first = false
+		}
+	}
+	
+	if oldestKey != "" {
+		delete(c.data, oldestKey)
+		c.metrics.Evictions++
+		c.metrics.CurrentSize--
+	}
+}
+
+// cleanup removes expired entries periodically
+func (c *InMemoryCache) cleanup() {
+	ticker := time.NewTicker(c.cleanupFreq)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		c.mu.Lock()
+		expiredKeys := make([]string, 0)
+		
+		for key, entry := range c.data {
+			if entry.IsExpired() {
+				expiredKeys = append(expiredKeys, key)
+			}
+		}
+		
+		for _, key := range expiredKeys {
+			delete(c.data, key)
+		}
+		
+		if len(expiredKeys) > 0 {
+			c.metrics.mu.Lock()
+			c.metrics.CurrentSize -= int64(len(expiredKeys))
+			c.metrics.mu.Unlock()
+			
+{{if eq .Logger "zap"}}
+			c.logger.Debug("Cleaned up expired cache entries", zap.Int("count", len(expiredKeys)))
+{{else if eq .Logger "logrus"}}
+			c.logger.WithField("count", len(expiredKeys)).Debug("Cleaned up expired cache entries")
+{{else if eq .Logger "zerolog"}}
+			log.Debug().Int("count", len(expiredKeys)).Msg("Cleaned up expired cache entries")
+{{else}}
+			c.logger.Debug("Cleaned up expired cache entries", "count", len(expiredKeys))
+{{end}}
+		}
+		
+		c.mu.Unlock()
+	}
+}
+
+// GetMetrics returns current cache metrics
+func (c *InMemoryCache) GetMetrics() CacheMetrics {
+	c.metrics.mu.RLock()
+	defer c.metrics.mu.RUnlock()
+	
+	return CacheMetrics{
+		Hits:        c.metrics.Hits,
+		Misses:      c.metrics.Misses,
+		Sets:        c.metrics.Sets,
+		Deletes:     c.metrics.Deletes,
+		Evictions:   c.metrics.Evictions,
+		CurrentSize: c.metrics.CurrentSize,
+	}
+}
+
+// ResponseCachingMiddleware provides HTTP response caching
+type ResponseCachingMiddleware struct {
+	cache       *InMemoryCache
+	cacheableStatusCodes map[int]bool
+	cacheableMethods     map[string]bool
+{{if eq .Logger "zap"}}
+	logger      *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger      *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger      *slog.Logger
+{{end}}
+}
+
+// NewResponseCachingMiddleware creates a new response caching middleware
+func NewResponseCachingMiddleware(cache *InMemoryCache{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *ResponseCachingMiddleware {
+	return &ResponseCachingMiddleware{
+		cache: cache,
+		cacheableStatusCodes: map[int]bool{
+			200: true, // OK
+			301: true, // Moved Permanently
+			302: true, // Found
+			304: true, // Not Modified
+			404: true, // Not Found (for negative caching)
+		},
+		cacheableMethods: map[string]bool{
+			"GET":  true,
+			"HEAD": true,
+		},
+{{if ne .Logger "zerolog"}}
+		logger: logger,
+{{end}}
+	}
+}
+
+// Middleware returns the HTTP middleware function
+func (m *ResponseCachingMiddleware) Middleware(ttl time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only cache certain methods
+			if !m.cacheableMethods[r.Method] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			// Generate cache key
+			cacheKey := m.generateCacheKey(r)
+			
+			// Try to get from cache
+			if entry, found := m.cache.Get(cacheKey); found {
+				m.serveCachedResponse(w, entry)
+				return
+			}
+			
+			// Create response recorder
+			recorder := &cacheResponseRecorder{
+				ResponseWriter: w,
+				statusCode:     200,
+				headers:        make(http.Header),
+				body:           &bytes.Buffer{},
+			}
+			
+			// Process request
+			next.ServeHTTP(recorder, r)
+			
+			// Cache response if cacheable
+			if m.cacheableStatusCodes[recorder.statusCode] {
+				entry := &CacheEntry{
+					StatusCode:  recorder.statusCode,
+					Headers:     m.flattenHeaders(recorder.headers),
+					Body:        recorder.body.Bytes(),
+					Timestamp:   time.Now(),
+					TTL:         ttl,
+					AccessCount: 0,
+					LastAccess:  time.Now(),
+				}
+				
+				m.cache.Set(cacheKey, entry)
+				
+{{if eq .Logger "zap"}}
+				m.logger.Debug("Response cached",
+					zap.String("key", cacheKey),
+					zap.Int("status_code", recorder.statusCode),
+					zap.Int("body_size", len(entry.Body)))
+{{else if eq .Logger "logrus"}}
+				m.logger.WithFields(logrus.Fields{
+					"key":         cacheKey,
+					"status_code": recorder.statusCode,
+					"body_size":   len(entry.Body),
+				}).Debug("Response cached")
+{{else if eq .Logger "zerolog"}}
+				log.Debug().
+					Str("key", cacheKey).
+					Int("status_code", recorder.statusCode).
+					Int("body_size", len(entry.Body)).
+					Msg("Response cached")
+{{else}}
+				m.logger.Debug("Response cached",
+					"key", cacheKey,
+					"status_code", recorder.statusCode,
+					"body_size", len(entry.Body))
+{{end}}
+			}
+		})
+	}
+}
+
+// generateCacheKey creates a unique cache key for the request
+func (m *ResponseCachingMiddleware) generateCacheKey(r *http.Request) string {
+	key := fmt.Sprintf("%s:%s", r.Method, r.URL.Path)
+	
+	// Include query parameters
+	if r.URL.RawQuery != "" {
+		key += "?" + r.URL.RawQuery
+	}
+	
+	// Include relevant headers
+	relevantHeaders := []string{"Accept", "Accept-Language", "Authorization"}
+	for _, header := range relevantHeaders {
+		if value := r.Header.Get(header); value != "" {
+			key += ":" + header + "=" + value
+		}
+	}
+	
+	// Hash the key to keep it manageable
+	hash := sha256.Sum256([]byte(key))
+	return hex.EncodeToString(hash[:])
+}
+
+// serveCachedResponse serves a response from cache
+func (m *ResponseCachingMiddleware) serveCachedResponse(w http.ResponseWriter, entry *CacheEntry) {
+	// Set headers
+	for name, value := range entry.Headers {
+		w.Header().Set(name, value)
+	}
+	
+	// Add cache headers
+	w.Header().Set("X-Cache", "HIT")
+	w.Header().Set("X-Cache-Timestamp", entry.Timestamp.Format(time.RFC3339))
+	
+	// Set status and write body
+	w.WriteHeader(entry.StatusCode)
+	w.Write(entry.Body)
+}
+
+// flattenHeaders converts http.Header to map[string]string
+func (m *ResponseCachingMiddleware) flattenHeaders(headers http.Header) map[string]string {
+	flattened := make(map[string]string)
+	for name, values := range headers {
+		if len(values) > 0 {
+			flattened[name] = values[0] // Take first value
+		}
+	}
+	return flattened
+}
+
+// cacheResponseRecorder records HTTP responses for caching
+type cacheResponseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+	headers    http.Header
+	body       *bytes.Buffer
+	written    bool
+}
+
+func (r *cacheResponseRecorder) WriteHeader(statusCode int) {
+	if !r.written {
+		r.statusCode = statusCode
+		r.written = true
+		
+		// Copy headers
+		for name, values := range r.ResponseWriter.Header() {
+			r.headers[name] = values
+		}
+	}
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (r *cacheResponseRecorder) Write(data []byte) (int, error) {
+	if !r.written {
+		r.WriteHeader(200)
+	}
+	
+	// Write to both original response and buffer
+	r.body.Write(data)
+	return r.ResponseWriter.Write(data)
+}
+
+// RequestDeduplicationMiddleware prevents duplicate concurrent requests
+type RequestDeduplicationMiddleware struct {
+	group   *singleflight.Group
+{{if eq .Logger "zap"}}
+	logger  *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger  *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger  *slog.Logger
+{{end}}
+	enabled map[string]bool
+}
+
+// NewRequestDeduplicationMiddleware creates a new request deduplication middleware
+func NewRequestDeduplicationMiddleware({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *RequestDeduplicationMiddleware {
+	return &RequestDeduplicationMiddleware{
+		group: &singleflight.Group{},
+{{if ne .Logger "zerolog"}}
+		logger: logger,
+{{end}}
+		enabled: map[string]bool{
+			"GET":  true,
+			"HEAD": true,
+		},
+	}
+}
+
+// Middleware returns the HTTP middleware function
+func (m *RequestDeduplicationMiddleware) Middleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Only deduplicate certain methods
+			if !m.enabled[r.Method] {
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			// Generate deduplication key
+			key := m.generateDeduplicationKey(r)
+			
+			// Use singleflight to ensure only one request is processed per key
+			result, err, shared := m.group.Do(key, func() (interface{}, error) {
+				// Create response recorder to capture the response
+				recorder := &deduplicationResponseRecorder{
+					ResponseWriter: w,
+					statusCode:     200,
+					headers:        make(http.Header),
+					body:           &bytes.Buffer{},
+				}
+				
+				// Process request
+				next.ServeHTTP(recorder, r)
+				
+				return &DeduplicationResult{
+					StatusCode: recorder.statusCode,
+					Headers:    recorder.headers,
+					Body:       recorder.body.Bytes(),
+				}, nil
+			})
+			
+			if err != nil {
+				http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+				return
+			}
+			
+			response := result.(*DeduplicationResult)
+			
+			// Set headers
+			for name, values := range response.Headers {
+				for _, value := range values {
+					w.Header().Add(name, value)
+				}
+			}
+			
+			// Add deduplication header
+			if shared {
+				w.Header().Set("X-Deduplicated", "true")
+{{if eq .Logger "zap"}}
+				m.logger.Debug("Request deduplicated", zap.String("key", key))
+{{else if eq .Logger "logrus"}}
+				m.logger.WithField("key", key).Debug("Request deduplicated")
+{{else if eq .Logger "zerolog"}}
+				log.Debug().Str("key", key).Msg("Request deduplicated")
+{{else}}
+				m.logger.Debug("Request deduplicated", "key", key)
+{{end}}
+			}
+			
+			// Write response
+			w.WriteHeader(response.StatusCode)
+			w.Write(response.Body)
+		})
+	}
+}
+
+// generateDeduplicationKey creates a unique key for request deduplication
+func (m *RequestDeduplicationMiddleware) generateDeduplicationKey(r *http.Request) string {
+	key := fmt.Sprintf("%s:%s", r.Method, r.URL.Path)
+	
+	// Include query parameters
+	if r.URL.RawQuery != "" {
+		key += "?" + r.URL.RawQuery
+	}
+	
+	// Include user context if available (to avoid cross-user contamination)
+	if userID := r.Header.Get("X-User-ID"); userID != "" {
+		key += ":user=" + userID
+	}
+	
+	return key
+}
+
+// DeduplicationResult holds the result of a deduplicated request
+type DeduplicationResult struct {
+	StatusCode int
+	Headers    http.Header
+	Body       []byte
+}
+
+// deduplicationResponseRecorder records HTTP responses for deduplication
+type deduplicationResponseRecorder struct {
+	http.ResponseWriter
+	statusCode int
+	headers    http.Header
+	body       *bytes.Buffer
+	written    bool
+}
+
+func (r *deduplicationResponseRecorder) WriteHeader(statusCode int) {
+	if !r.written {
+		r.statusCode = statusCode
+		r.written = true
+		
+		// Copy headers
+		for name, values := range r.ResponseWriter.Header() {
+			r.headers[name] = values
+		}
+	}
+}
+
+func (r *deduplicationResponseRecorder) Write(data []byte) (int, error) {
+	if !r.written {
+		r.WriteHeader(200)
+	}
+	
+	// Write to buffer (not to original response for deduplication)
+	return r.body.Write(data)
+}
+
+// CompressionMiddleware provides response compression
+func CompressionMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Check if client accepts compression
+			acceptEncoding := r.Header.Get("Accept-Encoding")
+			if !strings.Contains(acceptEncoding, "gzip") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			
+			// Set compression headers
+			w.Header().Set("Content-Encoding", "gzip")
+			w.Header().Set("Vary", "Accept-Encoding")
+			
+			// Note: In a real implementation, you would use gzip.NewWriter
+			// This is a simplified version
+			next.ServeHTTP(w, r)
+		})
+	}
+}

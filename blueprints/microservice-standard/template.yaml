@@ -86,6 +86,30 @@ variables:
     required: false
     default: false
 
+  - name: "EnableValidation"
+    description: "Enable request validation middleware"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableCaching"
+    description: "Enable response caching middleware"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableRetry"
+    description: "Enable retry mechanisms for external calls"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableRequestDeduplication"
+    description: "Enable request deduplication for concurrent requests"
+    type: "boolean"
+    required: false
+    default: true
+
   - name: "EnableKubernetes"
     description: "Generate Kubernetes manifests and configs"
     type: "boolean"
@@ -195,6 +219,19 @@ files:
   - source: "internal/middleware/cors.go.tmpl"
     destination: "internal/middleware/cors.go"
 
+  - source: "internal/middleware/validation.go.tmpl"
+    destination: "internal/middleware/validation.go"
+    condition: "{{.EnableValidation}}"
+
+  - source: "internal/middleware/performance.go.tmpl"
+    destination: "internal/middleware/performance.go"
+    condition: "{{or .EnableCaching .EnableRequestDeduplication}}"
+
+  # Resilience components
+  - source: "internal/resilience/retry.go.tmpl"
+    destination: "internal/resilience/retry.go"
+    condition: "{{.EnableRetry}}"
+
   # Service Discovery related files
   - source: "internal/discovery/consul.go.tmpl"
     destination: "internal/discovery/consul.go"
@@ -292,7 +329,7 @@ dependencies:
   
   # gRPC and Protocol Buffers
   - module: "google.golang.org/grpc"
-    version: "v1.73.0"
+    version: "v1.74.2"
     condition: "{{eq .CommunicationProtocol \"grpc\"}}"
   - module: "google.golang.org/protobuf"
     version: "v1.36.6"
@@ -339,6 +376,15 @@ dependencies:
     condition: "{{.EnableObservability}}"
   - module: "go.opentelemetry.io/otel/exporters/jaeger"
     version: "v1.17.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/exporters/otlp/otlptrace"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+    version: "v1.21.0"
+    condition: "{{.EnableObservability}}"
+  - module: "go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
+    version: "v1.21.0"
     condition: "{{.EnableObservability}}"
   - module: "github.com/prometheus/client_golang"
     version: "v1.17.0"
@@ -395,6 +441,11 @@ dependencies:
     version: "v1.4.0"
   - module: "golang.org/x/sync"
     version: "v0.5.0"
+    
+  # Performance and resilience dependencies
+  - module: "golang.org/x/sync"
+    version: "v0.5.0"
+    condition: "{{or .EnableRetry .EnableRequestDeduplication}}"
 
 post_hooks:
   - name: "go_mod_tidy"

@@ -1,0 +1,491 @@
+package middleware
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
+// ValidationError represents a validation error
+type ValidationError struct {
+	Field   string `json:"field"`
+	Message string `json:"message"`
+	Code    string `json:"code"`
+}
+
+// ValidationResponse represents the validation error response
+type ValidationResponse struct {
+	Message string            `json:"message"`
+	Errors  []ValidationError `json:"errors"`
+}
+
+// RequestValidator provides request validation functionality
+type RequestValidator struct {
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	maxBodySize    int64
+	allowedMethods map[string]bool
+	patterns       map[string]*regexp.Regexp
+}
+
+// NewRequestValidator creates a new request validator
+func NewRequestValidator({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *RequestValidator {
+	return &RequestValidator{
+{{if ne .Logger "zerolog"}}
+		logger:      logger,
+{{end}}
+		maxBodySize: 1024 * 1024, // 1MB default
+		allowedMethods: map[string]bool{
+			"GET":     true,
+			"POST":    true,
+			"PUT":     true,
+			"DELETE":  true,
+			"PATCH":   true,
+			"HEAD":    true,
+			"OPTIONS": true,
+		},
+		patterns: map[string]*regexp.Regexp{
+			"uuid":       regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`),
+			"email":      regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`),
+			"alphanumeric": regexp.MustCompile(`^[a-zA-Z0-9]+$`),
+			"slug":       regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`),
+		},
+	}
+}
+
+// SetMaxBodySize sets the maximum allowed request body size
+func (v *RequestValidator) SetMaxBodySize(size int64) {
+	v.maxBodySize = size
+}
+
+// ValidateRequestMiddleware returns a middleware that validates incoming requests
+func (v *RequestValidator) ValidateRequestMiddleware() func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Validate HTTP method
+			if !v.allowedMethods[r.Method] {
+				v.writeValidationError(w, r, []ValidationError{
+					{
+						Field:   "method",
+						Message: fmt.Sprintf("HTTP method %s is not allowed", r.Method),
+						Code:    "METHOD_NOT_ALLOWED",
+					},
+				}, http.StatusMethodNotAllowed)
+				return
+			}
+
+			// Validate Content-Length
+			if r.ContentLength > v.maxBodySize {
+				v.writeValidationError(w, r, []ValidationError{
+					{
+						Field:   "content-length",
+						Message: fmt.Sprintf("Request body too large: %d bytes (max: %d)", r.ContentLength, v.maxBodySize),
+						Code:    "BODY_TOO_LARGE",
+					},
+				}, http.StatusRequestEntityTooLarge)
+				return
+			}
+
+			// Validate Content-Type for POST/PUT/PATCH requests
+			if r.Method == "POST" || r.Method == "PUT" || r.Method == "PATCH" {
+				contentType := r.Header.Get("Content-Type")
+				if contentType != "" {
+					if !v.isValidContentType(contentType) {
+						v.writeValidationError(w, r, []ValidationError{
+							{
+								Field:   "content-type",
+								Message: "Invalid or unsupported content type",
+								Code:    "INVALID_CONTENT_TYPE",
+							},
+						}, http.StatusUnsupportedMediaType)
+						return
+					}
+				}
+			}
+
+			// Validate headers for potential security issues
+			if err := v.validateSecurityHeaders(r); err != nil {
+				v.writeValidationError(w, r, []ValidationError{
+					{
+						Field:   "headers",
+						Message: err.Error(),
+						Code:    "INVALID_HEADERS",
+					},
+				}, http.StatusBadRequest)
+				return
+			}
+
+			// Add validation context to request
+			ctx := context.WithValue(r.Context(), "validator", v)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}
+
+// ValidateUUID validates if a string is a valid UUID
+func (v *RequestValidator) ValidateUUID(value, fieldName string) *ValidationError {
+	if value == "" {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: "UUID cannot be empty",
+			Code:    "REQUIRED",
+		}
+	}
+	
+	if !v.patterns["uuid"].MatchString(strings.ToLower(value)) {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: "Invalid UUID format",
+			Code:    "INVALID_FORMAT",
+		}
+	}
+	
+	return nil
+}
+
+// ValidateEmail validates if a string is a valid email
+func (v *RequestValidator) ValidateEmail(value, fieldName string) *ValidationError {
+	if value == "" {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: "Email cannot be empty",
+			Code:    "REQUIRED",
+		}
+	}
+	
+	if !v.patterns["email"].MatchString(value) {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: "Invalid email format",
+			Code:    "INVALID_FORMAT",
+		}
+	}
+	
+	return nil
+}
+
+// ValidateString validates string fields with various constraints
+func (v *RequestValidator) ValidateString(value, fieldName string, minLen, maxLen int, pattern string) *ValidationError {
+	if value == "" && minLen > 0 {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s is required", fieldName),
+			Code:    "REQUIRED",
+		}
+	}
+	
+	if len(value) < minLen {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s must be at least %d characters", fieldName, minLen),
+			Code:    "TOO_SHORT",
+		}
+	}
+	
+	if maxLen > 0 && len(value) > maxLen {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s must be at most %d characters", fieldName, maxLen),
+			Code:    "TOO_LONG",
+		}
+	}
+	
+	if pattern != "" {
+		if regex, exists := v.patterns[pattern]; exists {
+			if !regex.MatchString(value) {
+				return &ValidationError{
+					Field:   fieldName,
+					Message: fmt.Sprintf("%s has invalid format", fieldName),
+					Code:    "INVALID_FORMAT",
+				}
+			}
+		}
+	}
+	
+	return nil
+}
+
+// ValidateInteger validates integer fields with range constraints
+func (v *RequestValidator) ValidateInteger(value, fieldName string, min, max int) *ValidationError {
+	if value == "" {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s is required", fieldName),
+			Code:    "REQUIRED",
+		}
+	}
+	
+	intValue, err := strconv.Atoi(value)
+	if err != nil {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s must be a valid integer", fieldName),
+			Code:    "INVALID_TYPE",
+		}
+	}
+	
+	if intValue < min {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s must be at least %d", fieldName, min),
+			Code:    "TOO_SMALL",
+		}
+	}
+	
+	if max > 0 && intValue > max {
+		return &ValidationError{
+			Field:   fieldName,
+			Message: fmt.Sprintf("%s must be at most %d", fieldName, max),
+			Code:    "TOO_LARGE",
+		}
+	}
+	
+	return nil
+}
+
+// ValidateJSON validates JSON payload structure
+func (v *RequestValidator) ValidateJSON(r *http.Request, target interface{}) []ValidationError {
+	var errors []ValidationError
+	
+	if r.Body == nil {
+		errors = append(errors, ValidationError{
+			Field:   "body",
+			Message: "Request body is required",
+			Code:    "REQUIRED",
+		})
+		return errors
+	}
+	
+	// Limit body size
+	r.Body = http.MaxBytesReader(nil, r.Body, v.maxBodySize)
+	
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields() // Strict JSON parsing
+	
+	if err := decoder.Decode(target); err != nil {
+		switch {
+		case strings.Contains(err.Error(), "unknown field"):
+			errors = append(errors, ValidationError{
+				Field:   "body",
+				Message: "Request contains unknown fields",
+				Code:    "UNKNOWN_FIELDS",
+			})
+		case strings.Contains(err.Error(), "cannot unmarshal"):
+			errors = append(errors, ValidationError{
+				Field:   "body",
+				Message: "Invalid JSON structure or data types",
+				Code:    "INVALID_JSON_STRUCTURE",
+			})
+		case strings.Contains(err.Error(), "http: request body too large"):
+			errors = append(errors, ValidationError{
+				Field:   "body",
+				Message: "Request body too large",
+				Code:    "BODY_TOO_LARGE",
+			})
+		default:
+			errors = append(errors, ValidationError{
+				Field:   "body",
+				Message: "Invalid JSON format",
+				Code:    "INVALID_JSON",
+			})
+		}
+	}
+	
+	return errors
+}
+
+// isValidContentType checks if content type is allowed
+func (v *RequestValidator) isValidContentType(contentType string) bool {
+	allowedTypes := []string{
+		"application/json",
+		"application/x-www-form-urlencoded",
+		"multipart/form-data",
+		"text/plain",
+		"application/octet-stream",
+	}
+	
+	// Extract base content type (ignore charset and other parameters)
+	baseType := strings.Split(contentType, ";")[0]
+	baseType = strings.TrimSpace(baseType)
+	
+	for _, allowed := range allowedTypes {
+		if strings.EqualFold(baseType, allowed) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// validateSecurityHeaders validates headers for potential security issues
+func (v *RequestValidator) validateSecurityHeaders(r *http.Request) error {
+	// Check for potentially dangerous headers
+	dangerousHeaders := []string{
+		"X-Forwarded-Host",
+		"X-Original-URL",
+		"X-Rewrite-URL",
+	}
+	
+	for _, header := range dangerousHeaders {
+		if value := r.Header.Get(header); value != "" {
+			// Log suspicious header but don't block (might be legitimate proxy usage)
+{{if eq .Logger "zap"}}
+			v.logger.Warn("Suspicious header detected",
+				zap.String("header", header),
+				zap.String("value", value),
+				zap.String("remote_addr", r.RemoteAddr))
+{{else if eq .Logger "logrus"}}
+			v.logger.WithFields(logrus.Fields{
+				"header":      header,
+				"value":       value,
+				"remote_addr": r.RemoteAddr,
+			}).Warn("Suspicious header detected")
+{{else if eq .Logger "zerolog"}}
+			log.Warn().
+				Str("header", header).
+				Str("value", value).
+				Str("remote_addr", r.RemoteAddr).
+				Msg("Suspicious header detected")
+{{else}}
+			v.logger.Warn("Suspicious header detected",
+				"header", header,
+				"value", value,
+				"remote_addr", r.RemoteAddr)
+{{end}}
+		}
+	}
+	
+	// Validate User-Agent (basic check)
+	userAgent := r.Header.Get("User-Agent")
+	if userAgent != "" && len(userAgent) > 500 {
+		return fmt.Errorf("User-Agent header too long")
+	}
+	
+	// Check for null bytes in headers (potential injection)
+	for name, values := range r.Header {
+		for _, value := range values {
+			if strings.Contains(value, "\x00") {
+				return fmt.Errorf("null byte detected in header %s", name)
+			}
+		}
+	}
+	
+	return nil
+}
+
+// writeValidationError writes a standardized validation error response
+func (v *RequestValidator) writeValidationError(w http.ResponseWriter, r *http.Request, errors []ValidationError, statusCode int) {
+	response := ValidationResponse{
+		Message: "Validation failed",
+		Errors:  errors,
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+{{if eq .Logger "zap"}}
+		v.logger.Error("Failed to encode validation error response", zap.Error(err))
+{{else if eq .Logger "logrus"}}
+		v.logger.WithError(err).Error("Failed to encode validation error response")
+{{else if eq .Logger "zerolog"}}
+		log.Error().Err(err).Msg("Failed to encode validation error response")
+{{else}}
+		v.logger.Error("Failed to encode validation error response", "error", err)
+{{end}}
+	}
+	
+	// Log validation errors for monitoring
+{{if eq .Logger "zap"}}
+	v.logger.Info("Request validation failed",
+		zap.String("method", r.Method),
+		zap.String("path", r.URL.Path),
+		zap.String("remote_addr", r.RemoteAddr),
+		zap.Int("status_code", statusCode),
+		zap.Int("error_count", len(errors)))
+{{else if eq .Logger "logrus"}}
+	v.logger.WithFields(logrus.Fields{
+		"method":      r.Method,
+		"path":        r.URL.Path,
+		"remote_addr": r.RemoteAddr,
+		"status_code": statusCode,
+		"error_count": len(errors),
+	}).Info("Request validation failed")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Str("method", r.Method).
+		Str("path", r.URL.Path).
+		Str("remote_addr", r.RemoteAddr).
+		Int("status_code", statusCode).
+		Int("error_count", len(errors)).
+		Msg("Request validation failed")
+{{else}}
+	v.logger.Info("Request validation failed",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"remote_addr", r.RemoteAddr,
+		"status_code", statusCode,
+		"error_count", len(errors))
+{{end}}
+}
+
+// GetValidatorFromContext retrieves the validator from request context
+func GetValidatorFromContext(ctx context.Context) *RequestValidator {
+	if validator, ok := ctx.Value("validator").(*RequestValidator); ok {
+		return validator
+	}
+	return nil
+}
+
+// SecurityHeadersMiddleware adds security headers to responses
+func SecurityHeadersMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Security headers
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		
+		// Remove server information
+		w.Header().Set("Server", "")
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequestTimeoutMiddleware adds timeout to requests
+func RequestTimeoutMiddleware(timeout time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

@@ -1,0 +1,606 @@
+package resilience
+
+import (
+	"context"
+	"fmt"
+	"math"
+	"math/rand"
+	"net"
+	"net/http"
+	"strings"
+	"syscall"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"{{.ModulePath}}/internal/metrics"
+)
+
+// RetryPolicy defines the retry behavior
+type RetryPolicy struct {
+	MaxAttempts     int
+	InitialDelay    time.Duration
+	MaxDelay        time.Duration
+	BackoffFactor   float64
+	Jitter          bool
+	RetriableErrors []error
+	RetriableStatus []int
+}
+
+// DefaultRetryPolicy returns a sensible default retry policy
+func DefaultRetryPolicy() *RetryPolicy {
+	return &RetryPolicy{
+		MaxAttempts:   3,
+		InitialDelay:  100 * time.Millisecond,
+		MaxDelay:      5 * time.Second,
+		BackoffFactor: 2.0,
+		Jitter:        true,
+		RetriableErrors: []error{
+			context.DeadlineExceeded,
+			syscall.ECONNREFUSED,
+			syscall.ECONNRESET,
+			syscall.ETIMEDOUT,
+		},
+		RetriableStatus: []int{
+			http.StatusRequestTimeout,
+			http.StatusTooManyRequests,
+			http.StatusInternalServerError,
+			http.StatusBadGateway,
+			http.StatusServiceUnavailable,
+			http.StatusGatewayTimeout,
+		},
+	}
+}
+
+// RetryResult contains the result of a retry operation
+type RetryResult struct {
+	Attempts      int
+	TotalDuration time.Duration
+	LastError     error
+	Success       bool
+}
+
+// Retrier provides retry functionality
+type Retrier struct {
+	policy  *RetryPolicy
+	metrics *metrics.Metrics
+{{if eq .Logger "zap"}}
+	logger  *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger  *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger  *slog.Logger
+{{end}}
+}
+
+// NewRetrier creates a new retrier with the given policy
+func NewRetrier(policy *RetryPolicy, metrics *metrics.Metrics{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *Retrier {
+	if policy == nil {
+		policy = DefaultRetryPolicy()
+	}
+	
+	return &Retrier{
+		policy:  policy,
+		metrics: metrics,
+{{if ne .Logger "zerolog"}}
+		logger:  logger,
+{{end}}
+	}
+}
+
+// Execute executes a function with retry logic
+func (r *Retrier) Execute(ctx context.Context, operation string, fn func() error) *RetryResult {
+	start := time.Now()
+	var lastError error
+	
+	for attempt := 1; attempt <= r.policy.MaxAttempts; attempt++ {
+		if attempt > 1 {
+			// Calculate delay with exponential backoff
+			delay := r.calculateDelay(attempt)
+			
+{{if eq .Logger "zap"}}
+			r.logger.Debug("Retrying operation",
+				zap.String("operation", operation),
+				zap.Int("attempt", attempt),
+				zap.Duration("delay", delay),
+				zap.Error(lastError))
+{{else if eq .Logger "logrus"}}
+			r.logger.WithFields(logrus.Fields{
+				"operation": operation,
+				"attempt":   attempt,
+				"delay":     delay,
+				"error":     lastError,
+			}).Debug("Retrying operation")
+{{else if eq .Logger "zerolog"}}
+			log.Debug().
+				Str("operation", operation).
+				Int("attempt", attempt).
+				Dur("delay", delay).
+				Err(lastError).
+				Msg("Retrying operation")
+{{else}}
+			r.logger.Debug("Retrying operation",
+				"operation", operation,
+				"attempt", attempt,
+				"delay", delay,
+				"error", lastError)
+{{end}}
+			
+			// Wait for delay or context cancellation
+			select {
+			case <-time.After(delay):
+				// Continue with retry
+			case <-ctx.Done():
+				// Context cancelled, abort retry
+				return &RetryResult{
+					Attempts:      attempt - 1,
+					TotalDuration: time.Since(start),
+					LastError:     ctx.Err(),
+					Success:       false,
+				}
+			}
+		}
+		
+		// Execute the operation
+		err := fn()
+		
+		// Record metrics
+		if r.metrics != nil {
+			status := "success"
+			if err != nil {
+				status = "error"
+			}
+			r.metrics.RecordBusinessOperation(fmt.Sprintf("retry.%s", operation), err == nil, time.Since(start))
+		}
+		
+		if err == nil {
+			// Success
+{{if eq .Logger "zap"}}
+			if attempt > 1 {
+				r.logger.Info("Operation succeeded after retry",
+					zap.String("operation", operation),
+					zap.Int("attempts", attempt),
+					zap.Duration("total_duration", time.Since(start)))
+			}
+{{else if eq .Logger "logrus"}}
+			if attempt > 1 {
+				r.logger.WithFields(logrus.Fields{
+					"operation":      operation,
+					"attempts":       attempt,
+					"total_duration": time.Since(start),
+				}).Info("Operation succeeded after retry")
+			}
+{{else if eq .Logger "zerolog"}}
+			if attempt > 1 {
+				log.Info().
+					Str("operation", operation).
+					Int("attempts", attempt).
+					Dur("total_duration", time.Since(start)).
+					Msg("Operation succeeded after retry")
+			}
+{{else}}
+			if attempt > 1 {
+				r.logger.Info("Operation succeeded after retry",
+					"operation", operation,
+					"attempts", attempt,
+					"total_duration", time.Since(start))
+			}
+{{end}}
+			
+			return &RetryResult{
+				Attempts:      attempt,
+				TotalDuration: time.Since(start),
+				LastError:     nil,
+				Success:       true,
+			}
+		}
+		
+		lastError = err
+		
+		// Check if error is retriable
+		if !r.isRetriableError(err) {
+{{if eq .Logger "zap"}}
+			r.logger.Debug("Error is not retriable, aborting",
+				zap.String("operation", operation),
+				zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			r.logger.WithFields(logrus.Fields{
+				"operation": operation,
+				"error":     err,
+			}).Debug("Error is not retriable, aborting")
+{{else if eq .Logger "zerolog"}}
+			log.Debug().
+				Str("operation", operation).
+				Err(err).
+				Msg("Error is not retriable, aborting")
+{{else}}
+			r.logger.Debug("Error is not retriable, aborting",
+				"operation", operation,
+				"error", err)
+{{end}}
+			break
+		}
+		
+		// Check if we've reached max attempts
+		if attempt >= r.policy.MaxAttempts {
+{{if eq .Logger "zap"}}
+			r.logger.Warn("Operation failed after max attempts",
+				zap.String("operation", operation),
+				zap.Int("max_attempts", r.policy.MaxAttempts),
+				zap.Error(err))
+{{else if eq .Logger "logrus"}}
+			r.logger.WithFields(logrus.Fields{
+				"operation":    operation,
+				"max_attempts": r.policy.MaxAttempts,
+				"error":        err,
+			}).Warn("Operation failed after max attempts")
+{{else if eq .Logger "zerolog"}}
+			log.Warn().
+				Str("operation", operation).
+				Int("max_attempts", r.policy.MaxAttempts).
+				Err(err).
+				Msg("Operation failed after max attempts")
+{{else}}
+			r.logger.Warn("Operation failed after max attempts",
+				"operation", operation,
+				"max_attempts", r.policy.MaxAttempts,
+				"error", err)
+{{end}}
+			break
+		}
+	}
+	
+	return &RetryResult{
+		Attempts:      r.policy.MaxAttempts,
+		TotalDuration: time.Since(start),
+		LastError:     lastError,
+		Success:       false,
+	}
+}
+
+// ExecuteWithResult executes a function with retry logic and returns a result
+func (r *Retrier) ExecuteWithResult(ctx context.Context, operation string, fn func() (interface{}, error)) (interface{}, *RetryResult) {
+	var result interface{}
+	
+	retryResult := r.Execute(ctx, operation, func() error {
+		var err error
+		result, err = fn()
+		return err
+	})
+	
+	return result, retryResult
+}
+
+// calculateDelay calculates the delay for the given attempt using exponential backoff
+func (r *Retrier) calculateDelay(attempt int) time.Duration {
+	// Calculate exponential backoff
+	delay := float64(r.policy.InitialDelay) * math.Pow(r.policy.BackoffFactor, float64(attempt-2))
+	
+	// Apply max delay cap
+	if delay > float64(r.policy.MaxDelay) {
+		delay = float64(r.policy.MaxDelay)
+	}
+	
+	// Apply jitter if enabled
+	if r.policy.Jitter {
+		// Add random jitter up to 10% of the delay
+		jitter := delay * 0.1 * rand.Float64()
+		delay += jitter
+	}
+	
+	return time.Duration(delay)
+}
+
+// isRetriableError checks if an error is retriable based on the policy
+func (r *Retrier) isRetriableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// Check against configured retriable errors
+	for _, retriableErr := range r.policy.RetriableErrors {
+		if err == retriableErr {
+			return true
+		}
+	}
+	
+	// Check for network errors
+	if isNetworkError(err) {
+		return true
+	}
+	
+	// Check for timeout errors
+	if isTimeoutError(err) {
+		return true
+	}
+	
+	// Check for context errors (but not cancellation)
+	if err == context.DeadlineExceeded {
+		return true
+	}
+	
+	return false
+}
+
+// isNetworkError checks if an error is a network-related error
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// Check for net.Error
+	if netErr, ok := err.(net.Error); ok {
+		return netErr.Temporary() || netErr.Timeout()
+	}
+	
+	// Check for common network error strings
+	errStr := strings.ToLower(err.Error())
+	networkPatterns := []string{
+		"connection refused",
+		"connection reset",
+		"network is unreachable",
+		"no route to host",
+		"broken pipe",
+		"connection timed out",
+		"i/o timeout",
+	}
+	
+	for _, pattern := range networkPatterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// isTimeoutError checks if an error is a timeout-related error
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	
+	// Check for net.Error with Timeout
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return true
+	}
+	
+	// Check for context timeout
+	if err == context.DeadlineExceeded {
+		return true
+	}
+	
+	// Check for timeout in error message
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "timeout")
+}
+
+// HTTPRetryClient wraps an HTTP client with retry functionality
+type HTTPRetryClient struct {
+	client  *http.Client
+	retrier *Retrier
+{{if eq .Logger "zap"}}
+	logger  *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger  *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger  *slog.Logger
+{{end}}
+}
+
+// NewHTTPRetryClient creates a new HTTP client with retry functionality
+func NewHTTPRetryClient(client *http.Client, retrier *Retrier{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *HTTPRetryClient {
+	if client == nil {
+		client = &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+				DisableKeepAlives:   false,
+			},
+		}
+	}
+	
+	return &HTTPRetryClient{
+		client:  client,
+		retrier: retrier,
+{{if ne .Logger "zerolog"}}
+		logger:  logger,
+{{end}}
+	}
+}
+
+// Do executes an HTTP request with retry logic
+func (c *HTTPRetryClient) Do(req *http.Request) (*http.Response, error) {
+	operation := fmt.Sprintf("http.%s.%s", req.Method, req.URL.Host)
+	
+	result, retryResult := c.retrier.ExecuteWithResult(req.Context(), operation, func() (interface{}, error) {
+		resp, err := c.client.Do(req)
+		
+		// Check if HTTP status code indicates a retriable error
+		if err == nil && c.isRetriableStatus(resp.StatusCode) {
+			resp.Body.Close()
+			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+		}
+		
+		return resp, err
+	})
+	
+	if !retryResult.Success {
+{{if eq .Logger "zap"}}
+		c.logger.Error("HTTP request failed after retries",
+			zap.String("method", req.Method),
+			zap.String("url", req.URL.String()),
+			zap.Int("attempts", retryResult.Attempts),
+			zap.Duration("total_duration", retryResult.TotalDuration),
+			zap.Error(retryResult.LastError))
+{{else if eq .Logger "logrus"}}
+		c.logger.WithFields(logrus.Fields{
+			"method":         req.Method,
+			"url":            req.URL.String(),
+			"attempts":       retryResult.Attempts,
+			"total_duration": retryResult.TotalDuration,
+			"error":          retryResult.LastError,
+		}).Error("HTTP request failed after retries")
+{{else if eq .Logger "zerolog"}}
+		log.Error().
+			Str("method", req.Method).
+			Str("url", req.URL.String()).
+			Int("attempts", retryResult.Attempts).
+			Dur("total_duration", retryResult.TotalDuration).
+			Err(retryResult.LastError).
+			Msg("HTTP request failed after retries")
+{{else}}
+		c.logger.Error("HTTP request failed after retries",
+			"method", req.Method,
+			"url", req.URL.String(),
+			"attempts", retryResult.Attempts,
+			"total_duration", retryResult.TotalDuration,
+			"error", retryResult.LastError)
+{{end}}
+		return nil, retryResult.LastError
+	}
+	
+	return result.(*http.Response), nil
+}
+
+// isRetriableStatus checks if an HTTP status code is retriable
+func (c *HTTPRetryClient) isRetriableStatus(statusCode int) bool {
+	for _, code := range c.retrier.policy.RetriableStatus {
+		if statusCode == code {
+			return true
+		}
+	}
+	return false
+}
+
+// Get executes a GET request with retry logic
+func (c *HTTPRetryClient) Get(url string) (*http.Response, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	return c.Do(req)
+}
+
+// Post executes a POST request with retry logic
+func (c *HTTPRetryClient) Post(url, contentType string, body interface{}) (*http.Response, error) {
+	// This is a simplified implementation - in a real scenario, you'd handle body serialization
+	req, err := http.NewRequest("POST", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	
+	req.Header.Set("Content-Type", contentType)
+	return c.Do(req)
+}
+
+// RetryableOperation represents an operation that can be retried
+type RetryableOperation interface {
+	Execute() error
+	Name() string
+}
+
+// DatabaseOperation wraps database operations with retry logic
+type DatabaseOperation struct {
+	name      string
+	operation func() error
+	retrier   *Retrier
+}
+
+// NewDatabaseOperation creates a new database operation with retry
+func NewDatabaseOperation(name string, operation func() error, retrier *Retrier) *DatabaseOperation {
+	return &DatabaseOperation{
+		name:      name,
+		operation: operation,
+		retrier:   retrier,
+	}
+}
+
+// Execute executes the database operation with retry logic
+func (d *DatabaseOperation) Execute(ctx context.Context) error {
+	result := d.retrier.Execute(ctx, fmt.Sprintf("db.%s", d.name), d.operation)
+	
+	if !result.Success {
+		return fmt.Errorf("database operation %s failed after %d attempts: %w", 
+			d.name, result.Attempts, result.LastError)
+	}
+	
+	return nil
+}
+
+// BulkheadConfig configures bulkhead isolation
+type BulkheadConfig struct {
+	MaxConcurrency int
+	QueueSize      int
+	Timeout        time.Duration
+}
+
+// Bulkhead provides bulkhead isolation pattern
+type Bulkhead struct {
+	semaphore chan struct{}
+	queue     chan func()
+	config    BulkheadConfig
+{{if eq .Logger "zap"}}
+	logger    *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger    *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger    *slog.Logger
+{{end}}
+}
+
+// NewBulkhead creates a new bulkhead with the given configuration
+func NewBulkhead(config BulkheadConfig{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *Bulkhead {
+	return &Bulkhead{
+		semaphore: make(chan struct{}, config.MaxConcurrency),
+		queue:     make(chan func(), config.QueueSize),
+		config:    config,
+{{if ne .Logger "zerolog"}}
+		logger:    logger,
+{{end}}
+	}
+}
+
+// Execute executes a function with bulkhead isolation
+func (b *Bulkhead) Execute(ctx context.Context, fn func() error) error {
+	select {
+	case b.semaphore <- struct{}{}:
+		// Got a slot, execute immediately
+		defer func() { <-b.semaphore }()
+		return fn()
+		
+	case <-time.After(b.config.Timeout):
+		return fmt.Errorf("bulkhead timeout: no available slots after %v", b.config.Timeout)
+		
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// Stats returns current bulkhead statistics
+func (b *Bulkhead) Stats() map[string]interface{} {
+	return map[string]interface{}{
+		"max_concurrency": b.config.MaxConcurrency,
+		"current_load":    len(b.semaphore),
+		"queue_size":      b.config.QueueSize,
+		"queue_length":    len(b.queue),
+		"timeout":         b.config.Timeout,
+	}
+}

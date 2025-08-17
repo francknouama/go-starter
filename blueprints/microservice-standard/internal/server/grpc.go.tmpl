@@ -2,22 +2,84 @@ package server
 
 import (
 	"context"
+	"fmt"
+	"net"
+
+	"google.golang.org/grpc"
 	pb "{{.ModulePath}}/proto"
 )
 
 {{- $serviceName := .ProjectName | replace "-" "" | replace "_" "" | title }}
 
-// grpcServer implements the {{$serviceName}}Server interface
+// grpcServer implements the {{$serviceName}}Server interface and manages the gRPC server
 type grpcServer struct {
 	pb.Unimplemented{{$serviceName}}Server
 	handler ServiceHandler
+	server  *grpc.Server
+	config  interface{}
+	logger  interface{}
 }
 
-// NewGrpcServer creates a new gRPC server instance
-func NewGrpcServer(handler ServiceHandler) *grpcServer {
-	return &grpcServer{
+// NewGRPCServer creates a new gRPC server instance
+func NewGRPCServer(config interface{}, handler ServiceHandler, logger interface{}) *grpcServer {
+	server := grpc.NewServer()
+	
+	grpcSrv := &grpcServer{
 		handler: handler,
+		server:  server,
+		config:  config,
+		logger:  logger,
 	}
+	
+	// Register the service
+	pb.Register{{$serviceName}}Server(server, grpcSrv)
+	
+	return grpcSrv
+}
+
+// Start starts the gRPC server
+func (s *grpcServer) Start(ctx context.Context) error {
+	// Extract config - this is a simplified version, should use proper config type
+	configMap, ok := s.config.(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid config type")
+	}
+	
+	serverConfig, ok := configMap["Server"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid server config")
+	}
+	
+	host, _ := serverConfig["Host"].(string)
+	port, _ := serverConfig["Port"].(int)
+	if host == "" {
+		host = "localhost"
+	}
+	if port == 0 {
+		port = 9090
+	}
+	
+	address := fmt.Sprintf("%s:%d", host, port)
+	
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", address, err)
+	}
+	
+	// Start server in a goroutine
+	go func() {
+		if err := s.server.Serve(listener); err != nil {
+			// Log error - simplified logging
+			fmt.Printf("gRPC server failed: %v\n", err)
+		}
+	}()
+	
+	// Wait for context cancellation
+	<-ctx.Done()
+	
+	// Graceful shutdown
+	s.server.GracefulStop()
+	return nil
 }
 
 // SayHello implements the SayHello RPC method

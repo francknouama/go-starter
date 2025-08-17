@@ -1,0 +1,586 @@
+package errors
+
+import (
+	"encoding/json"
+	"fmt"
+	"runtime"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
+// ErrorType represents different categories of errors
+type ErrorType string
+
+const (
+	ErrorTypeValidation     ErrorType = "validation"
+	ErrorTypeAuthentication ErrorType = "authentication"
+	ErrorTypeAuthorization  ErrorType = "authorization"
+	ErrorTypeNotFound       ErrorType = "not_found"
+	ErrorTypeConflict       ErrorType = "conflict"
+	ErrorTypeRateLimit      ErrorType = "rate_limit"
+	ErrorTypeTimeout        ErrorType = "timeout"
+	ErrorTypeNetwork        ErrorType = "network"
+	ErrorTypeDatabase       ErrorType = "database"
+	ErrorTypeExternal       ErrorType = "external"
+	ErrorTypeInternal       ErrorType = "internal"
+	ErrorTypeBusiness       ErrorType = "business"
+)
+
+// ErrorSeverity represents the severity level of an error
+type ErrorSeverity string
+
+const (
+	SeverityLow      ErrorSeverity = "low"
+	SeverityMedium   ErrorSeverity = "medium"
+	SeverityHigh     ErrorSeverity = "high"
+	SeverityCritical ErrorSeverity = "critical"
+)
+
+// EnhancedError provides rich error information for production systems
+type EnhancedError struct {
+	// Core error information
+	Type        ErrorType     `json:"type"`
+	Code        string        `json:"code"`
+	Message     string        `json:"message"`
+	Details     interface{}   `json:"details,omitempty"`
+	Cause       error         `json:"cause,omitempty"`
+	
+	// Context information
+	RequestID   string        `json:"request_id,omitempty"`
+	UserID      string        `json:"user_id,omitempty"`
+	TenantID    string        `json:"tenant_id,omitempty"`
+	Service     string        `json:"service"`
+	Operation   string        `json:"operation"`
+	
+	// Technical information
+	Timestamp   time.Time     `json:"timestamp"`
+	Severity    ErrorSeverity `json:"severity"`
+	Retryable   bool          `json:"retryable"`
+	
+	// Debug information (excluded in production)
+	Stack       string        `json:"stack,omitempty"`
+	File        string        `json:"file,omitempty"`
+	Line        int           `json:"line,omitempty"`
+	Function    string        `json:"function,omitempty"`
+	
+	// Metadata for monitoring and alerting
+	Tags        map[string]string `json:"tags,omitempty"`
+	Metrics     map[string]float64 `json:"metrics,omitempty"`
+}
+
+// Error implements the error interface
+func (e *EnhancedError) Error() string {
+	if e.Cause != nil {
+		return fmt.Sprintf("%s: %v", e.Message, e.Cause)
+	}
+	return e.Message
+}
+
+// Unwrap implements the unwrap interface for error wrapping
+func (e *EnhancedError) Unwrap() error {
+	return e.Cause
+}
+
+// Is implements the Is interface for error comparison
+func (e *EnhancedError) Is(target error) bool {
+	if enhanced, ok := target.(*EnhancedError); ok {
+		return e.Type == enhanced.Type && e.Code == enhanced.Code
+	}
+	return false
+}
+
+// ToJSON serializes the error to JSON
+func (e *EnhancedError) ToJSON() ([]byte, error) {
+	return json.Marshal(e)
+}
+
+// WithContext adds context information to the error
+func (e *EnhancedError) WithContext(requestID, userID, tenantID string) *EnhancedError {
+	e.RequestID = requestID
+	e.UserID = userID
+	e.TenantID = tenantID
+	return e
+}
+
+// WithTags adds tags for monitoring and alerting
+func (e *EnhancedError) WithTags(tags map[string]string) *EnhancedError {
+	if e.Tags == nil {
+		e.Tags = make(map[string]string)
+	}
+	for k, v := range tags {
+		e.Tags[k] = v
+	}
+	return e
+}
+
+// WithMetrics adds metrics for monitoring
+func (e *EnhancedError) WithMetrics(metrics map[string]float64) *EnhancedError {
+	if e.Metrics == nil {
+		e.Metrics = make(map[string]float64)
+	}
+	for k, v := range metrics {
+		e.Metrics[k] = v
+	}
+	return e
+}
+
+// ErrorBuilder provides a fluent interface for creating enhanced errors
+type ErrorBuilder struct {
+	err *EnhancedError
+}
+
+// NewError creates a new error builder
+func NewError(errType ErrorType, code, message string) *ErrorBuilder {
+	pc, file, line, _ := runtime.Caller(1)
+	fn := runtime.FuncForPC(pc)
+	
+	return &ErrorBuilder{
+		err: &EnhancedError{
+			Type:      errType,
+			Code:      code,
+			Message:   message,
+			Timestamp: time.Now(),
+			Severity:  SeverityMedium,
+			Retryable: false,
+			File:      file,
+			Line:      line,
+			Function:  fn.Name(),
+			Stack:     string(debug.Stack()),
+		},
+	}
+}
+
+// WithCause adds the underlying cause
+func (b *ErrorBuilder) WithCause(cause error) *ErrorBuilder {
+	b.err.Cause = cause
+	return b
+}
+
+// WithDetails adds additional details
+func (b *ErrorBuilder) WithDetails(details interface{}) *ErrorBuilder {
+	b.err.Details = details
+	return b
+}
+
+// WithSeverity sets the error severity
+func (b *ErrorBuilder) WithSeverity(severity ErrorSeverity) *ErrorBuilder {
+	b.err.Severity = severity
+	return b
+}
+
+// WithRetryable marks the error as retryable
+func (b *ErrorBuilder) WithRetryable(retryable bool) *ErrorBuilder {
+	b.err.Retryable = retryable
+	return b
+}
+
+// WithService sets the service name
+func (b *ErrorBuilder) WithService(service string) *ErrorBuilder {
+	b.err.Service = service
+	return b
+}
+
+// WithOperation sets the operation name
+func (b *ErrorBuilder) WithOperation(operation string) *ErrorBuilder {
+	b.err.Operation = operation
+	return b
+}
+
+// WithContext adds context information
+func (b *ErrorBuilder) WithContext(requestID, userID, tenantID string) *ErrorBuilder {
+	b.err.RequestID = requestID
+	b.err.UserID = userID
+	b.err.TenantID = tenantID
+	return b
+}
+
+// Build returns the enhanced error
+func (b *ErrorBuilder) Build() *EnhancedError {
+	return b.err
+}
+
+// Predefined error constructors for common error types
+
+// ValidationError creates a validation error
+func ValidationError(code, message string, details interface{}) *EnhancedError {
+	return NewError(ErrorTypeValidation, code, message).
+		WithDetails(details).
+		WithSeverity(SeverityLow).
+		Build()
+}
+
+// AuthenticationError creates an authentication error
+func AuthenticationError(code, message string) *EnhancedError {
+	return NewError(ErrorTypeAuthentication, code, message).
+		WithSeverity(SeverityMedium).
+		Build()
+}
+
+// AuthorizationError creates an authorization error
+func AuthorizationError(code, message string) *EnhancedError {
+	return NewError(ErrorTypeAuthorization, code, message).
+		WithSeverity(SeverityMedium).
+		Build()
+}
+
+// NotFoundError creates a not found error
+func NotFoundError(code, message string) *EnhancedError {
+	return NewError(ErrorTypeNotFound, code, message).
+		WithSeverity(SeverityLow).
+		Build()
+}
+
+// ConflictError creates a conflict error
+func ConflictError(code, message string) *EnhancedError {
+	return NewError(ErrorTypeConflict, code, message).
+		WithSeverity(SeverityMedium).
+		Build()
+}
+
+// DatabaseError creates a database error
+func DatabaseError(code, message string, cause error) *EnhancedError {
+	return NewError(ErrorTypeDatabase, code, message).
+		WithCause(cause).
+		WithSeverity(SeverityHigh).
+		WithRetryable(true).
+		Build()
+}
+
+// ExternalError creates an external service error
+func ExternalError(code, message string, cause error) *EnhancedError {
+	return NewError(ErrorTypeExternal, code, message).
+		WithCause(cause).
+		WithSeverity(SeverityMedium).
+		WithRetryable(true).
+		Build()
+}
+
+// InternalError creates an internal server error
+func InternalError(code, message string, cause error) *EnhancedError {
+	return NewError(ErrorTypeInternal, code, message).
+		WithCause(cause).
+		WithSeverity(SeverityCritical).
+		Build()
+}
+
+// BusinessError creates a business logic error
+func BusinessError(code, message string, details interface{}) *EnhancedError {
+	return NewError(ErrorTypeBusiness, code, message).
+		WithDetails(details).
+		WithSeverity(SeverityMedium).
+		Build()
+}
+
+// TimeoutError creates a timeout error
+func TimeoutError(code, message string, cause error) *EnhancedError {
+	return NewError(ErrorTypeTimeout, code, message).
+		WithCause(cause).
+		WithSeverity(SeverityMedium).
+		WithRetryable(true).
+		Build()
+}
+
+// NetworkError creates a network error
+func NetworkError(code, message string, cause error) *EnhancedError {
+	return NewError(ErrorTypeNetwork, code, message).
+		WithCause(cause).
+		WithSeverity(SeverityMedium).
+		WithRetryable(true).
+		Build()
+}
+
+// RateLimitError creates a rate limit error
+func RateLimitError(code, message string) *EnhancedError {
+	return NewError(ErrorTypeRateLimit, code, message).
+		WithSeverity(SeverityLow).
+		WithRetryable(true).
+		Build()
+}
+
+// ErrorLogger provides structured logging for enhanced errors
+type ErrorLogger struct {
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	service string
+}
+
+// NewErrorLogger creates a new error logger
+func NewErrorLogger({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, service string) *ErrorLogger {
+	return &ErrorLogger{
+{{if ne .Logger "zerolog"}}
+		logger:  logger,
+{{end}}
+		service: service,
+	}
+}
+
+// LogError logs an enhanced error with appropriate level based on severity
+func (el *ErrorLogger) LogError(err *EnhancedError) {
+	// Set service if not already set
+	if err.Service == "" {
+		err.Service = el.service
+	}
+
+{{if eq .Logger "zap"}}
+	fields := []zap.Field{
+		zap.String("error_type", string(err.Type)),
+		zap.String("error_code", err.Code),
+		zap.String("severity", string(err.Severity)),
+		zap.Bool("retryable", err.Retryable),
+		zap.String("service", err.Service),
+		zap.String("operation", err.Operation),
+		zap.Time("timestamp", err.Timestamp),
+	}
+
+	if err.RequestID != "" {
+		fields = append(fields, zap.String("request_id", err.RequestID))
+	}
+	if err.UserID != "" {
+		fields = append(fields, zap.String("user_id", err.UserID))
+	}
+	if err.TenantID != "" {
+		fields = append(fields, zap.String("tenant_id", err.TenantID))
+	}
+	if err.Details != nil {
+		fields = append(fields, zap.Any("details", err.Details))
+	}
+	if err.Tags != nil {
+		fields = append(fields, zap.Any("tags", err.Tags))
+	}
+	if err.Metrics != nil {
+		fields = append(fields, zap.Any("metrics", err.Metrics))
+	}
+	if err.Cause != nil {
+		fields = append(fields, zap.Error(err.Cause))
+	}
+
+	switch err.Severity {
+	case SeverityCritical:
+		el.logger.Error(err.Message, fields...)
+	case SeverityHigh:
+		el.logger.Error(err.Message, fields...)
+	case SeverityMedium:
+		el.logger.Warn(err.Message, fields...)
+	case SeverityLow:
+		el.logger.Info(err.Message, fields...)
+	default:
+		el.logger.Error(err.Message, fields...)
+	}
+
+{{else if eq .Logger "logrus"}}
+	fields := logrus.Fields{
+		"error_type": string(err.Type),
+		"error_code": err.Code,
+		"severity":   string(err.Severity),
+		"retryable":  err.Retryable,
+		"service":    err.Service,
+		"operation":  err.Operation,
+		"timestamp":  err.Timestamp,
+	}
+
+	if err.RequestID != "" {
+		fields["request_id"] = err.RequestID
+	}
+	if err.UserID != "" {
+		fields["user_id"] = err.UserID
+	}
+	if err.TenantID != "" {
+		fields["tenant_id"] = err.TenantID
+	}
+	if err.Details != nil {
+		fields["details"] = err.Details
+	}
+	if err.Tags != nil {
+		fields["tags"] = err.Tags
+	}
+	if err.Metrics != nil {
+		fields["metrics"] = err.Metrics
+	}
+
+	logEntry := el.logger.WithFields(fields)
+	if err.Cause != nil {
+		logEntry = logEntry.WithError(err.Cause)
+	}
+
+	switch err.Severity {
+	case SeverityCritical:
+		logEntry.Error(err.Message)
+	case SeverityHigh:
+		logEntry.Error(err.Message)
+	case SeverityMedium:
+		logEntry.Warn(err.Message)
+	case SeverityLow:
+		logEntry.Info(err.Message)
+	default:
+		logEntry.Error(err.Message)
+	}
+
+{{else if eq .Logger "zerolog"}}
+	event := log.Error()
+	
+	switch err.Severity {
+	case SeverityCritical:
+		event = log.Error()
+	case SeverityHigh:
+		event = log.Error()
+	case SeverityMedium:
+		event = log.Warn()
+	case SeverityLow:
+		event = log.Info()
+	default:
+		event = log.Error()
+	}
+
+	event = event.
+		Str("error_type", string(err.Type)).
+		Str("error_code", err.Code).
+		Str("severity", string(err.Severity)).
+		Bool("retryable", err.Retryable).
+		Str("service", err.Service).
+		Str("operation", err.Operation).
+		Time("timestamp", err.Timestamp)
+
+	if err.RequestID != "" {
+		event = event.Str("request_id", err.RequestID)
+	}
+	if err.UserID != "" {
+		event = event.Str("user_id", err.UserID)
+	}
+	if err.TenantID != "" {
+		event = event.Str("tenant_id", err.TenantID)
+	}
+	if err.Details != nil {
+		event = event.Interface("details", err.Details)
+	}
+	if err.Tags != nil {
+		event = event.Interface("tags", err.Tags)
+	}
+	if err.Metrics != nil {
+		event = event.Interface("metrics", err.Metrics)
+	}
+	if err.Cause != nil {
+		event = event.Err(err.Cause)
+	}
+
+	event.Msg(err.Message)
+
+{{else}}
+	attrs := []any{
+		"error_type", string(err.Type),
+		"error_code", err.Code,
+		"severity", string(err.Severity),
+		"retryable", err.Retryable,
+		"service", err.Service,
+		"operation", err.Operation,
+		"timestamp", err.Timestamp,
+	}
+
+	if err.RequestID != "" {
+		attrs = append(attrs, "request_id", err.RequestID)
+	}
+	if err.UserID != "" {
+		attrs = append(attrs, "user_id", err.UserID)
+	}
+	if err.TenantID != "" {
+		attrs = append(attrs, "tenant_id", err.TenantID)
+	}
+	if err.Details != nil {
+		attrs = append(attrs, "details", err.Details)
+	}
+	if err.Tags != nil {
+		attrs = append(attrs, "tags", err.Tags)
+	}
+	if err.Metrics != nil {
+		attrs = append(attrs, "metrics", err.Metrics)
+	}
+	if err.Cause != nil {
+		attrs = append(attrs, "cause", err.Cause)
+	}
+
+	switch err.Severity {
+	case SeverityCritical:
+		el.logger.Error(err.Message, attrs...)
+	case SeverityHigh:
+		el.logger.Error(err.Message, attrs...)
+	case SeverityMedium:
+		el.logger.Warn(err.Message, attrs...)
+	case SeverityLow:
+		el.logger.Info(err.Message, attrs...)
+	default:
+		el.logger.Error(err.Message, attrs...)
+	}
+{{end}}
+}
+
+// ErrorRegistry maintains a registry of known error codes
+type ErrorRegistry struct {
+	errors map[string]*ErrorDefinition
+}
+
+// ErrorDefinition defines metadata for an error code
+type ErrorDefinition struct {
+	Code        string
+	Type        ErrorType
+	Message     string
+	Severity    ErrorSeverity
+	Retryable   bool
+	Description string
+	Resolution  string
+}
+
+// NewErrorRegistry creates a new error registry
+func NewErrorRegistry() *ErrorRegistry {
+	return &ErrorRegistry{
+		errors: make(map[string]*ErrorDefinition),
+	}
+}
+
+// Register registers an error definition
+func (er *ErrorRegistry) Register(def *ErrorDefinition) {
+	er.errors[def.Code] = def
+}
+
+// Get retrieves an error definition by code
+func (er *ErrorRegistry) Get(code string) (*ErrorDefinition, bool) {
+	def, exists := er.errors[code]
+	return def, exists
+}
+
+// CreateError creates an enhanced error from a registered definition
+func (er *ErrorRegistry) CreateError(code string, details interface{}) *EnhancedError {
+	def, exists := er.errors[code]
+	if !exists {
+		return InternalError("UNKNOWN_ERROR", fmt.Sprintf("Unknown error code: %s", code), nil)
+	}
+	
+	return NewError(def.Type, def.Code, def.Message).
+		WithDetails(details).
+		WithSeverity(def.Severity).
+		WithRetryable(def.Retryable).
+		Build()
+}
+
+// GetAllDefinitions returns all registered error definitions
+func (er *ErrorRegistry) GetAllDefinitions() map[string]*ErrorDefinition {
+	result := make(map[string]*ErrorDefinition)
+	for k, v := range er.errors {
+		result[k] = v
+	}
+	return result
+}
