@@ -9,12 +9,26 @@ The most comprehensive Go project generator with **12 blueprints**, **progressiv
 
 ## ⚡ See It In Action
 
-### Beginner-Friendly Mode (Default)
+### 🎯 Interactive Mode (Recommended)
 ```bash
 # Install once
 go install github.com/francknouama/go-starter@latest
 
-# Generate with simple guided prompts
+# Start interactive guided project creation
+go-starter new
+
+# The interactive wizard will guide you through:
+# ✅ Project name (with random generator option)
+# ✅ Blueprint selection (with descriptions)
+# ✅ Complexity level (Simple → Expert)
+# ✅ Framework choice (context-aware options)
+# ✅ Logger selection (4 options)
+# ✅ Additional features (database, auth, etc.)
+```
+
+### Direct Mode (Non-Interactive)
+```bash
+# Skip interactive prompts with flags
 go-starter new my-api --type web-api --logger zap
 
 cd my-api
@@ -25,14 +39,13 @@ make build  # Production binary ready 🚀
 
 ### Progressive Disclosure - Start Simple, Scale Smart
 ```bash
-# Simple CLI (8 files) - Perfect for learning
-go-starter new my-tool --type cli --complexity simple
+# Interactive mode adapts to your experience level
+go-starter new              # Basic options (beginner-friendly)
+go-starter new --advanced   # All options (power users)
 
-# Standard CLI (29 files) - Production-ready
-go-starter new my-tool --type cli --complexity standard
-
-# Advanced mode - See all 18+ options
-go-starter new --advanced --help
+# Direct mode with complexity control
+go-starter new my-tool --type cli --complexity simple    # 8 files
+go-starter new my-tool --type cli --complexity standard  # 29 files
 ```
 
 **That's it.** No configuration files. No dependency hunting. No project structure decisions. Just working, production-ready code that scales with your needs.
