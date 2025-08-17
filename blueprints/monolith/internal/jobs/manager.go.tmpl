@@ -1,0 +1,840 @@
+package jobs
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+{{if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+{{else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"{{.ModulePath}}/config"
+)
+
+// Job represents a background job
+type Job interface {
+	ID() string
+	Execute(ctx context.Context) error
+	Retry() bool
+	MaxRetries() int
+	Delay() time.Duration
+}
+
+// JobStatus represents the status of a job
+type JobStatus string
+
+const (
+	JobStatusPending  JobStatus = "pending"
+	JobStatusRunning  JobStatus = "running"
+	JobStatusCompleted JobStatus = "completed"
+	JobStatusFailed   JobStatus = "failed"
+	JobStatusRetrying JobStatus = "retrying"
+)
+
+// JobResult contains the result of job execution
+type JobResult struct {
+	JobID       string        `json:"job_id"`
+	Status      JobStatus     `json:"status"`
+	StartTime   time.Time     `json:"start_time"`
+	EndTime     time.Time     `json:"end_time"`
+	Duration    time.Duration `json:"duration"`
+	Error       string        `json:"error,omitempty"`
+	Retries     int           `json:"retries"`
+	MaxRetries  int           `json:"max_retries"`
+	LastRetry   time.Time     `json:"last_retry,omitempty"`
+}
+
+// JobQueue manages job execution
+type JobQueue struct {
+	jobs      chan Job
+	results   chan JobResult
+	workers   int
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+	running   bool
+	mu        sync.RWMutex
+{{if eq .LoggerType "zap"}}
+	logger    *zap.Logger
+{{else if eq .LoggerType "logrus"}}
+	logger    *logrus.Logger
+{{else if eq .LoggerType "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger    *slog.Logger
+{{end}}
+	cfg       *config.Config
+	metrics   *JobMetrics
+}
+
+// JobMetrics tracks job execution metrics
+type JobMetrics struct {
+	JobsQueued    int64             `json:"jobs_queued"`
+	JobsCompleted int64             `json:"jobs_completed"`
+	JobsFailed    int64             `json:"jobs_failed"`
+	JobsRetried   int64             `json:"jobs_retried"`
+	WorkerCount   int               `json:"worker_count"`
+	QueueLength   int               `json:"queue_length"`
+	AverageTime   time.Duration     `json:"average_execution_time"`
+	JobsByType    map[string]int64  `json:"jobs_by_type"`
+	mu            sync.RWMutex
+}
+
+// NewJobQueue creates a new job queue
+func NewJobQueue(cfg *config.Config, workers int{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .LoggerType "slog"}}, logger *slog.Logger{{end}}) *JobQueue {
+	if workers <= 0 {
+		workers = 5 // Default to 5 workers
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	return &JobQueue{
+		jobs:    make(chan Job, 1000), // Buffer for 1000 jobs
+		results: make(chan JobResult, 1000),
+		workers: workers,
+		ctx:     ctx,
+		cancel:  cancel,
+{{if ne .LoggerType "zerolog"}}
+		logger:  logger,
+{{end}}
+		cfg:     cfg,
+		metrics: &JobMetrics{
+			JobsByType: make(map[string]int64),
+		},
+	}
+}
+
+// Start starts the job queue processing
+func (jq *JobQueue) Start() error {
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+
+	if jq.running {
+		return fmt.Errorf("job queue is already running")
+	}
+
+	jq.running = true
+
+	// Start workers
+	for i := 0; i < jq.workers; i++ {
+		jq.wg.Add(1)
+		go jq.worker(i)
+	}
+
+	// Start result processor
+	jq.wg.Add(1)
+	go jq.resultProcessor()
+
+{{if eq .LoggerType "zap"}}
+	jq.logger.Info("Job queue started", zap.Int("workers", jq.workers))
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.WithField("workers", jq.workers).Info("Job queue started")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Int("workers", jq.workers).Msg("Job queue started")
+{{else}}
+	jq.logger.Info("Job queue started", "workers", jq.workers)
+{{end}}
+
+	return nil
+}
+
+// Stop stops the job queue
+func (jq *JobQueue) Stop() error {
+	jq.mu.Lock()
+	defer jq.mu.Unlock()
+
+	if !jq.running {
+		return fmt.Errorf("job queue is not running")
+	}
+
+{{if eq .LoggerType "zap"}}
+	jq.logger.Info("Stopping job queue...")
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.Info("Stopping job queue...")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Stopping job queue...")
+{{else}}
+	jq.logger.Info("Stopping job queue...")
+{{end}}
+
+	jq.cancel()
+	close(jq.jobs)
+	
+	// Wait for all workers to finish
+	jq.wg.Wait()
+	close(jq.results)
+	
+	jq.running = false
+
+{{if eq .LoggerType "zap"}}
+	jq.logger.Info("Job queue stopped")
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.Info("Job queue stopped")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Job queue stopped")
+{{else}}
+	jq.logger.Info("Job queue stopped")
+{{end}}
+
+	return nil
+}
+
+// Submit submits a job to the queue
+func (jq *JobQueue) Submit(job Job) error {
+	jq.mu.RLock()
+	defer jq.mu.RUnlock()
+
+	if !jq.running {
+		return fmt.Errorf("job queue is not running")
+	}
+
+	select {
+	case jq.jobs <- job:
+		jq.metrics.mu.Lock()
+		jq.metrics.JobsQueued++
+		jq.metrics.QueueLength = len(jq.jobs)
+		jq.metrics.JobsByType[fmt.Sprintf("%T", job)]++
+		jq.metrics.mu.Unlock()
+
+{{if eq .LoggerType "zap"}}
+		jq.logger.Debug("Job submitted", zap.String("job_id", job.ID()))
+{{else if eq .LoggerType "logrus"}}
+		jq.logger.WithField("job_id", job.ID()).Debug("Job submitted")
+{{else if eq .LoggerType "zerolog"}}
+		log.Debug().Str("job_id", job.ID()).Msg("Job submitted")
+{{else}}
+		jq.logger.Debug("Job submitted", "job_id", job.ID())
+{{end}}
+		return nil
+	case <-jq.ctx.Done():
+		return fmt.Errorf("job queue is shutting down")
+	default:
+		return fmt.Errorf("job queue is full")
+	}
+}
+
+// worker processes jobs from the queue
+func (jq *JobQueue) worker(id int) {
+	defer jq.wg.Done()
+
+{{if eq .LoggerType "zap"}}
+	jq.logger.Debug("Worker started", zap.Int("worker_id", id))
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.WithField("worker_id", id).Debug("Worker started")
+{{else if eq .LoggerType "zerolog"}}
+	log.Debug().Int("worker_id", id).Msg("Worker started")
+{{else}}
+	jq.logger.Debug("Worker started", "worker_id", id)
+{{end}}
+
+	for {
+		select {
+		case job, ok := <-jq.jobs:
+			if !ok {
+				// Channel closed, worker should exit
+{{if eq .LoggerType "zap"}}
+				jq.logger.Debug("Worker stopping", zap.Int("worker_id", id))
+{{else if eq .LoggerType "logrus"}}
+				jq.logger.WithField("worker_id", id).Debug("Worker stopping")
+{{else if eq .LoggerType "zerolog"}}
+				log.Debug().Int("worker_id", id).Msg("Worker stopping")
+{{else}}
+				jq.logger.Debug("Worker stopping", "worker_id", id)
+{{end}}
+				return
+			}
+			
+			jq.processJob(job, id)
+
+		case <-jq.ctx.Done():
+			// Context cancelled, worker should exit
+{{if eq .LoggerType "zap"}}
+			jq.logger.Debug("Worker cancelled", zap.Int("worker_id", id))
+{{else if eq .LoggerType "logrus"}}
+			jq.logger.WithField("worker_id", id).Debug("Worker cancelled")
+{{else if eq .LoggerType "zerolog"}}
+			log.Debug().Int("worker_id", id).Msg("Worker cancelled")
+{{else}}
+			jq.logger.Debug("Worker cancelled", "worker_id", id)
+{{end}}
+			return
+		}
+	}
+}
+
+// processJob executes a single job with retry logic
+func (jq *JobQueue) processJob(job Job, workerID int) {
+	startTime := time.Now()
+	jobID := job.ID()
+	retries := 0
+	maxRetries := job.MaxRetries()
+
+{{if eq .LoggerType "zap"}}
+	jq.logger.Debug("Processing job",
+		zap.String("job_id", jobID),
+		zap.Int("worker_id", workerID))
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.WithFields(logrus.Fields{
+		"job_id":    jobID,
+		"worker_id": workerID,
+	}).Debug("Processing job")
+{{else if eq .LoggerType "zerolog"}}
+	log.Debug().
+		Str("job_id", jobID).
+		Int("worker_id", workerID).
+		Msg("Processing job")
+{{else}}
+	jq.logger.Debug("Processing job",
+		"job_id", jobID,
+		"worker_id", workerID)
+{{end}}
+
+	for {
+		// Create job context with timeout
+		jobCtx, cancel := context.WithTimeout(jq.ctx, 30*time.Minute)
+		
+		// Execute the job
+		err := job.Execute(jobCtx)
+		cancel()
+
+		endTime := time.Now()
+		duration := endTime.Sub(startTime)
+
+		result := JobResult{
+			JobID:      jobID,
+			StartTime:  startTime,
+			EndTime:    endTime,
+			Duration:   duration,
+			Retries:    retries,
+			MaxRetries: maxRetries,
+		}
+
+		if err == nil {
+			// Job succeeded
+			result.Status = JobStatusCompleted
+			jq.metrics.mu.Lock()
+			jq.metrics.JobsCompleted++
+			jq.metrics.mu.Unlock()
+
+{{if eq .LoggerType "zap"}}
+			jq.logger.Info("Job completed successfully",
+				zap.String("job_id", jobID),
+				zap.Duration("duration", duration),
+				zap.Int("retries", retries))
+{{else if eq .LoggerType "logrus"}}
+			jq.logger.WithFields(logrus.Fields{
+				"job_id":   jobID,
+				"duration": duration,
+				"retries":  retries,
+			}).Info("Job completed successfully")
+{{else if eq .LoggerType "zerolog"}}
+			log.Info().
+				Str("job_id", jobID).
+				Dur("duration", duration).
+				Int("retries", retries).
+				Msg("Job completed successfully")
+{{else}}
+			jq.logger.Info("Job completed successfully",
+				"job_id", jobID,
+				"duration", duration,
+				"retries", retries)
+{{end}}
+			break
+		}
+
+		// Job failed
+		result.Error = err.Error()
+
+		if retries < maxRetries && job.Retry() {
+			// Retry the job
+			retries++
+			result.Status = JobStatusRetrying
+			result.LastRetry = time.Now()
+
+			jq.metrics.mu.Lock()
+			jq.metrics.JobsRetried++
+			jq.metrics.mu.Unlock()
+
+{{if eq .LoggerType "zap"}}
+			jq.logger.Warn("Job failed, retrying",
+				zap.String("job_id", jobID),
+				zap.Error(err),
+				zap.Int("retry", retries),
+				zap.Int("max_retries", maxRetries))
+{{else if eq .LoggerType "logrus"}}
+			jq.logger.WithFields(logrus.Fields{
+				"job_id":      jobID,
+				"error":       err,
+				"retry":       retries,
+				"max_retries": maxRetries,
+			}).Warn("Job failed, retrying")
+{{else if eq .LoggerType "zerolog"}}
+			log.Warn().
+				Str("job_id", jobID).
+				Err(err).
+				Int("retry", retries).
+				Int("max_retries", maxRetries).
+				Msg("Job failed, retrying")
+{{else}}
+			jq.logger.Warn("Job failed, retrying",
+				"job_id", jobID,
+				"error", err,
+				"retry", retries,
+				"max_retries", maxRetries)
+{{end}}
+
+			// Wait before retry
+			select {
+			case <-time.After(job.Delay()):
+				// Continue to retry
+			case <-jq.ctx.Done():
+				// Context cancelled during retry delay
+				result.Status = JobStatusFailed
+				result.Error = "cancelled during retry"
+				break
+			}
+		} else {
+			// Max retries reached or retry not enabled
+			result.Status = JobStatusFailed
+			jq.metrics.mu.Lock()
+			jq.metrics.JobsFailed++
+			jq.metrics.mu.Unlock()
+
+{{if eq .LoggerType "zap"}}
+			jq.logger.Error("Job failed permanently",
+				zap.String("job_id", jobID),
+				zap.Error(err),
+				zap.Int("retries", retries),
+				zap.Int("max_retries", maxRetries))
+{{else if eq .LoggerType "logrus"}}
+			jq.logger.WithFields(logrus.Fields{
+				"job_id":      jobID,
+				"error":       err,
+				"retries":     retries,
+				"max_retries": maxRetries,
+			}).Error("Job failed permanently")
+{{else if eq .LoggerType "zerolog"}}
+			log.Error().
+				Str("job_id", jobID).
+				Err(err).
+				Int("retries", retries).
+				Int("max_retries", maxRetries).
+				Msg("Job failed permanently")
+{{else}}
+			jq.logger.Error("Job failed permanently",
+				"job_id", jobID,
+				"error", err,
+				"retries", retries,
+				"max_retries", maxRetries)
+{{end}}
+			break
+		}
+	}
+
+	// Send result to processor
+	select {
+	case jq.results <- result:
+		// Result sent successfully
+	case <-jq.ctx.Done():
+		// Context cancelled while sending result
+{{if eq .LoggerType "zap"}}
+		jq.logger.Warn("Failed to send job result - context cancelled", zap.String("job_id", jobID))
+{{else if eq .LoggerType "logrus"}}
+		jq.logger.WithField("job_id", jobID).Warn("Failed to send job result - context cancelled")
+{{else if eq .LoggerType "zerolog"}}
+		log.Warn().Str("job_id", jobID).Msg("Failed to send job result - context cancelled")
+{{else}}
+		jq.logger.Warn("Failed to send job result - context cancelled", "job_id", jobID)
+{{end}}
+	}
+}
+
+// resultProcessor processes job results
+func (jq *JobQueue) resultProcessor() {
+	defer jq.wg.Done()
+
+{{if eq .LoggerType "zap"}}
+	jq.logger.Debug("Result processor started")
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.Debug("Result processor started")
+{{else if eq .LoggerType "zerolog"}}
+	log.Debug().Msg("Result processor started")
+{{else}}
+	jq.logger.Debug("Result processor started")
+{{end}}
+
+	for {
+		select {
+		case result, ok := <-jq.results:
+			if !ok {
+				// Channel closed, processor should exit
+{{if eq .LoggerType "zap"}}
+				jq.logger.Debug("Result processor stopping")
+{{else if eq .LoggerType "logrus"}}
+				jq.logger.Debug("Result processor stopping")
+{{else if eq .LoggerType "zerolog"}}
+				log.Debug().Msg("Result processor stopping")
+{{else}}
+				jq.logger.Debug("Result processor stopping")
+{{end}}
+				return
+			}
+
+			// Process the result (e.g., store in database, send notifications)
+			jq.processResult(result)
+
+		case <-jq.ctx.Done():
+			// Context cancelled, processor should exit
+{{if eq .LoggerType "zap"}}
+			jq.logger.Debug("Result processor cancelled")
+{{else if eq .LoggerType "logrus"}}
+			jq.logger.Debug("Result processor cancelled")
+{{else if eq .LoggerType "zerolog"}}
+			log.Debug().Msg("Result processor cancelled")
+{{else}}
+			jq.logger.Debug("Result processor cancelled")
+{{end}}
+			return
+		}
+	}
+}
+
+// processResult processes a job result
+func (jq *JobQueue) processResult(result JobResult) {
+	// Update metrics
+	jq.metrics.mu.Lock()
+	jq.metrics.QueueLength = len(jq.jobs)
+	jq.metrics.mu.Unlock()
+
+	// Here you could:
+	// - Store results in database
+	// - Send notifications
+	// - Update monitoring systems
+	// - Trigger webhooks
+	
+{{if eq .LoggerType "zap"}}
+	jq.logger.Debug("Job result processed",
+		zap.String("job_id", result.JobID),
+		zap.String("status", string(result.Status)),
+		zap.Duration("duration", result.Duration))
+{{else if eq .LoggerType "logrus"}}
+	jq.logger.WithFields(logrus.Fields{
+		"job_id":   result.JobID,
+		"status":   string(result.Status),
+		"duration": result.Duration,
+	}).Debug("Job result processed")
+{{else if eq .LoggerType "zerolog"}}
+	log.Debug().
+		Str("job_id", result.JobID).
+		Str("status", string(result.Status)).
+		Dur("duration", result.Duration).
+		Msg("Job result processed")
+{{else}}
+	jq.logger.Debug("Job result processed",
+		"job_id", result.JobID,
+		"status", string(result.Status),
+		"duration", result.Duration)
+{{end}}
+}
+
+// GetMetrics returns current job queue metrics
+func (jq *JobQueue) GetMetrics() JobMetrics {
+	jq.metrics.mu.RLock()
+	defer jq.metrics.mu.RUnlock()
+
+	// Calculate current queue length
+	jq.metrics.QueueLength = len(jq.jobs)
+	jq.metrics.WorkerCount = jq.workers
+
+	// Create a copy to avoid race conditions
+	metrics := JobMetrics{
+		JobsQueued:    jq.metrics.JobsQueued,
+		JobsCompleted: jq.metrics.JobsCompleted,
+		JobsFailed:    jq.metrics.JobsFailed,
+		JobsRetried:   jq.metrics.JobsRetried,
+		WorkerCount:   jq.metrics.WorkerCount,
+		QueueLength:   jq.metrics.QueueLength,
+		AverageTime:   jq.metrics.AverageTime,
+		JobsByType:    make(map[string]int64),
+	}
+
+	// Copy job types map
+	for k, v := range jq.metrics.JobsByType {
+		metrics.JobsByType[k] = v
+	}
+
+	return metrics
+}
+
+// BaseJob provides a base implementation for jobs
+type BaseJob struct {
+	id         string
+	maxRetries int
+	retryDelay time.Duration
+	retryable  bool
+}
+
+// NewBaseJob creates a new base job
+func NewBaseJob(id string, maxRetries int, retryDelay time.Duration, retryable bool) *BaseJob {
+	return &BaseJob{
+		id:         id,
+		maxRetries: maxRetries,
+		retryDelay: retryDelay,
+		retryable:  retryable,
+	}
+}
+
+// ID returns the job ID
+func (j *BaseJob) ID() string {
+	return j.id
+}
+
+// Retry returns whether the job should be retried on failure
+func (j *BaseJob) Retry() bool {
+	return j.retryable
+}
+
+// MaxRetries returns the maximum number of retries
+func (j *BaseJob) MaxRetries() int {
+	return j.maxRetries
+}
+
+// Delay returns the delay between retries
+func (j *BaseJob) Delay() time.Duration {
+	return j.retryDelay
+}
+
+// EmailJob represents an email sending job
+type EmailJob struct {
+	*BaseJob
+	To      string `json:"to"`
+	Subject string `json:"subject"`
+	Body    string `json:"body"`
+}
+
+// NewEmailJob creates a new email job
+func NewEmailJob(to, subject, body string) *EmailJob {
+	return &EmailJob{
+		BaseJob: NewBaseJob(
+			fmt.Sprintf("email_%d", time.Now().UnixNano()),
+			3,
+			30*time.Second,
+			true,
+		),
+		To:      to,
+		Subject: subject,
+		Body:    body,
+	}
+}
+
+// Execute executes the email job
+func (e *EmailJob) Execute(ctx context.Context) error {
+	// Simulate email sending
+	// In a real implementation, you would use an email service
+	select {
+	case <-time.After(100 * time.Millisecond):
+		// Email sent successfully
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// ScheduledJobManager manages scheduled/cron jobs
+type ScheduledJobManager struct {
+	jobs     map[string]*ScheduledJob
+	queue    *JobQueue
+	ticker   *time.Ticker
+	ctx      context.Context
+	cancel   context.CancelFunc
+	mu       sync.RWMutex
+{{if eq .LoggerType "zap"}}
+	logger   *zap.Logger
+{{else if eq .LoggerType "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .LoggerType "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+}
+
+// ScheduledJob represents a job that runs on a schedule
+type ScheduledJob struct {
+	ID       string        `json:"id"`
+	Job      Job           `json:"-"`
+	Schedule time.Duration `json:"schedule"`
+	LastRun  time.Time     `json:"last_run"`
+	NextRun  time.Time     `json:"next_run"`
+	Enabled  bool          `json:"enabled"`
+}
+
+// NewScheduledJobManager creates a new scheduled job manager
+func NewScheduledJobManager(queue *JobQueue{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .LoggerType "slog"}}, logger *slog.Logger{{end}}) *ScheduledJobManager {
+	ctx, cancel := context.WithCancel(context.Background())
+	
+	return &ScheduledJobManager{
+		jobs:   make(map[string]*ScheduledJob),
+		queue:  queue,
+		ticker: time.NewTicker(time.Minute), // Check every minute
+		ctx:    ctx,
+		cancel: cancel,
+{{if ne .LoggerType "zerolog"}}
+		logger: logger,
+{{end}}
+	}
+}
+
+// AddScheduledJob adds a scheduled job
+func (sm *ScheduledJobManager) AddScheduledJob(id string, job Job, schedule time.Duration) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	scheduledJob := &ScheduledJob{
+		ID:       id,
+		Job:      job,
+		Schedule: schedule,
+		NextRun:  time.Now().Add(schedule),
+		Enabled:  true,
+	}
+
+	sm.jobs[id] = scheduledJob
+
+{{if eq .LoggerType "zap"}}
+	sm.logger.Info("Scheduled job added",
+		zap.String("job_id", id),
+		zap.Duration("schedule", schedule),
+		zap.Time("next_run", scheduledJob.NextRun))
+{{else if eq .LoggerType "logrus"}}
+	sm.logger.WithFields(logrus.Fields{
+		"job_id":   id,
+		"schedule": schedule,
+		"next_run": scheduledJob.NextRun,
+	}).Info("Scheduled job added")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("job_id", id).
+		Dur("schedule", schedule).
+		Time("next_run", scheduledJob.NextRun).
+		Msg("Scheduled job added")
+{{else}}
+	sm.logger.Info("Scheduled job added",
+		"job_id", id,
+		"schedule", schedule,
+		"next_run", scheduledJob.NextRun)
+{{end}}
+}
+
+// Start starts the scheduled job manager
+func (sm *ScheduledJobManager) Start() {
+	go func() {
+		for {
+			select {
+			case <-sm.ticker.C:
+				sm.checkScheduledJobs()
+			case <-sm.ctx.Done():
+				return
+			}
+		}
+	}()
+
+{{if eq .LoggerType "zap"}}
+	sm.logger.Info("Scheduled job manager started")
+{{else if eq .LoggerType "logrus"}}
+	sm.logger.Info("Scheduled job manager started")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Scheduled job manager started")
+{{else}}
+	sm.logger.Info("Scheduled job manager started")
+{{end}}
+}
+
+// Stop stops the scheduled job manager
+func (sm *ScheduledJobManager) Stop() {
+	sm.ticker.Stop()
+	sm.cancel()
+
+{{if eq .LoggerType "zap"}}
+	sm.logger.Info("Scheduled job manager stopped")
+{{else if eq .LoggerType "logrus"}}
+	sm.logger.Info("Scheduled job manager stopped")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Scheduled job manager stopped")
+{{else}}
+	sm.logger.Info("Scheduled job manager stopped")
+{{end}}
+}
+
+// checkScheduledJobs checks for jobs that need to run
+func (sm *ScheduledJobManager) checkScheduledJobs() {
+	now := time.Now()
+	
+	sm.mu.RLock()
+	jobsToRun := make([]*ScheduledJob, 0)
+	
+	for _, job := range sm.jobs {
+		if job.Enabled && now.After(job.NextRun) {
+			jobsToRun = append(jobsToRun, job)
+		}
+	}
+	sm.mu.RUnlock()
+
+	// Submit jobs that need to run
+	for _, scheduledJob := range jobsToRun {
+		if err := sm.queue.Submit(scheduledJob.Job); err != nil {
+{{if eq .LoggerType "zap"}}
+			sm.logger.Error("Failed to submit scheduled job",
+				zap.String("job_id", scheduledJob.ID),
+				zap.Error(err))
+{{else if eq .LoggerType "logrus"}}
+			sm.logger.WithFields(logrus.Fields{
+				"job_id": scheduledJob.ID,
+				"error":  err,
+			}).Error("Failed to submit scheduled job")
+{{else if eq .LoggerType "zerolog"}}
+			log.Error().
+				Str("job_id", scheduledJob.ID).
+				Err(err).
+				Msg("Failed to submit scheduled job")
+{{else}}
+			sm.logger.Error("Failed to submit scheduled job",
+				"job_id", scheduledJob.ID,
+				"error", err)
+{{end}}
+		} else {
+			// Update last run and next run times
+			sm.mu.Lock()
+			scheduledJob.LastRun = now
+			scheduledJob.NextRun = now.Add(scheduledJob.Schedule)
+			sm.mu.Unlock()
+
+{{if eq .LoggerType "zap"}}
+			sm.logger.Debug("Scheduled job submitted",
+				zap.String("job_id", scheduledJob.ID),
+				zap.Time("next_run", scheduledJob.NextRun))
+{{else if eq .LoggerType "logrus"}}
+			sm.logger.WithFields(logrus.Fields{
+				"job_id":   scheduledJob.ID,
+				"next_run": scheduledJob.NextRun,
+			}).Debug("Scheduled job submitted")
+{{else if eq .LoggerType "zerolog"}}
+			log.Debug().
+				Str("job_id", scheduledJob.ID).
+				Time("next_run", scheduledJob.NextRun).
+				Msg("Scheduled job submitted")
+{{else}}
+			sm.logger.Debug("Scheduled job submitted",
+				"job_id", scheduledJob.ID,
+				"next_run", scheduledJob.NextRun)
+{{end}}
+		}
+	}
+}

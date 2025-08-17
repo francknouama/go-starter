@@ -1,0 +1,448 @@
+{{if eq .SessionStore "redis"}}package cache
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"time"
+
+{{if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+{{else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"github.com/redis/go-redis/v9"
+	"{{.ModulePath}}/config"
+)
+
+// RedisCache provides a Redis-based cache implementation
+type RedisCache struct {
+	client *redis.Client
+	config *config.Config
+{{if eq .LoggerType "zap"}}
+	logger *zap.Logger
+{{else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+{{else if eq .LoggerType "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	stats  CacheStats
+}
+
+// NewRedisCache creates a new Redis cache
+func NewRedisCache(cfg *config.Config{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .LoggerType "slog"}}, logger *slog.Logger{{end}}) (*RedisCache, error) {
+	// Parse Redis DB number
+	db, err := strconv.Atoi(fmt.Sprintf("%d", cfg.Cache.RedisDB))
+	if err != nil {
+		db = 0 // Default to DB 0
+	}
+
+	// Create Redis client
+	rdb := redis.NewClient(&redis.Options{
+		Addr:     fmt.Sprintf("%s:%s", cfg.Cache.RedisHost, cfg.Cache.RedisPort),
+		Password: cfg.Cache.RedisPassword,
+		DB:       db,
+		
+		// Connection pool settings
+		PoolSize:     10,
+		MinIdleConns: 5,
+		MaxIdleConns: 10,
+		
+		// Timeouts
+		DialTimeout:  5 * time.Second,
+		ReadTimeout:  3 * time.Second,
+		WriteTimeout: 3 * time.Second,
+		
+		// Connection lifetime
+		ConnMaxIdleTime: 5 * time.Minute,
+		ConnMaxLifetime: 1 * time.Hour,
+	})
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := rdb.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+
+	cache := &RedisCache{
+		client: rdb,
+		config: cfg,
+{{if ne .LoggerType "zerolog"}}
+		logger: logger,
+{{end}}
+		stats: CacheStats{
+			Details: make(map[string]string),
+		},
+	}
+
+{{if eq .LoggerType "zap"}}
+	logger.Info("Redis cache initialized",
+		zap.String("host", cfg.Cache.RedisHost),
+		zap.String("port", cfg.Cache.RedisPort),
+		zap.Int("db", db))
+{{else if eq .LoggerType "logrus"}}
+	logger.WithFields(logrus.Fields{
+		"host": cfg.Cache.RedisHost,
+		"port": cfg.Cache.RedisPort,
+		"db":   db,
+	}).Info("Redis cache initialized")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("host", cfg.Cache.RedisHost).
+		Str("port", cfg.Cache.RedisPort).
+		Int("db", db).
+		Msg("Redis cache initialized")
+{{else}}
+	logger.Info("Redis cache initialized",
+		"host", cfg.Cache.RedisHost,
+		"port", cfg.Cache.RedisPort,
+		"db", db)
+{{end}}
+
+	return cache, nil
+}
+
+// Get retrieves a value from Redis
+func (r *RedisCache) Get(ctx context.Context, key string) ([]byte, error) {
+	result, err := r.client.Get(ctx, key).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			r.stats.Misses++
+			return nil, fmt.Errorf("key not found")
+		}
+		r.stats.Errors++
+		return nil, fmt.Errorf("Redis get error: %w", err)
+	}
+
+	r.stats.Hits++
+	return result, nil
+}
+
+// Set stores a value in Redis
+func (r *RedisCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
+	err := r.client.Set(ctx, key, value, expiration).Err()
+	if err != nil {
+		r.stats.Errors++
+		return fmt.Errorf("Redis set error: %w", err)
+	}
+
+	r.stats.Sets++
+	return nil
+}
+
+// Delete removes a key from Redis
+func (r *RedisCache) Delete(ctx context.Context, key string) error {
+	result, err := r.client.Del(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return fmt.Errorf("Redis delete error: %w", err)
+	}
+
+	if result > 0 {
+		r.stats.Deletes++
+	}
+
+	return nil
+}
+
+// Exists checks if a key exists in Redis
+func (r *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
+	result, err := r.client.Exists(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return false, fmt.Errorf("Redis exists error: %w", err)
+	}
+
+	return result > 0, nil
+}
+
+// Clear removes all keys from the current Redis database
+func (r *RedisCache) Clear(ctx context.Context) error {
+	err := r.client.FlushDB(ctx).Err()
+	if err != nil {
+		r.stats.Errors++
+		return fmt.Errorf("Redis clear error: %w", err)
+	}
+
+{{if eq .LoggerType "zap"}}
+	r.logger.Warn("Redis database cleared")
+{{else if eq .LoggerType "logrus"}}
+	r.logger.Warn("Redis database cleared")
+{{else if eq .LoggerType "zerolog"}}
+	log.Warn().Msg("Redis database cleared")
+{{else}}
+	r.logger.Warn("Redis database cleared")
+{{end}}
+
+	return nil
+}
+
+// Keys returns all keys matching the pattern
+func (r *RedisCache) Keys(ctx context.Context, pattern string) ([]string, error) {
+	keys, err := r.client.Keys(ctx, pattern).Result()
+	if err != nil {
+		r.stats.Errors++
+		return nil, fmt.Errorf("Redis keys error: %w", err)
+	}
+
+	return keys, nil
+}
+
+// TTL returns the time-to-live for a key
+func (r *RedisCache) TTL(ctx context.Context, key string) (time.Duration, error) {
+	duration, err := r.client.TTL(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return 0, fmt.Errorf("Redis TTL error: %w", err)
+	}
+
+	if duration == -2*time.Second {
+		return 0, fmt.Errorf("key does not exist")
+	}
+
+	return duration, nil
+}
+
+// Increment increments a numeric value
+func (r *RedisCache) Increment(ctx context.Context, key string) (int64, error) {
+	result, err := r.client.Incr(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return 0, fmt.Errorf("Redis increment error: %w", err)
+	}
+
+	return result, nil
+}
+
+// Decrement decrements a numeric value
+func (r *RedisCache) Decrement(ctx context.Context, key string) (int64, error) {
+	result, err := r.client.Decr(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return 0, fmt.Errorf("Redis decrement error: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetStats returns Redis cache statistics
+func (r *RedisCache) GetStats() CacheStats {
+	stats := r.stats
+	
+	// Get Redis info
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	info, err := r.client.Info(ctx, "memory", "keyspace", "clients").Result()
+	if err != nil {
+{{if eq .LoggerType "zap"}}
+		r.logger.Warn("Failed to get Redis info", zap.Error(err))
+{{else if eq .LoggerType "logrus"}}
+		r.logger.WithError(err).Warn("Failed to get Redis info")
+{{else if eq .LoggerType "zerolog"}}
+		log.Warn().Err(err).Msg("Failed to get Redis info")
+{{else}}
+		r.logger.Warn("Failed to get Redis info", "error", err)
+{{end}}
+	} else {
+		// Parse Redis info (simplified)
+		stats.Details["redis_info"] = info
+	}
+
+	// Get database size
+	dbSize, err := r.client.DBSize(ctx).Result()
+	if err != nil {
+{{if eq .LoggerType "zap"}}
+		r.logger.Warn("Failed to get Redis DB size", zap.Error(err))
+{{else if eq .LoggerType "logrus"}}
+		r.logger.WithError(err).Warn("Failed to get Redis DB size")
+{{else if eq .LoggerType "zerolog"}}
+		log.Warn().Err(err).Msg("Failed to get Redis DB size")
+{{else}}
+		r.logger.Warn("Failed to get Redis DB size", "error", err)
+{{end}}
+	} else {
+		stats.KeyCount = dbSize
+		stats.Details["db_size"] = fmt.Sprintf("%d", dbSize)
+	}
+
+	// Get pool stats
+	poolStats := r.client.PoolStats()
+	stats.Connections = int64(poolStats.TotalConns)
+	stats.Details["type"] = "redis"
+	stats.Details["pool_hits"] = fmt.Sprintf("%d", poolStats.Hits)
+	stats.Details["pool_misses"] = fmt.Sprintf("%d", poolStats.Misses)
+	stats.Details["pool_timeouts"] = fmt.Sprintf("%d", poolStats.Timeouts)
+	stats.Details["idle_conns"] = fmt.Sprintf("%d", poolStats.IdleConns)
+	stats.Details["stale_conns"] = fmt.Sprintf("%d", poolStats.StaleConns)
+
+	return stats
+}
+
+// SetWithExpireAt stores a value with an absolute expiration time
+func (r *RedisCache) SetWithExpireAt(ctx context.Context, key string, value []byte, expireAt time.Time) error {
+	err := r.client.Set(ctx, key, value, time.Until(expireAt)).Err()
+	if err != nil {
+		r.stats.Errors++
+		return fmt.Errorf("Redis set with expire at error: %w", err)
+	}
+
+	r.stats.Sets++
+	return nil
+}
+
+// SetNX sets a key only if it doesn't exist (atomic operation)
+func (r *RedisCache) SetNX(ctx context.Context, key string, value []byte, expiration time.Duration) (bool, error) {
+	result, err := r.client.SetNX(ctx, key, value, expiration).Result()
+	if err != nil {
+		r.stats.Errors++
+		return false, fmt.Errorf("Redis SETNX error: %w", err)
+	}
+
+	if result {
+		r.stats.Sets++
+	}
+
+	return result, nil
+}
+
+// GetSet atomically sets a key to a new value and returns the old value
+func (r *RedisCache) GetSet(ctx context.Context, key string, value []byte) ([]byte, error) {
+	result, err := r.client.GetSet(ctx, key, value).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			// Key didn't exist before
+			r.stats.Sets++
+			return nil, nil
+		}
+		r.stats.Errors++
+		return nil, fmt.Errorf("Redis GETSET error: %w", err)
+	}
+
+	r.stats.Sets++
+	return result, nil
+}
+
+// Expire sets a timeout on a key
+func (r *RedisCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	result, err := r.client.Expire(ctx, key, expiration).Result()
+	if err != nil {
+		r.stats.Errors++
+		return fmt.Errorf("Redis expire error: %w", err)
+	}
+
+	if !result {
+		return fmt.Errorf("key does not exist")
+	}
+
+	return nil
+}
+
+// LPush pushes elements to the head of a list
+func (r *RedisCache) LPush(ctx context.Context, key string, values ...interface{}) (int64, error) {
+	result, err := r.client.LPush(ctx, key, values...).Result()
+	if err != nil {
+		r.stats.Errors++
+		return 0, fmt.Errorf("Redis LPUSH error: %w", err)
+	}
+
+	return result, nil
+}
+
+// LPop removes and returns the first element from a list
+func (r *RedisCache) LPop(ctx context.Context, key string) ([]byte, error) {
+	result, err := r.client.LPop(ctx, key).Bytes()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, fmt.Errorf("list is empty")
+		}
+		r.stats.Errors++
+		return nil, fmt.Errorf("Redis LPOP error: %w", err)
+	}
+
+	return result, nil
+}
+
+// LLen returns the length of a list
+func (r *RedisCache) LLen(ctx context.Context, key string) (int64, error) {
+	result, err := r.client.LLen(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return 0, fmt.Errorf("Redis LLEN error: %w", err)
+	}
+
+	return result, nil
+}
+
+// SAdd adds members to a set
+func (r *RedisCache) SAdd(ctx context.Context, key string, members ...interface{}) (int64, error) {
+	result, err := r.client.SAdd(ctx, key, members...).Result()
+	if err != nil {
+		r.stats.Errors++
+		return 0, fmt.Errorf("Redis SADD error: %w", err)
+	}
+
+	return result, nil
+}
+
+// SMembers returns all members of a set
+func (r *RedisCache) SMembers(ctx context.Context, key string) ([]string, error) {
+	result, err := r.client.SMembers(ctx, key).Result()
+	if err != nil {
+		r.stats.Errors++
+		return nil, fmt.Errorf("Redis SMEMBERS error: %w", err)
+	}
+
+	return result, nil
+}
+
+// SIsMember checks if a value is a member of a set
+func (r *RedisCache) SIsMember(ctx context.Context, key string, member interface{}) (bool, error) {
+	result, err := r.client.SIsMember(ctx, key, member).Result()
+	if err != nil {
+		r.stats.Errors++
+		return false, fmt.Errorf("Redis SISMEMBER error: %w", err)
+	}
+
+	return result, nil
+}
+
+// Close closes the Redis connection
+func (r *RedisCache) Close() error {
+	err := r.client.Close()
+	if err != nil {
+		return fmt.Errorf("Redis close error: %w", err)
+	}
+
+{{if eq .LoggerType "zap"}}
+	r.logger.Info("Redis cache connection closed")
+{{else if eq .LoggerType "logrus"}}
+	r.logger.Info("Redis cache connection closed")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Msg("Redis cache connection closed")
+{{else}}
+	r.logger.Info("Redis cache connection closed")
+{{end}}
+
+	return nil
+}
+
+// Pipeline creates a Redis pipeline for batch operations
+func (r *RedisCache) Pipeline() redis.Pipeliner {
+	return r.client.Pipeline()
+}
+
+// Health checks Redis connection health
+func (r *RedisCache) Health(ctx context.Context) error {
+	return r.client.Ping(ctx).Err()
+}
+{{end}}

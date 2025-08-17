@@ -1,0 +1,489 @@
+package cache
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+{{if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+{{else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+{{if eq .SessionStore "redis"}}
+	"github.com/redis/go-redis/v9"
+{{end}}
+	"{{.ModulePath}}/config"
+)
+
+// Cache interface defines cache operations
+type Cache interface {
+	Get(ctx context.Context, key string) ([]byte, error)
+	Set(ctx context.Context, key string, value []byte, expiration time.Duration) error
+	Delete(ctx context.Context, key string) error
+	Exists(ctx context.Context, key string) (bool, error)
+	Clear(ctx context.Context) error
+	Keys(ctx context.Context, pattern string) ([]string, error)
+	TTL(ctx context.Context, key string) (time.Duration, error)
+	Increment(ctx context.Context, key string) (int64, error)
+	Decrement(ctx context.Context, key string) (int64, error)
+	GetStats() CacheStats
+}
+
+// CacheStats represents cache statistics
+type CacheStats struct {
+	Hits        int64             `json:"hits"`
+	Misses      int64             `json:"misses"`
+	Sets        int64             `json:"sets"`
+	Deletes     int64             `json:"deletes"`
+	Evictions   int64             `json:"evictions"`
+	KeyCount    int64             `json:"key_count"`
+	Memory      int64             `json:"memory_bytes"`
+	Connections int64             `json:"connections"`
+	Errors      int64             `json:"errors"`
+	Details     map[string]string `json:"details"`
+}
+
+// CacheManager manages multiple cache layers
+type CacheManager struct {
+	l1Cache Cache // In-memory cache (L1)
+	l2Cache Cache // Redis cache (L2)
+	config  *config.Config
+{{if eq .LoggerType "zap"}}
+	logger  *zap.Logger
+{{else if eq .LoggerType "logrus"}}
+	logger  *logrus.Logger
+{{else if eq .LoggerType "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger  *slog.Logger
+{{end}}
+	metrics CacheManagerMetrics
+}
+
+// CacheManagerMetrics tracks cache manager performance
+type CacheManagerMetrics struct {
+	L1Hits    int64 `json:"l1_hits"`
+	L1Misses  int64 `json:"l1_misses"`
+	L2Hits    int64 `json:"l2_hits"`
+	L2Misses  int64 `json:"l2_misses"`
+	L2Sets    int64 `json:"l2_sets"`
+	Errors    int64 `json:"errors"`
+	mu        sync.RWMutex
+}
+
+// NewCacheManager creates a new cache manager
+func NewCacheManager(cfg *config.Config{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .LoggerType "slog"}}, logger *slog.Logger{{end}}) (*CacheManager, error) {
+	cm := &CacheManager{
+		config: cfg,
+{{if ne .LoggerType "zerolog"}}
+		logger: logger,
+{{end}}
+	}
+
+	// Initialize L1 cache (in-memory)
+	l1Cache := NewInMemoryCache(1000, 10*time.Minute{{if ne .LoggerType "zerolog"}}, logger{{end}})
+	cm.l1Cache = l1Cache
+
+{{if eq .SessionStore "redis"}}
+	// Initialize L2 cache (Redis) if configured
+	if cfg.Cache.RedisHost != "" {
+		l2Cache, err := NewRedisCache(cfg{{if ne .LoggerType "zerolog"}}, logger{{end}})
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize Redis cache: %w", err)
+		}
+		cm.l2Cache = l2Cache
+	}
+{{end}}
+
+{{if eq .LoggerType "zap"}}
+	logger.Info("Cache manager initialized",
+		zap.Bool("l1_enabled", cm.l1Cache != nil),
+		zap.Bool("l2_enabled", cm.l2Cache != nil))
+{{else if eq .LoggerType "logrus"}}
+	logger.WithFields(logrus.Fields{
+		"l1_enabled": cm.l1Cache != nil,
+		"l2_enabled": cm.l2Cache != nil,
+	}).Info("Cache manager initialized")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Bool("l1_enabled", cm.l1Cache != nil).
+		Bool("l2_enabled", cm.l2Cache != nil).
+		Msg("Cache manager initialized")
+{{else}}
+	logger.Info("Cache manager initialized",
+		"l1_enabled", cm.l1Cache != nil,
+		"l2_enabled", cm.l2Cache != nil)
+{{end}}
+
+	return cm, nil
+}
+
+// Get retrieves a value from cache (L1 first, then L2)
+func (cm *CacheManager) Get(ctx context.Context, key string) ([]byte, error) {
+	// Try L1 cache first
+	if cm.l1Cache != nil {
+		value, err := cm.l1Cache.Get(ctx, key)
+		if err == nil {
+			cm.metrics.mu.Lock()
+			cm.metrics.L1Hits++
+			cm.metrics.mu.Unlock()
+
+{{if eq .LoggerType "zap"}}
+			cm.logger.Debug("Cache L1 hit", zap.String("key", key))
+{{else if eq .LoggerType "logrus"}}
+			cm.logger.WithField("key", key).Debug("Cache L1 hit")
+{{else if eq .LoggerType "zerolog"}}
+			log.Debug().Str("key", key).Msg("Cache L1 hit")
+{{else}}
+			cm.logger.Debug("Cache L1 hit", "key", key)
+{{end}}
+			return value, nil
+		}
+
+		cm.metrics.mu.Lock()
+		cm.metrics.L1Misses++
+		cm.metrics.mu.Unlock()
+	}
+
+	// Try L2 cache
+	if cm.l2Cache != nil {
+		value, err := cm.l2Cache.Get(ctx, key)
+		if err == nil {
+			cm.metrics.mu.Lock()
+			cm.metrics.L2Hits++
+			cm.metrics.mu.Unlock()
+
+			// Store in L1 cache for faster access
+			if cm.l1Cache != nil {
+				go func() {
+					// Use background context to avoid propagating cancellation
+					bgCtx := context.Background()
+					if setErr := cm.l1Cache.Set(bgCtx, key, value, 5*time.Minute); setErr != nil {
+{{if eq .LoggerType "zap"}}
+						cm.logger.Warn("Failed to set L1 cache", zap.String("key", key), zap.Error(setErr))
+{{else if eq .LoggerType "logrus"}}
+						cm.logger.WithFields(logrus.Fields{
+							"key":   key,
+							"error": setErr,
+						}).Warn("Failed to set L1 cache")
+{{else if eq .LoggerType "zerolog"}}
+						log.Warn().Str("key", key).Err(setErr).Msg("Failed to set L1 cache")
+{{else}}
+						cm.logger.Warn("Failed to set L1 cache", "key", key, "error", setErr)
+{{end}}
+					}
+				}()
+			}
+
+{{if eq .LoggerType "zap"}}
+			cm.logger.Debug("Cache L2 hit", zap.String("key", key))
+{{else if eq .LoggerType "logrus"}}
+			cm.logger.WithField("key", key).Debug("Cache L2 hit")
+{{else if eq .LoggerType "zerolog"}}
+			log.Debug().Str("key", key).Msg("Cache L2 hit")
+{{else}}
+			cm.logger.Debug("Cache L2 hit", "key", key)
+{{end}}
+			return value, nil
+		}
+
+		cm.metrics.mu.Lock()
+		cm.metrics.L2Misses++
+		cm.metrics.mu.Unlock()
+	}
+
+{{if eq .LoggerType "zap"}}
+	cm.logger.Debug("Cache miss", zap.String("key", key))
+{{else if eq .LoggerType "logrus"}}
+	cm.logger.WithField("key", key).Debug("Cache miss")
+{{else if eq .LoggerType "zerolog"}}
+	log.Debug().Str("key", key).Msg("Cache miss")
+{{else}}
+	cm.logger.Debug("Cache miss", "key", key)
+{{end}}
+
+	return nil, fmt.Errorf("cache miss")
+}
+
+// Set stores a value in both cache layers
+func (cm *CacheManager) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
+	var errors []error
+
+	// Set in L1 cache
+	if cm.l1Cache != nil {
+		if err := cm.l1Cache.Set(ctx, key, value, expiration); err != nil {
+			errors = append(errors, fmt.Errorf("L1 cache set error: %w", err))
+		}
+	}
+
+	// Set in L2 cache
+	if cm.l2Cache != nil {
+		if err := cm.l2Cache.Set(ctx, key, value, expiration); err != nil {
+			errors = append(errors, fmt.Errorf("L2 cache set error: %w", err))
+			cm.metrics.mu.Lock()
+			cm.metrics.Errors++
+			cm.metrics.mu.Unlock()
+		} else {
+			cm.metrics.mu.Lock()
+			cm.metrics.L2Sets++
+			cm.metrics.mu.Unlock()
+		}
+	}
+
+	if len(errors) > 0 {
+{{if eq .LoggerType "zap"}}
+		cm.logger.Warn("Cache set errors", zap.String("key", key), zap.Any("errors", errors))
+{{else if eq .LoggerType "logrus"}}
+		cm.logger.WithFields(logrus.Fields{
+			"key":    key,
+			"errors": errors,
+		}).Warn("Cache set errors")
+{{else if eq .LoggerType "zerolog"}}
+		log.Warn().Str("key", key).Interface("errors", errors).Msg("Cache set errors")
+{{else}}
+		cm.logger.Warn("Cache set errors", "key", key, "errors", errors)
+{{end}}
+		// Return the first error, but continue to try all caches
+		return errors[0]
+	}
+
+	return nil
+}
+
+// Delete removes a key from both cache layers
+func (cm *CacheManager) Delete(ctx context.Context, key string) error {
+	var errors []error
+
+	// Delete from L1 cache
+	if cm.l1Cache != nil {
+		if err := cm.l1Cache.Delete(ctx, key); err != nil {
+			errors = append(errors, fmt.Errorf("L1 cache delete error: %w", err))
+		}
+	}
+
+	// Delete from L2 cache
+	if cm.l2Cache != nil {
+		if err := cm.l2Cache.Delete(ctx, key); err != nil {
+			errors = append(errors, fmt.Errorf("L2 cache delete error: %w", err))
+		}
+	}
+
+	if len(errors) > 0 {
+		return errors[0]
+	}
+
+	return nil
+}
+
+// GetJSON retrieves and unmarshals a JSON value
+func (cm *CacheManager) GetJSON(ctx context.Context, key string, dest interface{}) error {
+	data, err := cm.Get(ctx, key)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(data, dest)
+}
+
+// SetJSON marshals and stores a JSON value
+func (cm *CacheManager) SetJSON(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("failed to marshal JSON: %w", err)
+	}
+
+	return cm.Set(ctx, key, data, expiration)
+}
+
+// GetOrSet retrieves a value or sets it if it doesn't exist
+func (cm *CacheManager) GetOrSet(ctx context.Context, key string, expiration time.Duration, fn func() ([]byte, error)) ([]byte, error) {
+	// Try to get from cache first
+	value, err := cm.Get(ctx, key)
+	if err == nil {
+		return value, nil
+	}
+
+	// Value not in cache, call function to get it
+	value, err = fn()
+	if err != nil {
+		return nil, err
+	}
+
+	// Store in cache for next time
+	if setErr := cm.Set(ctx, key, value, expiration); setErr != nil {
+{{if eq .LoggerType "zap"}}
+		cm.logger.Warn("Failed to cache value after generation", zap.String("key", key), zap.Error(setErr))
+{{else if eq .LoggerType "logrus"}}
+		cm.logger.WithFields(logrus.Fields{
+			"key":   key,
+			"error": setErr,
+		}).Warn("Failed to cache value after generation")
+{{else if eq .LoggerType "zerolog"}}
+		log.Warn().Str("key", key).Err(setErr).Msg("Failed to cache value after generation")
+{{else}}
+		cm.logger.Warn("Failed to cache value after generation", "key", key, "error", setErr)
+{{end}}
+	}
+
+	return value, nil
+}
+
+// GetStats returns combined cache statistics
+func (cm *CacheManager) GetStats() CacheStats {
+	stats := CacheStats{
+		Details: make(map[string]string),
+	}
+
+	cm.metrics.mu.RLock()
+	stats.Hits = cm.metrics.L1Hits + cm.metrics.L2Hits
+	stats.Misses = cm.metrics.L1Misses + cm.metrics.L2Misses
+	stats.Sets = cm.metrics.L2Sets
+	stats.Errors = cm.metrics.Errors
+	cm.metrics.mu.RUnlock()
+
+	// Get L1 stats
+	if cm.l1Cache != nil {
+		l1Stats := cm.l1Cache.GetStats()
+		stats.KeyCount += l1Stats.KeyCount
+		stats.Memory += l1Stats.Memory
+		stats.Evictions += l1Stats.Evictions
+		stats.Details["l1_keys"] = fmt.Sprintf("%d", l1Stats.KeyCount)
+		stats.Details["l1_memory"] = fmt.Sprintf("%d", l1Stats.Memory)
+	}
+
+	// Get L2 stats
+	if cm.l2Cache != nil {
+		l2Stats := cm.l2Cache.GetStats()
+		stats.KeyCount += l2Stats.KeyCount
+		stats.Connections += l2Stats.Connections
+		stats.Details["l2_keys"] = fmt.Sprintf("%d", l2Stats.KeyCount)
+		stats.Details["l2_connections"] = fmt.Sprintf("%d", l2Stats.Connections)
+	}
+
+	return stats
+}
+
+// TaggedCache provides cache operations with tags for group invalidation
+type TaggedCache struct {
+	cache *CacheManager
+	tags  map[string][]string // tag -> keys mapping
+	mu    sync.RWMutex
+{{if eq .LoggerType "zap"}}
+	logger *zap.Logger
+{{else if eq .LoggerType "logrus"}}
+	logger *logrus.Logger
+{{else if eq .LoggerType "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+}
+
+// NewTaggedCache creates a new tagged cache
+func NewTaggedCache(cache *CacheManager{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .LoggerType "slog"}}, logger *slog.Logger{{end}}) *TaggedCache {
+	return &TaggedCache{
+		cache: cache,
+		tags:  make(map[string][]string),
+{{if ne .LoggerType "zerolog"}}
+		logger: logger,
+{{end}}
+	}
+}
+
+// SetWithTags stores a value with associated tags
+func (tc *TaggedCache) SetWithTags(ctx context.Context, key string, value []byte, expiration time.Duration, tags []string) error {
+	// Store the value
+	if err := tc.cache.Set(ctx, key, value, expiration); err != nil {
+		return err
+	}
+
+	// Associate the key with tags
+	tc.mu.Lock()
+	defer tc.mu.Unlock()
+
+	for _, tag := range tags {
+		if _, exists := tc.tags[tag]; !exists {
+			tc.tags[tag] = make([]string, 0)
+		}
+		tc.tags[tag] = append(tc.tags[tag], key)
+	}
+
+	return nil
+}
+
+// InvalidateByTag removes all keys associated with a tag
+func (tc *TaggedCache) InvalidateByTag(ctx context.Context, tag string) error {
+	tc.mu.Lock()
+	keys, exists := tc.tags[tag]
+	if !exists {
+		tc.mu.Unlock()
+		return nil
+	}
+
+	// Copy keys to avoid holding lock during cache operations
+	keysCopy := make([]string, len(keys))
+	copy(keysCopy, keys)
+	
+	// Remove tag mapping
+	delete(tc.tags, tag)
+	tc.mu.Unlock()
+
+	// Remove keys from cache
+	var errors []error
+	for _, key := range keysCopy {
+		if err := tc.cache.Delete(ctx, key); err != nil {
+			errors = append(errors, err)
+		}
+	}
+
+{{if eq .LoggerType "zap"}}
+	tc.logger.Info("Invalidated cache by tag",
+		zap.String("tag", tag),
+		zap.Int("keys_count", len(keysCopy)),
+		zap.Int("errors_count", len(errors)))
+{{else if eq .LoggerType "logrus"}}
+	tc.logger.WithFields(logrus.Fields{
+		"tag":          tag,
+		"keys_count":   len(keysCopy),
+		"errors_count": len(errors),
+	}).Info("Invalidated cache by tag")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().
+		Str("tag", tag).
+		Int("keys_count", len(keysCopy)).
+		Int("errors_count", len(errors)).
+		Msg("Invalidated cache by tag")
+{{else}}
+	tc.logger.Info("Invalidated cache by tag",
+		"tag", tag,
+		"keys_count", len(keysCopy),
+		"errors_count", len(errors))
+{{end}}
+
+	if len(errors) > 0 {
+		return errors[0]
+	}
+
+	return nil
+}
+
+// GetTagStats returns statistics about tags
+func (tc *TaggedCache) GetTagStats() map[string]int {
+	tc.mu.RLock()
+	defer tc.mu.RUnlock()
+
+	stats := make(map[string]int)
+	for tag, keys := range tc.tags {
+		stats[tag] = len(keys)
+	}
+
+	return stats
+}

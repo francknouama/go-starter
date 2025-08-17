@@ -1,0 +1,391 @@
+package cache
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+{{if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+{{else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
+// MemoryCacheEntry represents a cache entry
+type MemoryCacheEntry struct {
+	Value     []byte    `json:"value"`
+	ExpiresAt time.Time `json:"expires_at"`
+	CreatedAt time.Time `json:"created_at"`
+	AccessCount int64   `json:"access_count"`
+	LastAccess  time.Time `json:"last_access"`
+}
+
+// IsExpired checks if the entry has expired
+func (e *MemoryCacheEntry) IsExpired() bool {
+	return time.Now().After(e.ExpiresAt)
+}
+
+// InMemoryCache provides an in-memory cache implementation
+type InMemoryCache struct {
+	data        map[string]*MemoryCacheEntry
+	mu          sync.RWMutex
+	maxSize     int
+	defaultTTL  time.Duration
+	cleanupFreq time.Duration
+	stats       CacheStats
+{{if eq .LoggerType "zap"}}
+	logger      *zap.Logger
+{{else if eq .LoggerType "logrus"}}
+	logger      *logrus.Logger
+{{else if eq .LoggerType "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger      *slog.Logger
+{{end}}
+	stopCleanup chan struct{}
+	cleanupDone chan struct{}
+}
+
+// NewInMemoryCache creates a new in-memory cache
+func NewInMemoryCache(maxSize int, defaultTTL time.Duration{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .LoggerType "slog"}}, logger *slog.Logger{{end}}) *InMemoryCache {
+	cache := &InMemoryCache{
+		data:        make(map[string]*MemoryCacheEntry),
+		maxSize:     maxSize,
+		defaultTTL:  defaultTTL,
+		cleanupFreq: time.Minute * 5, // Cleanup every 5 minutes
+{{if ne .LoggerType "zerolog"}}
+		logger:      logger,
+{{end}}
+		stopCleanup: make(chan struct{}),
+		cleanupDone: make(chan struct{}),
+		stats: CacheStats{
+			Details: make(map[string]string),
+		},
+	}
+
+	// Start cleanup goroutine
+	go cache.cleanupExpired()
+
+	return cache
+}
+
+// Get retrieves a value from the cache
+func (c *InMemoryCache) Get(ctx context.Context, key string) ([]byte, error) {
+	c.mu.RLock()
+	entry, exists := c.data[key]
+	c.mu.RUnlock()
+
+	if !exists {
+		c.stats.Misses++
+		return nil, fmt.Errorf("key not found")
+	}
+
+	if entry.IsExpired() {
+		// Remove expired entry
+		c.mu.Lock()
+		delete(c.data, key)
+		c.mu.Unlock()
+		
+		c.stats.Misses++
+		return nil, fmt.Errorf("key expired")
+	}
+
+	// Update access statistics
+	c.mu.Lock()
+	entry.AccessCount++
+	entry.LastAccess = time.Now()
+	c.mu.Unlock()
+
+	c.stats.Hits++
+	return entry.Value, nil
+}
+
+// Set stores a value in the cache
+func (c *InMemoryCache) Set(ctx context.Context, key string, value []byte, expiration time.Duration) error {
+	if expiration == 0 {
+		expiration = c.defaultTTL
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Check if we need to evict entries
+	if len(c.data) >= c.maxSize {
+		c.evictLRU()
+	}
+
+	now := time.Now()
+	c.data[key] = &MemoryCacheEntry{
+		Value:       make([]byte, len(value)),
+		ExpiresAt:   now.Add(expiration),
+		CreatedAt:   now,
+		LastAccess:  now,
+		AccessCount: 0,
+	}
+	copy(c.data[key].Value, value)
+
+	c.stats.Sets++
+	c.stats.KeyCount = int64(len(c.data))
+	c.stats.Memory = c.calculateMemoryUsage()
+
+	return nil
+}
+
+// Delete removes a key from the cache
+func (c *InMemoryCache) Delete(ctx context.Context, key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.data[key]; exists {
+		delete(c.data, key)
+		c.stats.Deletes++
+		c.stats.KeyCount = int64(len(c.data))
+		c.stats.Memory = c.calculateMemoryUsage()
+		return nil
+	}
+
+	return fmt.Errorf("key not found")
+}
+
+// Exists checks if a key exists in the cache
+func (c *InMemoryCache) Exists(ctx context.Context, key string) (bool, error) {
+	c.mu.RLock()
+	entry, exists := c.data[key]
+	c.mu.RUnlock()
+
+	if !exists {
+		return false, nil
+	}
+
+	if entry.IsExpired() {
+		// Remove expired entry
+		c.mu.Lock()
+		delete(c.data, key)
+		c.mu.Unlock()
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// Clear removes all entries from the cache
+func (c *InMemoryCache) Clear(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	count := len(c.data)
+	c.data = make(map[string]*MemoryCacheEntry)
+	c.stats.Deletes += int64(count)
+	c.stats.KeyCount = 0
+	c.stats.Memory = 0
+
+{{if eq .LoggerType "zap"}}
+	c.logger.Info("Cache cleared", zap.Int("entries_removed", count))
+{{else if eq .LoggerType "logrus"}}
+	c.logger.WithField("entries_removed", count).Info("Cache cleared")
+{{else if eq .LoggerType "zerolog"}}
+	log.Info().Int("entries_removed", count).Msg("Cache cleared")
+{{else}}
+	c.logger.Info("Cache cleared", "entries_removed", count)
+{{end}}
+
+	return nil
+}
+
+// Keys returns all keys matching the pattern (simplified - supports * wildcard)
+func (c *InMemoryCache) Keys(ctx context.Context, pattern string) ([]string, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var keys []string
+	for key := range c.data {
+		if c.matchPattern(key, pattern) {
+			keys = append(keys, key)
+		}
+	}
+
+	return keys, nil
+}
+
+// TTL returns the time-to-live for a key
+func (c *InMemoryCache) TTL(ctx context.Context, key string) (time.Duration, error) {
+	c.mu.RLock()
+	entry, exists := c.data[key]
+	c.mu.RUnlock()
+
+	if !exists {
+		return 0, fmt.Errorf("key not found")
+	}
+
+	if entry.IsExpired() {
+		return 0, fmt.Errorf("key expired")
+	}
+
+	return time.Until(entry.ExpiresAt), nil
+}
+
+// Increment increments a numeric value (not supported in basic in-memory cache)
+func (c *InMemoryCache) Increment(ctx context.Context, key string) (int64, error) {
+	return 0, fmt.Errorf("increment not supported in in-memory cache")
+}
+
+// Decrement decrements a numeric value (not supported in basic in-memory cache)
+func (c *InMemoryCache) Decrement(ctx context.Context, key string) (int64, error) {
+	return 0, fmt.Errorf("decrement not supported in in-memory cache")
+}
+
+// GetStats returns cache statistics
+func (c *InMemoryCache) GetStats() CacheStats {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	stats := c.stats
+	stats.KeyCount = int64(len(c.data))
+	stats.Memory = c.calculateMemoryUsage()
+	stats.Details["type"] = "in-memory"
+	stats.Details["max_size"] = fmt.Sprintf("%d", c.maxSize)
+	stats.Details["default_ttl"] = c.defaultTTL.String()
+
+	return stats
+}
+
+// evictLRU removes the least recently used entry
+func (c *InMemoryCache) evictLRU() {
+	if len(c.data) == 0 {
+		return
+	}
+
+	var oldestKey string
+	var oldestTime time.Time
+	first := true
+
+	for key, entry := range c.data {
+		if first || entry.LastAccess.Before(oldestTime) {
+			oldestKey = key
+			oldestTime = entry.LastAccess
+			first = false
+		}
+	}
+
+	if oldestKey != "" {
+		delete(c.data, oldestKey)
+		c.stats.Evictions++
+
+{{if eq .LoggerType "zap"}}
+		c.logger.Debug("Evicted LRU entry", zap.String("key", oldestKey))
+{{else if eq .LoggerType "logrus"}}
+		c.logger.WithField("key", oldestKey).Debug("Evicted LRU entry")
+{{else if eq .LoggerType "zerolog"}}
+		log.Debug().Str("key", oldestKey).Msg("Evicted LRU entry")
+{{else}}
+		c.logger.Debug("Evicted LRU entry", "key", oldestKey)
+{{end}}
+	}
+}
+
+// cleanupExpired removes expired entries periodically
+func (c *InMemoryCache) cleanupExpired() {
+	ticker := time.NewTicker(c.cleanupFreq)
+	defer ticker.Stop()
+	defer close(c.cleanupDone)
+
+	for {
+		select {
+		case <-ticker.C:
+			c.performCleanup()
+		case <-c.stopCleanup:
+			return
+		}
+	}
+}
+
+// performCleanup removes expired entries
+func (c *InMemoryCache) performCleanup() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	now := time.Now()
+	expiredKeys := make([]string, 0)
+
+	for key, entry := range c.data {
+		if now.After(entry.ExpiresAt) {
+			expiredKeys = append(expiredKeys, key)
+		}
+	}
+
+	for _, key := range expiredKeys {
+		delete(c.data, key)
+	}
+
+	if len(expiredKeys) > 0 {
+		c.stats.Evictions += int64(len(expiredKeys))
+		c.stats.KeyCount = int64(len(c.data))
+		c.stats.Memory = c.calculateMemoryUsage()
+
+{{if eq .LoggerType "zap"}}
+		c.logger.Debug("Cleaned up expired entries", zap.Int("count", len(expiredKeys)))
+{{else if eq .LoggerType "logrus"}}
+		c.logger.WithField("count", len(expiredKeys)).Debug("Cleaned up expired entries")
+{{else if eq .LoggerType "zerolog"}}
+		log.Debug().Int("count", len(expiredKeys)).Msg("Cleaned up expired entries")
+{{else}}
+		c.logger.Debug("Cleaned up expired entries", "count", len(expiredKeys))
+{{end}}
+	}
+}
+
+// calculateMemoryUsage estimates memory usage (simplified)
+func (c *InMemoryCache) calculateMemoryUsage() int64 {
+	var total int64
+	for key, entry := range c.data {
+		// Rough estimate: key size + value size + entry overhead
+		total += int64(len(key)) + int64(len(entry.Value)) + 64 // 64 bytes overhead per entry
+	}
+	return total
+}
+
+// matchPattern performs simple pattern matching (supports * wildcard)
+func (c *InMemoryCache) matchPattern(key, pattern string) bool {
+	if pattern == "*" {
+		return true
+	}
+	
+	// Simple wildcard matching - in production, you might want more sophisticated pattern matching
+	if len(pattern) == 0 {
+		return len(key) == 0
+	}
+	
+	if pattern[len(pattern)-1] == '*' {
+		prefix := pattern[:len(pattern)-1]
+		return len(key) >= len(prefix) && key[:len(prefix)] == prefix
+	}
+	
+	if pattern[0] == '*' {
+		suffix := pattern[1:]
+		return len(key) >= len(suffix) && key[len(key)-len(suffix):] == suffix
+	}
+	
+	return key == pattern
+}
+
+// Stop stops the cleanup goroutine
+func (c *InMemoryCache) Stop() {
+	close(c.stopCleanup)
+	<-c.cleanupDone
+
+{{if eq .LoggerType "zap"}}
+	c.logger.Debug("In-memory cache stopped")
+{{else if eq .LoggerType "logrus"}}
+	c.logger.Debug("In-memory cache stopped")
+{{else if eq .LoggerType "zerolog"}}
+	log.Debug().Msg("In-memory cache stopped")
+{{else}}
+	c.logger.Debug("In-memory cache stopped")
+{{end}}
+}

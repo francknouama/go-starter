@@ -46,6 +46,15 @@ variables:
     description: Asset build system
     default: "embedded"
     options: ["embedded", "webpack", "vite", "esbuild"]
+  - name: EnableJobs
+    description: Enable background job processing
+    default: true
+  - name: EnableCaching
+    description: Enable enhanced caching system
+    default: true
+  - name: EnablePerformanceMonitoring
+    description: Enable performance monitoring and metrics
+    default: true
 
 files:
   # Root files
@@ -129,6 +138,20 @@ files:
   - source: services/cache.go.tmpl
     destination: services/cache.go
     condition: "{{eq .SessionStore \"redis\"}}"
+
+  # Enhanced internal components
+  - source: internal/jobs/manager.go.tmpl
+    destination: internal/jobs/manager.go
+    condition: "{{.EnableJobs}}"
+  - source: internal/cache/manager.go.tmpl
+    destination: internal/cache/manager.go
+    condition: "{{.EnableCaching}}"
+  - source: internal/cache/memory.go.tmpl
+    destination: internal/cache/memory.go
+    condition: "{{.EnableCaching}}"
+  - source: internal/cache/redis.go.tmpl
+    destination: internal/cache/redis.go
+    condition: "{{and .EnableCaching (eq .SessionStore \"redis\")}}"
 
   # Database
   - source: database/connection.go.tmpl
