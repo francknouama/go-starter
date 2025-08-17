@@ -338,6 +338,8 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
               tabIndex={0}
               role="button"
               aria-expanded={expandedFolders.has(node.path)}
+              aria-controls={`folder-content-${node.path.replace(/[^a-zA-Z0-9]/g, '-')}`}
+              aria-label={`${expandedFolders.has(node.path) ? 'Collapse' : 'Expand'} folder ${node.name}`}
             >
               {expandedFolders.has(node.path) ? (
                 <ChevronDownIcon className="h-4 w-4 text-gray-500" />
@@ -352,7 +354,13 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
               <span className="text-gray-900 font-medium">{node.name}</span>
             </div>
             {expandedFolders.has(node.path) && node.children && (
-              <div>{renderFileTree(node.children, depth + 1)}</div>
+              <div 
+                id={`folder-content-${node.path.replace(/[^a-zA-Z0-9]/g, '-')}`}
+                role="group"
+                aria-label={`Contents of ${node.name} folder`}
+              >
+                {renderFileTree(node.children, depth + 1)}
+              </div>
             )}
           </div>
         ) : (
@@ -372,6 +380,8 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
             }}
             tabIndex={0}
             role="button"
+            aria-pressed={selectedFile === node.path}
+            aria-label={`Select file ${node.name}${node.size ? ` (${(node.size / 1024).toFixed(1)}KB)` : ''}`}
           >
             <DocumentIcon className="h-4 w-4 text-gray-500" />
             <span>{node.name}</span>
@@ -404,14 +414,21 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
     <div className="h-full flex flex-col">
       <div className="flex-1 overflow-hidden flex">
         {/* File Tree */}
-        <div className="w-1/2 border-r overflow-auto">
+        <nav 
+          className="w-1/2 border-r overflow-auto"
+          aria-label="Project file tree"
+          role="tree"
+        >
           <div className="p-4">
             {renderFileTree(fileStructure)}
           </div>
-        </div>
+        </nav>
 
         {/* File Preview */}
-        <div className="w-1/2 flex flex-col">
+        <main 
+          className="w-1/2 flex flex-col"
+          aria-label="File content preview"
+        >
           {selectedFileNode ? (
             <div className="h-full flex flex-col">
               <div className="p-4 border-b bg-gray-50">
@@ -437,11 +454,15 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
               Select a file to preview its content
             </div>
           )}
-        </div>
+        </main>
       </div>
 
       {/* File Count Summary */}
-      <div className="border-t p-4 bg-gray-50">
+      <footer 
+        className="border-t p-4 bg-gray-50"
+        role="status"
+        aria-label="Project statistics"
+      >
         <div className="text-sm text-gray-600">
           <span className="font-medium">
             {fileStructure.reduce((count, node) => {
@@ -458,7 +479,7 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
             </span>
           )}
         </div>
-      </div>
+      </footer>
     </div>
   )
 }

@@ -234,13 +234,21 @@ export default function ConfigurationPanel({
         <Disclosure defaultOpen>
           {({ open }) => (
             <>
-              <Disclosure.Button className="flex w-full justify-between rounded-lg bg-gray-50 px-4 py-2 text-left text-sm font-medium text-gray-900 hover:bg-gray-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75">
+              <Disclosure.Button 
+                className="flex w-full justify-between rounded-lg bg-gray-50 px-4 py-2 text-left text-sm font-medium text-gray-900 hover:bg-gray-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75"
+                aria-expanded={open}
+                aria-controls="basic-settings-panel"
+              >
                 <span>Basic Settings</span>
                 <ChevronDownIcon
                   className={`${open ? 'rotate-180 transform' : ''} h-5 w-5 text-gray-500`}
+                  aria-hidden="true"
                 />
               </Disclosure.Button>
-              <Disclosure.Panel className="px-4 pt-4 pb-2 space-y-4">
+              <Disclosure.Panel 
+                id="basic-settings-panel"
+                className="px-4 pt-4 pb-2 space-y-4"
+              >
                 {/* Project Name - Validated */}
                 <div>
                   <div className="flex items-center gap-2 mb-2">
@@ -366,13 +374,21 @@ export default function ConfigurationPanel({
         <Disclosure defaultOpen>
           {({ open }) => (
             <>
-              <Disclosure.Button className="flex w-full justify-between rounded-lg bg-gray-50 px-4 py-2 text-left text-sm font-medium text-gray-900 hover:bg-gray-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75">
+              <Disclosure.Button 
+                className="flex w-full justify-between rounded-lg bg-gray-50 px-4 py-2 text-left text-sm font-medium text-gray-900 hover:bg-gray-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75"
+                aria-expanded={open}
+                aria-controls="framework-architecture-panel"
+              >
                 <span>Framework & Architecture</span>
                 <ChevronDownIcon
                   className={`${open ? 'rotate-180 transform' : ''} h-5 w-5 text-gray-500`}
+                  aria-hidden="true"
                 />
               </Disclosure.Button>
-              <Disclosure.Panel className="px-4 pt-4 pb-2 space-y-4">
+              <Disclosure.Panel 
+                id="framework-architecture-panel"
+                className="px-4 pt-4 pb-2 space-y-4"
+              >
                 {/* Framework - Compact Cards */}
                 {(config.projectType === 'web-api' || config.projectType === 'microservice') && (
                   <div>
@@ -496,7 +512,11 @@ export default function ConfigurationPanel({
             <Disclosure>
               {({ open }) => (
                 <>
-                  <Disclosure.Button className="flex w-full justify-between rounded-lg bg-purple-50 px-4 py-2 text-left text-sm font-medium text-purple-900 hover:bg-purple-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75">
+                  <Disclosure.Button 
+                    className="flex w-full justify-between rounded-lg bg-purple-50 px-4 py-2 text-left text-sm font-medium text-purple-900 hover:bg-purple-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75"
+                    aria-expanded={open}
+                    aria-controls="database-configuration-panel"
+                  >
                     <div className="flex items-center gap-2">
                       <span>Database Configuration</span>
                       <HelpTooltip 
@@ -508,9 +528,13 @@ export default function ConfigurationPanel({
                     </div>
                     <ChevronDownIcon
                       className={`${open ? 'rotate-180 transform' : ''} h-5 w-5 text-purple-500`}
+                      aria-hidden="true"
                     />
                   </Disclosure.Button>
-                  <Disclosure.Panel className="px-4 pt-4 pb-2 space-y-4">
+                  <Disclosure.Panel 
+                    id="database-configuration-panel"
+                    className="px-4 pt-4 pb-2 space-y-4"
+                  >
                     <div className="space-y-4">
                       <div>
                         <div className="flex items-center gap-2 mb-2">
@@ -618,7 +642,11 @@ export default function ConfigurationPanel({
             <Disclosure>
               {({ open }) => (
                 <>
-                  <Disclosure.Button className="flex w-full justify-between rounded-lg bg-purple-50 px-4 py-2 text-left text-sm font-medium text-purple-900 hover:bg-purple-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75">
+                  <Disclosure.Button 
+                    className="flex w-full justify-between rounded-lg bg-purple-50 px-4 py-2 text-left text-sm font-medium text-purple-900 hover:bg-purple-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75"
+                    aria-expanded={open}
+                    aria-controls="authentication-security-panel"
+                  >
                     <div className="flex items-center gap-2">
                       <span>Authentication & Security</span>
                       <HelpTooltip 
@@ -630,9 +658,13 @@ export default function ConfigurationPanel({
                     </div>
                     <ChevronDownIcon
                       className={`${open ? 'rotate-180 transform' : ''} h-5 w-5 text-purple-500`}
+                      aria-hidden="true"
                     />
                   </Disclosure.Button>
-                  <Disclosure.Panel className="px-4 pt-4 pb-2 space-y-4">
+                  <Disclosure.Panel 
+                    id="authentication-security-panel"
+                    className="px-4 pt-4 pb-2 space-y-4"
+                  >
                     <div className="space-y-4">
                       <div>
                         <div className="flex items-center gap-2 mb-2">
@@ -696,7 +728,11 @@ export default function ConfigurationPanel({
             <Disclosure>
               {({ open }) => (
                 <>
-                  <Disclosure.Button className="flex w-full justify-between rounded-lg bg-purple-50 px-4 py-2 text-left text-sm font-medium text-purple-900 hover:bg-purple-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75">
+                  <Disclosure.Button 
+                    className="flex w-full justify-between rounded-lg bg-purple-50 px-4 py-2 text-left text-sm font-medium text-purple-900 hover:bg-purple-100 focus:outline-none focus-visible:ring focus-visible:ring-primary-500 focus-visible:ring-opacity-75"
+                    aria-expanded={open}
+                    aria-controls="deployment-options-panel"
+                  >
                     <div className="flex items-center gap-2">
                       <span>Deployment Options</span>
                       <HelpTooltip 
@@ -708,9 +744,13 @@ export default function ConfigurationPanel({
                     </div>
                     <ChevronDownIcon
                       className={`${open ? 'rotate-180 transform' : ''} h-5 w-5 text-purple-500`}
+                      aria-hidden="true"
                     />
                   </Disclosure.Button>
-                  <Disclosure.Panel className="px-4 pt-4 pb-2 space-y-4">
+                  <Disclosure.Panel 
+                    id="deployment-options-panel"
+                    className="px-4 pt-4 pb-2 space-y-4"
+                  >
                     <div className="space-y-4">
                       <div>
                         <div className="flex items-center gap-2 mb-2">

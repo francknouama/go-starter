@@ -59,7 +59,11 @@ export default function ModeSelector({ mode, onChange }: ModeSelectorProps) {
         </p>
       </div>
 
-      <RadioGroup value={mode} onChange={onChange}>
+      <RadioGroup 
+        value={mode} 
+        onChange={onChange}
+        aria-label="Choose your configuration experience level"
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {modeOptions.map((option) => (
             <RadioGroup.Option
