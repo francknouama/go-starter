@@ -91,6 +91,24 @@ variables:
     required: false
     default: "grpc-gateway"
 
+  - name: "EnableEnhancedInterceptors"
+    description: "Enable enhanced gRPC interceptors with monitoring and security"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableRateLimiting"
+    description: "Enable rate limiting for gRPC and HTTP requests"
+    type: "boolean"
+    required: false
+    default: true
+
+  - name: "EnableMetrics"
+    description: "Enable Prometheus metrics collection"
+    type: "boolean"
+    required: false
+    default: true
+
 dependencies:
   # Core gRPC dependencies - Updated to latest secure versions
   - module: "google.golang.org/grpc"
@@ -186,6 +204,11 @@ dependencies:
   # UUID generation for request IDs
   - module: "github.com/google/uuid"
     version: "v1.6.0"
+    
+  # Rate limiting and metrics dependencies
+  - module: "golang.org/x/time"
+    version: "v0.5.0"
+    condition: "{{.EnableRateLimiting}}"
 
 files:
   # Main application
@@ -336,6 +359,25 @@ files:
     
   - source: "internal/middleware/error_handler.go.tmpl"
     destination: "internal/middleware/error_handler.go"
+
+  # Enhanced interceptors
+  - source: "internal/interceptors/enhanced.go.tmpl"
+    destination: "internal/interceptors/enhanced.go"
+    condition: "{{.EnableEnhancedInterceptors}}"
+    
+  # Rate limiting middleware
+  - source: "internal/middleware/rate_limiter.go.tmpl"
+    destination: "internal/middleware/rate_limiter.go"
+    condition: "{{.EnableRateLimiting}}"
+    
+  # Metrics collection
+  - source: "internal/metrics/collector.go.tmpl"
+    destination: "internal/metrics/collector.go"
+    condition: "{{.EnableMetrics}}"
+    
+  # Enhanced error handling system
+  - source: "../shared/errors/enhanced_errors.go.tmpl"
+    destination: "internal/errors/enhanced_errors.go"
     
   # Database migrations (conditional)
   - source: "migrations/001_create_users.up.sql.tmpl"

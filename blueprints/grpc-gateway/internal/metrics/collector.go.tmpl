@@ -1,0 +1,405 @@
+package metrics
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
+// MetricsCollector collects and exposes application metrics
+type MetricsCollector struct {
+	httpMetrics HTTPMetrics
+	grpcMetrics GRPCMetrics
+	systemMetrics SystemMetrics
+	mutex       sync.RWMutex
+{{if eq .Logger "zap"}}
+	logger      *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger      *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger      *slog.Logger
+{{end}}
+	startTime   time.Time
+}
+
+// HTTPMetrics tracks HTTP request metrics
+type HTTPMetrics struct {
+	RequestsTotal      map[string]int64            `json:"requests_total"`       // method:path
+	RequestDuration    map[string][]time.Duration  `json:"request_duration_ms"`  // method:path
+	ResponseSize       map[string][]int64          `json:"response_size_bytes"`  // method:path
+	StatusCodes        map[int]int64               `json:"status_codes"`         // status_code
+	ActiveRequests     int64                       `json:"active_requests"`
+}
+
+// GRPCMetrics tracks gRPC request metrics
+type GRPCMetrics struct {
+	RequestsTotal      map[string]int64            `json:"requests_total"`       // method
+	RequestDuration    map[string][]time.Duration  `json:"request_duration_ms"`  // method
+	ErrorsTotal        map[string]int64            `json:"errors_total"`         // method:code
+	ActiveRequests     int64                       `json:"active_requests"`
+	StreamsActive      int64                       `json:"streams_active"`
+}
+
+// SystemMetrics tracks system-level metrics
+type SystemMetrics struct {
+	UptimeSeconds     float64 `json:"uptime_seconds"`
+	MemoryUsageBytes  int64   `json:"memory_usage_bytes"`
+	GoroutinesCount   int64   `json:"goroutines_count"`
+	CPUUsagePercent   float64 `json:"cpu_usage_percent"`
+}
+
+// NewMetricsCollector creates a new metrics collector
+func NewMetricsCollector({{if ne .Logger "zerolog"}}logger {{if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else}}*slog.Logger{{end}}{{end}}) *MetricsCollector {
+	return &MetricsCollector{
+		httpMetrics: HTTPMetrics{
+			RequestsTotal:   make(map[string]int64),
+			RequestDuration: make(map[string][]time.Duration),
+			ResponseSize:    make(map[string][]int64),
+			StatusCodes:     make(map[int]int64),
+		},
+		grpcMetrics: GRPCMetrics{
+			RequestsTotal:   make(map[string]int64),
+			RequestDuration: make(map[string][]time.Duration),
+			ErrorsTotal:     make(map[string]int64),
+		},
+{{if ne .Logger "zerolog"}}
+		logger:    logger,
+{{end}}
+		startTime: time.Now(),
+	}
+}
+
+// HTTPMetricsMiddleware creates a metrics collection middleware for HTTP requests
+func (mc *MetricsCollector) HTTPMetricsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		
+		mc.mutex.Lock()
+		mc.httpMetrics.ActiveRequests++
+		mc.mutex.Unlock()
+		
+		defer func() {
+			mc.mutex.Lock()
+			mc.httpMetrics.ActiveRequests--
+			mc.mutex.Unlock()
+		}()
+		
+		c.Next()
+		
+		duration := time.Since(start)
+		size := c.Writer.Size()
+		status := c.Writer.Status()
+		
+		mc.recordHTTPMetrics(c.Request.Method, c.FullPath(), duration, int64(size), status)
+	}
+}
+
+// GRPCMetricsInterceptor creates a metrics collection interceptor for gRPC requests
+func (mc *MetricsCollector) GRPCMetricsInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		start := time.Now()
+		
+		mc.mutex.Lock()
+		mc.grpcMetrics.ActiveRequests++
+		mc.mutex.Unlock()
+		
+		defer func() {
+			mc.mutex.Lock()
+			mc.grpcMetrics.ActiveRequests--
+			mc.mutex.Unlock()
+		}()
+		
+		resp, err := handler(ctx, req)
+		
+		duration := time.Since(start)
+		mc.recordGRPCMetrics(info.FullMethod, duration, err)
+		
+		return resp, err
+	}
+}
+
+// GRPCStreamMetricsInterceptor creates a metrics collection interceptor for gRPC streams
+func (mc *MetricsCollector) GRPCStreamMetricsInterceptor() grpc.StreamServerInterceptor {
+	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		start := time.Now()
+		
+		mc.mutex.Lock()
+		mc.grpcMetrics.StreamsActive++
+		mc.mutex.Unlock()
+		
+		defer func() {
+			mc.mutex.Lock()
+			mc.grpcMetrics.StreamsActive--
+			mc.mutex.Unlock()
+		}()
+		
+		err := handler(srv, ss)
+		
+		duration := time.Since(start)
+		mc.recordGRPCMetrics(info.FullMethod, duration, err)
+		
+		return err
+	}
+}
+
+// recordHTTPMetrics records HTTP request metrics
+func (mc *MetricsCollector) recordHTTPMetrics(method, path string, duration time.Duration, size int64, statusCode int) {
+	mc.mutex.Lock()
+	defer mc.mutex.Unlock()
+	
+	key := fmt.Sprintf("%s:%s", method, path)
+	
+	// Count total requests
+	mc.httpMetrics.RequestsTotal[key]++
+	
+	// Record duration (keep last 1000 for percentile calculations)
+	durations := mc.httpMetrics.RequestDuration[key]
+	durations = append(durations, duration)
+	if len(durations) > 1000 {
+		durations = durations[len(durations)-1000:]
+	}
+	mc.httpMetrics.RequestDuration[key] = durations
+	
+	// Record response size (keep last 1000)
+	sizes := mc.httpMetrics.ResponseSize[key]
+	sizes = append(sizes, size)
+	if len(sizes) > 1000 {
+		sizes = sizes[len(sizes)-1000:]
+	}
+	mc.httpMetrics.ResponseSize[key] = sizes
+	
+	// Count status codes
+	mc.httpMetrics.StatusCodes[statusCode]++
+}
+
+// recordGRPCMetrics records gRPC request metrics
+func (mc *MetricsCollector) recordGRPCMetrics(method string, duration time.Duration, err error) {
+	mc.mutex.Lock()
+	defer mc.mutex.Unlock()
+	
+	// Count total requests
+	mc.grpcMetrics.RequestsTotal[method]++
+	
+	// Record duration (keep last 1000 for percentile calculations)
+	durations := mc.grpcMetrics.RequestDuration[method]
+	durations = append(durations, duration)
+	if len(durations) > 1000 {
+		durations = durations[len(durations)-1000:]
+	}
+	mc.grpcMetrics.RequestDuration[method] = durations
+	
+	// Record errors
+	if err != nil {
+		code := status.Code(err)
+		errorKey := fmt.Sprintf("%s:%s", method, code.String())
+		mc.grpcMetrics.ErrorsTotal[errorKey]++
+	}
+}
+
+// GetMetrics returns current metrics snapshot
+func (mc *MetricsCollector) GetMetrics() map[string]interface{} {
+	mc.mutex.RLock()
+	defer mc.mutex.RUnlock()
+	
+	// Update system metrics
+	mc.updateSystemMetrics()
+	
+	return map[string]interface{}{
+		"http":   mc.calculateHTTPSummary(),
+		"grpc":   mc.calculateGRPCSummary(),
+		"system": mc.systemMetrics,
+	}
+}
+
+// calculateHTTPSummary calculates HTTP metrics summary
+func (mc *MetricsCollector) calculateHTTPSummary() map[string]interface{} {
+	summary := map[string]interface{}{
+		"requests_total":    mc.httpMetrics.RequestsTotal,
+		"active_requests":   mc.httpMetrics.ActiveRequests,
+		"status_codes":      mc.httpMetrics.StatusCodes,
+		"avg_duration_ms":   make(map[string]float64),
+		"p95_duration_ms":   make(map[string]float64),
+		"avg_response_size": make(map[string]float64),
+	}
+	
+	// Calculate averages and percentiles
+	for key, durations := range mc.httpMetrics.RequestDuration {
+		if len(durations) > 0 {
+			summary["avg_duration_ms"].(map[string]float64)[key] = calculateAvgDuration(durations)
+			summary["p95_duration_ms"].(map[string]float64)[key] = calculateP95Duration(durations)
+		}
+	}
+	
+	for key, sizes := range mc.httpMetrics.ResponseSize {
+		if len(sizes) > 0 {
+			summary["avg_response_size"].(map[string]float64)[key] = calculateAvgSize(sizes)
+		}
+	}
+	
+	return summary
+}
+
+// calculateGRPCSummary calculates gRPC metrics summary
+func (mc *MetricsCollector) calculateGRPCSummary() map[string]interface{} {
+	summary := map[string]interface{}{
+		"requests_total":   mc.grpcMetrics.RequestsTotal,
+		"active_requests":  mc.grpcMetrics.ActiveRequests,
+		"streams_active":   mc.grpcMetrics.StreamsActive,
+		"errors_total":     mc.grpcMetrics.ErrorsTotal,
+		"avg_duration_ms":  make(map[string]float64),
+		"p95_duration_ms":  make(map[string]float64),
+	}
+	
+	// Calculate averages and percentiles
+	for method, durations := range mc.grpcMetrics.RequestDuration {
+		if len(durations) > 0 {
+			summary["avg_duration_ms"].(map[string]float64)[method] = calculateAvgDuration(durations)
+			summary["p95_duration_ms"].(map[string]float64)[method] = calculateP95Duration(durations)
+		}
+	}
+	
+	return summary
+}
+
+// updateSystemMetrics updates system-level metrics
+func (mc *MetricsCollector) updateSystemMetrics() {
+	mc.systemMetrics.UptimeSeconds = time.Since(mc.startTime).Seconds()
+	// Note: In a real implementation, you would collect actual system metrics
+	// This is a simplified version for demonstration
+}
+
+// MetricsHandler creates an HTTP handler for metrics endpoint
+func (mc *MetricsCollector) MetricsHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metrics := mc.GetMetrics()
+		
+		w.Header().Set("Content-Type", "application/json")
+		
+		// Simple JSON serialization
+		// In production, you might want to use a proper JSON library
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{
+	"timestamp": "%s",
+	"metrics": %+v
+}`, time.Now().Format(time.RFC3339), metrics)
+	}
+}
+
+// PrometheusHandler creates a Prometheus-compatible metrics endpoint
+func (mc *MetricsCollector) PrometheusHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mc.mutex.RLock()
+		defer mc.mutex.RUnlock()
+		
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		
+		// HTTP metrics
+		for endpoint, count := range mc.httpMetrics.RequestsTotal {
+			fmt.Fprintf(w, "http_requests_total{endpoint=\"%s\"} %d\n", endpoint, count)
+		}
+		
+		fmt.Fprintf(w, "http_requests_active %d\n", mc.httpMetrics.ActiveRequests)
+		
+		for status, count := range mc.httpMetrics.StatusCodes {
+			fmt.Fprintf(w, "http_responses_total{status=\"%d\"} %d\n", status, count)
+		}
+		
+		// gRPC metrics
+		for method, count := range mc.grpcMetrics.RequestsTotal {
+			fmt.Fprintf(w, "grpc_requests_total{method=\"%s\"} %d\n", method, count)
+		}
+		
+		fmt.Fprintf(w, "grpc_requests_active %d\n", mc.grpcMetrics.ActiveRequests)
+		fmt.Fprintf(w, "grpc_streams_active %d\n", mc.grpcMetrics.StreamsActive)
+		
+		for errorKey, count := range mc.grpcMetrics.ErrorsTotal {
+			fmt.Fprintf(w, "grpc_errors_total{error=\"%s\"} %d\n", errorKey, count)
+		}
+		
+		// System metrics
+		fmt.Fprintf(w, "system_uptime_seconds %f\n", mc.systemMetrics.UptimeSeconds)
+	}
+}
+
+// ResetMetrics resets all collected metrics
+func (mc *MetricsCollector) ResetMetrics() {
+	mc.mutex.Lock()
+	defer mc.mutex.Unlock()
+	
+	mc.httpMetrics = HTTPMetrics{
+		RequestsTotal:   make(map[string]int64),
+		RequestDuration: make(map[string][]time.Duration),
+		ResponseSize:    make(map[string][]int64),
+		StatusCodes:     make(map[int]int64),
+	}
+	
+	mc.grpcMetrics = GRPCMetrics{
+		RequestsTotal:   make(map[string]int64),
+		RequestDuration: make(map[string][]time.Duration),
+		ErrorsTotal:     make(map[string]int64),
+	}
+	
+	mc.startTime = time.Now()
+}
+
+// Helper functions for calculations
+
+func calculateAvgDuration(durations []time.Duration) float64 {
+	if len(durations) == 0 {
+		return 0
+	}
+	
+	var total time.Duration
+	for _, d := range durations {
+		total += d
+	}
+	
+	return float64(total/time.Duration(len(durations))) / float64(time.Millisecond)
+}
+
+func calculateP95Duration(durations []time.Duration) float64 {
+	if len(durations) == 0 {
+		return 0
+	}
+	
+	// Simple p95 calculation (would need sorting in production)
+	index := int(float64(len(durations)) * 0.95)
+	if index >= len(durations) {
+		index = len(durations) - 1
+	}
+	
+	return float64(durations[index]) / float64(time.Millisecond)
+}
+
+func calculateAvgSize(sizes []int64) float64 {
+	if len(sizes) == 0 {
+		return 0
+	}
+	
+	var total int64
+	for _, s := range sizes {
+		total += s
+	}
+	
+	return float64(total) / float64(len(sizes))
+}

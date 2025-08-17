@@ -25,6 +25,15 @@ import (
 	"{{.ModulePath}}/internal/services"
 	"{{.ModulePath}}/internal/repository"
 	"{{.ModulePath}}/internal/tls"
+{{if .EnableEnhancedInterceptors}}
+	"{{.ModulePath}}/internal/interceptors"
+{{end}}
+{{if .EnableRateLimiting}}
+	ratelimit "{{.ModulePath}}/internal/middleware"
+{{end}}
+{{if .EnableMetrics}}
+	"{{.ModulePath}}/internal/metrics"
+{{end}}
 	{{- if ne .DatabaseDriver ""}}
 	"{{.ModulePath}}/internal/database"
 	{{- end}}
@@ -87,6 +96,17 @@ func main() {
 	authService := services.NewAuthService(userRepo, passwordService, appLogger{{- if eq .AuthType "jwt"}}, authMiddleware{{- end}})
 	{{- end}}
 
+	// Initialize enhanced components
+{{if .EnableMetrics}}
+	metricsCollector := metrics.NewMetricsCollector({{if ne .Logger "zerolog"}}appLogger{{end}})
+{{end}}
+{{if .EnableRateLimiting}}
+	rateLimiter := ratelimit.NewRateLimiter(100, time.Minute{{if ne .Logger "zerolog"}}, appLogger{{end}}) // 100 requests per minute
+{{end}}
+{{if .EnableEnhancedInterceptors}}
+	enhancedInterceptors := interceptors.NewEnhancedInterceptors({{if ne .Logger "zerolog"}}appLogger{{end}})
+{{end}}
+
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -98,7 +118,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := startGRPCServer(ctx, cfg, userService, healthService, appLogger); err != nil {
+		if err := startGRPCServer(ctx, cfg, userService, healthService, appLogger{{if .EnableEnhancedInterceptors}}, enhancedInterceptors{{end}}{{if .EnableRateLimiting}}, rateLimiter{{end}}{{if .EnableMetrics}}, metricsCollector{{end}}); err != nil {
 			appLogger.Error("gRPC server error", "error", err)
 			cancel()
 		}
@@ -108,7 +128,7 @@ func main() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		if err := startGatewayServer(ctx, cfg, appLogger{{- if ne .AuthType ""}}, authMiddleware{{- end}}); err != nil {
+		if err := startGatewayServer(ctx, cfg, appLogger{{- if ne .AuthType ""}}, authMiddleware{{- end}}{{if .EnableRateLimiting}}, rateLimiter{{end}}{{if .EnableMetrics}}, metricsCollector{{end}}); err != nil {
 			appLogger.Error("Gateway server error", "error", err)
 			cancel()
 		}
@@ -135,7 +155,7 @@ func main() {
 	appLogger.Info("{{.ProjectName}} stopped")
 }
 
-func startGRPCServer(ctx context.Context, cfg *config.Config, userService *services.UserService, healthService *services.HealthService, appLogger logger.Logger) error {
+func startGRPCServer(ctx context.Context, cfg *config.Config, userService *services.UserService, healthService *services.HealthService, appLogger logger.Logger{{if .EnableEnhancedInterceptors}}, enhancedInterceptors *interceptors.EnhancedInterceptors{{end}}{{if .EnableRateLimiting}}, rateLimiter *ratelimit.RateLimiter{{end}}{{if .EnableMetrics}}, metricsCollector *metrics.MetricsCollector{{end}}) error {
 	// Validate TLS configuration
 	if err := tls.ValidateTLSConfig(cfg.Server.TLS, appLogger); err != nil {
 		return fmt.Errorf("TLS configuration validation failed: %w", err)
@@ -150,13 +170,38 @@ func startGRPCServer(ctx context.Context, cfg *config.Config, userService *servi
 	}
 
 	// Create gRPC server options with interceptor chain
+	var unaryInterceptors []grpc.UnaryServerInterceptor
+	var streamInterceptors []grpc.StreamServerInterceptor
+
+{{if .EnableEnhancedInterceptors}}
+	// Use enhanced interceptors if enabled
+	unaryInterceptors = append(unaryInterceptors, enhancedInterceptors.UnaryServerInterceptor())
+	streamInterceptors = append(streamInterceptors, enhancedInterceptors.StreamServerInterceptor())
+{{else}}
+	// Use basic interceptors
+	unaryInterceptors = append(unaryInterceptors,
+		middleware.GRPCRequestIDInterceptor(appLogger),
+		server.UnaryLoggingInterceptor(appLogger),
+		middleware.GRPCSecurityInterceptor(appLogger),
+		middleware.GRPCErrorInterceptor(appLogger),
+	)
+{{end}}
+
+{{if .EnableRateLimiting}}
+	// Add rate limiting interceptors
+	unaryInterceptors = append(unaryInterceptors, rateLimiter.GRPCRateLimitInterceptor())
+	streamInterceptors = append(streamInterceptors, rateLimiter.GRPCStreamRateLimitInterceptor())
+{{end}}
+
+{{if .EnableMetrics}}
+	// Add metrics collection interceptors
+	unaryInterceptors = append(unaryInterceptors, metricsCollector.GRPCMetricsInterceptor())
+	streamInterceptors = append(streamInterceptors, metricsCollector.GRPCStreamMetricsInterceptor())
+{{end}}
+
 	serverOpts := []grpc.ServerOption{
-		grpc.ChainUnaryInterceptor(
-			middleware.GRPCRequestIDInterceptor(appLogger),
-			server.UnaryLoggingInterceptor(appLogger),
-			middleware.GRPCSecurityInterceptor(appLogger),
-			middleware.GRPCErrorInterceptor(appLogger),
-		),
+		grpc.ChainUnaryInterceptor(unaryInterceptors...),
+		grpc.ChainStreamInterceptor(streamInterceptors...),
 	}
 
 	// Add TLS credentials if enabled
@@ -204,7 +249,7 @@ func startGRPCServer(ctx context.Context, cfg *config.Config, userService *servi
 	}
 }
 
-func startGatewayServer(ctx context.Context, cfg *config.Config, appLogger logger.Logger{{- if ne .AuthType ""}}, authMiddleware *middleware.AuthMiddleware{{- end}}) error {
+func startGatewayServer(ctx context.Context, cfg *config.Config, appLogger logger.Logger{{- if ne .AuthType ""}}, authMiddleware *middleware.AuthMiddleware{{- end}}{{if .EnableRateLimiting}}, rateLimiter *ratelimit.RateLimiter{{end}}{{if .EnableMetrics}}, metricsCollector *metrics.MetricsCollector{{end}}) error {
 	// Create gRPC Gateway mux
 	mux := runtime.NewServeMux()
 
@@ -237,6 +282,12 @@ func startGatewayServer(ctx context.Context, cfg *config.Config, appLogger logge
 	router.Use(middleware.SecurityHeaders())
 	router.Use(middleware.CORSConfig())
 	router.Use(middleware.ValidateContentType())
+{{if .EnableMetrics}}
+	router.Use(metricsCollector.HTTPMetricsMiddleware())
+{{end}}
+{{if .EnableRateLimiting}}
+	router.Use(rateLimiter.HTTPRateLimitMiddleware())
+{{end}}
 	router.Use(middleware.ErrorHandler(appLogger))
 	
 	{{- if ne .AuthType ""}}
@@ -252,6 +303,12 @@ func startGatewayServer(ctx context.Context, cfg *config.Config, appLogger logge
 	router.Any("/health", gin.WrapH(mux))
 	router.Any("/ready", gin.WrapH(mux))
 	router.Any("/live", gin.WrapH(mux))
+
+{{if .EnableMetrics}}
+	// Metrics endpoints
+	router.GET("/metrics", gin.WrapH(metricsCollector.MetricsHandler()))
+	router.GET("/metrics/prometheus", gin.WrapH(metricsCollector.PrometheusHandler()))
+{{end}}
 
 	// Additional custom REST endpoints can be added here
 	router.GET("/version", func(c *gin.Context) {

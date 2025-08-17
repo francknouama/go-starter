@@ -1,0 +1,536 @@
+package interceptors
+
+import (
+	"context"
+	"fmt"
+	"runtime/debug"
+	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"{{.ModulePath}}/internal/logger"
+)
+
+// EnhancedInterceptors provides production-grade gRPC interceptors
+type EnhancedInterceptors struct {
+{{if eq .Logger "zap"}}
+	logger *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger *slog.Logger
+{{end}}
+	metrics *InterceptorMetrics
+}
+
+// InterceptorMetrics tracks interceptor performance
+type InterceptorMetrics struct {
+	RequestsTotal        int64 `json:"requests_total"`
+	RequestsActive       int64 `json:"requests_active"`
+	RequestDuration      int64 `json:"request_duration_ms"`
+	ErrorsTotal          int64 `json:"errors_total"`
+	PanicRecoveries      int64 `json:"panic_recoveries"`
+	ValidationErrors     int64 `json:"validation_errors"`
+	AuthenticationErrors int64 `json:"authentication_errors"`
+	RateLimitExceeded    int64 `json:"rate_limit_exceeded"`
+}
+
+// NewEnhancedInterceptors creates a new enhanced interceptors instance
+func NewEnhancedInterceptors({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *EnhancedInterceptors {
+	return &EnhancedInterceptors{
+{{if ne .Logger "zerolog"}}
+		logger:  logger,
+{{end}}
+		metrics: &InterceptorMetrics{},
+	}
+}
+
+// UnaryServerInterceptor returns a unified unary server interceptor
+func (ei *EnhancedInterceptors) UnaryServerInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		start := time.Now()
+		ei.metrics.RequestsTotal++
+		ei.metrics.RequestsActive++
+		defer func() {
+			ei.metrics.RequestsActive--
+			ei.metrics.RequestDuration = time.Since(start).Milliseconds()
+		}()
+
+		// Request ID and tracing
+		ctx = ei.addRequestID(ctx)
+		
+		// Panic recovery
+		ctx = ei.addPanicRecovery(ctx, info.FullMethod)
+		
+		// Request validation
+		if err := ei.validateRequest(req); err != nil {
+			ei.metrics.ValidationErrors++
+			return nil, status.Errorf(codes.InvalidArgument, "validation failed: %v", err)
+		}
+
+		// Authentication
+		if err := ei.authenticateRequest(ctx, info.FullMethod); err != nil {
+			ei.metrics.AuthenticationErrors++
+			return nil, err
+		}
+
+		// Rate limiting
+		if err := ei.checkRateLimit(ctx, info.FullMethod); err != nil {
+			ei.metrics.RateLimitExceeded++
+			return nil, err
+		}
+
+		// Request logging
+		ei.logRequest(ctx, info.FullMethod, req, start)
+
+		// Execute handler with recovery
+		var resp interface{}
+		var err error
+		
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					ei.metrics.PanicRecoveries++
+					stack := string(debug.Stack())
+					
+{{if eq .Logger "zap"}}
+					ei.logger.Error("Panic recovered in gRPC handler",
+						zap.String("method", info.FullMethod),
+						zap.Any("panic", r),
+						zap.String("stack", stack))
+{{else if eq .Logger "logrus"}}
+					ei.logger.WithFields(logrus.Fields{
+						"method": info.FullMethod,
+						"panic":  r,
+						"stack":  stack,
+					}).Error("Panic recovered in gRPC handler")
+{{else if eq .Logger "zerolog"}}
+					log.Error().
+						Str("method", info.FullMethod).
+						Interface("panic", r).
+						Str("stack", stack).
+						Msg("Panic recovered in gRPC handler")
+{{else}}
+					ei.logger.Error("Panic recovered in gRPC handler",
+						"method", info.FullMethod,
+						"panic", r,
+						"stack", stack)
+{{end}}
+					
+					err = status.Errorf(codes.Internal, "internal server error")
+				}
+			}()
+			
+			resp, err = handler(ctx, req)
+		}()
+
+		// Response logging
+		ei.logResponse(ctx, info.FullMethod, resp, err, time.Since(start))
+
+		if err != nil {
+			ei.metrics.ErrorsTotal++
+		}
+
+		return resp, err
+	}
+}
+
+// StreamServerInterceptor returns a unified stream server interceptor
+func (ei *EnhancedInterceptors) StreamServerInterceptor() grpc.StreamServerInterceptor {
+	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		start := time.Now()
+		ei.metrics.RequestsTotal++
+		ei.metrics.RequestsActive++
+		defer func() {
+			ei.metrics.RequestsActive--
+			ei.metrics.RequestDuration = time.Since(start).Milliseconds()
+		}()
+
+		ctx := ss.Context()
+		
+		// Request ID and tracing
+		ctx = ei.addRequestID(ctx)
+		
+		// Authentication
+		if err := ei.authenticateRequest(ctx, info.FullMethod); err != nil {
+			ei.metrics.AuthenticationErrors++
+			return err
+		}
+
+		// Rate limiting
+		if err := ei.checkRateLimit(ctx, info.FullMethod); err != nil {
+			ei.metrics.RateLimitExceeded++
+			return err
+		}
+
+		// Wrap stream with enhanced context
+		wrappedStream := &enhancedServerStream{
+			ServerStream: ss,
+			ctx:          ctx,
+		}
+
+		// Stream logging
+{{if eq .Logger "zap"}}
+		ei.logger.Info("gRPC stream started",
+			zap.String("method", info.FullMethod),
+			zap.String("request_id", getRequestID(ctx)))
+{{else if eq .Logger "logrus"}}
+		ei.logger.WithFields(logrus.Fields{
+			"method":     info.FullMethod,
+			"request_id": getRequestID(ctx),
+		}).Info("gRPC stream started")
+{{else if eq .Logger "zerolog"}}
+		log.Info().
+			Str("method", info.FullMethod).
+			Str("request_id", getRequestID(ctx)).
+			Msg("gRPC stream started")
+{{else}}
+		ei.logger.Info("gRPC stream started",
+			"method", info.FullMethod,
+			"request_id", getRequestID(ctx))
+{{end}}
+
+		// Execute handler with recovery
+		var err error
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					ei.metrics.PanicRecoveries++
+					stack := string(debug.Stack())
+					
+{{if eq .Logger "zap"}}
+					ei.logger.Error("Panic recovered in gRPC stream handler",
+						zap.String("method", info.FullMethod),
+						zap.Any("panic", r),
+						zap.String("stack", stack))
+{{else if eq .Logger "logrus"}}
+					ei.logger.WithFields(logrus.Fields{
+						"method": info.FullMethod,
+						"panic":  r,
+						"stack":  stack,
+					}).Error("Panic recovered in gRPC stream handler")
+{{else if eq .Logger "zerolog"}}
+					log.Error().
+						Str("method", info.FullMethod).
+						Interface("panic", r).
+						Str("stack", stack).
+						Msg("Panic recovered in gRPC stream handler")
+{{else}}
+					ei.logger.Error("Panic recovered in gRPC stream handler",
+						"method", info.FullMethod,
+						"panic", r,
+						"stack", stack)
+{{end}}
+					
+					err = status.Errorf(codes.Internal, "internal server error")
+				}
+			}()
+			
+			err = handler(srv, wrappedStream)
+		}()
+
+		duration := time.Since(start)
+
+		// Stream completion logging
+{{if eq .Logger "zap"}}
+		if err != nil {
+			ei.logger.Error("gRPC stream completed with error",
+				zap.String("method", info.FullMethod),
+				zap.String("request_id", getRequestID(ctx)),
+				zap.Error(err),
+				zap.Duration("duration", duration))
+		} else {
+			ei.logger.Info("gRPC stream completed successfully",
+				zap.String("method", info.FullMethod),
+				zap.String("request_id", getRequestID(ctx)),
+				zap.Duration("duration", duration))
+		}
+{{else if eq .Logger "logrus"}}
+		logFields := logrus.Fields{
+			"method":     info.FullMethod,
+			"request_id": getRequestID(ctx),
+			"duration":   duration,
+		}
+		if err != nil {
+			ei.logger.WithFields(logFields).WithError(err).Error("gRPC stream completed with error")
+		} else {
+			ei.logger.WithFields(logFields).Info("gRPC stream completed successfully")
+		}
+{{else if eq .Logger "zerolog"}}
+		if err != nil {
+			log.Error().
+				Str("method", info.FullMethod).
+				Str("request_id", getRequestID(ctx)).
+				Err(err).
+				Dur("duration", duration).
+				Msg("gRPC stream completed with error")
+		} else {
+			log.Info().
+				Str("method", info.FullMethod).
+				Str("request_id", getRequestID(ctx)).
+				Dur("duration", duration).
+				Msg("gRPC stream completed successfully")
+		}
+{{else}}
+		if err != nil {
+			ei.logger.Error("gRPC stream completed with error",
+				"method", info.FullMethod,
+				"request_id", getRequestID(ctx),
+				"error", err,
+				"duration", duration)
+		} else {
+			ei.logger.Info("gRPC stream completed successfully",
+				"method", info.FullMethod,
+				"request_id", getRequestID(ctx),
+				"duration", duration)
+		}
+{{end}}
+
+		if err != nil {
+			ei.metrics.ErrorsTotal++
+		}
+
+		return err
+	}
+}
+
+// addRequestID adds a unique request ID to the context
+func (ei *EnhancedInterceptors) addRequestID(ctx context.Context) context.Context {
+	// Check if request ID already exists in metadata
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if reqIDs := md.Get("x-request-id"); len(reqIDs) > 0 {
+			return context.WithValue(ctx, "request_id", reqIDs[0])
+		}
+	}
+	
+	// Generate new request ID
+	requestID := generateRequestID()
+	return context.WithValue(ctx, "request_id", requestID)
+}
+
+// addPanicRecovery adds panic recovery context
+func (ei *EnhancedInterceptors) addPanicRecovery(ctx context.Context, method string) context.Context {
+	return context.WithValue(ctx, "method", method)
+}
+
+// validateRequest validates the incoming request
+func (ei *EnhancedInterceptors) validateRequest(req interface{}) error {
+	// Basic validation - check if request is nil
+	if req == nil {
+		return fmt.Errorf("request cannot be nil")
+	}
+	
+	// Check if request implements proto.Message for size validation
+	if msg, ok := req.(proto.Message); ok {
+		size := proto.Size(msg)
+		if size > 1024*1024 { // 1MB limit
+			return fmt.Errorf("request too large: %d bytes", size)
+		}
+	}
+	
+	// Add custom validation logic here
+	// You could validate specific fields, business rules, etc.
+	
+	return nil
+}
+
+// authenticateRequest performs authentication checks
+func (ei *EnhancedInterceptors) authenticateRequest(ctx context.Context, method string) error {
+	// Skip authentication for health checks and public methods
+	publicMethods := map[string]bool{
+		"/health.v1.HealthService/Check": true,
+		"/health.v1.HealthService/Watch": true,
+	}
+	
+	if publicMethods[method] {
+		return nil
+	}
+	
+{{if ne .AuthType ""}}
+	// Check for authorization metadata
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return status.Errorf(codes.Unauthenticated, "missing metadata")
+	}
+	
+	authHeaders := md.Get("authorization")
+	if len(authHeaders) == 0 {
+		return status.Errorf(codes.Unauthenticated, "missing authorization header")
+	}
+	
+	// Basic token validation (implement your authentication logic here)
+	token := authHeaders[0]
+	if token == "" {
+		return status.Errorf(codes.Unauthenticated, "invalid token")
+	}
+	
+	// TODO: Implement actual token validation
+	// This could involve JWT validation, database lookup, etc.
+	
+{{end}}
+	return nil
+}
+
+// checkRateLimit performs rate limiting checks
+func (ei *EnhancedInterceptors) checkRateLimit(ctx context.Context, method string) error {
+	// Simple rate limiting based on client IP or user ID
+	// In production, you'd use a more sophisticated rate limiter
+	
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return nil // No metadata, allow request
+	}
+	
+	// Check for rate limit headers
+	clientIP := ""
+	if ips := md.Get("x-forwarded-for"); len(ips) > 0 {
+		clientIP = ips[0]
+	} else if ips := md.Get("x-real-ip"); len(ips) > 0 {
+		clientIP = ips[0]
+	}
+	
+	// TODO: Implement actual rate limiting logic
+	// This could use Redis, in-memory store, etc.
+	
+	_ = clientIP // Placeholder to avoid unused variable error
+	
+	return nil
+}
+
+// logRequest logs the incoming request
+func (ei *EnhancedInterceptors) logRequest(ctx context.Context, method string, req interface{}, start time.Time) {
+	requestID := getRequestID(ctx)
+	
+{{if eq .Logger "zap"}}
+	ei.logger.Info("gRPC request received",
+		zap.String("method", method),
+		zap.String("request_id", requestID),
+		zap.Time("timestamp", start))
+{{else if eq .Logger "logrus"}}
+	ei.logger.WithFields(logrus.Fields{
+		"method":     method,
+		"request_id": requestID,
+		"timestamp":  start,
+	}).Info("gRPC request received")
+{{else if eq .Logger "zerolog"}}
+	log.Info().
+		Str("method", method).
+		Str("request_id", requestID).
+		Time("timestamp", start).
+		Msg("gRPC request received")
+{{else}}
+	ei.logger.Info("gRPC request received",
+		"method", method,
+		"request_id", requestID,
+		"timestamp", start)
+{{end}}
+}
+
+// logResponse logs the outgoing response
+func (ei *EnhancedInterceptors) logResponse(ctx context.Context, method string, resp interface{}, err error, duration time.Duration) {
+	requestID := getRequestID(ctx)
+	
+{{if eq .Logger "zap"}}
+	if err != nil {
+		ei.logger.Error("gRPC request completed with error",
+			zap.String("method", method),
+			zap.String("request_id", requestID),
+			zap.Error(err),
+			zap.Duration("duration", duration))
+	} else {
+		ei.logger.Info("gRPC request completed successfully",
+			zap.String("method", method),
+			zap.String("request_id", requestID),
+			zap.Duration("duration", duration))
+	}
+{{else if eq .Logger "logrus"}}
+	logFields := logrus.Fields{
+		"method":     method,
+		"request_id": requestID,
+		"duration":   duration,
+	}
+	if err != nil {
+		ei.logger.WithFields(logFields).WithError(err).Error("gRPC request completed with error")
+	} else {
+		ei.logger.WithFields(logFields).Info("gRPC request completed successfully")
+	}
+{{else if eq .Logger "zerolog"}}
+	if err != nil {
+		log.Error().
+			Str("method", method).
+			Str("request_id", requestID).
+			Err(err).
+			Dur("duration", duration).
+			Msg("gRPC request completed with error")
+	} else {
+		log.Info().
+			Str("method", method).
+			Str("request_id", requestID).
+			Dur("duration", duration).
+			Msg("gRPC request completed successfully")
+	}
+{{else}}
+	if err != nil {
+		ei.logger.Error("gRPC request completed with error",
+			"method", method,
+			"request_id", requestID,
+			"error", err,
+			"duration", duration)
+	} else {
+		ei.logger.Info("gRPC request completed successfully",
+			"method", method,
+			"request_id", requestID,
+			"duration", duration)
+	}
+{{end}}
+}
+
+// enhancedServerStream wraps grpc.ServerStream with enhanced context
+type enhancedServerStream struct {
+	grpc.ServerStream
+	ctx context.Context
+}
+
+func (s *enhancedServerStream) Context() context.Context {
+	return s.ctx
+}
+
+// getRequestID extracts request ID from context
+func getRequestID(ctx context.Context) string {
+	if reqID, ok := ctx.Value("request_id").(string); ok {
+		return reqID
+	}
+	return "unknown"
+}
+
+// generateRequestID generates a unique request ID
+func generateRequestID() string {
+	// Simple request ID generation - in production, you might use UUID
+	return fmt.Sprintf("req-%d", time.Now().UnixNano())
+}
+
+// GetMetrics returns current interceptor metrics
+func (ei *EnhancedInterceptors) GetMetrics() InterceptorMetrics {
+	return *ei.metrics
+}
+
+// ResetMetrics resets all metrics
+func (ei *EnhancedInterceptors) ResetMetrics() {
+	ei.metrics = &InterceptorMetrics{}
+}

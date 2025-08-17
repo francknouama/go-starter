@@ -1,0 +1,292 @@
+package middleware
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog/log"
+{{else}}
+	"log/slog"
+{{end}}
+)
+
+// RateLimiter implements a token bucket rate limiter
+type RateLimiter struct {
+	requests int
+	window   time.Duration
+	buckets  map[string]*bucket
+	mutex    sync.RWMutex
+{{if eq .Logger "zap"}}
+	logger   *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger   *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	// zerolog uses global logger
+{{else}}
+	logger   *slog.Logger
+{{end}}
+}
+
+type bucket struct {
+	tokens   int
+	lastSeen time.Time
+	mutex    sync.Mutex
+}
+
+// NewRateLimiter creates a new rate limiter
+func NewRateLimiter(requests int, window time.Duration{{if ne .Logger "zerolog"}}, logger {{if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else}}*slog.Logger{{end}}{{end}}) *RateLimiter {
+	rl := &RateLimiter{
+		requests: requests,
+		window:   window,
+		buckets:  make(map[string]*bucket),
+{{if ne .Logger "zerolog"}}
+		logger:   logger,
+{{end}}
+	}
+	
+	// Start cleanup routine
+	go rl.cleanup()
+	
+	return rl
+}
+
+// Allow checks if a request should be allowed
+func (rl *RateLimiter) Allow(key string) bool {
+	rl.mutex.RLock()
+	b, exists := rl.buckets[key]
+	rl.mutex.RUnlock()
+	
+	if !exists {
+		rl.mutex.Lock()
+		// Double-check pattern
+		if b, exists = rl.buckets[key]; !exists {
+			b = &bucket{
+				tokens:   rl.requests,
+				lastSeen: time.Now(),
+			}
+			rl.buckets[key] = b
+		}
+		rl.mutex.Unlock()
+	}
+	
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	
+	now := time.Now()
+	elapsed := now.Sub(b.lastSeen)
+	
+	// Refill tokens based on elapsed time
+	if elapsed > 0 {
+		tokensToAdd := int(elapsed / rl.window * time.Duration(rl.requests))
+		b.tokens = min(rl.requests, b.tokens+tokensToAdd)
+		b.lastSeen = now
+	}
+	
+	if b.tokens > 0 {
+		b.tokens--
+		return true
+	}
+	
+	return false
+}
+
+// GetStats returns current rate limiter statistics
+func (rl *RateLimiter) GetStats() map[string]interface{} {
+	rl.mutex.RLock()
+	defer rl.mutex.RUnlock()
+	
+	stats := map[string]interface{}{
+		"active_buckets": len(rl.buckets),
+		"requests_limit": rl.requests,
+		"window_seconds": rl.window.Seconds(),
+	}
+	
+	return stats
+}
+
+// cleanup removes expired buckets
+func (rl *RateLimiter) cleanup() {
+	ticker := time.NewTicker(rl.window)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		rl.mutex.Lock()
+		cutoff := time.Now().Add(-rl.window * 2)
+		
+		for key, bucket := range rl.buckets {
+			bucket.mutex.Lock()
+			if bucket.lastSeen.Before(cutoff) {
+				delete(rl.buckets, key)
+			}
+			bucket.mutex.Unlock()
+		}
+		rl.mutex.Unlock()
+	}
+}
+
+// HTTPRateLimitMiddleware creates a rate limiting middleware for HTTP requests
+func (rl *RateLimiter) HTTPRateLimitMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		key := rl.getClientKey(c.Request)
+		
+		if !rl.Allow(key) {
+{{if eq .Logger "zap"}}
+			rl.logger.Warn("Rate limit exceeded",
+				zap.String("client_key", key),
+				zap.String("path", c.Request.URL.Path),
+				zap.String("method", c.Request.Method))
+{{else if eq .Logger "logrus"}}
+			rl.logger.WithFields(logrus.Fields{
+				"client_key": key,
+				"path":       c.Request.URL.Path,
+				"method":     c.Request.Method,
+			}).Warn("Rate limit exceeded")
+{{else if eq .Logger "zerolog"}}
+			log.Warn().
+				Str("client_key", key).
+				Str("path", c.Request.URL.Path).
+				Str("method", c.Request.Method).
+				Msg("Rate limit exceeded")
+{{else}}
+			rl.logger.Warn("Rate limit exceeded",
+				"client_key", key,
+				"path", c.Request.URL.Path,
+				"method", c.Request.Method)
+{{end}}
+			
+			c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", rl.requests))
+			c.Header("X-RateLimit-Window", fmt.Sprintf("%.0f", rl.window.Seconds()))
+			c.Header("Retry-After", fmt.Sprintf("%.0f", rl.window.Seconds()))
+			
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":   "rate_limit_exceeded",
+				"message": "Too many requests",
+				"retry_after": rl.window.Seconds(),
+			})
+			c.Abort()
+			return
+		}
+		
+		// Add rate limit headers
+		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", rl.requests))
+		c.Header("X-RateLimit-Window", fmt.Sprintf("%.0f", rl.window.Seconds()))
+		
+		c.Next()
+	}
+}
+
+// GRPCRateLimitInterceptor creates a rate limiting interceptor for gRPC requests
+func (rl *RateLimiter) GRPCRateLimitInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		key := rl.getGRPCClientKey(ctx)
+		
+		if !rl.Allow(key) {
+{{if eq .Logger "zap"}}
+			rl.logger.Warn("gRPC rate limit exceeded",
+				zap.String("client_key", key),
+				zap.String("method", info.FullMethod))
+{{else if eq .Logger "logrus"}}
+			rl.logger.WithFields(logrus.Fields{
+				"client_key": key,
+				"method":     info.FullMethod,
+			}).Warn("gRPC rate limit exceeded")
+{{else if eq .Logger "zerolog"}}
+			log.Warn().
+				Str("client_key", key).
+				Str("method", info.FullMethod).
+				Msg("gRPC rate limit exceeded")
+{{else}}
+			rl.logger.Warn("gRPC rate limit exceeded",
+				"client_key", key,
+				"method", info.FullMethod)
+{{end}}
+			
+			return nil, status.Errorf(codes.ResourceExhausted, "rate limit exceeded")
+		}
+		
+		return handler(ctx, req)
+	}
+}
+
+// GRPCStreamRateLimitInterceptor creates a rate limiting interceptor for gRPC stream requests
+func (rl *RateLimiter) GRPCStreamRateLimitInterceptor() grpc.StreamServerInterceptor {
+	return func(srv interface{}, ss grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		key := rl.getGRPCClientKey(ss.Context())
+		
+		if !rl.Allow(key) {
+{{if eq .Logger "zap"}}
+			rl.logger.Warn("gRPC stream rate limit exceeded",
+				zap.String("client_key", key),
+				zap.String("method", info.FullMethod))
+{{else if eq .Logger "logrus"}}
+			rl.logger.WithFields(logrus.Fields{
+				"client_key": key,
+				"method":     info.FullMethod,
+			}).Warn("gRPC stream rate limit exceeded")
+{{else if eq .Logger "zerolog"}}
+			log.Warn().
+				Str("client_key", key).
+				Str("method", info.FullMethod).
+				Msg("gRPC stream rate limit exceeded")
+{{else}}
+			rl.logger.Warn("gRPC stream rate limit exceeded",
+				"client_key", key,
+				"method", info.FullMethod)
+{{end}}
+			
+			return status.Errorf(codes.ResourceExhausted, "rate limit exceeded")
+		}
+		
+		return handler(srv, ss)
+	}
+}
+
+// getClientKey extracts a unique client identifier from HTTP request
+func (rl *RateLimiter) getClientKey(req *http.Request) string {
+	// Priority: API key > User ID > IP address
+	if apiKey := req.Header.Get("X-API-Key"); apiKey != "" {
+		return "api:" + apiKey
+	}
+	
+	if userID := req.Header.Get("X-User-ID"); userID != "" {
+		return "user:" + userID
+	}
+	
+	// Try to get real IP
+	if forwarded := req.Header.Get("X-Forwarded-For"); forwarded != "" {
+		return "ip:" + forwarded
+	}
+	
+	if realIP := req.Header.Get("X-Real-IP"); realIP != "" {
+		return "ip:" + realIP
+	}
+	
+	return "ip:" + req.RemoteAddr
+}
+
+// getGRPCClientKey extracts a unique client identifier from gRPC context
+func (rl *RateLimiter) getGRPCClientKey(ctx context.Context) string {
+	// For gRPC, we would extract from metadata
+	// This is a simplified implementation
+	return "grpc:default"
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
