@@ -2,6 +2,8 @@
 
 Get your first go-starter project running in 5 minutes! ⚡
 
+> **🎉 MILESTONE ACHIEVED**: go-starter now has **7 production-ready blueprints**, including the newly production-ready **gRPC Gateway** for dual HTTP/gRPC APIs!
+
 ## 🎯 Goal
 
 By the end of this guide, you'll have:
@@ -53,6 +55,16 @@ This creates a minimal CLI tool with:
 go-starter new my-api --type=web-api --framework=gin
 ```
 
+### New: gRPC Gateway ✅ **NEWLY PRODUCTION READY** (For dual-protocol APIs)
+```bash
+go-starter new my-gateway --type=grpc-gateway
+```
+
+This creates a production-ready API gateway with:
+- ✅ Both HTTP REST and gRPC endpoints
+- ✅ Enhanced interceptors and middleware
+- ✅ Protocol buffer integration
+
 ## 🎮 Step 3: Run Your Project
 
 ```bash
@@ -86,6 +98,9 @@ go-starter new fiber-api --type=web-api --framework=fiber
 
 # Explore architectures
 go-starter new clean-api --type=web-api --architecture=clean
+
+# Try the new gRPC Gateway
+go-starter new gateway-api --type=grpc-gateway
 ```
 
 ### 🔍 Explore Available Options

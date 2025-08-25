@@ -2,6 +2,10 @@
 
 Welcome to go-starter! This guide will help you create your first Go project using our comprehensive project generator. Whether you're a beginner or an experienced developer, go-starter adapts to your needs with progressive disclosure and smart defaults.
 
+## 🎉 MILESTONE ACHIEVED: 7 Production-Ready Blueprints!
+
+**Major Update**: go-starter has reached a significant milestone with **7 fully production-ready blueprints**, including the newly production-ready **gRPC Gateway** for dual HTTP/gRPC APIs. All blueprints have been validated through comprehensive ATDD testing and are ready for enterprise use.
+
 ## 🚀 Quick Start (2 Minutes)
 
 ### 1. Install go-starter
@@ -177,16 +181,32 @@ go-starter new my-service --type=microservice
 ```
 **Best for**: Distributed systems, service mesh architectures, cloud-native applications
 
-### 6. Monoliths
+### 6. gRPC Gateway ✅ **NEWLY PRODUCTION READY**
+
+Dual-protocol APIs supporting both HTTP REST and gRPC endpoints.
+
+```bash
+go-starter new my-gateway --type=grpc-gateway
+```
+**Best for**: API gateway patterns, protocol translation services, unified API endpoints
+
+**Production Features**:
+- **Dual HTTP/gRPC support**: Single service handling both protocols
+- **Enhanced interceptors**: Monitoring, security, and performance
+- **Unified middleware**: Consistent middleware across both protocols  
+- **Rate limiting**: Configurable limits for both HTTP and gRPC
+- **Protocol buffer integration**: Full protobuf support with code generation
+
+### 7. Monoliths (Development)
 
 Traditional web applications with all components in one deployable unit.
 
 ```bash
-go-starter new my-app --type=monolith
+go-starter new my-app --type=monolith  # Coming in Phase 3
 ```
 **Best for**: Rapid prototyping, small teams, traditional web applications
 
-### 7. Workspaces
+### 8. Workspaces (Future)
 
 Multi-module projects for monorepos.
 
