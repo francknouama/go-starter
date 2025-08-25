@@ -18,12 +18,35 @@ go-starter includes comprehensive security measures to protect against common vu
 - **Function Whitelisting**: Only safe template functions are allowed
 - **Path Traversal Protection**: Template paths are validated to prevent directory traversal
 - **Resource Limits**: Templates have size and execution time limits
+- **Progressive Disclosure Validation**: ✨ **NEW**: Complexity-level templates are security-validated
+- **Blueprint Selection Security**: Complexity-aware blueprint mapping prevents malicious blueprint injection
 
 ### Input Validation
 - **Project Name Sanitization**: Dangerous characters and reserved names are rejected
 - **Module Path Validation**: Go module paths are validated against malicious patterns
 - **Path Validation**: Output paths are checked for traversal attempts
 - **Resource Limits**: File count, directory count, and total size limits are enforced
+- **Complexity Level Validation**: ✨ **NEW**: Complexity flags are validated against allowed values
+- **Flag Injection Prevention**: Progressive disclosure flag combinations are sanitized
+
+### Progressive Disclosure Security ✨
+
+**NEW**: Additional security measures for the progressive disclosure system:
+
+#### Help System Security
+- **Flag Filtering Validation**: Help filtering logic prevents information disclosure
+- **Command Injection Prevention**: Help command parameters are sanitized
+- **Resource Limits**: Help generation has execution time and memory limits
+
+#### Complexity-Aware Security
+- **Blueprint Mapping Validation**: Complexity-to-blueprint mapping is statically validated
+- **Template Selection Security**: Only pre-approved templates are selectable by complexity
+- **Default Value Sanitization**: Smart defaults are validated before application
+
+#### Interactive Prevention Security
+- **Flag Sufficiency Validation**: Logic prevents bypassing security prompts
+- **Default Application Security**: Auto-applied defaults undergo security validation
+- **Prompt Bypass Auditing**: All prompt bypasses are logged for security monitoring
 
 ### Generated Code Security
 - **No Hardcoded Secrets**: Templates never include hardcoded credentials
@@ -74,11 +97,20 @@ We follow responsible disclosure:
 # Run all security tests
 go test -v ./tests/security/...
 
+# Progressive disclosure security tests ✨ NEW
+go test -v ./tests/security/progressive_disclosure/...
+
 # Scan templates for security issues
 go run main.go security scan-templates
 
+# Validate complexity-aware template selection
+go run main.go security validate-complexity-mapping
+
 # Validate project configuration
 go run main.go security scan-config project.yaml
+
+# Test progressive disclosure flag validation
+go run main.go security test-flag-combinations
 ```
 
 ### Manual Security Checks

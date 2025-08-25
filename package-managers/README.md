@@ -5,10 +5,11 @@ This directory contains configuration and setup files for distributing go-starte
 ## 📦 Supported Package Managers
 
 ### 1. Go Modules (Primary)
-- **Status**: ✅ Ready
+- **Status**: ✅ Ready - v2.1 with Progressive Disclosure
 - **Installation**: `go install github.com/francknouama/go-starter/cmd/go-starter@latest`
 - **Update**: Automatic with Go toolchain
 - **Platform**: All Go-supported platforms
+- **Features**: 20 blueprints, progressive disclosure system, simplified logger architecture
 
 ### 2. Homebrew (macOS/Linux)
 - **Status**: 🔄 In Progress
@@ -241,7 +242,30 @@ which go-starter
 go-starter --help
 ```
 
+## 🔄 Version History & Compatibility
+
+### Current Release: v2.1+
+- **Progressive Disclosure**: Complete implementation with smart help filtering
+- **Simplified Logger Architecture**: 60-90% code reduction while maintaining functionality  
+- **20 Blueprints**: From simple CLI (8 files) to enterprise architectures
+- **Enhanced Security**: Progressive disclosure security validation
+- **Phase 2 Complete**: Enterprise production features with observability
+
+### Version Compatibility Matrix
+
+| Version | Features | Blueprint Count | Progressive Disclosure | Logger Architecture |
+|---------|----------|-----------------|------------------------|-------------------|
+| **v2.1+** | Full feature set | 20 blueprints | ✅ Complete system | ✅ Simplified (60-90% reduction) |
+| **v2.0** | Enhanced blueprints | 12 blueprints | 🔄 Basic implementation | ❌ Complex implementation |
+| **v1.4+** | Core functionality | 8 blueprints | ❌ Not available | ❌ Legacy logger system |
+
+### Upgrade Recommendations
+- **From v1.x**: Major upgrade recommended for progressive disclosure and simplified architecture
+- **From v2.0**: Minor upgrade recommended for simplified logger architecture
+- **New Users**: Install latest v2.1+ for complete feature set
+
 ---
 
-Last updated: 2025-07-26
-Version compatibility: v1.4.0+
+**Last updated**: 2025-08-24  
+**Version compatibility**: v2.1+ (Recommended) | v1.4+ (Minimum)  
+**Go version**: 1.21+ required

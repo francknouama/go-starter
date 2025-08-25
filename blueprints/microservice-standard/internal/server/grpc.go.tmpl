@@ -2,39 +2,182 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+{{else}}
+	"log/slog"
+{{end}}
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/health"
+	"google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
+{{if .EnableObservability}}
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+{{end}}
+
+	"{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/handler"
+{{if .EnableObservability}}
+	"{{.ModulePath}}/internal/metrics"
+{{end}}
 	pb "{{.ModulePath}}/proto"
 )
 
 {{- $serviceName := .ProjectName | replace "-" "" | replace "_" "" | title }}
 
-// grpcServer implements the {{$serviceName}}Server interface and manages the gRPC server
-type grpcServer struct {
+// GRPCServer implements the {{$serviceName}}Server interface and manages the gRPC server
+type GRPCServer struct {
 	pb.Unimplemented{{$serviceName}}Server
-	handler ServiceHandler
-	server  *grpc.Server
-	config  interface{}
-	logger  interface{}
+	handler      *handler.ServiceHandler
+	server       *grpc.Server
+	healthServer *health.Server
+	config       *config.Config
+{{if eq .Logger "zap"}}
+	logger       *zap.Logger
+{{else if eq .Logger "logrus"}}
+	logger       *logrus.Logger
+{{else if eq .Logger "zerolog"}}
+	logger       zerolog.Logger
+{{else}}
+	logger       *slog.Logger
+{{end}}
+{{if .EnableObservability}}
+	metrics      *metrics.Metrics
+	tracer       trace.Tracer
+{{end}}
 }
 
-// NewGRPCServer creates a new gRPC server instance
-func NewGRPCServer(config interface{}, handler ServiceHandler, logger interface{}) *grpcServer {
-	server := grpc.NewServer()
-	
-	grpcSrv := &grpcServer{
-		handler: handler,
-		server:  server,
-		config:  config,
-		logger:  logger,
+// NewGRPCServer creates a new production-ready gRPC server instance with interceptors and middleware
+func NewGRPCServer(
+	cfg *config.Config,
+	handler *handler.ServiceHandler,
+{{if eq .Logger "zap"}}
+	logger *zap.Logger,
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger,
+{{else if eq .Logger "zerolog"}}
+	logger zerolog.Logger,
+{{else}}
+	logger *slog.Logger,
+{{end}}
+{{if .EnableObservability}}
+	metrics *metrics.Metrics,
+{{end}}
+) (*GRPCServer, error) {
+	// Initialize OpenTelemetry tracer
+{{if .EnableObservability}}
+	tracer := otel.Tracer("{{.ProjectName}}-grpc-server")
+{{end}}
+
+	// Create gRPC server options with production-grade configuration
+	opts := []grpc.ServerOption{
+		// Connection keepalive parameters
+		grpc.KeepaliveParams(keepalive.ServerParameters{
+			MaxConnectionIdle:     15 * time.Second,
+			MaxConnectionAge:      30 * time.Second,
+			MaxConnectionAgeGrace: 5 * time.Second,
+			Time:                  5 * time.Second,
+			Timeout:               1 * time.Second,
+		}),
+		grpc.KeepaliveEnforcementPolicy(keepalive.EnforcementPolicy{
+			MinTime:             5 * time.Second,
+			PermitWithoutStream: true,
+		}),
+		// Max message sizes
+		grpc.MaxRecvMsgSize(4 << 20), // 4MB
+		grpc.MaxSendMsgSize(4 << 20), // 4MB
 	}
-	
-	// Register the service
+
+	// Add TLS credentials if enabled
+	if cfg.Server.TLS.Enabled {
+		tlsConfig, err := loadTLSConfig(cfg.Server.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load TLS config: %w", err)
+		}
+		creds := credentials.NewTLS(tlsConfig)
+		opts = append(opts, grpc.Creds(creds))
+	}
+
+	// Add unary interceptor chain
+	unaryInterceptors := []grpc.UnaryServerInterceptor{
+		unaryLoggingInterceptor(logger),
+		unaryRecoveryInterceptor(logger),
+{{if .EnableObservability}}
+		otelgrpc.UnaryServerInterceptor(),
+		unaryMetricsInterceptor(metrics),
+{{end}}
+{{if .EnableRateLimiting}}
+		unaryRateLimitingInterceptor(),
+{{end}}
+{{if .EnableAuthentication}}
+		unaryAuthInterceptor(cfg),
+{{end}}
+		unaryValidationInterceptor(),
+	}
+	opts = append(opts, grpc.ChainUnaryInterceptor(unaryInterceptors...))
+
+	// Add streaming interceptor chain
+	streamInterceptors := []grpc.StreamServerInterceptor{
+		streamLoggingInterceptor(logger),
+		streamRecoveryInterceptor(logger),
+{{if .EnableObservability}}
+		otelgrpc.StreamServerInterceptor(),
+{{end}}
+{{if .EnableAuthentication}}
+		streamAuthInterceptor(cfg),
+{{end}}
+	}
+	opts = append(opts, grpc.ChainStreamInterceptor(streamInterceptors...))
+
+	// Create gRPC server with options
+	server := grpc.NewServer(opts...)
+
+	// Create health server
+	healthServer := health.NewServer()
+
+	grpcSrv := &GRPCServer{
+		handler:      handler,
+		server:       server,
+		healthServer: healthServer,
+		config:       cfg,
+		logger:       logger,
+{{if .EnableObservability}}
+		metrics:      metrics,
+		tracer:       tracer,
+{{end}}
+	}
+
+	// Register services
 	pb.Register{{$serviceName}}Server(server, grpcSrv)
-	
-	return grpcSrv
+	grpc_health_v1.RegisterHealthServer(server, healthServer)
+
+	// Enable gRPC reflection in development
+	if cfg.Server.EnableReflection {
+		reflection.Register(server)
+	}
+
+	// Set initial health status
+	healthServer.SetServingStatus("{{.ProjectName}}", grpc_health_v1.HealthCheckResponse_SERVING)
+	healthServer.SetServingStatus("", grpc_health_v1.HealthCheckResponse_SERVING)
+
+	return grpcSrv, nil
 }
 
 // Start starts the gRPC server
@@ -82,13 +225,60 @@ func (s *grpcServer) Start(ctx context.Context) error {
 	return nil
 }
 
-// SayHello implements the SayHello RPC method
-func (s *grpcServer) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloResponse, error) {
-	message := s.handler.SayHello(in.Name)
+// SayHello implements the SayHello RPC method with comprehensive tracing and error handling
+func (s *GRPCServer) SayHello(ctx context.Context, in *pb.HelloRequest) (*pb.HelloResponse, error) {
+{{if .EnableObservability}}
+	ctx, span := s.tracer.Start(ctx, "SayHello")
+	defer span.End()
+
+	span.SetAttributes(
+		attribute.String("request.name", in.Name),
+		attribute.String("service.name", "{{.ProjectName}}"),
+	)
+{{end}}
+
+	// Validate input
+	if in.Name == "" {
+		return nil, status.Error(codes.InvalidArgument, "name cannot be empty")
+	}
+
+	// Record business operation metrics
+{{if .EnableObservability}}
+	start := time.Now()
+	defer func() {
+		s.metrics.RecordBusinessOperation("say_hello", true, time.Since(start))
+	}()
+{{end}}
+
+	// Call business logic
+	message := s.handler.SayHello(ctx, in.Name)
+
+{{if .EnableObservability}}
+	span.SetAttributes(attribute.String("response.message", message))
+{{end}}
+
 	return &pb.HelloResponse{Message: message}, nil
 }
 
-// ServiceHandler interface defines the business logic methods
-type ServiceHandler interface {
-	SayHello(name string) string
+// loadTLSConfig loads TLS configuration for the gRPC server
+func loadTLSConfig(tlsConfig config.TLSConfig) (*tls.Config, error) {
+	if tlsConfig.CertFile == "" || tlsConfig.KeyFile == "" {
+		return nil, fmt.Errorf("TLS cert and key files must be provided")
+	}
+
+	cert, err := tls.LoadX509KeyPair(tlsConfig.CertFile, tlsConfig.KeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load TLS certificate: %w", err)
+	}
+
+	return &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		MinVersion:   tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
+		},
+	}, nil
 }

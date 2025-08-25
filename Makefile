@@ -7,20 +7,46 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 # Build commands
-build: ## Build the CLI binary
-	@echo "Building go-starter..."
-	go build -o bin/go-starter .
+build: build-cli ## Build the CLI binary (alias for build-cli)
+
+build-cli: ## Build the CLI binary
+	@echo "Building go-starter CLI..."
+	go build -o bin/go-starter ./cmd/go-starter
 	@echo "✓ Built: bin/go-starter"
 
-dev-build: ## Build with race detection for development
-	@echo "Building go-starter with race detection..."
-	go build -race -o bin/go-starter-dev .
+build-web: ## Build the production web server
+	@echo "Building go-starter web server (production)..."
+	cd web && go build -o ../bin/go-starter-web ./cmd/web-server
+	@echo "✓ Built: bin/go-starter-web"
+
+build-dev: ## Build the development web server
+	@echo "Building go-starter web server (development)..."
+	go build -o bin/go-starter-dev ./cmd/go-starter-dev
 	@echo "✓ Built: bin/go-starter-dev"
 
-install: ## Install go-starter to $GOPATH/bin
-	@echo "Installing go-starter..."
-	go install .
+build-all: ## Build all binaries
+	@echo "Building all go-starter binaries..."
+	$(MAKE) build-cli
+	$(MAKE) build-web
+	$(MAKE) build-dev
+	@echo "✓ Built all binaries"
+
+dev-build: ## Build CLI with race detection for development
+	@echo "Building go-starter CLI with race detection..."
+	go build -race -o bin/go-starter-race ./cmd/go-starter
+	@echo "✓ Built: bin/go-starter-race"
+
+install: ## Install go-starter CLI to $GOPATH/bin
+	@echo "Installing go-starter CLI..."
+	go install ./cmd/go-starter
 	@echo "✓ Installed go-starter"
+
+# Legacy build (with deprecation warning)
+build-legacy: ## Build using legacy root main.go (deprecated)
+	@echo "⚠️  WARNING: Building from root main.go is deprecated"
+	@echo "   Use 'make build-cli' instead"
+	go build -o bin/go-starter-legacy .
+	@echo "✓ Built: bin/go-starter-legacy"
 
 # Test commands
 test: ## Run all tests with coverage
@@ -86,9 +112,17 @@ clean: ## Clean build artifacts
 	@echo "✓ Cleanup completed"
 
 # Run commands (for testing)
-run: build ## Build and run with sample arguments
+run: build-cli ## Build and run CLI with sample arguments
 	@echo "Running go-starter with --help..."
 	./bin/go-starter --help
+
+run-web: build-web ## Build and run production web server
+	@echo "Running go-starter web server (production)..."
+	./bin/go-starter-web
+
+run-dev: build-dev ## Build and run development web server
+	@echo "Running go-starter web server (development)..."
+	./bin/go-starter-dev
 
 # Development utilities
 mod-tidy: ## Run go mod tidy

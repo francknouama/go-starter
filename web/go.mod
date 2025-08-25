@@ -1,6 +1,6 @@
 module github.com/francknouama/go-starter/web
 
-go 1.24.4
+go 1.21
 
 replace github.com/francknouama/go-starter => ../
 

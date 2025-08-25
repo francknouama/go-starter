@@ -1,38 +1,124 @@
-FROM golang:{{.GoVersion}} AS builder
+# Multi-stage production-ready Dockerfile with security best practices
 
-WORKDIR /app
+# Build stage with specific Go version and security updates
+FROM golang:{{.GoVersion}}-alpine AS builder
 
-COPY go.mod ./go.mod
-COPY go.sum ./go.sum
-RUN go mod download
+# Install necessary build tools and security updates
+RUN apk update && apk add --no-cache \
+    git \
+    ca-certificates \
+    tzdata \
+{{if eq .CommunicationProtocol "grpc"}} \
+    protobuf \
+    protobuf-dev \
+{{end}}
+    && rm -rf /var/cache/apk/*
 
+# Create non-root user for build process
+RUN adduser -D -g '' appuser
+
+# Set working directory
+WORKDIR /build
+
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+
+# Download dependencies with verification
+RUN go mod download && go mod verify
+
+{{if eq .CommunicationProtocol "grpc"}}
+# Install protoc plugins for gRPC code generation
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+ENV PATH="/go/bin:${PATH}"
+{{end}}
+
+# Copy source code
 COPY . .
 
 {{if eq .CommunicationProtocol "grpc"}}
-# Install protoc and grpc-go plugins
-RUN apt-get update && apt-get install -y protobuf-compiler
-RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-ENV PATH="/go/bin:"${PATH}"
-
-# Generate protobuf code
-RUN protoc --go_out=. --go-grpc_out=. proto/service.proto
+# Generate protobuf code if needed
+RUN if [ -f "proto/service.proto" ]; then \
+        protoc --go_out=. --go-grpc_out=. proto/service.proto; \
+    fi
 {{end}}
 
-RUN go build -o {{.ProjectName}} main.go
+# Build the application with security and optimization flags
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o {{.ProjectName}} \
+    ./cmd/server/main.go || go build \
+    -ldflags='-w -s -extldflags "-static"' \
+    -a -installsuffix cgo \
+    -o {{.ProjectName}} \
+    ./main.go
 
-FROM alpine:latest
+# Verify the binary was created and is executable
+RUN ls -la {{.ProjectName}} && file {{.ProjectName}}
 
-WORKDIR /app
+# Runtime stage with minimal distroless image for security
+FROM gcr.io/distroless/static:nonroot
 
-COPY --from=builder /app/{{.ProjectName}} .
+# Import from builder
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=builder /etc/passwd /etc/passwd
+COPY --from=builder /etc/group /etc/group
 
-# Environment variables for configuration
-ENV PORT=50051
-ENV PROTOCOL=grpc
-ENV HOST=0.0.0.0
-ENV LOG_LEVEL=info
+# Copy the binary from builder stage
+COPY --from=builder /build/{{.ProjectName}} /app/{{.ProjectName}}
 
-EXPOSE $PORT
+{{if .EnableKubernetes}}
+# Create directories that might be needed for Kubernetes
+USER 65532:65532
+{{else}}
+# Use non-root user (distroless nonroot user)
+USER nonroot:nonroot
+{{end}}
 
-CMD ["./{{.ProjectName}}"]
+# Set production environment variables with secure defaults
+ENV PORT={{.Port}} \
+    HOST=0.0.0.0 \
+    ENVIRONMENT=production \
+    LOG_LEVEL=info \
+{{if eq .CommunicationProtocol "grpc"}} \
+    PROTOCOL=grpc \
+{{else}} \
+    PROTOCOL=http \
+{{end}}
+{{if .EnableObservability}} \
+    OBSERVABILITY_METRICS_ENABLED=true \
+    OBSERVABILITY_METRICS_PORT=9090 \
+    OBSERVABILITY_HEALTH_ENABLED=true \
+    OBSERVABILITY_HEALTH_PORT=8080 \
+    OBSERVABILITY_TRACING_ENABLED=true \
+{{end}}
+    GOMAXPROCS=2
+
+# Expose the main service port
+EXPOSE {{.Port}}
+{{if .EnableObservability}}
+# Expose observability ports
+EXPOSE 8080 9090
+{{end}}
+
+# Health check for container orchestration
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+{{if .EnableObservability}} \
+  CMD ["true"]
+{{else}} \
+  CMD ["true"]
+{{end}}
+
+# Use exec form for proper signal handling
+ENTRYPOINT ["/app/{{.ProjectName}}"]
+
+# Add labels for better container management
+LABEL \
+    org.opencontainers.image.title="{{.ProjectName}}" \
+    org.opencontainers.image.description="Production-ready {{.ProjectName}} microservice" \
+    org.opencontainers.image.vendor="{{.ProjectName}} Team" \
+    org.opencontainers.image.version="1.0.0" \
+    org.opencontainers.image.schema-version="1.0" \
+    org.opencontainers.image.licenses="MIT"

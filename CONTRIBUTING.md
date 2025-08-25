@@ -48,7 +48,35 @@ make test
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 ```
 
-### 3. Understanding the Codebase
+### 3. Progressive Disclosure Development Requirements ✨
+
+**NEW**: Working with progressive disclosure features requires additional setup and testing:
+
+#### Progressive Disclosure Test Requirements
+- **Complexity Level Testing**: All complexity levels (Simple, Standard, Advanced, Expert) must be tested
+- **Help System Testing**: Both basic and advanced help modes must be validated
+- **Blueprint Selection**: Complexity-aware blueprint mapping must be tested
+- **Interactive Prevention**: Sufficient flags must prevent prompting
+- **Default Application**: Smart defaults must be tested for CLI blueprints
+
+#### Testing Progressive Disclosure Features
+```bash
+# Test progressive disclosure unit tests
+go test ./internal/prompts/progressive_test.go -v
+
+# Test CLI complexity levels
+go test ./tests/acceptance/cli/progressive_disclosure_test.go -v
+
+# Test blueprint selection with complexity
+go test ./tests/acceptance/blueprints/cli/cli_simple_atdd_test.go -v
+
+# Validate all complexity levels generate working code
+for complexity in simple standard advanced expert; do
+  go-starter new test-$complexity --type=cli --complexity=$complexity --dry-run
+done
+```
+
+### 4. Understanding the Codebase
 
 - Read the [README.md](README.md) for project overview
 - Review existing tests to understand testing patterns
@@ -327,6 +355,54 @@ func TestNewFeature_WithInvalidInput_ReturnsError(t *testing.T) {
 
 ## 🎯 Project-Specific Guidelines
 
+### Progressive Disclosure System Testing ✨
+
+**NEW**: All progressive disclosure features require comprehensive TDD coverage.
+
+When working on progressive disclosure features:
+
+```go
+func TestProgressiveDisclosure_ComplexitySelection(t *testing.T) {
+    tests := []struct {
+        name         string
+        complexity   string
+        blueprintType string
+        expected     string
+        wantErr      bool
+    }{
+        {
+            name:         "CLI simple complexity",
+            complexity:   "simple",
+            blueprintType: "cli",
+            expected:     "cli-simple",
+            wantErr:      false,
+        },
+        {
+            name:         "CLI standard complexity",
+            complexity:   "standard", 
+            blueprintType: "cli",
+            expected:     "cli",
+            wantErr:      false,
+        },
+        // More test cases for all blueprint types...
+    }
+    // Implementation tests...
+}
+
+func TestHelpSystem_FlagFiltering(t *testing.T) {
+    // Test basic mode shows only essential flags
+    // Test advanced mode shows all flags
+    // Test flag deduplication
+    // Test context-aware help hints
+}
+
+func TestInteractivePrompts_Prevention(t *testing.T) {
+    // Test sufficient flags prevent prompts
+    // Test smart defaults application
+    // Test module path generation for testing
+}
+```
+
 ### Blueprint Testing
 
 When working on blueprints:
@@ -337,6 +413,10 @@ func TestBlueprint_Generation(t *testing.T) {
     // Test variable substitution
     // Test file generation
     // Test generated project compiles
+    
+    // NEW: Test complexity-aware generation
+    // Test progressive disclosure integration
+    // Test logger simplification
 }
 ```
 

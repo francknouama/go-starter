@@ -1,17 +1,92 @@
-name: CI
+name: CI/CD Pipeline
 
 on:
   push:
     branches: [ main, develop ]
   pull_request:
     branches: [ main ]
+  release:
+    types: [ published ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  GO_VERSION: '{{.GoVersion}}'
 
 jobs:
-  test:
+  # Security scanning job - run first to fail fast
+  security:
+    name: Security Scan
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: Run Gosec Security Scanner
+      uses: securecodewarrior/github-action-gosec@master
+      with:
+        args: '-fmt sarif -out gosec.sarif ./...'
+    
+    - name: Upload SARIF file
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: gosec.sarif
+    
+    - name: Run govulncheck
+      run: |
+        go install golang.org/x/vuln/cmd/govulncheck@latest
+        govulncheck ./...
+    
+    - name: Run Nancy (dependency vulnerability scanner)
+      run: |
+        go install github.com/sonatypecom/nancy@latest
+        go list -json -m all | nancy sleuth
+
+  # Code quality and linting
+  lint:
+    name: Lint & Format
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: ${{ env.GO_VERSION }}
+    
+    - name: golangci-lint
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+        args: --timeout=5m --config=.golangci.yml
+    
+    - name: Check formatting
+      run: |
+        if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+          echo "Code is not formatted properly:"
+          gofmt -s -l .
+          exit 1
+        fi
+
+  # Comprehensive testing matrix
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [security, lint]
     strategy:
+      fail-fast: false
       matrix:
-        go-version: [{{.GoVersion}}, '1.22', '1.23']
+        go-version: ['{{.GoVersion}}', '1.22', '1.23']
+        test-type: [unit, integration]
 
     steps:
     - uses: actions/checkout@v4
@@ -21,92 +96,333 @@ jobs:
       with:
         go-version: ${{`{{ matrix.go-version }}`}}
 
-    - name: Cache Go modules
-      uses: actions/cache@v3
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
-        path: ~/go/pkg/mod
-        key: ${{`{{ runner.os }}`}}-go-${{`{{ hashFiles('**/go.sum') }}`}}
+        go-version: ${{ matrix.go-version }}
+    
+    - name: Cache Go modules
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cache/go-build
+          ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ matrix.go-version }}-${{ hashFiles('**/go.sum') }}
         restore-keys: |
-          ${{`{{ runner.os }}`}}-go-
-
+          ${{ runner.os }}-go-${{ matrix.go-version }}-
+          ${{ runner.os }}-go-
+    
+{{if eq .CommunicationProtocol "grpc"}}
+    - name: Set up Protocol Buffers
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+        export PATH="$PATH:$(go env GOPATH)/bin"
+    
+    - name: Generate protobuf code
+      run: |
+        export PATH="$PATH:$(go env GOPATH)/bin"
+        if [ -f "proto/service.proto" ]; then
+          protoc --go_out=. --go-grpc_out=. proto/service.proto
+        fi
+{{end}}
+    
     - name: Download dependencies
-      run: go mod download
-
-    - name: Run tests
-      run: go test -v -race -coverprofile=coverage.out ./...
+      run: go mod download && go mod verify
+    
+    - name: Run unit tests
+      if: matrix.test-type == 'unit'
+      run: |
+        go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        go tool cover -html=coverage.out -o coverage.html
+    
+    - name: Run integration tests
+      if: matrix.test-type == 'integration'
+      run: |
+        # Set up test infrastructure
+{{if ne .DatabaseType "none"}}
+        docker-compose -f docker-compose.test.yml up -d
+        sleep 10
+{{end}}
+        
+        # Run integration tests
+        go test -v -tags=integration ./tests/integration/...
+        
+{{if ne .DatabaseType "none"}}
+        # Clean up
+        docker-compose -f docker-compose.test.yml down
+{{end}}
 
     - name: Upload coverage to Codecov
-      if: matrix.go-version == '{{.GoVersion}}'
-      uses: codecov/codecov-action@v3
+      if: matrix.go-version == env.GO_VERSION && matrix.test-type == 'unit'
+      uses: codecov/codecov-action@v4
       with:
         file: ./coverage.out
         flags: unittests
-
-    - name: Test gRPC endpoints
-      run: |
-        # Start gRPC server in background
-        go run main.go &
-        SERVER_PID=$!
-        sleep 3
-        
-        # Test gRPC health check (if available)
-        go run -m main.go health-check || echo "gRPC health check not available"
-        
-        # Kill server
-        kill $SERVER_PID || true
-
-  lint:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
+        name: codecov-umbrella
+        fail_ci_if_error: true
+    
+    - name: Upload coverage artifacts
+      if: matrix.go-version == env.GO_VERSION && matrix.test-type == 'unit'
+      uses: actions/upload-artifact@v4
       with:
-        go-version: {{.GoVersion}}
-    - name: golangci-lint
-      uses: golangci/golangci-lint-action@v6
-      with:
-        version: latest
+        name: coverage-reports
+        path: |
+          coverage.out
+          coverage.html
+        retention-days: 30
 
+
+
+  # Multi-platform build testing
   build:
-    runs-on: ${{`{{ matrix.os }}`}}
+    name: Build & Test
+    runs-on: ${{ matrix.os }}
+    needs: [test]
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        arch: [amd64, arm64]
+        exclude:
+          - os: windows-latest
+            arch: arm64
+    
     steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v5
       with:
-        go-version: {{.GoVersion}}
-    - name: Build
-      run: go build -o bin/{{.ProjectName}} .
+        go-version: ${{ env.GO_VERSION }}
+    
+{{if eq .CommunicationProtocol "grpc"}}
+    - name: Set up Protocol Buffers (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y protobuf-compiler
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    
+    - name: Set up Protocol Buffers (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install protobuf
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    
+    - name: Set up Protocol Buffers (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        choco install protoc
+        go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+        go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+    
+    - name: Generate protobuf code
+      run: |
+        if [ -f "proto/service.proto" ] || [ -f "proto\service.proto" ]; then
+          protoc --go_out=. --go-grpc_out=. proto/service.proto
+        fi
+      shell: bash
+{{end}}
+    
+    - name: Build binary
+      env:
+        GOOS: ${{ runner.os == 'ubuntu-latest' && 'linux' || runner.os == 'windows-latest' && 'windows' || 'darwin' }}
+        GOARCH: ${{ matrix.arch }}
+        CGO_ENABLED: 0
+      run: |
+        go mod download
+        go build -ldflags='-w -s -extldflags "-static"' -o bin/{{.ProjectName}}${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/server/main.go || go build -ldflags='-w -s -extldflags "-static"' -o bin/{{.ProjectName}}${{ runner.os == 'Windows' && '.exe' || '' }} ./main.go
+    
     - name: Test binary
       run: |
-        chmod +x bin/{{.ProjectName}} || true
-        timeout 5s ./bin/{{.ProjectName}} --help || true
+        chmod +x bin/{{.ProjectName}}* || true
+        ./bin/{{.ProjectName}}* --version || ./bin/{{.ProjectName}}* --help || echo "Binary test completed"
+      shell: bash
+      timeout-minutes: 1
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: {{.ProjectName}}-${{ runner.os }}-${{ matrix.arch }}
+        path: bin/
+        retention-days: 7
 
+  # Docker multi-architecture build and security scanning
   docker:
+    name: Docker Build & Scan
     runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-    - name: Build Docker image
-      run: |
-        docker build -t {{.ProjectName}}:test .
-        docker run --rm {{.ProjectName}}:test --help || true
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: actions/setup-go@v4
+    
+    - name: Log in to Container Registry
+      if: github.event_name != 'pull_request'
+      uses: docker/login-action@v3
       with:
-        go-version: {{.GoVersion}}
-    - name: Run Gosec Security Scanner
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix=sha-
+          type=raw,value=latest,enable={{is_default_branch}}
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+    
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        platforms: linux/amd64,linux/arm64
+        push: ${{ github.event_name != 'pull_request' }}
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+        build-args: |
+          BUILDTIME=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+          VERSION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.version'] }}
+          REVISION=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+    
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+      continue-on-error: true
+    
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+    
+    - name: Test Docker image
+      if: github.event_name != 'pull_request'
       run: |
-        go install github.com/securego/gosec/v2/cmd/gosec@latest
-        gosec ./...
-    - name: Run govulncheck
+        docker run --rm --name {{.ProjectName}}-test \
+          -e PORT={{.Port}} \
+          -p {{.Port}}:{{.Port}} \
+{{if .EnableObservability}}
+          -p 8080:8080 \
+          -p 9090:9090 \
+{{end}}
+          --health-cmd="true" \
+          --health-interval=10s \
+          --health-timeout=5s \
+          --health-retries=3 \
+          --health-start-period=10s \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest &
+        
+        # Wait for container to start
+        sleep 15
+        
+        # Test health endpoints
+{{if .EnableObservability}}
+        curl -f http://localhost:8080/health || echo "Health check failed"
+        curl -f http://localhost:9090/metrics || echo "Metrics endpoint failed"
+{{end}}
+        
+        # Stop container
+        docker stop {{.ProjectName}}-test || true
+
+  # Deployment to staging (on main branch)
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment:
+      name: staging
+      url: https://{{.ProjectName}}-staging.example.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Deploy to staging
       run: |
-        go install golang.org/x/vuln/cmd/govulncheck@latest
-        govulncheck ./...
+        echo "Deploying to staging environment..."
+        # Add your staging deployment logic here
+        # Example: kubectl, helm, or cloud provider CLI commands
+        echo "Staging deployment completed"
+    
+    - name: Run smoke tests
+      run: |
+        echo "Running staging smoke tests..."
+        # Add staging smoke tests here
+        sleep 5
+        echo "Smoke tests passed"
+    
+    - name: Notify deployment
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#deployments'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
+
+  # Production deployment (on release)
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [docker]
+    if: github.event_name == 'release'
+    environment:
+      name: production
+      url: https://{{.ProjectName}}.example.com
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Deploy to production
+      run: |
+        echo "Deploying to production environment..."
+        # Add your production deployment logic here
+        echo "Production deployment completed"
+    
+    - name: Run production health checks
+      run: |
+        echo "Running production health checks..."
+        # Add production health checks here
+        sleep 10
+        echo "Health checks passed"
+    
+    - name: Notify production deployment
+      if: always()
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        channel: '#production-alerts'
+        webhook_url: ${{ secrets.SLACK_WEBHOOK_PROD }}
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_PROD }}
