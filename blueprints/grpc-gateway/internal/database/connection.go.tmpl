@@ -18,7 +18,13 @@ import (
 	{{end}}
 
 	{{if eq .DatabaseORM "gorm"}}
-	"gorm.io/driver/{{.DatabaseDriver}}"
+	{{if eq .DatabaseDriver "postgres"}}
+	"gorm.io/driver/postgres"
+	{{else if eq .DatabaseDriver "mysql"}}
+	"gorm.io/driver/mysql"
+	{{else if eq .DatabaseDriver "sqlite"}}
+	"gorm.io/driver/sqlite"
+	{{end}}
 	"gorm.io/gorm"
 	gormlogger "gorm.io/gorm/logger"
 	{{else if eq .DatabaseORM "sqlx"}}
@@ -65,25 +71,25 @@ func NewConnection(ctx context.Context, cfg *config.Config, log logger.Logger) (
 		dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			cfg.Database.Host,
 			cfg.Database.Port,
-			cfg.Database.User,
+			cfg.Database.Usernamename,
 			cfg.Database.Password,
-			cfg.Database.Name,
+			cfg.Database.Database,
 			cfg.Database.SSLMode,
 		)
 		db, err = gorm.Open(postgres.Open(dsn), gormConfig)
 	{{else if eq .DatabaseDriver "mysql"}}
 	case "mysql":
 		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-			cfg.Database.User,
+			cfg.Database.Usernamename,
 			cfg.Database.Password,
 			cfg.Database.Host,
 			cfg.Database.Port,
-			cfg.Database.Name,
+			cfg.Database.Database,
 		)
 		db, err = gorm.Open(mysql.Open(dsn), gormConfig)
 	{{else if eq .DatabaseDriver "sqlite"}}
-	case "sqlite":
-		db, err = gorm.Open(sqlite.Open(cfg.Database.Name), gormConfig)
+	case "sqlite3":
+		db, err = gorm.Open(sqlite.Open(cfg.Database.Database), gormConfig)
 	{{end}}
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
@@ -108,23 +114,23 @@ func NewConnection(ctx context.Context, cfg *config.Config, log logger.Logger) (
 		dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			cfg.Database.Host,
 			cfg.Database.Port,
-			cfg.Database.User,
+			cfg.Database.Username,
 			cfg.Database.Password,
-			cfg.Database.Name,
+			cfg.Database.Database,
 			cfg.Database.SSLMode,
 		)
 	{{else if eq .DatabaseDriver "mysql"}}
 	case "mysql":
 		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-			cfg.Database.User,
+			cfg.Database.Username,
 			cfg.Database.Password,
 			cfg.Database.Host,
 			cfg.Database.Port,
-			cfg.Database.Name,
+			cfg.Database.Database,
 		)
 	{{else if eq .DatabaseDriver "sqlite"}}
 	case "sqlite3":
-		dsn = cfg.Database.Name
+		dsn = cfg.Database.Database
 	{{end}}
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
@@ -146,23 +152,23 @@ func NewConnection(ctx context.Context, cfg *config.Config, log logger.Logger) (
 		dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			cfg.Database.Host,
 			cfg.Database.Port,
-			cfg.Database.User,
+			cfg.Database.Username,
 			cfg.Database.Password,
-			cfg.Database.Name,
+			cfg.Database.Database,
 			cfg.Database.SSLMode,
 		)
 	{{else if eq .DatabaseDriver "mysql"}}
 	case "mysql":
 		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-			cfg.Database.User,
+			cfg.Database.Username,
 			cfg.Database.Password,
 			cfg.Database.Host,
 			cfg.Database.Port,
-			cfg.Database.Name,
+			cfg.Database.Database,
 		)
 	{{else if eq .DatabaseDriver "sqlite"}}
 	case "sqlite3":
-		dsn = cfg.Database.Name
+		dsn = cfg.Database.Database
 	{{end}}
 	default:
 		return nil, fmt.Errorf("unsupported database driver: %s", cfg.Database.Driver)
@@ -182,7 +188,6 @@ func NewConnection(ctx context.Context, cfg *config.Config, log logger.Logger) (
 	// Configure connection pool
 	sqlDB.SetMaxOpenConns(cfg.Database.MaxOpenConns)
 	sqlDB.SetMaxIdleConns(cfg.Database.MaxIdleConns)
-	sqlDB.SetConnMaxLifetime(cfg.Database.ConnMaxLifetime)
 
 	log.Info("Database connection established successfully")
 

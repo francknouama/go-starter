@@ -11,16 +11,15 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-
 {{if eq .Logger "zap"}}
 	"go.uber.org/zap"
 {{else if eq .Logger "logrus"}}
 	"github.com/sirupsen/logrus"
 {{else if eq .Logger "zerolog"}}
 	"github.com/rs/zerolog/log"
-{{else}}
-	"log/slog"
 {{end}}
+
+	"{{.ModulePath}}/internal/logger"
 )
 
 // RateLimiter implements a token bucket rate limiter
@@ -29,15 +28,7 @@ type RateLimiter struct {
 	window   time.Duration
 	buckets  map[string]*bucket
 	mutex    sync.RWMutex
-{{if eq .Logger "zap"}}
-	logger   *zap.Logger
-{{else if eq .Logger "logrus"}}
-	logger   *logrus.Logger
-{{else if eq .Logger "zerolog"}}
-	// zerolog uses global logger
-{{else}}
-	logger   *slog.Logger
-{{end}}
+	logger   logger.Logger
 }
 
 type bucket struct {
@@ -47,14 +38,12 @@ type bucket struct {
 }
 
 // NewRateLimiter creates a new rate limiter
-func NewRateLimiter(requests int, window time.Duration{{if ne .Logger "zerolog"}}, logger {{if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else}}*slog.Logger{{end}}{{end}}) *RateLimiter {
+func NewRateLimiter(requests int, window time.Duration, logger logger.Logger) *RateLimiter {
 	rl := &RateLimiter{
 		requests: requests,
 		window:   window,
 		buckets:  make(map[string]*bucket),
-{{if ne .Logger "zerolog"}}
 		logger:   logger,
-{{end}}
 	}
 	
 	// Start cleanup routine

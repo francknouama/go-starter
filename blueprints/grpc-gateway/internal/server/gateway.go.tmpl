@@ -8,7 +8,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/reflection"
+	"google.golang.org/protobuf/encoding/protojson"
 
 	"{{.ModulePath}}/internal/config"
 	"{{.ModulePath}}/internal/logger"
@@ -29,11 +29,11 @@ func NewGatewayServer(cfg *config.Config, log logger.Logger) *GatewayServer {
 	mux := runtime.NewServeMux(
 		runtime.WithMarshalerOption(runtime.MIMEWildcard, &runtime.HTTPBodyMarshaler{
 			Marshaler: &runtime.JSONPb{
-				MarshalOptions: {
+				MarshalOptions: protojson.MarshalOptions{
 					UseProtoNames:   true,
 					EmitUnpopulated: true,
 				},
-				UnmarshalOptions: {
+				UnmarshalOptions: protojson.UnmarshalOptions{
 					DiscardUnknown: true,
 				},
 			},

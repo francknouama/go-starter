@@ -31,19 +31,44 @@ help: ## Show this help message
 
 install-tools: ## Install required protobuf and gRPC tools
 	@echo "Installing protobuf and gRPC tools..."
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@latest
-	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@latest
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.35.1
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.5.1
+	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-grpc-gateway@v2.22.0
+	go install github.com/grpc-ecosystem/grpc-gateway/v2/protoc-gen-openapiv2@v2.22.0
+	@echo "Installing buf (if not present)..."
+	@command -v buf >/dev/null 2>&1 || { \
+		echo "Installing buf CLI..."; \
+		curl -sSL "https://github.com/bufbuild/buf/releases/latest/download/buf-$(shell uname -s)-$(shell uname -m)" -o "$${TMPDIR}/buf"; \
+		chmod +x "$${TMPDIR}/buf"; \
+		sudo mv "$${TMPDIR}/buf" /usr/local/bin/buf; \
+	}
 
-generate: ## Generate protobuf and gRPC Gateway code (using buf)
+generate: ## Generate protobuf and gRPC Gateway code (using buf with fallback)
 	@echo "Generating protobuf code with buf..."
 	@mkdir -p $(GEN_DIR)
 	@mkdir -p ./api
 	@if command -v buf >/dev/null 2>&1; then \
-		buf generate; \
+		echo "Using buf for code generation..."; \
+		echo "Running buf mod update..."; \
+		if buf mod update; then \
+			echo "Running buf generate..."; \
+			if buf generate; then \
+				echo "✓ buf generate completed successfully"; \
+				$(MAKE) fix-generated-paths; \
+				$(MAKE) post-generate; \
+			else \
+				echo "⚠ buf generate failed, falling back to protoc..."; \
+				$(MAKE) install-tools; \
+				$(MAKE) protoc-generate; \
+			fi; \
+		else \
+			echo "⚠ buf mod update failed, falling back to protoc..."; \
+			$(MAKE) install-tools; \
+			$(MAKE) protoc-generate; \
+		fi; \
 	else \
-		echo "Warning: buf not found, using protoc fallback..."; \
+		echo "buf not found, using protoc fallback..."; \
+		$(MAKE) install-tools; \
 		$(MAKE) protoc-generate; \
 	fi
 
@@ -51,8 +76,24 @@ protoc-generate: ## Generate code using protoc (fallback method)
 	@echo "Generating protobuf code with protoc..."
 	@mkdir -p $(GEN_DIR)
 	@mkdir -p ./api
+	@# Find googleapis include path
+	@GOOGLEAPIS_PATH=""; \
+	if [ -d "/usr/local/include/google" ]; then \
+		GOOGLEAPIS_PATH="/usr/local/include"; \
+	elif GENPROTO_PATH=$$(go list -f '{{"{{.Dir}}"}}' -m google.golang.org/genproto/googleapis 2>/dev/null); then \
+		GOOGLEAPIS_PATH="$$GENPROTO_PATH/.."; \
+	elif GOOGLEAPIS_PATH=$$(go list -f '{{"{{.Dir}}"}}' -m github.com/googleapis/googleapis 2>/dev/null); then \
+		true; \
+	else \
+		echo "Downloading googleapis..."; \
+		mkdir -p .googleapis; \
+		curl -sSL https://github.com/googleapis/googleapis/archive/master.tar.gz | tar -xz -C .googleapis --strip-components=1; \
+		GOOGLEAPIS_PATH=".googleapis"; \
+	fi; \
 	$(PROTOC) \
 		--proto_path=$(PROTO_DIR) \
+		--proto_path=$$GOOGLEAPIS_PATH \
+		--proto_path=/usr/local/include \
 		--go_out=$(GEN_DIR) \
 		--go_opt=paths=source_relative \
 		--go-grpc_out=$(GEN_DIR) \
@@ -62,9 +103,31 @@ protoc-generate: ## Generate code using protoc (fallback method)
 		--openapiv2_out=./api \
 		--openapiv2_opt=logtostderr=true \
 		$(shell find $(PROTO_DIR) -name "*.proto")
+	@$(MAKE) post-generate
 
 buf-generate: ## Generate code using buf (alias for generate)
 	@$(MAKE) generate
+
+fix-generated-paths: ## Fix buf generated directory structure
+	@echo "Fixing generated file paths..."
+	@if [ -d "$(GEN_DIR)/proto" ]; then \
+		echo "Moving files from gen/proto/* to gen/*..."; \
+		mv $(GEN_DIR)/proto/* $(GEN_DIR)/ 2>/dev/null || true; \
+		rmdir $(GEN_DIR)/proto 2>/dev/null || true; \
+		echo "✓ Generated file paths fixed"; \
+	fi
+
+post-generate: ## Post-processing after protobuf generation
+	@echo "Running post-generation tasks..."
+	@if [ -d "$(GEN_DIR)" ] && [ "$$(ls -A $(GEN_DIR) 2>/dev/null)" ]; then \
+		echo "Verifying generated files exist..."; \
+		find $(GEN_DIR) -name "*.go" -type f | head -3; \
+		echo "Cleaning up Go module dependencies..."; \
+		go mod tidy; \
+		echo "✓ Post-generation completed"; \
+	else \
+		echo "⚠ No generated files found in $(GEN_DIR)"; \
+	fi
 
 build: generate ## Build the application
 	@echo "Building {{.ProjectName}}..."

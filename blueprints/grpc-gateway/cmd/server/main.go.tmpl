@@ -55,7 +55,12 @@ func main() {
 
 	// Initialize logger
 	loggerFactory := logger.NewFactory()
-	appLogger, err := loggerFactory.CreateFromConfig(cfg.Logger)
+	loggerConfig := logger.Config{
+		Type:   cfg.Logger.Type,
+		Level:  cfg.Logger.Level,
+		Format: cfg.Logger.Format,
+	}
+	appLogger, err := loggerFactory.CreateFromConfig(loggerConfig)
 	if err != nil {
 		log.Fatalf("Failed to create logger: %v", err)
 	}
@@ -98,13 +103,13 @@ func main() {
 
 	// Initialize enhanced components
 {{if .EnableMetrics}}
-	metricsCollector := metrics.NewMetricsCollector({{if ne .Logger "zerolog"}}appLogger{{end}})
+	metricsCollector := metrics.NewMetricsCollector(appLogger)
 {{end}}
 {{if .EnableRateLimiting}}
-	rateLimiter := ratelimit.NewRateLimiter(100, time.Minute{{if ne .Logger "zerolog"}}, appLogger{{end}}) // 100 requests per minute
+	rateLimiter := ratelimit.NewRateLimiter(100, time.Minute, appLogger) // 100 requests per minute
 {{end}}
 {{if .EnableEnhancedInterceptors}}
-	enhancedInterceptors := interceptors.NewEnhancedInterceptors({{if ne .Logger "zerolog"}}appLogger{{end}})
+	enhancedInterceptors := interceptors.NewEnhancedInterceptors(appLogger)
 {{end}}
 
 	// Create context for graceful shutdown

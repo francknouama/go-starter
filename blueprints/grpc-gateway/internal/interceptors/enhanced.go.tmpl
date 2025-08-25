@@ -11,15 +11,12 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
-
 {{if eq .Logger "zap"}}
 	"go.uber.org/zap"
 {{else if eq .Logger "logrus"}}
 	"github.com/sirupsen/logrus"
 {{else if eq .Logger "zerolog"}}
 	"github.com/rs/zerolog/log"
-{{else}}
-	"log/slog"
 {{end}}
 
 	"{{.ModulePath}}/internal/logger"
@@ -27,15 +24,7 @@ import (
 
 // EnhancedInterceptors provides production-grade gRPC interceptors
 type EnhancedInterceptors struct {
-{{if eq .Logger "zap"}}
-	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
-	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
-	// zerolog uses global logger
-{{else}}
-	logger *slog.Logger
-{{end}}
+	logger  logger.Logger
 	metrics *InterceptorMetrics
 }
 
@@ -52,11 +41,9 @@ type InterceptorMetrics struct {
 }
 
 // NewEnhancedInterceptors creates a new enhanced interceptors instance
-func NewEnhancedInterceptors({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *EnhancedInterceptors {
+func NewEnhancedInterceptors(logger logger.Logger) *EnhancedInterceptors {
 	return &EnhancedInterceptors{
-{{if ne .Logger "zerolog"}}
 		logger:  logger,
-{{end}}
 		metrics: &InterceptorMetrics{},
 	}
 }

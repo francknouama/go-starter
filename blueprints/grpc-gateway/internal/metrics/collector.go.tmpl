@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"strconv"
 	"sync"
 	"time"
 
@@ -12,15 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 
-{{if eq .Logger "zap"}}
-	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
-	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
-	"github.com/rs/zerolog/log"
-{{else}}
-	"log/slog"
-{{end}}
+	"{{.ModulePath}}/internal/logger"
 )
 
 // MetricsCollector collects and exposes application metrics
@@ -29,15 +20,7 @@ type MetricsCollector struct {
 	grpcMetrics GRPCMetrics
 	systemMetrics SystemMetrics
 	mutex       sync.RWMutex
-{{if eq .Logger "zap"}}
-	logger      *zap.Logger
-{{else if eq .Logger "logrus"}}
-	logger      *logrus.Logger
-{{else if eq .Logger "zerolog"}}
-	// zerolog uses global logger
-{{else}}
-	logger      *slog.Logger
-{{end}}
+	logger      logger.Logger
 	startTime   time.Time
 }
 
@@ -68,7 +51,7 @@ type SystemMetrics struct {
 }
 
 // NewMetricsCollector creates a new metrics collector
-func NewMetricsCollector({{if ne .Logger "zerolog"}}logger {{if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else}}*slog.Logger{{end}}{{end}}) *MetricsCollector {
+func NewMetricsCollector(logger logger.Logger) *MetricsCollector {
 	return &MetricsCollector{
 		httpMetrics: HTTPMetrics{
 			RequestsTotal:   make(map[string]int64),
@@ -81,9 +64,7 @@ func NewMetricsCollector({{if ne .Logger "zerolog"}}logger {{if eq .Logger "zap"
 			RequestDuration: make(map[string][]time.Duration),
 			ErrorsTotal:     make(map[string]int64),
 		},
-{{if ne .Logger "zerolog"}}
 		logger:    logger,
-{{end}}
 		startTime: time.Now(),
 	}
 }

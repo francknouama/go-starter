@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -23,9 +24,10 @@ type Config struct {
 
 // ServerConfig contains server-related configuration
 type ServerConfig struct {
-	HTTPPort int       `mapstructure:"http_port"`
-	GRPCPort int       `mapstructure:"grpc_port"`
-	TLS      TLSConfig `mapstructure:"tls"`
+	HTTPPort        int           `mapstructure:"http_port"`
+	GRPCPort        int           `mapstructure:"grpc_port"`
+	ShutdownTimeout time.Duration `mapstructure:"shutdown_timeout"`
+	TLS             TLSConfig     `mapstructure:"tls"`
 }
 
 // TLSConfig contains TLS-related configuration
@@ -55,10 +57,8 @@ type DatabaseConfig struct {
 	Password string `mapstructure:"password"`
 	Database string `mapstructure:"database"`
 	SSLMode  string `mapstructure:"ssl_mode"`
-	{{- if eq .DatabaseORM "gorm"}}
 	MaxOpenConns int `mapstructure:"max_open_conns"`
 	MaxIdleConns int `mapstructure:"max_idle_conns"`
-	{{- end}}
 }
 
 // GetDSN returns the database connection string
@@ -155,6 +155,7 @@ func setDefaults() {
 	// Server defaults
 	viper.SetDefault("server.http_port", {{.HttpPort | default 8080}})
 	viper.SetDefault("server.grpc_port", {{.GrpcPort | default 50051}})
+	viper.SetDefault("server.shutdown_timeout", "30s")
 	
 	// TLS defaults
 	viper.SetDefault("server.tls.enabled", true)
