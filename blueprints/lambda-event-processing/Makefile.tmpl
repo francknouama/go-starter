@@ -1,0 +1,310 @@
+.PHONY: help build test clean deploy package install lint security validate
+.DEFAULT_GOAL := help
+
+# Variables
+GO_VERSION := {{.GoVersion}}
+PROJECT_NAME := {{.ProjectName}}
+FUNCTION_NAME := $(PROJECT_NAME)-event-processor
+REGION := $(AWS_DEFAULT_REGION)
+ifeq ($(REGION),)
+	REGION := us-east-1
+endif
+
+# Environment-specific configurations
+ENV ?= dev
+STACK_NAME := $(PROJECT_NAME)-$(ENV)
+S3_BUCKET := $(PROJECT_NAME)-deployment-$(ENV)-$(shell echo $(REGION) | tr '[:upper:]' '[:lower:]')
+
+# Build configuration
+GOOS := linux
+GOARCH := {{- if eq .GoVersion "1.21"}} arm64 {{- else}} amd64 {{- end}}
+CGO_ENABLED := 0
+LDFLAGS := -ldflags="-s -w -X main.version=$(shell git describe --tags --always --dirty)"
+
+# Colors for output
+RED := \033[0;31m
+GREEN := \033[0;32m
+YELLOW := \033[0;33m
+BLUE := \033[0;34m
+NC := \033[0m # No Color
+
+## Show this help message
+help:
+	@echo ''
+	@echo 'Usage:'
+	@echo '  ${YELLOW}make${NC} ${GREEN}<target>${NC}'
+	@echo ''
+	@echo 'Targets:'
+	@awk 'BEGIN {FS = ":.*?## "} { \
+		if (/^[a-zA-Z_-]+:.*?##/) { \
+			printf "  ${YELLOW}%-20s${NC} %s\n", $$1, $$2 \
+		} \
+	}' $(MAKEFILE_LIST)
+	@echo ''
+
+## Install development dependencies
+install:
+	@echo "${BLUE}Installing development dependencies...${NC}"
+	go mod download
+	go mod tidy
+{{- if eq .TestingLevel "comprehensive"}}
+	# Install testing tools
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+	go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest
+	go install github.com/go-task/task/v3/cmd/task@latest
+{{- end}}
+	# Install AWS SAM CLI (if not already installed)
+	@which sam > /dev/null || (echo "${YELLOW}Please install AWS SAM CLI: https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-install.html${NC}")
+	@echo "${GREEN}Dependencies installed successfully!${NC}"
+
+## Build the Lambda function binary
+build: clean
+	@echo "${BLUE}Building Lambda function...${NC}"
+	@echo "Go version: $(GO_VERSION)"
+	@echo "Target architecture: $(GOOS)/$(GOARCH)"
+	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=$(CGO_ENABLED) go build $(LDFLAGS) -o bootstrap main.go
+	@echo "${GREEN}Build completed successfully!${NC}"
+
+## Run comprehensive tests
+test:
+	@echo "${BLUE}Running tests...${NC}"
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	# Run security scan first
+	@which gosec > /dev/null && gosec -severity medium ./... || echo "${YELLOW}Warning: gosec not found, skipping security scan${NC}"
+{{- end}}
+	# Run unit tests with coverage
+	go test -v -race -coverprofile=coverage.out ./...
+	# Generate coverage report
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "${GREEN}Tests completed! Coverage report: coverage.html${NC}"
+
+{{- if eq .TestingLevel "comprehensive"}}
+## Run integration tests (requires Docker)
+test-integration:
+	@echo "${BLUE}Running integration tests...${NC}"
+	# Start test containers
+	docker-compose -f docker-compose.test.yml up -d
+	# Wait for services to be ready
+	sleep 10
+	# Run integration tests
+	go test -v -tags=integration ./tests/integration/...
+	# Cleanup
+	docker-compose -f docker-compose.test.yml down
+	@echo "${GREEN}Integration tests completed!${NC}"
+{{- end}}
+
+## Run static analysis and linting
+lint:
+	@echo "${BLUE}Running static analysis...${NC}"
+{{- if eq .TestingLevel "comprehensive"}}
+	# Run golangci-lint if available
+	@which golangci-lint > /dev/null && golangci-lint run --timeout=5m || echo "${YELLOW}Warning: golangci-lint not found${NC}"
+{{- end}}
+	# Run go vet
+	go vet ./...
+	# Run go fmt check
+	@test -z "$(shell gofmt -l .)" || (echo "${RED}Code is not formatted. Run 'gofmt -w .'${NC}" && exit 1)
+	@echo "${GREEN}Linting completed successfully!${NC}"
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+## Run security vulnerability scan
+security:
+	@echo "${BLUE}Running security scan...${NC}"
+	@which gosec > /dev/null || (echo "${RED}gosec not found. Install with: go install github.com/securecodewarrior/gosec/v2/cmd/gosec@latest${NC}" && exit 1)
+	gosec -severity medium -confidence medium -fmt json -out security-report.json ./...
+	@echo "${GREEN}Security scan completed! Report: security-report.json${NC}"
+{{- end}}
+
+## Validate SAM template
+validate:
+	@echo "${BLUE}Validating SAM template...${NC}"
+	@which sam > /dev/null || (echo "${RED}AWS SAM CLI not found${NC}" && exit 1)
+	sam validate --template template.yaml
+	@echo "${GREEN}Template validation successful!${NC}"
+
+## Package the Lambda function for deployment
+package: build validate
+	@echo "${BLUE}Packaging Lambda function...${NC}"
+	# Create S3 bucket if it doesn't exist
+	@aws s3 mb s3://$(S3_BUCKET) --region $(REGION) 2>/dev/null || true
+	# Package the application
+	sam package \
+		--template-file template.yaml \
+		--output-template-file packaged-template.yaml \
+		--s3-bucket $(S3_BUCKET) \
+		--region $(REGION)
+	@echo "${GREEN}Packaging completed! Packaged template: packaged-template.yaml${NC}"
+
+## Deploy to AWS (dev environment by default)
+deploy: package
+	@echo "${BLUE}Deploying to AWS ($(ENV) environment)...${NC}"
+	@echo "Stack name: $(STACK_NAME)"
+	@echo "Region: $(REGION)"
+	sam deploy \
+		--template-file packaged-template.yaml \
+		--stack-name $(STACK_NAME) \
+		--capabilities CAPABILITY_IAM \
+		--region $(REGION) \
+		--parameter-overrides Environment=$(ENV) \
+		--confirm-changeset \
+		--fail-on-empty-changeset false
+	@echo "${GREEN}Deployment completed successfully!${NC}"
+	@echo "${BLUE}Stack outputs:${NC}"
+	@aws cloudformation describe-stacks --stack-name $(STACK_NAME) --region $(REGION) --query 'Stacks[0].Outputs' --output table
+
+## Deploy to production (requires explicit confirmation)
+deploy-prod:
+	@echo "${RED}⚠️  Production deployment${NC}"
+	@read -p "Are you sure you want to deploy to production? [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		make deploy ENV=prod; \
+	else \
+		echo "Production deployment cancelled."; \
+	fi
+
+## Invoke the Lambda function locally for testing
+local-invoke:
+	@echo "${BLUE}Invoking Lambda function locally...${NC}"
+	@which sam > /dev/null || (echo "${RED}AWS SAM CLI not found${NC}" && exit 1)
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
+	# Test with SQS event
+	sam local invoke EventProcessingFunction --event events/sqs-event.json
+{{- end}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
+	# Test with SNS event  
+	sam local invoke EventProcessingFunction --event events/sns-event.json
+{{- end}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
+	# Test with EventBridge event
+	sam local invoke EventProcessingFunction --event events/eventbridge-event.json
+{{- end}}
+
+## Start local API for development
+local-api:
+	@echo "${BLUE}Starting local SAM API...${NC}"
+	sam local start-api --host 0.0.0.0 --port 3000
+
+## View Lambda function logs
+logs:
+	@echo "${BLUE}Viewing Lambda function logs...${NC}"
+	@which sam > /dev/null || (echo "${RED}AWS SAM CLI not found${NC}" && exit 1)
+	sam logs --stack-name $(STACK_NAME) --name EventProcessingFunction --tail
+
+## Monitor CloudWatch metrics
+monitor:
+	@echo "${BLUE}Opening CloudWatch dashboard...${NC}"
+	@aws cloudformation describe-stacks --stack-name $(STACK_NAME) --region $(REGION) --query 'Stacks[0].Outputs[?OutputKey==`MonitoringDashboardUrl`].OutputValue' --output text | xargs open
+
+## Clean build artifacts
+clean:
+	@echo "${BLUE}Cleaning build artifacts...${NC}"
+	rm -rf bootstrap
+	rm -rf packaged-template.yaml
+	rm -rf coverage.out coverage.html
+	rm -rf security-report.json
+	@echo "${GREEN}Clean completed!${NC}"
+
+## Delete the CloudFormation stack
+delete:
+	@echo "${RED}⚠️  Deleting CloudFormation stack: $(STACK_NAME)${NC}"
+	@read -p "Are you sure you want to delete the stack? This cannot be undone. [y/N] " -n 1 -r; \
+	echo; \
+	if [[ $$REPLY =~ ^[Yy]$$ ]]; then \
+		aws cloudformation delete-stack --stack-name $(STACK_NAME) --region $(REGION); \
+		echo "${YELLOW}Stack deletion initiated. Check AWS Console for progress.${NC}"; \
+	else \
+		echo "Stack deletion cancelled."; \
+	fi
+
+## Quick development workflow: build, test, and deploy to dev
+dev-deploy: clean build test package deploy
+	@echo "${GREEN}🚀 Development deployment completed!${NC}"
+
+## Generate test events for local development  
+generate-events:
+	@echo "${BLUE}Generating test events...${NC}"
+	@mkdir -p events
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
+	# Generate SQS test event
+	@echo '{
+	  "Records": [
+	    {
+	      "messageId": "test-message-1",
+	      "receiptHandle": "test-receipt-handle",
+	      "body": "{\"type\": \"user_created\", \"user_id\": \"12345\", \"email\": \"user@example.com\"}",
+	      "attributes": {
+	        "ApproximateReceiveCount": "1",
+	        "SentTimestamp": "1609459200000"
+	      },
+	      "messageAttributes": {},
+	      "md5OfBody": "test-md5",
+	      "eventSource": "aws:sqs",
+	      "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:test-queue",
+	      "awsRegion": "us-east-1"
+	    }
+	  ]
+	}' > events/sqs-event.json
+{{- end}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
+	# Generate SNS test event
+	@echo '{
+	  "Records": [
+	    {
+	      "EventSource": "aws:sns",
+	      "EventVersion": "1.0",
+	      "EventSubscriptionArn": "arn:aws:sns:us-east-1:123456789012:test-topic:subscription-id",
+	      "Sns": {
+	        "Type": "Notification",
+	        "MessageId": "test-message-id",
+	        "TopicArn": "arn:aws:sns:us-east-1:123456789012:test-topic",
+	        "Subject": "Test Notification",
+	        "Message": "{\"type\": \"alert\", \"severity\": \"high\", \"message\": \"Test alert\"}",
+	        "Timestamp": "2021-01-01T00:00:00.000Z",
+	        "SignatureVersion": "1",
+	        "MessageAttributes": {}
+	      }
+	    }
+	  ]
+	}' > events/sns-event.json
+{{- end}}
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
+	# Generate EventBridge test event
+	@echo '{
+	  "version": "0",
+	  "id": "test-event-id",
+	  "detail-type": "User Registered",
+	  "source": "custom.{{.ProjectName}}",
+	  "account": "123456789012",
+	  "time": "2021-01-01T00:00:00Z",
+	  "region": "us-east-1",
+	  "detail": {
+	    "userId": "12345",
+	    "email": "user@example.com",
+	    "registrationTime": "2021-01-01T00:00:00Z"
+	  }
+	}' > events/eventbridge-event.json
+{{- end}}
+	@echo "${GREEN}Test events generated in ./events/ directory${NC}"
+
+## Show project information
+info:
+	@echo "${BLUE}Project Information:${NC}"
+	@echo "  Project Name: $(PROJECT_NAME)"
+	@echo "  Go Version: $(GO_VERSION)"
+	@echo "  Environment: $(ENV)"
+	@echo "  Stack Name: $(STACK_NAME)"
+	@echo "  AWS Region: $(REGION)"
+	@echo "  S3 Bucket: $(S3_BUCKET)"
+	@echo "  Target Architecture: $(GOOS)/$(GOARCH)"
+{{- if .EventSources}}
+	@echo "  Event Sources: {{- if kindIs "slice" .EventSources}}{{range $i, $source := .EventSources}}{{if $i}}, {{end}}{{$source}}{{end}}{{else}}{{.EventSources}}{{end}}"
+{{- end}}
+	@echo "  Processing Pattern: {{.ProcessingPattern}}"
+	@echo "  Observability Level: {{.ObservabilityLevel}}"
+
+# Ensure required environment variables are set
+check-env:
+	@test "$(AWS_DEFAULT_REGION)" != "" || (echo "${RED}AWS_DEFAULT_REGION not set${NC}" && exit 1)
+	@test "$(AWS_PROFILE)" != "" || (echo "${YELLOW}AWS_PROFILE not set, using default${NC}")
+	@aws sts get-caller-identity > /dev/null || (echo "${RED}AWS credentials not configured${NC}" && exit 1)

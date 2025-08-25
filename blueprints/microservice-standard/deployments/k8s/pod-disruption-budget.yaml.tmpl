@@ -1,0 +1,19 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{.ProjectName}}-pdb
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: availability
+spec:
+  selector:
+    matchLabels:
+      app: {{.ProjectName}}
+  {{if eq .Environment "production"}}
+  minAvailable: 2  # Ensure at least 2 pods are available during disruptions
+  {{else}}
+  minAvailable: 1  # Ensure at least 1 pod is available during disruptions
+  {{end}}
+  maxUnavailable: 1  # Allow maximum 1 pod to be unavailable at a time
+  unhealthyPodEvictionPolicy: IfHealthyBudget

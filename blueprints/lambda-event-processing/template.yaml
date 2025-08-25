@@ -103,6 +103,16 @@ files:
     description: "SQS message processing with batch support"
     condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"sqs\")) (and (kindIs \"slice\" .EventSources) (has \"sqs\" .EventSources))}}"
 
+  - source: "internal/handler/sns_handler.go.tmpl"
+    destination: "internal/handler/sns_handler.go"
+    description: "SNS message processing with fanout support"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"sns\")) (and (kindIs \"slice\" .EventSources) (has \"sns\" .EventSources))}}"
+
+  - source: "internal/handler/eventbridge_handler.go.tmpl"
+    destination: "internal/handler/eventbridge_handler.go"
+    description: "EventBridge event processing with intelligent routing"
+    condition: "{{or (and (kindIs \"string\" .EventSources) (eq .EventSources \"eventbridge\")) (and (kindIs \"slice\" .EventSources) (has \"eventbridge\" .EventSources))}}"
+
   # Domain Models and Events
   - source: "internal/domain/event.go.tmpl"
     destination: "internal/domain/event.go"
@@ -135,11 +145,56 @@ files:
     destination: "internal/performance/cold_start.go"
     description: "Cold start optimization patterns"
 
+  # Processing Engines
+  - source: "internal/processor/batch_processor.go.tmpl"
+    destination: "internal/processor/batch_processor.go"
+    description: "Batch processing engine for high-throughput scenarios"
+    condition: "{{eq .ProcessingPattern \"batch\"}}"
+
   # Security Features
   - source: "internal/security/secrets_manager.go.tmpl"
     destination: "internal/security/secrets_manager.go"
     description: "AWS Secrets Manager integration"
     condition: "{{or (and (kindIs \"string\" .SecurityFeatures) (eq .SecurityFeatures \"secrets-manager\")) (and (kindIs \"slice\" .SecurityFeatures) (has \"secrets-manager\" .SecurityFeatures))}}"
+
+  # Resilience Patterns
+  - source: "internal/resilience/circuit_breaker.go.tmpl"
+    destination: "internal/resilience/circuit_breaker.go"
+    description: "Circuit breaker pattern for fault tolerance"
+    condition: "{{or (and (kindIs \"string\" .ResilienceFeatures) (eq .ResilienceFeatures \"circuit-breaker\")) (and (kindIs \"slice\" .ResilienceFeatures) (has \"circuit-breaker\" .ResilienceFeatures))}}"
+
+  - source: "internal/resilience/dlq_handler.go.tmpl"
+    destination: "internal/resilience/dlq_handler.go"
+    description: "Dead letter queue handler for failed messages"
+    condition: "{{or (and (kindIs \"string\" .ResilienceFeatures) (eq .ResilienceFeatures \"dlq\")) (and (kindIs \"slice\" .ResilienceFeatures) (has \"dlq\" .ResilienceFeatures))}}"
+
+  # Infrastructure as Code
+  - source: "template.yaml.tmpl"
+    destination: "template.yaml"
+    description: "AWS SAM template for serverless deployment"
+
+  # Build and Deployment
+  - source: "Makefile.tmpl"
+    destination: "Makefile"
+    description: "Build automation and deployment scripts"
+
+  - source: "deploy.sh.tmpl"
+    destination: "deploy.sh"
+    executable: true
+    description: "Deployment automation script"
+
+  # Environment Configuration
+  - source: "samconfig.toml.tmpl"
+    destination: "samconfig.toml"
+    description: "SAM CLI configuration for different environments"
+
+  - source: "env-example.tmpl"
+    destination: ".env.example"
+    description: "Environment variables template"
+
+  - source: "gitignore.tmpl"
+    destination: ".gitignore"
+    description: "Git ignore rules for Go and AWS"
 
   # Documentation
   - source: "README.md.tmpl"

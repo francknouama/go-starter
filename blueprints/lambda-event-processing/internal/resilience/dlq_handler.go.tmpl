@@ -1,0 +1,362 @@
+package resilience
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
+	"{{.ModulePath}}/internal/observability"
+)
+
+// DLQConfig holds the configuration for dead letter queue handling
+type DLQConfig struct {
+	Enabled       bool   `json:"enabled" yaml:"enabled"`
+	QueueURL      string `json:"queue_url" yaml:"queue_url"`
+	MaxRetries    int    `json:"max_retries" yaml:"max_retries"`
+	RetryDelay    time.Duration `json:"retry_delay" yaml:"retry_delay"`
+	IncludeHeaders bool  `json:"include_headers" yaml:"include_headers"`
+	IncludeStackTrace bool `json:"include_stack_trace" yaml:"include_stack_trace"`
+}
+
+// DefaultDLQConfig returns a default DLQ configuration
+func DefaultDLQConfig() DLQConfig {
+	return DLQConfig{
+		Enabled:           false,
+		MaxRetries:        3,
+		RetryDelay:        30 * time.Second,
+		IncludeHeaders:    true,
+		IncludeStackTrace: false,
+	}
+}
+
+// DLQMessage represents a message sent to the dead letter queue
+type DLQMessage struct {
+	OriginalMessage   interface{}            `json:"original_message"`
+	Error             string                 `json:"error"`
+	ErrorDetails      map[string]interface{} `json:"error_details,omitempty"`
+	ProcessingAttempts int                   `json:"processing_attempts"`
+	FirstFailureTime  time.Time             `json:"first_failure_time"`
+	LastFailureTime   time.Time             `json:"last_failure_time"`
+	LambdaContext     map[string]interface{} `json:"lambda_context,omitempty"`
+	Headers           map[string]string      `json:"headers,omitempty"`
+	StackTrace        string                 `json:"stack_trace,omitempty"`
+}
+
+// DLQHandler manages dead letter queue operations for failed messages
+type DLQHandler struct {
+	config    DLQConfig
+	sqsClient *sqs.Client
+	logger    observability.Logger
+}
+
+// NewDLQHandler creates a new dead letter queue handler
+func NewDLQHandler(config DLQConfig, sqsClient *sqs.Client) (*DLQHandler, error) {
+	logger := observability.GetLogger()
+	
+	if config.Enabled && config.QueueURL == "" {
+		return nil, fmt.Errorf("DLQ queue URL is required when DLQ is enabled")
+	}
+	
+	handler := &DLQHandler{
+		config:    config,
+		sqsClient: sqsClient,
+		logger:    logger,
+	}
+	
+	logger.Info("DLQ handler initialized", map[string]interface{}{
+		"enabled":           config.Enabled,
+		"queue_url":         config.QueueURL,
+		"max_retries":       config.MaxRetries,
+		"retry_delay":       config.RetryDelay.String(),
+		"include_headers":   config.IncludeHeaders,
+		"include_stack_trace": config.IncludeStackTrace,
+	})
+	
+	return handler, nil
+}
+
+// SendToDLQ sends a failed message to the dead letter queue
+func (h *DLQHandler) SendToDLQ(ctx context.Context, originalMessage interface{}, processingError error) error {
+	if !h.config.Enabled {
+		h.logger.Debug("DLQ is disabled, skipping DLQ send")
+		return nil
+	}
+	
+	return observability.TraceSubsegment(ctx, "send_to_dlq", func(ctx context.Context) error {
+		// Create DLQ message
+		dlqMessage := h.createDLQMessage(originalMessage, processingError)
+		
+		// Serialize the DLQ message
+		messageBody, err := json.Marshal(dlqMessage)
+		if err != nil {
+			h.logger.Error("Failed to serialize DLQ message", map[string]interface{}{
+				"error": err.Error(),
+			})
+			return fmt.Errorf("failed to serialize DLQ message: %w", err)
+		}
+		
+		// Send to DLQ with retry logic
+		err = h.sendWithRetry(ctx, string(messageBody), dlqMessage)
+		if err != nil {
+			h.logger.Error("Failed to send message to DLQ after retries", map[string]interface{}{
+				"error": err.Error(),
+				"max_retries": h.config.MaxRetries,
+			})
+			return err
+		}
+		
+		// Record DLQ metrics
+		observability.RecordDLQMessageSent()
+		
+		h.logger.Info("Message sent to DLQ", map[string]interface{}{
+			"processing_attempts": dlqMessage.ProcessingAttempts,
+			"error": processingError.Error(),
+		})
+		
+		return nil
+	})
+}
+
+// SendSQSToDLQ sends a failed SQS message to the dead letter queue
+func (h *DLQHandler) SendSQSToDLQ(ctx context.Context, sqsMessage events.SQSMessage, processingError error) error {
+	if !h.config.Enabled {
+		return nil
+	}
+	
+	// Extract processing attempts from SQS attributes
+	processingAttempts := 1
+	if receiveCount, exists := sqsMessage.Attributes["ApproximateReceiveCount"]; exists {
+		if count := parseIntSafely(receiveCount); count > 0 {
+			processingAttempts = count
+		}
+	}
+	
+	return h.SendToDLQ(ctx, sqsMessage, processingError)
+}
+
+// createDLQMessage creates a DLQ message from the original message and error
+func (h *DLQHandler) createDLQMessage(originalMessage interface{}, processingError error) *DLQMessage {
+	now := time.Now()
+	
+	dlqMessage := &DLQMessage{
+		OriginalMessage:   originalMessage,
+		Error:             processingError.Error(),
+		ProcessingAttempts: 1,
+		FirstFailureTime:  now,
+		LastFailureTime:   now,
+		ErrorDetails:      make(map[string]interface{}),
+	}
+	
+	// Extract processing attempts from SQS message if available
+	if sqsMsg, ok := originalMessage.(events.SQSMessage); ok {
+		if receiveCount, exists := sqsMsg.Attributes["ApproximateReceiveCount"]; exists {
+			if count := parseIntSafely(receiveCount); count > 0 {
+				dlqMessage.ProcessingAttempts = count
+			}
+		}
+		
+		// Add SQS-specific error details
+		dlqMessage.ErrorDetails["queue_arn"] = sqsMsg.EventSourceARN
+		dlqMessage.ErrorDetails["message_id"] = sqsMsg.MessageId
+		dlqMessage.ErrorDetails["receipt_handle"] = sqsMsg.ReceiptHandle
+		
+		if h.config.IncludeHeaders {
+			dlqMessage.Headers = make(map[string]string)
+			for key, value := range sqsMsg.Attributes {
+				dlqMessage.Headers["sqs_"+key] = value
+			}
+			for key, attr := range sqsMsg.MessageAttributes {
+				if attr.StringValue != nil {
+					dlqMessage.Headers["attr_"+key] = *attr.StringValue
+				}
+			}
+		}
+	}
+	
+	// Extract processing attempts from SNS message if available
+	if snsEvent, ok := originalMessage.(events.SNSEvent); ok && len(snsEvent.Records) > 0 {
+		snsMsg := snsEvent.Records[0].SNS
+		dlqMessage.ErrorDetails["topic_arn"] = snsMsg.TopicArn
+		dlqMessage.ErrorDetails["message_id"] = snsMsg.MessageId
+		dlqMessage.ErrorDetails["subject"] = snsMsg.Subject
+		
+		if h.config.IncludeHeaders {
+			dlqMessage.Headers = make(map[string]string)
+			for key, attr := range snsMsg.MessageAttributes {
+				if attr.Value != nil {
+					dlqMessage.Headers["sns_"+key] = *attr.Value
+				}
+			}
+		}
+	}
+	
+	// Add Lambda context if available from observability
+	if correlationID := observability.GetCorrelationID(); correlationID != "" {
+		dlqMessage.LambdaContext = map[string]interface{}{
+			"correlation_id": correlationID,
+			"timestamp": now.Format(time.RFC3339),
+		}
+	}
+	
+	// Add stack trace if enabled
+	if h.config.IncludeStackTrace {
+		// In a real implementation, you might want to capture the actual stack trace
+		dlqMessage.StackTrace = fmt.Sprintf("Error occurred in Lambda function at %s", now.Format(time.RFC3339))
+	}
+	
+	return dlqMessage
+}
+
+// sendWithRetry sends a message to DLQ with exponential backoff retry logic
+func (h *DLQHandler) sendWithRetry(ctx context.Context, messageBody string, dlqMessage *DLQMessage) error {
+	var lastErr error
+	
+	for attempt := 0; attempt <= h.config.MaxRetries; attempt++ {
+		if attempt > 0 {
+			// Apply exponential backoff
+			delay := h.config.RetryDelay * time.Duration(1<<(attempt-1))
+			h.logger.Debug("Retrying DLQ send after delay", map[string]interface{}{
+				"attempt": attempt,
+				"delay": delay.String(),
+			})
+			
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		
+		// Prepare message attributes
+		messageAttributes := map[string]types.MessageAttributeValue{
+			"ProcessingAttempts": {
+				DataType:    aws.String("Number"),
+				StringValue: aws.String(fmt.Sprintf("%d", dlqMessage.ProcessingAttempts)),
+			},
+			"OriginalError": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String(dlqMessage.Error),
+			},
+			"FirstFailureTime": {
+				DataType:    aws.String("String"),
+				StringValue: aws.String(dlqMessage.FirstFailureTime.Format(time.RFC3339)),
+			},
+		}
+		
+		// Add correlation ID if available
+		if correlationID := observability.GetCorrelationID(); correlationID != "" {
+			messageAttributes["CorrelationID"] = types.MessageAttributeValue{
+				DataType:    aws.String("String"),
+				StringValue: aws.String(correlationID),
+			}
+		}
+		
+		// Send message to DLQ
+		input := &sqs.SendMessageInput{
+			QueueUrl:          aws.String(h.config.QueueURL),
+			MessageBody:       aws.String(messageBody),
+			MessageAttributes: messageAttributes,
+			DelaySeconds:      0,
+		}
+		
+		_, err := h.sqsClient.SendMessage(ctx, input)
+		if err == nil {
+			// Success
+			return nil
+		}
+		
+		lastErr = err
+		h.logger.Warn("DLQ send attempt failed", map[string]interface{}{
+			"attempt": attempt + 1,
+			"error": err.Error(),
+			"max_retries": h.config.MaxRetries + 1,
+		})
+	}
+	
+	return fmt.Errorf("failed to send message to DLQ after %d attempts: %w", h.config.MaxRetries+1, lastErr)
+}
+
+// GetQueueAttributes retrieves attributes of the DLQ
+func (h *DLQHandler) GetQueueAttributes(ctx context.Context) (map[string]string, error) {
+	if !h.config.Enabled {
+		return nil, fmt.Errorf("DLQ is not enabled")
+	}
+	
+	input := &sqs.GetQueueAttributesInput{
+		QueueUrl: aws.String(h.config.QueueURL),
+		AttributeNames: []types.QueueAttributeName{
+			types.QueueAttributeNameApproximateNumberOfMessages,
+			types.QueueAttributeNameApproximateNumberOfMessagesNotVisible,
+			types.QueueAttributeNameCreatedTimestamp,
+			types.QueueAttributeNameLastModifiedTimestamp,
+		},
+	}
+	
+	result, err := h.sqsClient.GetQueueAttributes(ctx, input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get DLQ attributes: %w", err)
+	}
+	
+	return result.Attributes, nil
+}
+
+// HealthCheck verifies the DLQ handler is functioning correctly
+func (h *DLQHandler) HealthCheck(ctx context.Context) error {
+	if !h.config.Enabled {
+		return nil // DLQ disabled, consider healthy
+	}
+	
+	// Try to get queue attributes to verify connectivity
+	_, err := h.GetQueueAttributes(ctx)
+	if err != nil {
+		return fmt.Errorf("DLQ health check failed: %w", err)
+	}
+	
+	return nil
+}
+
+// GetMetrics returns DLQ handler metrics
+func (h *DLQHandler) GetMetrics() map[string]interface{} {
+	metrics := map[string]interface{}{
+		"enabled": h.config.Enabled,
+		"max_retries": h.config.MaxRetries,
+	}
+	
+	if h.config.Enabled {
+		// Try to get queue attributes for additional metrics
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		
+		if attrs, err := h.GetQueueAttributes(ctx); err == nil {
+			for key, value := range attrs {
+				metrics["queue_"+key] = value
+			}
+		}
+	}
+	
+	return metrics
+}
+
+// parseIntSafely parses a string to int, returning 0 if parsing fails
+func parseIntSafely(s string) int {
+	if s == "" {
+		return 0
+	}
+	
+	// Simple conversion for positive integers
+	result := 0
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			result = result*10 + int(r-'0')
+		} else {
+			return 0
+		}
+	}
+	return result
+}

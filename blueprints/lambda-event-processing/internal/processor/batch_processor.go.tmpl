@@ -1,0 +1,332 @@
+package processor
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/observability"
+)
+
+// BatchConfig holds configuration for batch processing
+type BatchConfig struct {
+	Size       int           `json:"size" yaml:"size"`
+	Timeout    time.Duration `json:"timeout" yaml:"timeout"`
+	MaxWait    time.Duration `json:"max_wait" yaml:"max_wait"`
+	Workers    int           `json:"workers" yaml:"workers"`
+	BufferSize int           `json:"buffer_size" yaml:"buffer_size"`
+}
+
+// DefaultBatchConfig returns a default batch configuration
+func DefaultBatchConfig() BatchConfig {
+	return BatchConfig{
+		Size:       10,
+		Timeout:    30 * time.Second,
+		MaxWait:    5 * time.Second,
+		Workers:    3,
+		BufferSize: 100,
+	}
+}
+
+// BatchProcessor handles batch processing of messages
+type BatchProcessor struct {
+	config BatchConfig
+	logger observability.Logger
+	mu     sync.RWMutex
+	stats  BatchStats
+}
+
+// BatchStats holds statistics about batch processing
+type BatchStats struct {
+	BatchesProcessed int64
+	MessagesProcessed int64
+	AverageLatency   time.Duration
+	LastProcessed    time.Time
+}
+
+// NewBatchProcessor creates a new batch processor
+func NewBatchProcessor(config BatchConfig) (*BatchProcessor, error) {
+	logger := observability.GetLogger()
+	
+	if config.Size <= 0 {
+		return nil, fmt.Errorf("batch size must be positive")
+	}
+	if config.Workers <= 0 {
+		return nil, fmt.Errorf("number of workers must be positive")
+	}
+	
+	processor := &BatchProcessor{
+		config: config,
+		logger: logger,
+	}
+	
+	logger.Info("Batch processor initialized", map[string]interface{}{
+		"batch_size":   config.Size,
+		"timeout":      config.Timeout.String(),
+		"max_wait":     config.MaxWait.String(),
+		"workers":      config.Workers,
+		"buffer_size":  config.BufferSize,
+	})
+	
+	return processor, nil
+}
+
+// ProcessBatch processes a batch of messages concurrently
+func (bp *BatchProcessor) ProcessBatch(ctx context.Context, messages []*domain.Message) (*domain.ProcessingResult, error) {
+	if len(messages) == 0 {
+		return &domain.ProcessingResult{
+			ProcessedCount: 0,
+			FailedCount:    0,
+			Errors:         make(map[string]error),
+		}, nil
+	}
+
+	return observability.TraceSubsegment(ctx, "batch_processing", func(ctx context.Context) (*domain.ProcessingResult, error) {
+		startTime := time.Now()
+		bp.logger.Info("Processing message batch", map[string]interface{}{
+			"batch_size": len(messages),
+			"worker_count": bp.config.Workers,
+		})
+
+		// Create result aggregator
+		result := &domain.ProcessingResult{
+			ProcessedCount: 0,
+			FailedCount:    0,
+			Errors:         make(map[string]error),
+		}
+
+		// Create work channels
+		messageChan := make(chan *domain.Message, bp.config.BufferSize)
+		resultChan := make(chan *messageResult, len(messages))
+
+		// Start workers
+		var wg sync.WaitGroup
+		for i := 0; i < bp.config.Workers; i++ {
+			wg.Add(1)
+			go bp.worker(ctx, i, messageChan, resultChan, &wg)
+		}
+
+		// Send messages to workers
+		go func() {
+			defer close(messageChan)
+			for _, msg := range messages {
+				select {
+				case messageChan <- msg:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+
+		// Wait for workers to complete
+		go func() {
+			wg.Wait()
+			close(resultChan)
+		}()
+
+		// Collect results
+		for msgResult := range resultChan {
+			if msgResult.err != nil {
+				result.FailedCount++
+				result.Errors[msgResult.messageID] = msgResult.err
+			} else {
+				result.ProcessedCount++
+			}
+		}
+
+		// Update statistics
+		duration := time.Since(startTime)
+		bp.updateStats(len(messages), duration)
+
+		// Record metrics
+		observability.RecordBatchProcessed(len(messages), int(result.ProcessedCount), int(result.FailedCount))
+
+		bp.logger.Info("Batch processing completed", map[string]interface{}{
+			"processed": result.ProcessedCount,
+			"failed": result.FailedCount,
+			"duration_ms": duration.Milliseconds(),
+			"throughput_per_sec": float64(len(messages)) / duration.Seconds(),
+		})
+
+		return result, nil
+	})
+}
+
+// messageResult represents the result of processing a single message
+type messageResult struct {
+	messageID string
+	err       error
+}
+
+// worker processes messages from the message channel
+func (bp *BatchProcessor) worker(ctx context.Context, workerID int, messageChan <-chan *domain.Message, resultChan chan<- *messageResult, wg *sync.WaitGroup) {
+	defer wg.Done()
+	
+	bp.logger.Debug("Batch worker started", map[string]interface{}{
+		"worker_id": workerID,
+	})
+
+	for {
+		select {
+		case message, ok := <-messageChan:
+			if !ok {
+				bp.logger.Debug("Batch worker finished", map[string]interface{}{
+					"worker_id": workerID,
+				})
+				return
+			}
+
+			// Process message with timeout
+			msgCtx, cancel := context.WithTimeout(ctx, bp.config.Timeout)
+			err := bp.processMessage(msgCtx, message)
+			cancel()
+
+			resultChan <- &messageResult{
+				messageID: message.ID,
+				err:       err,
+			}
+
+		case <-ctx.Done():
+			bp.logger.Debug("Batch worker cancelled", map[string]interface{}{
+				"worker_id": workerID,
+			})
+			return
+		}
+	}
+}
+
+// processMessage processes a single message (implement your business logic here)
+func (bp *BatchProcessor) processMessage(ctx context.Context, message *domain.Message) error {
+	return observability.TraceSubsegment(ctx, "process_batch_message", func(ctx context.Context) error {
+		bp.logger.Debug("Processing batch message", map[string]interface{}{
+			"message_id": message.ID,
+			"source": message.Source,
+			"body_size": len(message.Body),
+		})
+
+		// Add your business logic here
+		// This is where you would:
+		// 1. Parse and validate the message
+		// 2. Transform the data
+		// 3. Call external services
+		// 4. Store results in databases
+		// 5. Trigger downstream processes
+
+		// Example processing delay (remove in production)
+		select {
+		case <-time.After(10 * time.Millisecond): // Simulate processing time
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+
+		// Example business logic based on message attributes
+		if messageType, exists := message.Attributes["type"]; exists {
+			switch messageType {
+			case "user_event":
+				return bp.processUserEvent(ctx, message)
+			case "order_event":
+				return bp.processOrderEvent(ctx, message)
+			case "payment_event":
+				return bp.processPaymentEvent(ctx, message)
+			default:
+				bp.logger.Warn("Unknown message type in batch", map[string]interface{}{
+					"message_type": messageType,
+					"message_id": message.ID,
+				})
+			}
+		}
+
+		return nil
+	})
+}
+
+// Business logic processors (implement your specific logic)
+func (bp *BatchProcessor) processUserEvent(ctx context.Context, message *domain.Message) error {
+	bp.logger.Debug("Processing user event in batch", map[string]interface{}{
+		"message_id": message.ID,
+	})
+	// Implement user event processing
+	return nil
+}
+
+func (bp *BatchProcessor) processOrderEvent(ctx context.Context, message *domain.Message) error {
+	bp.logger.Debug("Processing order event in batch", map[string]interface{}{
+		"message_id": message.ID,
+	})
+	// Implement order event processing
+	return nil
+}
+
+func (bp *BatchProcessor) processPaymentEvent(ctx context.Context, message *domain.Message) error {
+	bp.logger.Debug("Processing payment event in batch", map[string]interface{}{
+		"message_id": message.ID,
+	})
+	// Implement payment event processing
+	return nil
+}
+
+// updateStats updates processing statistics
+func (bp *BatchProcessor) updateStats(messageCount int, duration time.Duration) {
+	bp.mu.Lock()
+	defer bp.mu.Unlock()
+	
+	bp.stats.BatchesProcessed++
+	bp.stats.MessagesProcessed += int64(messageCount)
+	bp.stats.LastProcessed = time.Now()
+	
+	// Calculate moving average for latency
+	if bp.stats.BatchesProcessed == 1 {
+		bp.stats.AverageLatency = duration
+	} else {
+		// Simple moving average
+		bp.stats.AverageLatency = time.Duration(
+			(int64(bp.stats.AverageLatency) + int64(duration)) / 2,
+		)
+	}
+}
+
+// GetStats returns current processing statistics
+func (bp *BatchProcessor) GetStats() BatchStats {
+	bp.mu.RLock()
+	defer bp.mu.RUnlock()
+	return bp.stats
+}
+
+// GetMetrics returns processor metrics
+func (bp *BatchProcessor) GetMetrics() map[string]interface{} {
+	stats := bp.GetStats()
+	return map[string]interface{}{
+		"batches_processed": stats.BatchesProcessed,
+		"messages_processed": stats.MessagesProcessed,
+		"average_latency_ms": stats.AverageLatency.Milliseconds(),
+		"last_processed": stats.LastProcessed.Format(time.RFC3339),
+		"config_batch_size": bp.config.Size,
+		"config_workers": bp.config.Workers,
+	}
+}
+
+// HealthCheck verifies the batch processor is functioning correctly
+func (bp *BatchProcessor) HealthCheck(ctx context.Context) error {
+	// Test with a dummy message
+	testMessage := &domain.Message{
+		ID:        "health-check",
+		Body:      "test",
+		Source:    "health-check",
+		Timestamp: time.Now(),
+		Attributes: map[string]interface{}{
+			"type": "health_check",
+		},
+	}
+	
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	
+	err := bp.processMessage(ctx, testMessage)
+	if err != nil {
+		return fmt.Errorf("batch processor health check failed: %w", err)
+	}
+	
+	return nil
+}

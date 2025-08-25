@@ -1,0 +1,415 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	
+	appConfig "{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/observability"
+{{- if eq .ProcessingPattern "fanout"}}
+	"{{.ModulePath}}/internal/processor"
+{{- end}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	"{{.ModulePath}}/internal/security"
+{{- end}}
+)
+
+// SNSHandler processes SNS messages with comprehensive error handling and observability
+type SNSHandler struct {
+	cfg       *appConfig.Config
+	snsClient *sns.Client
+	logger    observability.Logger
+{{- if eq .ProcessingPattern "fanout"}}
+	processor *processor.FanoutProcessor
+{{- end}}
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	validator *security.InputValidator
+{{- end}}
+}
+
+// NewSNSHandler creates a new SNS event handler with AWS SDK v2
+func NewSNSHandler(cfg *appConfig.Config) (*SNSHandler, error) {
+	logger := observability.GetLogger()
+	
+	// Initialize AWS config
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(cfg.AWS.Region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	handler := &SNSHandler{
+		cfg:       cfg,
+		snsClient: sns.NewFromConfig(awsCfg),
+		logger:    logger,
+	}
+
+{{- if eq .ProcessingPattern "fanout"}}
+	// Initialize fanout processor
+	handler.processor, err = processor.NewFanoutProcessor(cfg.Processing.Fanout)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize fanout processor: %w", err)
+	}
+{{- end}}
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	// Initialize input validator
+	handler.validator = security.NewInputValidator(cfg.Security.Validation)
+{{- end}}
+
+	logger.Info("SNS handler initialized", map[string]interface{}{
+		"processing_pattern": "{{.ProcessingPattern}}",
+		"region":            cfg.AWS.Region,
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+		"validation_enabled": cfg.Security.Validation.Enabled,
+{{- end}}
+	})
+
+	return handler, nil
+}
+
+// HandleEvent processes SNS events with comprehensive error handling
+func (h *SNSHandler) HandleEvent(ctx context.Context, event interface{}) (*domain.ProcessingResult, error) {
+	snsEvent, ok := event.(events.SNSEvent)
+	if !ok {
+		return nil, fmt.Errorf("invalid event type for SNS handler: %T", event)
+	}
+
+	h.logger.Info("Processing SNS event", map[string]interface{}{
+		"record_count": len(snsEvent.Records),
+		"processing":   "{{.ProcessingPattern}}",
+	})
+
+	// Track SNS-specific metrics
+	observability.RecordSNSMessageCount(len(snsEvent.Records))
+
+	// Process based on configured pattern
+{{- if eq .ProcessingPattern "fanout"}}
+	return h.processFanout(ctx, snsEvent.Records)
+{{- else if eq .ProcessingPattern "individual"}}
+	return h.processIndividual(ctx, snsEvent.Records)
+{{- else}}
+	return h.processDefault(ctx, snsEvent.Records)
+{{- end}}
+}
+
+{{- if eq .ProcessingPattern "fanout"}}
+// processFanout processes SNS messages with fanout pattern for broadcast scenarios
+func (h *SNSHandler) processFanout(ctx context.Context, records []events.SNSEventRecord) (*domain.ProcessingResult, error) {
+	return observability.TraceSubsegment(ctx, "sns_fanout_processing", func(ctx context.Context) (*domain.ProcessingResult, error) {
+		// Convert SNS messages to domain messages
+		messages := make([]*domain.Message, len(records))
+		for i, record := range records {
+			msg, err := h.convertSNSMessage(record.SNS)
+			if err != nil {
+				h.logger.Error("Failed to convert SNS message", map[string]interface{}{
+					"message_id": record.SNS.MessageId,
+					"error":      err.Error(),
+				})
+				continue
+			}
+			messages[i] = msg
+		}
+
+		// Process using fanout processor
+		return h.processor.ProcessFanout(ctx, messages)
+	})
+}
+{{- end}}
+
+{{- if eq .ProcessingPattern "individual"}}
+// processIndividual processes each SNS message individually with error isolation
+func (h *SNSHandler) processIndividual(ctx context.Context, records []events.SNSEventRecord) (*domain.ProcessingResult, error) {
+	result := &domain.ProcessingResult{
+		ProcessedCount: 0,
+		FailedCount:    0,
+		Errors:         make(map[string]error),
+	}
+
+	for _, record := range records {
+		err := h.processMessage(ctx, record.SNS)
+		if err != nil {
+			result.FailedCount++
+			result.Errors[record.SNS.MessageId] = err
+			h.logger.Error("Failed to process SNS message", map[string]interface{}{
+				"message_id": record.SNS.MessageId,
+				"error":      err.Error(),
+			})
+		} else {
+			result.ProcessedCount++
+			h.logger.Debug("Successfully processed SNS message", map[string]interface{}{
+				"message_id": record.SNS.MessageId,
+			})
+		}
+	}
+
+	return result, nil
+}
+{{- end}}
+
+// processDefault handles standard SNS message processing
+func (h *SNSHandler) processDefault(ctx context.Context, records []events.SNSEventRecord) (*domain.ProcessingResult, error) {
+	result := &domain.ProcessingResult{
+		ProcessedCount: 0,
+		FailedCount:    0,
+		Errors:         make(map[string]error),
+	}
+
+	// Process messages with controlled concurrency
+	semaphore := make(chan struct{}, h.cfg.Processing.MaxConcurrency)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+
+	for _, record := range records {
+		wg.Add(1)
+		go func(msg events.SNSMessage) {
+			defer wg.Done()
+			
+			// Acquire semaphore
+			semaphore <- struct{}{}
+			defer func() { <-semaphore }()
+
+			err := h.processMessage(ctx, msg)
+			
+			mu.Lock()
+			if err != nil {
+				result.FailedCount++
+				result.Errors[msg.MessageId] = err
+			} else {
+				result.ProcessedCount++
+			}
+			mu.Unlock()
+		}(record.SNS)
+	}
+
+	wg.Wait()
+	return result, nil
+}
+
+// processMessage processes a single SNS message with comprehensive error handling
+func (h *SNSHandler) processMessage(ctx context.Context, message events.SNSMessage) error {
+	return observability.TraceSubsegment(ctx, "process_sns_message", func(ctx context.Context) error {
+		// Add message metadata to trace
+		observability.AddTraceAnnotation(ctx, "message_id", message.MessageId)
+		observability.AddTraceAnnotation(ctx, "topic_arn", message.TopicArn)
+		observability.AddTraceAnnotation(ctx, "subject", message.Subject)
+		
+		// Parse message body
+		var messageBody map[string]interface{}
+		if err := json.Unmarshal([]byte(message.Message), &messageBody); err != nil {
+			return fmt.Errorf("failed to parse message body: %w", err)
+		}
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+		// Validate message input
+		if h.validator != nil {
+			if err := h.validator.ValidateMessage(messageBody); err != nil {
+				return fmt.Errorf("message validation failed: %w", err)
+			}
+		}
+{{- end}}
+
+		// Log message processing start
+		h.logger.Debug("Processing SNS message", map[string]interface{}{
+			"message_id": message.MessageId,
+			"topic_arn":  message.TopicArn,
+			"subject":    message.Subject,
+			"body_size":  len(message.Message),
+		})
+
+		// Add business logic here
+		if err := h.processBusinessLogic(ctx, messageBody, message); err != nil {
+			return fmt.Errorf("business logic processing failed: %w", err)
+		}
+
+		// Record successful processing
+		observability.RecordSNSMessageProcessed()
+		
+		return nil
+	})
+}
+
+// processBusinessLogic contains the actual business logic for processing SNS messages
+func (h *SNSHandler) processBusinessLogic(ctx context.Context, messageBody map[string]interface{}, message events.SNSMessage) error {
+	// Extract message type from subject or message body
+	messageType := message.Subject
+	if messageType == "" {
+		if msgType, ok := messageBody["type"].(string); ok {
+			messageType = msgType
+		} else {
+			messageType = "notification"
+		}
+	}
+
+	h.logger.Info("Processing SNS business logic", map[string]interface{}{
+		"message_id":   message.MessageId,
+		"message_type": messageType,
+		"topic_arn":    message.TopicArn,
+	})
+
+	// Add your business logic here
+	// This is where you would:
+	// 1. Handle notification events
+	// 2. Trigger downstream processes
+	// 3. Send alerts or notifications
+	// 4. Update system state
+	
+	// Example business logic (replace with your actual logic)
+	switch messageType {
+	case "alert":
+		return h.handleAlert(ctx, messageBody, message)
+	case "notification":
+		return h.handleNotification(ctx, messageBody, message)
+	case "system_event":
+		return h.handleSystemEvent(ctx, messageBody, message)
+	default:
+		h.logger.Warn("Unknown SNS message type", map[string]interface{}{
+			"message_type": messageType,
+			"message_id":   message.MessageId,
+		})
+		// Don't return an error for unknown types to avoid infinite reprocessing
+		return nil
+	}
+}
+
+// Business logic handlers (implement your specific logic)
+func (h *SNSHandler) handleAlert(ctx context.Context, messageBody map[string]interface{}, message events.SNSMessage) error {
+	// Implement alert handling
+	h.logger.Info("Handling alert event", map[string]interface{}{
+		"alert_id":   messageBody["alert_id"],
+		"severity":   messageBody["severity"],
+		"message_id": message.MessageId,
+	})
+	return nil
+}
+
+func (h *SNSHandler) handleNotification(ctx context.Context, messageBody map[string]interface{}, message events.SNSMessage) error {
+	// Implement notification handling
+	h.logger.Info("Handling notification event", map[string]interface{}{
+		"recipient": messageBody["recipient"],
+		"message_id": message.MessageId,
+	})
+	return nil
+}
+
+func (h *SNSHandler) handleSystemEvent(ctx context.Context, messageBody map[string]interface{}, message events.SNSMessage) error {
+	// Implement system event handling
+	h.logger.Info("Handling system event", map[string]interface{}{
+		"event_type": messageBody["event_type"],
+		"message_id": message.MessageId,
+	})
+	return nil
+}
+
+// convertSNSMessage converts an SNS message to a domain message
+func (h *SNSHandler) convertSNSMessage(message events.SNSMessage) (*domain.Message, error) {
+	msg := &domain.Message{
+		ID:          message.MessageId,
+		Body:        message.Message,
+		Attributes:  make(map[string]interface{}),
+		Timestamp:   time.Now(),
+		Source:      "sns",
+		SourceARN:   message.TopicArn,
+	}
+
+	// Convert message attributes
+	for key, attr := range message.MessageAttributes {
+		if attr.Value != nil {
+			msg.Attributes[key] = *attr.Value
+		}
+	}
+
+	// Add SNS-specific metadata
+	msg.Metadata = map[string]interface{}{
+		"subject":         message.Subject,
+		"message_id":      message.MessageId,
+		"signature":       message.Signature,
+		"signature_version": message.SignatureVersion,
+		"signing_cert_url": message.SigningCertURL,
+		"unsubscribe_url": message.UnsubscribeURL,
+	}
+
+	return msg, nil
+}
+
+// GetEventType returns the event type this handler processes
+func (h *SNSHandler) GetEventType() string {
+	return "sns"
+}
+
+// Validate checks if the event is a valid SNS event
+func (h *SNSHandler) Validate(event interface{}) error {
+	snsEvent, ok := event.(events.SNSEvent)
+	if !ok {
+		return fmt.Errorf("event is not an SNS event: %T", event)
+	}
+
+	if len(snsEvent.Records) == 0 {
+		return fmt.Errorf("SNS event contains no records")
+	}
+
+	// Validate each record
+	for i, record := range snsEvent.Records {
+		if record.SNS.MessageId == "" {
+			return fmt.Errorf("SNS record %d missing message ID", i)
+		}
+		if record.SNS.Message == "" {
+			return fmt.Errorf("SNS record %d missing message body", i)
+		}
+		if record.EventSource != "aws:sns" {
+			return fmt.Errorf("SNS record %d has invalid event source: %s", i, record.EventSource)
+		}
+		if record.SNS.TopicArn == "" {
+			return fmt.Errorf("SNS record %d missing topic ARN", i)
+		}
+	}
+
+	return nil
+}
+
+// HealthCheck verifies the SNS handler is functioning correctly
+func (h *SNSHandler) HealthCheck(ctx context.Context) error {
+	// Check SNS client connectivity
+	_, err := h.snsClient.ListTopics(ctx, &sns.ListTopicsInput{})
+	if err != nil {
+		return fmt.Errorf("SNS health check failed: %w", err)
+	}
+
+{{- if eq .ProcessingPattern "fanout"}}
+	// Check fanout processor health
+	if err := h.processor.HealthCheck(ctx); err != nil {
+		return fmt.Errorf("fanout processor health check failed: %w", err)
+	}
+{{- end}}
+
+	return nil
+}
+
+// GetMetrics returns handler-specific metrics
+func (h *SNSHandler) GetMetrics() map[string]interface{} {
+	metrics := map[string]interface{}{
+		"handler_type": "sns",
+		"processing_pattern": "{{.ProcessingPattern}}",
+	}
+
+{{- if eq .ProcessingPattern "fanout"}}
+	if h.processor != nil {
+		processorMetrics := h.processor.GetMetrics()
+		for key, value := range processorMetrics {
+			metrics["processor_"+key] = value
+		}
+	}
+{{- end}}
+
+	return metrics
+}

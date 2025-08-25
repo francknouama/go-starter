@@ -1,0 +1,73 @@
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: {{.ProjectName}}-psp
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: security
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  hostNetwork: false
+  hostIPC: false
+  hostPID: false
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  supplementalGroups:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  fsGroup:
+    rule: 'MustRunAs'
+    ranges:
+      - min: 1
+        max: 65535
+  readOnlyRootFilesystem: true
+  seLinux:
+    rule: RunAsAny
+  forbiddenSysctls:
+    - '*'
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{.ProjectName}}-psp-use
+  labels:
+    app: {{.ProjectName}}
+    component: security
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs: ['use']
+  resourceNames:
+  - {{.ProjectName}}-psp
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{.ProjectName}}-psp-use
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: security
+roleRef:
+  kind: ClusterRole
+  name: {{.ProjectName}}-psp-use
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: {{.ProjectName}}
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}

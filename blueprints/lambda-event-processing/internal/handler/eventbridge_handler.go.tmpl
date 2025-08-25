@@ -1,0 +1,348 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/aws/aws-lambda-go/events"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/eventbridge"
+	
+	appConfig "{{.ModulePath}}/internal/config"
+	"{{.ModulePath}}/internal/domain"
+	"{{.ModulePath}}/internal/observability"
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	"{{.ModulePath}}/internal/security"
+{{- end}}
+)
+
+// EventBridgeHandler processes EventBridge events with comprehensive error handling and observability
+type EventBridgeHandler struct {
+	cfg               *appConfig.Config
+	eventBridgeClient *eventbridge.Client
+	logger            observability.Logger
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	validator         *security.InputValidator
+{{- end}}
+}
+
+// NewEventBridgeHandler creates a new EventBridge event handler with AWS SDK v2
+func NewEventBridgeHandler(cfg *appConfig.Config) (*EventBridgeHandler, error) {
+	logger := observability.GetLogger()
+	
+	// Initialize AWS config
+	awsCfg, err := config.LoadDefaultConfig(context.Background(),
+		config.WithRegion(cfg.AWS.Region),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
+	}
+
+	handler := &EventBridgeHandler{
+		cfg:               cfg,
+		eventBridgeClient: eventbridge.NewFromConfig(awsCfg),
+		logger:            logger,
+	}
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+	// Initialize input validator
+	handler.validator = security.NewInputValidator(cfg.Security.Validation)
+{{- end}}
+
+	logger.Info("EventBridge handler initialized", map[string]interface{}{
+		"processing_pattern": "{{.ProcessingPattern}}",
+		"region":            cfg.AWS.Region,
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+		"validation_enabled": cfg.Security.Validation.Enabled,
+{{- end}}
+	})
+
+	return handler, nil
+}
+
+// HandleEvent processes EventBridge events with comprehensive error handling
+func (h *EventBridgeHandler) HandleEvent(ctx context.Context, event interface{}) (*domain.ProcessingResult, error) {
+	// EventBridge events can come in different formats
+	// Check for both CloudWatchEvent and direct EventBridge event formats
+	var eventBridgeEvent events.CloudWatchEvent
+	
+	// Try to convert to CloudWatchEvent (legacy format)
+	if cwEvent, ok := event.(events.CloudWatchEvent); ok {
+		eventBridgeEvent = cwEvent
+	} else {
+		// Try to marshal/unmarshal for type conversion
+		eventBytes, err := json.Marshal(event)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal event: %w", err)
+		}
+		
+		if err := json.Unmarshal(eventBytes, &eventBridgeEvent); err != nil {
+			return nil, fmt.Errorf("invalid event type for EventBridge handler: %T, error: %w", event, err)
+		}
+	}
+
+	h.logger.Info("Processing EventBridge event", map[string]interface{}{
+		"source":       eventBridgeEvent.Source,
+		"detail_type":  eventBridgeEvent.DetailType,
+		"account":      eventBridgeEvent.Account,
+		"region":       eventBridgeEvent.Region,
+		"processing":   "{{.ProcessingPattern}}",
+	})
+
+	// Track EventBridge-specific metrics
+	observability.RecordEventBridgeEvent(eventBridgeEvent.Source, eventBridgeEvent.DetailType)
+
+	// Process the event
+	return h.processEvent(ctx, eventBridgeEvent)
+}
+
+// processEvent processes a single EventBridge event with comprehensive error handling
+func (h *EventBridgeHandler) processEvent(ctx context.Context, event events.CloudWatchEvent) (*domain.ProcessingResult, error) {
+	return observability.TraceSubsegment(ctx, "process_eventbridge_event", func(ctx context.Context) (*domain.ProcessingResult, error) {
+		// Add event metadata to trace
+		observability.AddTraceAnnotation(ctx, "event_source", event.Source)
+		observability.AddTraceAnnotation(ctx, "event_detail_type", event.DetailType)
+		observability.AddTraceAnnotation(ctx, "event_account", event.Account)
+		observability.AddTraceAnnotation(ctx, "event_region", event.Region)
+		
+		// Parse event detail
+		var eventDetail map[string]interface{}
+		if err := json.Unmarshal(event.Detail, &eventDetail); err != nil {
+			return nil, fmt.Errorf("failed to parse event detail: %w", err)
+		}
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+		// Validate event input
+		if h.validator != nil {
+			if err := h.validator.ValidateEvent(eventDetail); err != nil {
+				return nil, fmt.Errorf("event validation failed: %w", err)
+			}
+		}
+{{- end}}
+
+		// Log event processing start
+		h.logger.Debug("Processing EventBridge event", map[string]interface{}{
+			"event_id":      event.ID,
+			"source":        event.Source,
+			"detail_type":   event.DetailType,
+			"detail_size":   len(event.Detail),
+			"timestamp":     event.Time,
+		})
+
+		// Process business logic
+		if err := h.processBusinessLogic(ctx, eventDetail, event); err != nil {
+			return &domain.ProcessingResult{
+				ProcessedCount: 0,
+				FailedCount:    1,
+				Errors:         map[string]error{event.ID: err},
+			}, fmt.Errorf("business logic processing failed: %w", err)
+		}
+
+		// Record successful processing
+		observability.RecordEventBridgeEventProcessed(event.Source, event.DetailType)
+		
+		return &domain.ProcessingResult{
+			ProcessedCount: 1,
+			FailedCount:    0,
+			Errors:         make(map[string]error),
+		}, nil
+	})
+}
+
+// processBusinessLogic contains the actual business logic for processing EventBridge events
+func (h *EventBridgeHandler) processBusinessLogic(ctx context.Context, eventDetail map[string]interface{}, event events.CloudWatchEvent) error {
+	h.logger.Info("Processing EventBridge business logic", map[string]interface{}{
+		"event_id":     event.ID,
+		"source":       event.Source,
+		"detail_type":  event.DetailType,
+		"account":      event.Account,
+		"region":       event.Region,
+	})
+
+	// Route based on event source and detail type
+	eventKey := fmt.Sprintf("%s:%s", event.Source, event.DetailType)
+	
+	// Add your business logic here
+	// This is where you would:
+	// 1. Route events based on source and detail type
+	// 2. Transform event data
+	// 3. Trigger downstream processes
+	// 4. Update system state
+	// 5. Send notifications
+	
+	// Example business logic routing (replace with your actual logic)
+	switch eventKey {
+	case "aws.ec2:EC2 Instance State-change Notification":
+		return h.handleEC2StateChange(ctx, eventDetail, event)
+	case "aws.s3:Object Created":
+		return h.handleS3ObjectCreated(ctx, eventDetail, event)
+	case "custom.app:User Registered":
+		return h.handleUserRegistered(ctx, eventDetail, event)
+	case "custom.app:Order Processed":
+		return h.handleOrderProcessed(ctx, eventDetail, event)
+	case "aws.cloudformation:CloudFormation Stack Status Change":
+		return h.handleCloudFormationChange(ctx, eventDetail, event)
+	default:
+		h.logger.Warn("Unknown EventBridge event type", map[string]interface{}{
+			"event_key":    eventKey,
+			"source":       event.Source,
+			"detail_type":  event.DetailType,
+			"event_id":     event.ID,
+		})
+		// Don't return an error for unknown types to avoid infinite reprocessing
+		return nil
+	}
+}
+
+// Business logic handlers (implement your specific logic)
+func (h *EventBridgeHandler) handleEC2StateChange(ctx context.Context, eventDetail map[string]interface{}, event events.CloudWatchEvent) error {
+	// Implement EC2 state change handling
+	h.logger.Info("Handling EC2 state change event", map[string]interface{}{
+		"instance_id": eventDetail["instance-id"],
+		"state":       eventDetail["state"],
+		"event_id":    event.ID,
+	})
+	return nil
+}
+
+func (h *EventBridgeHandler) handleS3ObjectCreated(ctx context.Context, eventDetail map[string]interface{}, event events.CloudWatchEvent) error {
+	// Implement S3 object created handling
+	h.logger.Info("Handling S3 object created event", map[string]interface{}{
+		"bucket": eventDetail["bucket"],
+		"key":    eventDetail["key"],
+		"event_id": event.ID,
+	})
+	return nil
+}
+
+func (h *EventBridgeHandler) handleUserRegistered(ctx context.Context, eventDetail map[string]interface{}, event events.CloudWatchEvent) error {
+	// Implement custom user registered event handling
+	h.logger.Info("Handling user registered event", map[string]interface{}{
+		"user_id":   eventDetail["userId"],
+		"email":     eventDetail["email"],
+		"event_id":  event.ID,
+	})
+	return nil
+}
+
+func (h *EventBridgeHandler) handleOrderProcessed(ctx context.Context, eventDetail map[string]interface{}, event events.CloudWatchEvent) error {
+	// Implement custom order processed event handling
+	h.logger.Info("Handling order processed event", map[string]interface{}{
+		"order_id":   eventDetail["orderId"],
+		"amount":     eventDetail["amount"],
+		"event_id":   event.ID,
+	})
+	return nil
+}
+
+func (h *EventBridgeHandler) handleCloudFormationChange(ctx context.Context, eventDetail map[string]interface{}, event events.CloudWatchEvent) error {
+	// Implement CloudFormation stack change handling
+	h.logger.Info("Handling CloudFormation stack change event", map[string]interface{}{
+		"stack_name": eventDetail["stack-name"],
+		"status":     eventDetail["status-details"],
+		"event_id":   event.ID,
+	})
+	return nil
+}
+
+// convertEventBridgeEvent converts an EventBridge event to a domain message
+func (h *EventBridgeHandler) convertEventBridgeEvent(event events.CloudWatchEvent) (*domain.Message, error) {
+	msg := &domain.Message{
+		ID:        event.ID,
+		Body:      string(event.Detail),
+		Attributes: map[string]interface{}{
+			"source":      event.Source,
+			"detail_type": event.DetailType,
+			"account":     event.Account,
+			"region":      event.Region,
+		},
+		Timestamp: event.Time,
+		Source:    "eventbridge",
+		SourceARN: fmt.Sprintf("arn:aws:events:%s:%s:event-bus/%s", event.Region, event.Account, "default"),
+	}
+
+	// Add EventBridge-specific metadata
+	msg.Metadata = map[string]interface{}{
+		"version":     event.Version,
+		"resources":   event.Resources,
+		"source":      event.Source,
+		"detail_type": event.DetailType,
+	}
+
+	return msg, nil
+}
+
+// GetEventType returns the event type this handler processes
+func (h *EventBridgeHandler) GetEventType() string {
+	return "eventbridge"
+}
+
+// Validate checks if the event is a valid EventBridge event
+func (h *EventBridgeHandler) Validate(event interface{}) error {
+	// Try to validate as CloudWatchEvent
+	if cwEvent, ok := event.(events.CloudWatchEvent); ok {
+		return h.validateCloudWatchEvent(cwEvent)
+	}
+	
+	// Try to convert and validate
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal event for validation: %w", err)
+	}
+	
+	var cwEvent events.CloudWatchEvent
+	if err := json.Unmarshal(eventBytes, &cwEvent); err != nil {
+		return fmt.Errorf("event is not a valid EventBridge event: %T, error: %w", event, err)
+	}
+	
+	return h.validateCloudWatchEvent(cwEvent)
+}
+
+// validateCloudWatchEvent validates a CloudWatch event structure
+func (h *EventBridgeHandler) validateCloudWatchEvent(event events.CloudWatchEvent) error {
+	if event.ID == "" {
+		return fmt.Errorf("EventBridge event missing ID")
+	}
+	if event.Source == "" {
+		return fmt.Errorf("EventBridge event missing source")
+	}
+	if event.DetailType == "" {
+		return fmt.Errorf("EventBridge event missing detail type")
+	}
+	if len(event.Detail) == 0 {
+		return fmt.Errorf("EventBridge event missing detail")
+	}
+	if event.Account == "" {
+		return fmt.Errorf("EventBridge event missing account")
+	}
+	if event.Region == "" {
+		return fmt.Errorf("EventBridge event missing region")
+	}
+
+	return nil
+}
+
+// HealthCheck verifies the EventBridge handler is functioning correctly
+func (h *EventBridgeHandler) HealthCheck(ctx context.Context) error {
+	// Check EventBridge client connectivity
+	_, err := h.eventBridgeClient.ListEventBuses(ctx, &eventbridge.ListEventBusesInput{
+		Limit: aws.Int32(1),
+	})
+	if err != nil {
+		return fmt.Errorf("EventBridge health check failed: %w", err)
+	}
+
+	return nil
+}
+
+// GetMetrics returns handler-specific metrics
+func (h *EventBridgeHandler) GetMetrics() map[string]interface{} {
+	return map[string]interface{}{
+		"handler_type":       "eventbridge",
+		"processing_pattern": "{{.ProcessingPattern}}",
+	}
+}

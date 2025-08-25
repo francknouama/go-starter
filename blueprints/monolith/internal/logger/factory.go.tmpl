@@ -1,0 +1,496 @@
+package logger
+
+import (
+	"io"
+	"os"
+	"time"
+
+{{- if eq .LoggerType "slog"}}
+	"log/slog"
+{{- else if eq .LoggerType "zap"}}
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+{{- else if eq .LoggerType "logrus"}}
+	"github.com/sirupsen/logrus"
+{{- else if eq .LoggerType "zerolog"}}
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+{{- end}}
+
+	"{{.ModulePath}}/config"
+)
+
+// Logger interface defines logging operations
+type Logger interface {
+	Debug(msg string, fields ...interface{})
+	Info(msg string, fields ...interface{})
+	Warn(msg string, fields ...interface{})
+	Error(msg string, fields ...interface{})
+	Fatal(msg string, fields ...interface{})
+	WithField(key string, value interface{}) Logger
+	WithFields(fields map[string]interface{}) Logger
+	WithError(err error) Logger
+}
+
+{{- if eq .LoggerType "slog"}}
+// SlogLogger wraps slog.Logger to implement our Logger interface
+type SlogLogger struct {
+	logger *slog.Logger
+}
+
+// NewSlogLogger creates a new slog logger
+func NewSlogLogger(cfg *config.Config) Logger {
+	var level slog.Level
+	switch cfg.Log.Level {
+	case "debug":
+		level = slog.LevelDebug
+	case "warn":
+		level = slog.LevelWarn
+	case "error":
+		level = slog.LevelError
+	default:
+		level = slog.LevelInfo
+	}
+
+	var output io.Writer = os.Stdout
+	if cfg.Log.Output == "stderr" {
+		output = os.Stderr
+	}
+
+	opts := &slog.HandlerOptions{
+		Level:     level,
+		AddSource: cfg.Log.AddSource || cfg.App.Environment == "development",
+	}
+
+	var handler slog.Handler
+	if cfg.Log.Format == "json" {
+		handler = slog.NewJSONHandler(output, opts)
+	} else {
+		handler = slog.NewTextHandler(output, opts)
+	}
+
+	return &SlogLogger{
+		logger: slog.New(handler),
+	}
+}
+
+func (s *SlogLogger) Debug(msg string, fields ...interface{}) {
+	s.logger.Debug(msg, fields...)
+}
+
+func (s *SlogLogger) Info(msg string, fields ...interface{}) {
+	s.logger.Info(msg, fields...)
+}
+
+func (s *SlogLogger) Warn(msg string, fields ...interface{}) {
+	s.logger.Warn(msg, fields...)
+}
+
+func (s *SlogLogger) Error(msg string, fields ...interface{}) {
+	s.logger.Error(msg, fields...)
+}
+
+func (s *SlogLogger) Fatal(msg string, fields ...interface{}) {
+	s.logger.Error(msg, fields...)
+	os.Exit(1)
+}
+
+func (s *SlogLogger) WithField(key string, value interface{}) Logger {
+	return &SlogLogger{
+		logger: s.logger.With(key, value),
+	}
+}
+
+func (s *SlogLogger) WithFields(fields map[string]interface{}) Logger {
+	args := make([]interface{}, 0, len(fields)*2)
+	for k, v := range fields {
+		args = append(args, k, v)
+	}
+	return &SlogLogger{
+		logger: s.logger.With(args...),
+	}
+}
+
+func (s *SlogLogger) WithError(err error) Logger {
+	return s.WithField("error", err)
+}
+
+{{- else if eq .LoggerType "zap"}}
+// ZapLogger wraps zap.Logger to implement our Logger interface
+type ZapLogger struct {
+	logger *zap.Logger
+	sugar  *zap.SugaredLogger
+}
+
+// NewZapLogger creates a new zap logger
+func NewZapLogger(cfg *config.Config) Logger {
+	var zapCfg zap.Config
+	if cfg.App.Environment == "production" {
+		zapCfg = zap.NewProductionConfig()
+	} else {
+		zapCfg = zap.NewDevelopmentConfig()
+	}
+
+	// Set log level
+	switch cfg.Log.Level {
+	case "debug":
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+	case "warn":
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+	case "error":
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	default:
+		zapCfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+	}
+
+	// Set output paths
+	if cfg.Log.Output == "stderr" {
+		zapCfg.OutputPaths = []string{"stderr"}
+		zapCfg.ErrorOutputPaths = []string{"stderr"}
+	}
+
+	// Configure encoding
+	if cfg.Log.Format != "json" {
+		zapCfg.Encoding = "console"
+	}
+
+	// Add caller information in development
+	if cfg.App.Environment == "development" || cfg.Log.AddSource {
+		zapCfg.Development = true
+		zapCfg.DisableCaller = false
+		zapCfg.DisableStacktrace = false
+	} else {
+		zapCfg.DisableCaller = true
+		zapCfg.DisableStacktrace = true
+	}
+
+	logger, err := zapCfg.Build()
+	if err != nil {
+		panic("Failed to initialize zap logger: " + err.Error())
+	}
+
+	return &ZapLogger{
+		logger: logger,
+		sugar:  logger.Sugar(),
+	}
+}
+
+func (z *ZapLogger) Debug(msg string, fields ...interface{}) {
+	z.sugar.Debugw(msg, fields...)
+}
+
+func (z *ZapLogger) Info(msg string, fields ...interface{}) {
+	z.sugar.Infow(msg, fields...)
+}
+
+func (z *ZapLogger) Warn(msg string, fields ...interface{}) {
+	z.sugar.Warnw(msg, fields...)
+}
+
+func (z *ZapLogger) Error(msg string, fields ...interface{}) {
+	z.sugar.Errorw(msg, fields...)
+}
+
+func (z *ZapLogger) Fatal(msg string, fields ...interface{}) {
+	z.sugar.Fatalw(msg, fields...)
+}
+
+func (z *ZapLogger) WithField(key string, value interface{}) Logger {
+	return &ZapLogger{
+		logger: z.logger.With(zap.Any(key, value)),
+		sugar:  z.logger.With(zap.Any(key, value)).Sugar(),
+	}
+}
+
+func (z *ZapLogger) WithFields(fields map[string]interface{}) Logger {
+	zapFields := make([]zap.Field, 0, len(fields))
+	for k, v := range fields {
+		zapFields = append(zapFields, zap.Any(k, v))
+	}
+	newLogger := z.logger.With(zapFields...)
+	return &ZapLogger{
+		logger: newLogger,
+		sugar:  newLogger.Sugar(),
+	}
+}
+
+func (z *ZapLogger) WithError(err error) Logger {
+	return z.WithField("error", err)
+}
+
+{{- else if eq .LoggerType "logrus"}}
+// LogrusLogger wraps logrus.Logger to implement our Logger interface
+type LogrusLogger struct {
+	logger *logrus.Logger
+	entry  *logrus.Entry
+}
+
+// NewLogrusLogger creates a new logrus logger
+func NewLogrusLogger(cfg *config.Config) Logger {
+	logger := logrus.New()
+
+	// Set log format
+	if cfg.Log.Format == "json" {
+		logger.SetFormatter(&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339,
+		})
+	} else {
+		logger.SetFormatter(&logrus.TextFormatter{
+			FullTimestamp:   true,
+			TimestampFormat: time.RFC3339,
+			ForceColors:     cfg.App.Environment == "development",
+		})
+	}
+
+	// Set log level
+	switch cfg.Log.Level {
+	case "debug":
+		logger.SetLevel(logrus.DebugLevel)
+	case "warn":
+		logger.SetLevel(logrus.WarnLevel)
+	case "error":
+		logger.SetLevel(logrus.ErrorLevel)
+	default:
+		logger.SetLevel(logrus.InfoLevel)
+	}
+
+	// Set output
+	if cfg.Log.Output == "stderr" {
+		logger.SetOutput(os.Stderr)
+	} else {
+		logger.SetOutput(os.Stdout)
+	}
+
+	// Add caller information in development
+	if cfg.App.Environment == "development" || cfg.Log.AddSource {
+		logger.SetReportCaller(true)
+	}
+
+	return &LogrusLogger{
+		logger: logger,
+		entry:  logrus.NewEntry(logger),
+	}
+}
+
+func (l *LogrusLogger) Debug(msg string, fields ...interface{}) {
+	l.entry.Debug(msg)
+}
+
+func (l *LogrusLogger) Info(msg string, fields ...interface{}) {
+	l.entry.Info(msg)
+}
+
+func (l *LogrusLogger) Warn(msg string, fields ...interface{}) {
+	l.entry.Warn(msg)
+}
+
+func (l *LogrusLogger) Error(msg string, fields ...interface{}) {
+	l.entry.Error(msg)
+}
+
+func (l *LogrusLogger) Fatal(msg string, fields ...interface{}) {
+	l.entry.Fatal(msg)
+}
+
+func (l *LogrusLogger) WithField(key string, value interface{}) Logger {
+	return &LogrusLogger{
+		logger: l.logger,
+		entry:  l.entry.WithField(key, value),
+	}
+}
+
+func (l *LogrusLogger) WithFields(fields map[string]interface{}) Logger {
+	return &LogrusLogger{
+		logger: l.logger,
+		entry:  l.entry.WithFields(logrus.Fields(fields)),
+	}
+}
+
+func (l *LogrusLogger) WithError(err error) Logger {
+	return &LogrusLogger{
+		logger: l.logger,
+		entry:  l.entry.WithError(err),
+	}
+}
+
+{{- else if eq .LoggerType "zerolog"}}
+// ZerologLogger wraps zerolog.Logger to implement our Logger interface
+type ZerologLogger struct {
+	logger zerolog.Logger
+}
+
+// NewZerologLogger creates a new zerolog logger
+func NewZerologLogger(cfg *config.Config) Logger {
+	// Set global log level
+	switch cfg.Log.Level {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+
+	var logger zerolog.Logger
+
+	// Configure output
+	var output io.Writer = os.Stdout
+	if cfg.Log.Output == "stderr" {
+		output = os.Stderr
+	}
+
+	// Configure format
+	if cfg.Log.Format != "json" && cfg.App.Environment == "development" {
+		logger = log.Output(zerolog.ConsoleWriter{
+			Out:        output,
+			TimeFormat: time.RFC3339,
+		})
+	} else {
+		logger = zerolog.New(output)
+	}
+
+	// Add timestamp and caller information
+	logger = logger.With().Timestamp().Logger()
+	if cfg.App.Environment == "development" || cfg.Log.AddSource {
+		logger = logger.With().Caller().Logger()
+	}
+
+	return &ZerologLogger{
+		logger: logger,
+	}
+}
+
+func (z *ZerologLogger) Debug(msg string, fields ...interface{}) {
+	event := z.logger.Debug()
+	z.addFields(event, fields...)
+	event.Msg(msg)
+}
+
+func (z *ZerologLogger) Info(msg string, fields ...interface{}) {
+	event := z.logger.Info()
+	z.addFields(event, fields...)
+	event.Msg(msg)
+}
+
+func (z *ZerologLogger) Warn(msg string, fields ...interface{}) {
+	event := z.logger.Warn()
+	z.addFields(event, fields...)
+	event.Msg(msg)
+}
+
+func (z *ZerologLogger) Error(msg string, fields ...interface{}) {
+	event := z.logger.Error()
+	z.addFields(event, fields...)
+	event.Msg(msg)
+}
+
+func (z *ZerologLogger) Fatal(msg string, fields ...interface{}) {
+	event := z.logger.Fatal()
+	z.addFields(event, fields...)
+	event.Msg(msg)
+}
+
+func (z *ZerologLogger) WithField(key string, value interface{}) Logger {
+	return &ZerologLogger{
+		logger: z.logger.With().Interface(key, value).Logger(),
+	}
+}
+
+func (z *ZerologLogger) WithFields(fields map[string]interface{}) Logger {
+	ctx := z.logger.With()
+	for k, v := range fields {
+		ctx = ctx.Interface(k, v)
+	}
+	return &ZerologLogger{
+		logger: ctx.Logger(),
+	}
+}
+
+func (z *ZerologLogger) WithError(err error) Logger {
+	return &ZerologLogger{
+		logger: z.logger.With().Err(err).Logger(),
+	}
+}
+
+// addFields adds key-value pairs to a zerolog event
+func (z *ZerologLogger) addFields(event *zerolog.Event, fields ...interface{}) {
+	for i := 0; i < len(fields); i += 2 {
+		if i+1 < len(fields) {
+			if key, ok := fields[i].(string); ok {
+				event.Interface(key, fields[i+1])
+			}
+		}
+	}
+}
+{{- end}}
+
+// NewLogger creates a new logger based on configuration
+func NewLogger(cfg *config.Config) Logger {
+{{- if eq .LoggerType "slog"}}
+	return NewSlogLogger(cfg)
+{{- else if eq .LoggerType "zap"}}
+	return NewZapLogger(cfg)
+{{- else if eq .LoggerType "logrus"}}
+	return NewLogrusLogger(cfg)
+{{- else if eq .LoggerType "zerolog"}}
+	return NewZerologLogger(cfg)
+{{- end}}
+}
+
+// Global logger instance
+var globalLogger Logger
+
+// SetGlobal sets the global logger instance
+func SetGlobal(logger Logger) {
+	globalLogger = logger
+}
+
+// GetGlobal returns the global logger instance
+func GetGlobal() Logger {
+	if globalLogger == nil {
+		panic("Global logger not initialized")
+	}
+	return globalLogger
+}
+
+// Debug logs a debug message using the global logger
+func Debug(msg string, fields ...interface{}) {
+	GetGlobal().Debug(msg, fields...)
+}
+
+// Info logs an info message using the global logger
+func Info(msg string, fields ...interface{}) {
+	GetGlobal().Info(msg, fields...)
+}
+
+// Warn logs a warning message using the global logger
+func Warn(msg string, fields ...interface{}) {
+	GetGlobal().Warn(msg, fields...)
+}
+
+// Error logs an error message using the global logger
+func Error(msg string, fields ...interface{}) {
+	GetGlobal().Error(msg, fields...)
+}
+
+// Fatal logs a fatal message and exits using the global logger
+func Fatal(msg string, fields ...interface{}) {
+	GetGlobal().Fatal(msg, fields...)
+}
+
+// WithField returns a logger with the specified field
+func WithField(key string, value interface{}) Logger {
+	return GetGlobal().WithField(key, value)
+}
+
+// WithFields returns a logger with the specified fields
+func WithFields(fields map[string]interface{}) Logger {
+	return GetGlobal().WithFields(fields)
+}
+
+// WithError returns a logger with the specified error
+func WithError(err error) Logger {
+	return GetGlobal().WithError(err)
+}

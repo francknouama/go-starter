@@ -1,0 +1,396 @@
+package resilience
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"time"
+
+	"{{.ModulePath}}/internal/observability"
+)
+
+// CircuitBreakerState represents the current state of the circuit breaker
+type CircuitBreakerState int
+
+const (
+	Closed CircuitBreakerState = iota
+	Open
+	HalfOpen
+)
+
+func (s CircuitBreakerState) String() string {
+	switch s {
+	case Closed:
+		return "closed"
+	case Open:
+		return "open"
+	case HalfOpen:
+		return "half-open"
+	default:
+		return "unknown"
+	}
+}
+
+// CircuitBreakerConfig holds the configuration for the circuit breaker
+type CircuitBreakerConfig struct {
+	FailureThreshold   int           `json:"failure_threshold" yaml:"failure_threshold"`
+	SuccessThreshold   int           `json:"success_threshold" yaml:"success_threshold"`
+	Timeout           time.Duration `json:"timeout" yaml:"timeout"`
+	MaxRequests       int           `json:"max_requests" yaml:"max_requests"`
+	ResetTimeout      time.Duration `json:"reset_timeout" yaml:"reset_timeout"`
+}
+
+// DefaultCircuitBreakerConfig returns a default circuit breaker configuration
+func DefaultCircuitBreakerConfig() CircuitBreakerConfig {
+	return CircuitBreakerConfig{
+		FailureThreshold: 5,
+		SuccessThreshold: 3,
+		Timeout:         30 * time.Second,
+		MaxRequests:     10,
+		ResetTimeout:    60 * time.Second,
+	}
+}
+
+// CircuitBreakerStats holds statistics about circuit breaker operations
+type CircuitBreakerStats struct {
+	Requests       int64
+	Successes      int64
+	Failures       int64
+	Rejections     int64
+	LastFailure    time.Time
+	LastSuccess    time.Time
+	LastStateChange time.Time
+}
+
+// CircuitBreaker implements the circuit breaker pattern for resilient event processing
+type CircuitBreaker struct {
+	config CircuitBreakerConfig
+	logger observability.Logger
+	
+	// State management
+	mu                sync.RWMutex
+	state            CircuitBreakerState
+	generationID     int64
+	lastStateChange  time.Time
+	
+	// Counters
+	consecutiveFailures int
+	consecutiveSuccesses int
+	requestCount        int64
+	
+	// Statistics
+	stats CircuitBreakerStats
+}
+
+// NewCircuitBreaker creates a new circuit breaker with the given configuration
+func NewCircuitBreaker(config CircuitBreakerConfig) (*CircuitBreaker, error) {
+	logger := observability.GetLogger()
+	
+	if config.FailureThreshold <= 0 {
+		return nil, fmt.Errorf("failure threshold must be positive")
+	}
+	if config.SuccessThreshold <= 0 {
+		return nil, fmt.Errorf("success threshold must be positive")
+	}
+	if config.Timeout <= 0 {
+		return nil, fmt.Errorf("timeout must be positive")
+	}
+	
+	cb := &CircuitBreaker{
+		config:          config,
+		logger:          logger,
+		state:           Closed,
+		lastStateChange: time.Now(),
+	}
+	
+	logger.Info("Circuit breaker initialized", map[string]interface{}{
+		"failure_threshold": config.FailureThreshold,
+		"success_threshold": config.SuccessThreshold,
+		"timeout_seconds":   config.Timeout.Seconds(),
+		"reset_timeout":     config.ResetTimeout.Seconds(),
+	})
+	
+	return cb, nil
+}
+
+// Execute runs the given function with circuit breaker protection
+func (cb *CircuitBreaker) Execute(fn func() (interface{}, error)) (interface{}, error) {
+	generation, err := cb.beforeRequest()
+	if err != nil {
+		return nil, err
+	}
+	
+	defer func() {
+		if r := recover(); r != nil {
+			cb.onFailure(generation, fmt.Errorf("panic: %v", r))
+			panic(r)
+		}
+	}()
+	
+	result, err := fn()
+	if err != nil {
+		cb.onFailure(generation, err)
+		return result, err
+	}
+	
+	cb.onSuccess(generation)
+	return result, nil
+}
+
+// ExecuteWithContext runs the given function with circuit breaker protection and context
+func (cb *CircuitBreaker) ExecuteWithContext(ctx context.Context, fn func(context.Context) (interface{}, error)) (interface{}, error) {
+	generation, err := cb.beforeRequest()
+	if err != nil {
+		return nil, err
+	}
+	
+	// Create a timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, cb.config.Timeout)
+	defer cancel()
+	
+	resultChan := make(chan interface{}, 1)
+	errorChan := make(chan error, 1)
+	
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				errorChan <- fmt.Errorf("panic: %v", r)
+			}
+		}()
+		
+		result, err := fn(timeoutCtx)
+		if err != nil {
+			errorChan <- err
+			return
+		}
+		resultChan <- result
+	}()
+	
+	select {
+	case result := <-resultChan:
+		cb.onSuccess(generation)
+		return result, nil
+	case err := <-errorChan:
+		cb.onFailure(generation, err)
+		return nil, err
+	case <-timeoutCtx.Done():
+		err := fmt.Errorf("circuit breaker timeout after %v", cb.config.Timeout)
+		cb.onFailure(generation, err)
+		return nil, err
+	}
+}
+
+// beforeRequest checks if the request should be allowed
+func (cb *CircuitBreaker) beforeRequest() (int64, error) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	
+	now := time.Now()
+	state := cb.state
+	generation := cb.generationID
+	
+	// Update statistics
+	cb.stats.Requests++
+	cb.requestCount++
+	
+	switch state {
+	case Closed:
+		// Allow request in closed state
+		return generation, nil
+		
+	case Open:
+		// Check if we should transition to half-open
+		if now.Sub(cb.lastStateChange) >= cb.config.ResetTimeout {
+			cb.setState(HalfOpen, now)
+			cb.requestCount = 1
+			return cb.generationID, nil
+		}
+		
+		// Reject request in open state
+		cb.stats.Rejections++
+		err := fmt.Errorf("circuit breaker is open")
+		cb.logger.Debug("Circuit breaker rejected request", map[string]interface{}{
+			"state": state.String(),
+			"consecutive_failures": cb.consecutiveFailures,
+			"time_since_last_failure": now.Sub(cb.stats.LastFailure).String(),
+		})
+		return generation, err
+		
+	case HalfOpen:
+		// Allow limited requests in half-open state
+		if cb.requestCount <= int64(cb.config.MaxRequests) {
+			return generation, nil
+		}
+		
+		// Too many requests, reject
+		cb.stats.Rejections++
+		err := fmt.Errorf("circuit breaker is half-open with too many requests")
+		return generation, err
+		
+	default:
+		return generation, fmt.Errorf("unknown circuit breaker state: %v", state)
+	}
+}
+
+// onSuccess handles successful request completion
+func (cb *CircuitBreaker) onSuccess(generation int64) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	
+	now := time.Now()
+	
+	// Ignore if this is from an old generation
+	if generation != cb.generationID {
+		return
+	}
+	
+	// Update statistics
+	cb.stats.Successes++
+	cb.stats.LastSuccess = now
+	cb.consecutiveFailures = 0
+	cb.consecutiveSuccesses++
+	
+	switch cb.state {
+	case Closed:
+		// Stay closed
+		
+	case HalfOpen:
+		// Check if we should close the circuit
+		if cb.consecutiveSuccesses >= cb.config.SuccessThreshold {
+			cb.setState(Closed, now)
+			cb.consecutiveSuccesses = 0
+			cb.requestCount = 0
+		}
+		
+	case Open:
+		// This shouldn't happen, but reset if it does
+		cb.setState(Closed, now)
+		cb.consecutiveSuccesses = 0
+		cb.requestCount = 0
+	}
+	
+	// Record success metric
+	observability.RecordCircuitBreakerSuccess()
+}
+
+// onFailure handles failed request completion
+func (cb *CircuitBreaker) onFailure(generation int64, err error) {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	
+	now := time.Now()
+	
+	// Ignore if this is from an old generation
+	if generation != cb.generationID {
+		return
+	}
+	
+	// Update statistics
+	cb.stats.Failures++
+	cb.stats.LastFailure = now
+	cb.consecutiveSuccesses = 0
+	cb.consecutiveFailures++
+	
+	cb.logger.Debug("Circuit breaker recorded failure", map[string]interface{}{
+		"error": err.Error(),
+		"consecutive_failures": cb.consecutiveFailures,
+		"failure_threshold": cb.config.FailureThreshold,
+		"current_state": cb.state.String(),
+	})
+	
+	switch cb.state {
+	case Closed:
+		// Check if we should open the circuit
+		if cb.consecutiveFailures >= cb.config.FailureThreshold {
+			cb.setState(Open, now)
+			cb.requestCount = 0
+		}
+		
+	case HalfOpen:
+		// Any failure in half-open state opens the circuit
+		cb.setState(Open, now)
+		cb.requestCount = 0
+		
+	case Open:
+		// Already open, update failure time
+		cb.stats.LastFailure = now
+	}
+	
+	// Record failure metric
+	observability.RecordCircuitBreakerFailure()
+}
+
+// setState transitions the circuit breaker to a new state
+func (cb *CircuitBreaker) setState(newState CircuitBreakerState, now time.Time) {
+	if cb.state == newState {
+		return
+	}
+	
+	oldState := cb.state
+	cb.state = newState
+	cb.lastStateChange = now
+	cb.stats.LastStateChange = now
+	cb.generationID++
+	
+	cb.logger.Info("Circuit breaker state changed", map[string]interface{}{
+		"old_state": oldState.String(),
+		"new_state": newState.String(),
+		"consecutive_failures": cb.consecutiveFailures,
+		"consecutive_successes": cb.consecutiveSuccesses,
+		"generation_id": cb.generationID,
+	})
+	
+	// Record state change metric
+	observability.RecordCircuitBreakerStateChange(oldState.String(), newState.String())
+}
+
+// GetState returns the current state of the circuit breaker
+func (cb *CircuitBreaker) GetState() CircuitBreakerState {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state
+}
+
+// GetStats returns current statistics for the circuit breaker
+func (cb *CircuitBreaker) GetStats() CircuitBreakerStats {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.stats
+}
+
+// Reset resets the circuit breaker to its initial state
+func (cb *CircuitBreaker) Reset() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	
+	now := time.Now()
+	cb.setState(Closed, now)
+	cb.consecutiveFailures = 0
+	cb.consecutiveSuccesses = 0
+	cb.requestCount = 0
+	
+	cb.logger.Info("Circuit breaker reset", map[string]interface{}{
+		"generation_id": cb.generationID,
+	})
+}
+
+// IsOpen returns true if the circuit breaker is in open state
+func (cb *CircuitBreaker) IsOpen() bool {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state == Open
+}
+
+// IsClosed returns true if the circuit breaker is in closed state
+func (cb *CircuitBreaker) IsClosed() bool {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state == Closed
+}
+
+// IsHalfOpen returns true if the circuit breaker is in half-open state
+func (cb *CircuitBreaker) IsHalfOpen() bool {
+	cb.mu.RLock()
+	defer cb.mu.RUnlock()
+	return cb.state == HalfOpen
+}

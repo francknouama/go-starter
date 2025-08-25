@@ -1,0 +1,292 @@
+# {{.ProjectName}} - Environment Configuration Template
+# Copy this file to .env and adjust values for your environment
+# DO NOT commit .env to version control - it contains sensitive information
+
+# =============================================================================
+# AWS Configuration
+# =============================================================================
+
+# AWS Profile to use (optional, uses default if not specified)
+# AWS_PROFILE=development
+
+# AWS Region for deployment
+AWS_DEFAULT_REGION=us-east-1
+
+# Alternative regions for multi-region deployments
+# AWS_SECONDARY_REGION=us-west-2
+
+# =============================================================================
+# Environment and Deployment Configuration
+# =============================================================================
+
+# Deployment environment (dev, staging, prod)
+ENVIRONMENT=dev
+
+# Project configuration
+PROJECT_NAME={{.ProjectName}}
+GO_VERSION={{.GoVersion}}
+PROCESSING_PATTERN={{.ProcessingPattern}}
+OBSERVABILITY_LEVEL={{.ObservabilityLevel}}
+
+# Stack naming
+STACK_NAME={{.ProjectName}}-dev
+
+# S3 bucket for deployment artifacts (will be created if it doesn't exist)
+DEPLOYMENT_BUCKET={{.ProjectName}}-deployment-dev-us-east-1
+
+# =============================================================================
+# Application Configuration
+# =============================================================================
+
+# Logging configuration
+LOG_LEVEL=debug
+LOGGER_TYPE={{.LoggerType}}
+
+# Enable structured logging
+LOG_JSON=true
+
+# Lambda function configuration
+LAMBDA_TIMEOUT=300
+LAMBDA_MEMORY=256
+LAMBDA_ARCHITECTURE={{- if eq .GoVersion "1.21"}} arm64 {{- else}} x86_64 {{- end}}
+
+# =============================================================================
+# Event Source Configuration
+# =============================================================================
+
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sqs")) (and (kindIs "slice" .EventSources) (has "sqs" .EventSources))}}
+# SQS Configuration
+SQS_QUEUE_URL=
+SQS_BATCH_SIZE={{- if eq .ProcessingPattern "batch"}} 10 {{- else}} 1 {{- end}}
+SQS_VISIBILITY_TIMEOUT=300
+SQS_MAX_RECEIVE_COUNT=3
+{{- end}}
+
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "sns")) (and (kindIs "slice" .EventSources) (has "sns" .EventSources))}}
+# SNS Configuration
+SNS_TOPIC_ARN=
+SNS_DISPLAY_NAME={{.ProjectName}} Notifications
+{{- end}}
+
+{{- if or (and (kindIs "string" .EventSources) (eq .EventSources "eventbridge")) (and (kindIs "slice" .EventSources) (has "eventbridge" .EventSources))}}
+# EventBridge Configuration
+EVENTBRIDGE_BUS_NAME=default
+EVENT_SOURCE=custom.{{.ProjectName}}
+{{- end}}
+
+# =============================================================================
+# Processing Configuration
+# =============================================================================
+
+# Concurrency settings
+MAX_CONCURRENCY=10
+PROCESSING_TIMEOUT=30s
+
+{{- if eq .ProcessingPattern "batch"}}
+# Batch processing settings
+BATCH_SIZE=10
+BATCH_TIMEOUT=5s
+BATCH_MAX_WAIT=30s
+{{- end}}
+
+{{- if eq .ProcessingPattern "fanout"}}
+# Fanout processing settings
+FANOUT_WORKERS=5
+FANOUT_BUFFER_SIZE=100
+{{- end}}
+
+# =============================================================================
+# Resilience Configuration
+# =============================================================================
+
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "circuit-breaker")) (and (kindIs "slice" .ResilienceFeatures) (has "circuit-breaker" .ResilienceFeatures))}}
+# Circuit Breaker Configuration
+CIRCUIT_BREAKER_ENABLED=true
+CIRCUIT_BREAKER_FAILURE_THRESHOLD=5
+CIRCUIT_BREAKER_SUCCESS_THRESHOLD=3
+CIRCUIT_BREAKER_TIMEOUT=30s
+CIRCUIT_BREAKER_RESET_TIMEOUT=60s
+{{- end}}
+
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "retry")) (and (kindIs "slice" .ResilienceFeatures) (has "retry" .ResilienceFeatures))}}
+# Retry Configuration
+RETRY_ENABLED=true
+RETRY_MAX_ATTEMPTS=3
+RETRY_INITIAL_DELAY=1s
+RETRY_MAX_DELAY=30s
+RETRY_MULTIPLIER=2.0
+{{- end}}
+
+{{- if or (and (kindIs "string" .ResilienceFeatures) (eq .ResilienceFeatures "dlq")) (and (kindIs "slice" .ResilienceFeatures) (has "dlq" .ResilienceFeatures))}}
+# Dead Letter Queue Configuration
+DLQ_ENABLED=true
+DLQ_QUEUE_URL=
+DLQ_MAX_RETRIES=3
+DLQ_RETRY_DELAY=30s
+DLQ_INCLUDE_HEADERS=true
+DLQ_INCLUDE_STACK_TRACE=false
+{{- end}}
+
+# =============================================================================
+# Observability Configuration
+# =============================================================================
+
+{{- if ne .ObservabilityLevel "basic"}}
+# X-Ray Tracing
+AWS_XRAY_TRACING_NAME={{.ProjectName}}
+AWS_XRAY_CONTEXT_MISSING=LOG_ERROR
+AWS_XRAY_DEBUG_MODE=false
+
+# CloudWatch Metrics
+METRICS_ENABLED=true
+METRICS_NAMESPACE=AWS/Lambda/{{.ProjectName}}
+CUSTOM_METRICS_ENABLED=true
+
+# Performance Monitoring
+PERF_MONITORING_ENABLED=true
+COLD_START_TRACKING=true
+MEMORY_USAGE_TRACKING=true
+{{- end}}
+
+# Correlation ID tracking
+CORRELATION_ID_HEADER=X-Correlation-ID
+GENERATE_CORRELATION_ID=true
+
+# =============================================================================
+# Security Configuration
+# =============================================================================
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "secrets-manager")) (and (kindIs "slice" .SecurityFeatures) (has "secrets-manager" .SecurityFeatures))}}
+# AWS Secrets Manager
+SECRETS_MANAGER_ENABLED=true
+SECRETS_REGION=us-east-1
+SECRETS_PREFIX={{.ProjectName}}
+
+# Example secrets (replace with actual secret names)
+# DATABASE_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:{{.ProjectName}}/database-AbCdEf
+# API_KEY_SECRET_ARN=arn:aws:secretsmanager:us-east-1:123456789012:secret:{{.ProjectName}}/api-keys-123456
+{{- end}}
+
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+# Input Validation
+INPUT_VALIDATION_ENABLED=true
+VALIDATION_STRICT_MODE=false
+VALIDATION_MAX_PAYLOAD_SIZE=1048576  # 1MB
+{{- end}}
+
+# IAM and Security
+ENABLE_IAM_LEAST_PRIVILEGE=true
+SECURITY_HEADERS_ENABLED=true
+
+# =============================================================================
+# Testing Configuration
+# =============================================================================
+
+{{- if eq .TestingLevel "comprehensive"}}
+# Test configuration
+TEST_TIMEOUT=30s
+TEST_PARALLEL=true
+TEST_VERBOSE=false
+TEST_COVERAGE_THRESHOLD=80
+
+# Integration test configuration
+INTEGRATION_TESTS_ENABLED=true
+TEST_CONTAINERS_ENABLED=true
+TEST_AWS_ENDPOINT_URL=http://localhost:4566  # LocalStack
+{{- end}}
+
+# Load testing
+LOAD_TEST_ENABLED=false
+LOAD_TEST_DURATION=60s
+LOAD_TEST_CONCURRENCY=10
+
+# =============================================================================
+# Development Configuration
+# =============================================================================
+
+# Development mode settings
+DEBUG=true
+DEVELOPMENT_MODE=true
+HOT_RELOAD=false
+
+# Local development
+LOCAL_DEVELOPMENT=true
+LOCAL_API_PORT=3000
+LOCAL_LAMBDA_PORT=3001
+
+# Skip certain checks in development
+SKIP_TESTS=false
+SKIP_LINTING=false
+SKIP_SECURITY_SCAN=false
+
+# =============================================================================
+# Monitoring and Alerting
+# =============================================================================
+
+{{- if ne .ObservabilityLevel "basic"}}
+# CloudWatch Alarms
+ALARM_ERROR_THRESHOLD=5
+ALARM_DURATION_THRESHOLD=30000  # 30 seconds in milliseconds
+ALARM_EVALUATION_PERIODS=2
+
+# Notification settings
+NOTIFICATION_EMAIL=
+SLACK_WEBHOOK_URL=
+PAGER_DUTY_SERVICE_KEY=
+
+# Dashboard configuration
+DASHBOARD_ENABLED=true
+DASHBOARD_AUTO_REFRESH=300  # 5 minutes
+{{- end}}
+
+# =============================================================================
+# Cost Optimization
+# =============================================================================
+
+# Cost tracking
+COST_ALLOCATION_TAGS=Environment={{.ProjectName}}-dev,Project={{.ProjectName}}
+COST_MONITORING_ENABLED=true
+
+# Resource optimization
+AUTO_SCALING_ENABLED=false
+RESOURCE_CLEANUP_ENABLED=true
+CLEANUP_RETENTION_DAYS=30
+
+# =============================================================================
+# Additional Configuration
+# =============================================================================
+
+# Feature flags
+FEATURE_FLAG_NEW_PROCESSING=false
+FEATURE_FLAG_ENHANCED_LOGGING=true
+FEATURE_FLAG_METRICS_V2=false
+
+# External service configuration
+# DATABASE_URL=
+# REDIS_URL=
+# ELASTICSEARCH_URL=
+
+# API endpoints
+# EXTERNAL_API_BASE_URL=
+# WEBHOOK_URL=
+
+# =============================================================================
+# Environment-Specific Overrides
+# =============================================================================
+
+# Uncomment and modify for specific environments:
+
+# # Staging overrides
+# [staging]
+# LOG_LEVEL=info
+# DEBUG=false
+# CIRCUIT_BREAKER_FAILURE_THRESHOLD=10
+
+# # Production overrides  
+# [production]
+# LOG_LEVEL=warn
+# DEBUG=false
+# DEVELOPMENT_MODE=false
+# SKIP_TESTS=true
+# METRICS_DETAILED=false
+# ALARM_ERROR_THRESHOLD=1

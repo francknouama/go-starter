@@ -1,0 +1,109 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{.ProjectName}}-network-policy
+  namespace: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+  labels:
+    app: {{.ProjectName}}
+    component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: {{.ProjectName}}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow traffic from other pods in the same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: {{if .EnableServiceMesh}}{{.ServiceMesh.Namespace}}{{else}}default{{end}}
+    ports:
+    - protocol: TCP
+      port: {{.Port}}
+{{if .EnableObservability}}
+    - protocol: TCP
+      port: 8080  # Health check port
+    - protocol: TCP
+      port: 9090  # Metrics port
+{{end}}
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: {{.Port}}
+{{if .EnableServiceMesh}}
+  # Allow Istio sidecar communication
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    ports:
+    - protocol: TCP
+      port: 15090  # Envoy admin
+    - protocol: TCP
+      port: 15001  # Envoy outbound
+    - protocol: TCP
+      port: 15006  # Envoy inbound
+{{end}}
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{if ne .DatabaseType "none"}}
+  # Allow database connections
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: database
+    ports:
+    - protocol: TCP
+{{if eq .DatabaseType "postgres"}}
+      port: 5432
+{{else if eq .DatabaseType "mysql"}}
+      port: 3306
+{{else if eq .DatabaseType "mongodb"}}
+      port: 27017
+{{else if eq .DatabaseType "redis"}}
+      port: 6379
+{{end}}
+{{end}}
+{{if .EnableObservability}}
+  # Allow connections to observability stack
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: observability
+    ports:
+    - protocol: TCP
+      port: 14268  # Jaeger collector
+    - protocol: TCP
+      port: 4317   # OTLP gRPC
+    - protocol: TCP
+      port: 4318   # OTLP HTTP
+{{end}}
+{{if .EnableServiceMesh}}
+  # Allow Istio sidecar communication
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 15001  # Envoy outbound
+{{end}}
+  # Allow HTTPS to external services
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80

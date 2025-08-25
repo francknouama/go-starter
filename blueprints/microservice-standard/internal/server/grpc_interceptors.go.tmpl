@@ -1,0 +1,394 @@
+package server
+
+import (
+	"context"
+	"fmt"
+	"runtime/debug"
+	"time"
+
+{{if eq .Logger "zap"}}
+	"go.uber.org/zap"
+{{else if eq .Logger "logrus"}}
+	"github.com/sirupsen/logrus"
+{{else if eq .Logger "zerolog"}}
+	"github.com/rs/zerolog"
+{{else}}
+	"log/slog"
+{{end}}
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
+{{if .EnableObservability}}
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+{{end}}
+{{if .EnableRateLimiting}}
+	"golang.org/x/time/rate"
+{{end}}
+
+	"{{.ModulePath}}/internal/config"
+{{if .EnableObservability}}
+	"{{.ModulePath}}/internal/metrics"
+{{end}}
+)
+
+// unaryLoggingInterceptor logs all unary gRPC requests with structured logging
+func unaryLoggingInterceptor(
+{{if eq .Logger "zap"}}
+	logger *zap.Logger,
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger,
+{{else if eq .Logger "zerolog"}}
+	logger zerolog.Logger,
+{{else}}
+	logger *slog.Logger,
+{{end}}
+) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		start := time.Now()
+		
+		// Extract client information
+		clientIP := "unknown"
+		if peer, ok := peer.FromContext(ctx); ok {
+			clientIP = peer.Addr.String()
+		}
+		
+		// Extract request ID from metadata
+		requestID := "unknown"
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
+			if ids := md.Get("x-request-id"); len(ids) > 0 {
+				requestID = ids[0]
+			}
+		}
+
+		// Call the handler
+		resp, err := handler(ctx, req)
+		
+		// Log the request
+		duration := time.Since(start)
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+
+{{if eq .Logger "zap"}}
+		logger.Info("gRPC request",
+			zap.String("method", info.FullMethod),
+			zap.String("client_ip", clientIP),
+			zap.String("request_id", requestID),
+			zap.String("status", status),
+			zap.Duration("duration", duration),
+			zap.Error(err))
+{{else if eq .Logger "logrus"}}
+		logger.WithFields(logrus.Fields{
+			"method":     info.FullMethod,
+			"client_ip":  clientIP,
+			"request_id": requestID,
+			"status":     status,
+			"duration":   duration,
+		}).Info("gRPC request")
+		if err != nil {
+			logger.WithError(err).Error("gRPC request error")
+		}
+{{else if eq .Logger "zerolog"}}
+		logger.Info().
+			Str("method", info.FullMethod).
+			Str("client_ip", clientIP).
+			Str("request_id", requestID).
+			Str("status", status).
+			Dur("duration", duration).
+			Err(err).
+			Msg("gRPC request")
+{{else}}
+		logger.Info("gRPC request",
+			"method", info.FullMethod,
+			"client_ip", clientIP,
+			"request_id", requestID,
+			"status", status,
+			"duration", duration,
+			"error", err)
+{{end}}
+
+		return resp, err
+	}
+}
+
+// unaryRecoveryInterceptor recovers from panics in unary gRPC handlers
+func unaryRecoveryInterceptor(
+{{if eq .Logger "zap"}}
+	logger *zap.Logger,
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger,
+{{else if eq .Logger "zerolog"}}
+	logger zerolog.Logger,
+{{else}}
+	logger *slog.Logger,
+{{end}}
+) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := string(debug.Stack())
+{{if eq .Logger "zap"}}
+				logger.Error("Panic in gRPC handler",
+					zap.String("method", info.FullMethod),
+					zap.Any("panic", r),
+					zap.String("stack", stack))
+{{else if eq .Logger "logrus"}}
+				logger.WithFields(logrus.Fields{
+					"method": info.FullMethod,
+					"panic":  r,
+					"stack":  stack,
+				}).Error("Panic in gRPC handler")
+{{else if eq .Logger "zerolog"}}
+				logger.Error().
+					Str("method", info.FullMethod).
+					Interface("panic", r).
+					Str("stack", stack).
+					Msg("Panic in gRPC handler")
+{{else}}
+				logger.Error("Panic in gRPC handler",
+					"method", info.FullMethod,
+					"panic", r,
+					"stack", stack)
+{{end}}
+				err = status.Errorf(codes.Internal, "Internal server error")
+			}
+		}()
+
+		return handler(ctx, req)
+	}
+}
+
+{{if .EnableObservability}}
+// unaryMetricsInterceptor records metrics for unary gRPC requests
+func unaryMetricsInterceptor(metrics *metrics.Metrics) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		start := time.Now()
+		metrics.IncGRPCRequestsInFlight()
+		defer metrics.DecGRPCRequestsInFlight()
+
+		resp, err := handler(ctx, req)
+
+		duration := time.Since(start)
+		statusCode := "OK"
+		if err != nil {
+			if s, ok := status.FromError(err); ok {
+				statusCode = s.Code().String()
+			} else {
+				statusCode = "Unknown"
+			}
+		}
+
+		metrics.RecordGRPCRequest(info.FullMethod, statusCode, duration)
+
+		return resp, err
+	}
+}
+{{end}}
+
+{{if .EnableRateLimiting}}
+// unaryRateLimitingInterceptor implements rate limiting for unary gRPC requests
+func unaryRateLimitingInterceptor() grpc.UnaryServerInterceptor {
+	// Create a simple rate limiter (in production, use a more sophisticated implementation)
+	limiter := rate.NewLimiter(rate.Limit(100), 200) // 100 requests per second, burst of 200
+
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if !limiter.Allow() {
+			return nil, status.Errorf(codes.ResourceExhausted, "Rate limit exceeded")
+		}
+
+		return handler(ctx, req)
+	}
+}
+{{end}}
+
+{{if .EnableAuthentication}}
+// unaryAuthInterceptor validates JWT tokens for authenticated endpoints
+func unaryAuthInterceptor(cfg *config.Config) grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Skip authentication for health checks
+		if info.FullMethod == "/grpc.health.v1.Health/Check" || 
+		   info.FullMethod == "/grpc.health.v1.Health/Watch" {
+			return handler(ctx, req)
+		}
+
+		md, ok := metadata.FromIncomingContext(ctx)
+		if !ok {
+			return nil, status.Errorf(codes.Unauthenticated, "Missing metadata")
+		}
+
+		auth := md.Get("authorization")
+		if len(auth) == 0 {
+			return nil, status.Errorf(codes.Unauthenticated, "Missing authorization header")
+		}
+
+		// TODO: Implement JWT validation logic here
+		// For now, just check if the token exists
+		token := auth[0]
+		if token == "" {
+			return nil, status.Errorf(codes.Unauthenticated, "Empty authorization token")
+		}
+
+		return handler(ctx, req)
+	}
+}
+{{end}}
+
+// unaryValidationInterceptor validates request data
+func unaryValidationInterceptor() grpc.UnaryServerInterceptor {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		// Add validation logic here based on your needs
+		// For example, validate protobuf message fields
+		
+		return handler(ctx, req)
+	}
+}
+
+// streamLoggingInterceptor logs all streaming gRPC requests
+func streamLoggingInterceptor(
+{{if eq .Logger "zap"}}
+	logger *zap.Logger,
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger,
+{{else if eq .Logger "zerolog"}}
+	logger zerolog.Logger,
+{{else}}
+	logger *slog.Logger,
+{{end}}
+) grpc.StreamServerInterceptor {
+	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		start := time.Now()
+		
+		// Extract client information
+		clientIP := "unknown"
+		if peer, ok := peer.FromContext(stream.Context()); ok {
+			clientIP = peer.Addr.String()
+		}
+
+		err := handler(srv, stream)
+
+		duration := time.Since(start)
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+
+{{if eq .Logger "zap"}}
+		logger.Info("gRPC stream request",
+			zap.String("method", info.FullMethod),
+			zap.String("client_ip", clientIP),
+			zap.String("status", status),
+			zap.Duration("duration", duration),
+			zap.Error(err))
+{{else if eq .Logger "logrus"}}
+		logger.WithFields(logrus.Fields{
+			"method":    info.FullMethod,
+			"client_ip": clientIP,
+			"status":    status,
+			"duration":  duration,
+		}).Info("gRPC stream request")
+		if err != nil {
+			logger.WithError(err).Error("gRPC stream request error")
+		}
+{{else if eq .Logger "zerolog"}}
+		logger.Info().
+			Str("method", info.FullMethod).
+			Str("client_ip", clientIP).
+			Str("status", status).
+			Dur("duration", duration).
+			Err(err).
+			Msg("gRPC stream request")
+{{else}}
+		logger.Info("gRPC stream request",
+			"method", info.FullMethod,
+			"client_ip", clientIP,
+			"status", status,
+			"duration", duration,
+			"error", err)
+{{end}}
+
+		return err
+	}
+}
+
+// streamRecoveryInterceptor recovers from panics in streaming gRPC handlers
+func streamRecoveryInterceptor(
+{{if eq .Logger "zap"}}
+	logger *zap.Logger,
+{{else if eq .Logger "logrus"}}
+	logger *logrus.Logger,
+{{else if eq .Logger "zerolog"}}
+	logger zerolog.Logger,
+{{else}}
+	logger *slog.Logger,
+{{end}}
+) grpc.StreamServerInterceptor {
+	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				stack := string(debug.Stack())
+{{if eq .Logger "zap"}}
+				logger.Error("Panic in gRPC stream handler",
+					zap.String("method", info.FullMethod),
+					zap.Any("panic", r),
+					zap.String("stack", stack))
+{{else if eq .Logger "logrus"}}
+				logger.WithFields(logrus.Fields{
+					"method": info.FullMethod,
+					"panic":  r,
+					"stack":  stack,
+				}).Error("Panic in gRPC stream handler")
+{{else if eq .Logger "zerolog"}}
+				logger.Error().
+					Str("method", info.FullMethod).
+					Interface("panic", r).
+					Str("stack", stack).
+					Msg("Panic in gRPC stream handler")
+{{else}}
+				logger.Error("Panic in gRPC stream handler",
+					"method", info.FullMethod,
+					"panic", r,
+					"stack", stack)
+{{end}}
+				err = status.Errorf(codes.Internal, "Internal server error")
+			}
+		}()
+
+		return handler(srv, stream)
+	}
+}
+
+{{if .EnableAuthentication}}
+// streamAuthInterceptor validates JWT tokens for authenticated streaming endpoints
+func streamAuthInterceptor(cfg *config.Config) grpc.StreamServerInterceptor {
+	return func(srv interface{}, stream grpc.ServerStream, info *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+		// Skip authentication for health checks
+		if info.FullMethod == "/grpc.health.v1.Health/Check" || 
+		   info.FullMethod == "/grpc.health.v1.Health/Watch" {
+			return handler(srv, stream)
+		}
+
+		md, ok := metadata.FromIncomingContext(stream.Context())
+		if !ok {
+			return status.Errorf(codes.Unauthenticated, "Missing metadata")
+		}
+
+		auth := md.Get("authorization")
+		if len(auth) == 0 {
+			return status.Errorf(codes.Unauthenticated, "Missing authorization header")
+		}
+
+		// TODO: Implement JWT validation logic here
+		token := auth[0]
+		if token == "" {
+			return status.Errorf(codes.Unauthenticated, "Empty authorization token")
+		}
+
+		return handler(srv, stream)
+	}
+}
+{{end}}

@@ -1,0 +1,566 @@
+#!/bin/bash
+
+# {{.ProjectName}} - Production-Grade Lambda Event Processing Deployment Script
+# This script provides comprehensive deployment automation with environment-specific configurations
+
+set -euo pipefail
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
+NC='\033[0m' # No Color
+
+# Default configuration
+PROJECT_NAME="{{.ProjectName}}"
+DEFAULT_REGION="us-east-1"
+DEFAULT_ENV="dev"
+GO_VERSION="{{.GoVersion}}"
+PROCESSING_PATTERN="{{.ProcessingPattern}}"
+OBSERVABILITY_LEVEL="{{.ObservabilityLevel}}"
+
+# Script configuration
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
+ROOT_DIR="$SCRIPT_DIR"
+LOG_FILE="$ROOT_DIR/deployment.log"
+TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
+
+# Initialize logging
+echo "[$TIMESTAMP] Deployment started" > "$LOG_FILE"
+
+# Utility functions
+log() {
+    local level=$1
+    shift
+    local message="$*"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo "[$timestamp] [$level] $message" | tee -a "$LOG_FILE"
+}
+
+log_info() { 
+    echo -e "${BLUE}[INFO]${NC} $*"
+    log "INFO" "$*"
+}
+
+log_warn() { 
+    echo -e "${YELLOW}[WARN]${NC} $*"
+    log "WARN" "$*"
+}
+
+log_error() { 
+    echo -e "${RED}[ERROR]${NC} $*" >&2
+    log "ERROR" "$*"
+}
+
+log_success() { 
+    echo -e "${GREEN}[SUCCESS]${NC} $*"
+    log "SUCCESS" "$*"
+}
+
+log_debug() {
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        echo -e "${PURPLE}[DEBUG]${NC} $*"
+        log "DEBUG" "$*"
+    fi
+}
+
+# Error handling
+cleanup() {
+    local exit_code=$?
+    if [[ $exit_code -ne 0 ]]; then
+        log_error "Deployment failed with exit code $exit_code"
+        log_error "Check $LOG_FILE for detailed logs"
+    fi
+    exit $exit_code
+}
+
+trap cleanup EXIT
+
+# Help function
+show_help() {
+    cat << EOF
+${BLUE}{{.ProjectName}} - Lambda Event Processing Deployment${NC}
+
+Usage: $0 [OPTIONS]
+
+Options:
+  -e, --env ENV              Target environment (dev|staging|prod) [default: $DEFAULT_ENV]
+  -r, --region REGION        AWS region [default: $DEFAULT_REGION]
+  -p, --profile PROFILE      AWS profile to use
+  -s, --skip-build          Skip build step (use existing bootstrap binary)
+  -t, --skip-tests          Skip running tests
+  -v, --validate-only       Only validate template, don't deploy
+  -f, --force               Force deployment without confirmation
+  -d, --debug               Enable debug output
+  -c, --clean               Clean artifacts before deployment
+  --dry-run                 Show what would be deployed without actually deploying
+  --rollback                Rollback to previous deployment
+  -h, --help                Show this help message
+
+Examples:
+  $0 --env dev --region us-west-2
+  $0 --env prod --profile production --force
+  $0 --validate-only
+  $0 --rollback --env staging
+
+Environment Variables:
+  AWS_PROFILE              AWS profile (overrides --profile)
+  AWS_DEFAULT_REGION       AWS region (overrides --region)
+  DEBUG                    Enable debug mode (true/false)
+  SKIP_TESTS              Skip tests (true/false)
+  DEPLOYMENT_BUCKET       S3 bucket for deployment artifacts
+EOF
+}
+
+# Parse command line arguments
+parse_args() {
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -e|--env)
+                ENVIRONMENT="$2"
+                shift 2
+                ;;
+            -r|--region)
+                REGION="$2"
+                shift 2
+                ;;
+            -p|--profile)
+                AWS_PROFILE="$2"
+                shift 2
+                ;;
+            -s|--skip-build)
+                SKIP_BUILD=true
+                shift
+                ;;
+            -t|--skip-tests)
+                SKIP_TESTS=true
+                shift
+                ;;
+            -v|--validate-only)
+                VALIDATE_ONLY=true
+                shift
+                ;;
+            -f|--force)
+                FORCE_DEPLOY=true
+                shift
+                ;;
+            -d|--debug)
+                DEBUG=true
+                shift
+                ;;
+            -c|--clean)
+                CLEAN_FIRST=true
+                shift
+                ;;
+            --dry-run)
+                DRY_RUN=true
+                shift
+                ;;
+            --rollback)
+                ROLLBACK=true
+                shift
+                ;;
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+}
+
+# Set defaults and validate environment
+set_defaults() {
+    ENVIRONMENT="${ENVIRONMENT:-$DEFAULT_ENV}"
+    REGION="${REGION:-${AWS_DEFAULT_REGION:-$DEFAULT_REGION}}"
+    AWS_PROFILE="${AWS_PROFILE:-}"
+    SKIP_BUILD="${SKIP_BUILD:-false}"
+    SKIP_TESTS="${SKIP_TESTS:-${SKIP_TESTS:-false}}"
+    VALIDATE_ONLY="${VALIDATE_ONLY:-false}"
+    FORCE_DEPLOY="${FORCE_DEPLOY:-false}"
+    DEBUG="${DEBUG:-false}"
+    CLEAN_FIRST="${CLEAN_FIRST:-false}"
+    DRY_RUN="${DRY_RUN:-false}"
+    ROLLBACK="${ROLLBACK:-false}"
+    
+    # Derived variables
+    STACK_NAME="$PROJECT_NAME-$ENVIRONMENT"
+    DEPLOYMENT_BUCKET="${DEPLOYMENT_BUCKET:-$PROJECT_NAME-deployment-$ENVIRONMENT-$(echo "$REGION" | tr '[:upper:]' '[:lower:]')}"
+    
+    log_debug "Configuration loaded:"
+    log_debug "  Environment: $ENVIRONMENT"
+    log_debug "  Region: $REGION"
+    log_debug "  Stack Name: $STACK_NAME"
+    log_debug "  Deployment Bucket: $DEPLOYMENT_BUCKET"
+    log_debug "  AWS Profile: ${AWS_PROFILE:-<default>}"
+}
+
+# Validate environment and prerequisites
+validate_environment() {
+    log_info "Validating environment and prerequisites..."
+    
+    # Check environment value
+    case $ENVIRONMENT in
+        dev|staging|prod)
+            log_debug "Environment '$ENVIRONMENT' is valid"
+            ;;
+        *)
+            log_error "Invalid environment '$ENVIRONMENT'. Must be one of: dev, staging, prod"
+            exit 1
+            ;;
+    esac
+    
+    # Check required tools
+    local required_tools=("aws" "sam" "go" "make")
+    for tool in "${required_tools[@]}"; do
+        if ! command -v "$tool" &> /dev/null; then
+            log_error "Required tool '$tool' not found in PATH"
+            exit 1
+        fi
+        log_debug "Tool '$tool' found: $(command -v "$tool")"
+    done
+    
+    # Validate Go version
+    local current_go_version
+    current_go_version=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | sed 's/go//')
+    log_debug "Go version: $current_go_version (required: $GO_VERSION)"
+    
+    # Check AWS credentials
+    if [[ -n "$AWS_PROFILE" ]]; then
+        export AWS_PROFILE
+        log_debug "Using AWS profile: $AWS_PROFILE"
+    fi
+    
+    if ! aws sts get-caller-identity &> /dev/null; then
+        log_error "AWS credentials not configured or invalid"
+        log_error "Configure with: aws configure [--profile $AWS_PROFILE]"
+        exit 1
+    fi
+    
+    local caller_identity
+    caller_identity=$(aws sts get-caller-identity --query '[Account,Arn]' --output text)
+    log_debug "AWS Identity: $caller_identity"
+    
+    # Validate region
+    if ! aws ec2 describe-regions --region-names "$REGION" &> /dev/null; then
+        log_error "Invalid AWS region: $REGION"
+        exit 1
+    fi
+    
+    log_success "Environment validation completed"
+}
+
+# Clean build artifacts
+clean_artifacts() {
+    if [[ "$CLEAN_FIRST" == "true" ]]; then
+        log_info "Cleaning build artifacts..."
+        make clean
+        log_success "Build artifacts cleaned"
+    fi
+}
+
+# Build the Lambda function
+build_function() {
+    if [[ "$SKIP_BUILD" == "true" ]]; then
+        log_info "Skipping build step"
+        if [[ ! -f "bootstrap" ]]; then
+            log_error "No bootstrap binary found and build was skipped"
+            exit 1
+        fi
+        return
+    fi
+    
+    log_info "Building Lambda function..."
+    make build
+    
+    if [[ ! -f "bootstrap" ]]; then
+        log_error "Build failed - bootstrap binary not found"
+        exit 1
+    fi
+    
+    local binary_size
+    binary_size=$(du -h bootstrap | cut -f1)
+    log_success "Build completed successfully (binary size: $binary_size)"
+}
+
+# Run tests
+run_tests() {
+    if [[ "$SKIP_TESTS" == "true" ]]; then
+        log_info "Skipping tests"
+        return
+    fi
+    
+    log_info "Running tests..."
+    
+    # Run unit tests
+    if ! make test; then
+        log_error "Tests failed"
+        exit 1
+    fi
+    
+{{- if eq .TestingLevel "comprehensive"}}
+    # Run integration tests if available
+    if [[ -f "docker-compose.test.yml" ]]; then
+        log_info "Running integration tests..."
+        if ! make test-integration; then
+            log_warn "Integration tests failed, continuing with deployment"
+        fi
+    fi
+{{- end}}
+    
+{{- if or (and (kindIs "string" .SecurityFeatures) (eq .SecurityFeatures "input-validation")) (and (kindIs "slice" .SecurityFeatures) (has "input-validation" .SecurityFeatures))}}
+    # Run security scan
+    log_info "Running security scan..."
+    if ! make security; then
+        log_warn "Security scan found issues, check security-report.json"
+    fi
+{{- end}}
+    
+    log_success "Tests completed successfully"
+}
+
+# Validate SAM template
+validate_template() {
+    log_info "Validating SAM template..."
+    
+    if ! sam validate --template template.yaml; then
+        log_error "Template validation failed"
+        exit 1
+    fi
+    
+    # Additional CloudFormation validation
+    if ! aws cloudformation validate-template --template-body file://template.yaml --region "$REGION" &> /dev/null; then
+        log_error "CloudFormation template validation failed"
+        exit 1
+    fi
+    
+    log_success "Template validation successful"
+}
+
+# Create S3 deployment bucket
+create_deployment_bucket() {
+    log_info "Ensuring deployment bucket exists: $DEPLOYMENT_BUCKET"
+    
+    if aws s3api head-bucket --bucket "$DEPLOYMENT_BUCKET" 2> /dev/null; then
+        log_debug "Deployment bucket already exists"
+        return
+    fi
+    
+    log_info "Creating deployment bucket: $DEPLOYMENT_BUCKET"
+    
+    if [[ "$REGION" == "us-east-1" ]]; then
+        aws s3api create-bucket --bucket "$DEPLOYMENT_BUCKET" --region "$REGION"
+    else
+        aws s3api create-bucket --bucket "$DEPLOYMENT_BUCKET" --region "$REGION" --create-bucket-configuration LocationConstraint="$REGION"
+    fi
+    
+    # Enable versioning
+    aws s3api put-bucket-versioning --bucket "$DEPLOYMENT_BUCKET" --versioning-configuration Status=Enabled
+    
+    # Add lifecycle policy to clean up old artifacts
+    cat > "/tmp/lifecycle-policy.json" << EOF
+{
+    "Rules": [
+        {
+            "ID": "DeleteOldVersions",
+            "Status": "Enabled",
+            "NoncurrentVersionExpirationInDays": 30
+        },
+        {
+            "ID": "DeleteIncompleteMultipartUploads",
+            "Status": "Enabled",
+            "AbortIncompleteMultipartUpload": {
+                "DaysAfterInitiation": 1
+            }
+        }
+    ]
+}
+EOF
+    
+    aws s3api put-bucket-lifecycle-configuration --bucket "$DEPLOYMENT_BUCKET" --lifecycle-configuration file:///tmp/lifecycle-policy.json
+    rm "/tmp/lifecycle-policy.json"
+    
+    log_success "Deployment bucket created and configured"
+}
+
+# Package the application
+package_application() {
+    log_info "Packaging application..."
+    
+    if ! sam package \
+        --template-file template.yaml \
+        --output-template-file packaged-template.yaml \
+        --s3-bucket "$DEPLOYMENT_BUCKET" \
+        --region "$REGION"; then
+        log_error "Packaging failed"
+        exit 1
+    fi
+    
+    log_success "Application packaged successfully"
+}
+
+# Get deployment confirmation
+get_deployment_confirmation() {
+    if [[ "$FORCE_DEPLOY" == "true" ]] || [[ "$ENVIRONMENT" == "dev" ]]; then
+        return 0
+    fi
+    
+    echo
+    echo -e "${YELLOW}=== DEPLOYMENT CONFIRMATION ===${NC}"
+    echo "Project: $PROJECT_NAME"
+    echo "Environment: $ENVIRONMENT"
+    echo "Region: $REGION"
+    echo "Stack Name: $STACK_NAME"
+    echo "Processing Pattern: $PROCESSING_PATTERN"
+    echo "Observability Level: $OBSERVABILITY_LEVEL"
+    echo
+    
+    if [[ "$ENVIRONMENT" == "prod" ]]; then
+        echo -e "${RED}⚠️  This is a PRODUCTION deployment!${NC}"
+        echo
+    fi
+    
+    read -r -p "Do you want to proceed with deployment? [y/N] " response
+    case "$response" in
+        [yY][eE][sS]|[yY])
+            return 0
+            ;;
+        *)
+            log_info "Deployment cancelled by user"
+            exit 0
+            ;;
+    esac
+}
+
+# Deploy the application
+deploy_application() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "DRY RUN: Would deploy with the following parameters:"
+        log_info "  Stack: $STACK_NAME"
+        log_info "  Region: $REGION"
+        log_info "  Environment: $ENVIRONMENT"
+        return 0
+    fi
+    
+    log_info "Deploying application..."
+    log_info "Stack: $STACK_NAME"
+    log_info "Region: $REGION"
+    
+    local deploy_args=(
+        --template-file packaged-template.yaml
+        --stack-name "$STACK_NAME"
+        --capabilities CAPABILITY_IAM
+        --region "$REGION"
+        --parameter-overrides Environment="$ENVIRONMENT"
+        --fail-on-empty-changeset false
+    )
+    
+    # Add confirmation flag for non-dev environments
+    if [[ "$ENVIRONMENT" != "dev" ]] && [[ "$FORCE_DEPLOY" != "true" ]]; then
+        deploy_args+=(--confirm-changeset)
+    fi
+    
+    if ! sam deploy "${deploy_args[@]}"; then
+        log_error "Deployment failed"
+        exit 1
+    fi
+    
+    log_success "Deployment completed successfully!"
+}
+
+# Show deployment outputs
+show_outputs() {
+    if [[ "$DRY_RUN" == "true" ]]; then
+        return 0
+    fi
+    
+    log_info "Retrieving stack outputs..."
+    
+    local outputs
+    outputs=$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" --region "$REGION" --query 'Stacks[0].Outputs' --output table 2>/dev/null)
+    
+    if [[ -n "$outputs" ]]; then
+        echo
+        echo -e "${GREEN}=== DEPLOYMENT OUTPUTS ===${NC}"
+        echo "$outputs"
+    else
+        log_warn "No stack outputs found"
+    fi
+}
+
+# Rollback deployment
+rollback_deployment() {
+    log_info "Rolling back deployment..."
+    
+    # Get previous template from S3
+    local previous_version
+    previous_version=$(aws s3api list-object-versions --bucket "$DEPLOYMENT_BUCKET" --prefix "$STACK_NAME/" --query 'Versions[1].VersionId' --output text)
+    
+    if [[ "$previous_version" == "None" ]]; then
+        log_error "No previous version found for rollback"
+        exit 1
+    fi
+    
+    log_info "Rolling back to version: $previous_version"
+    
+    # This is a simplified rollback - in production, you might want more sophisticated rollback logic
+    aws cloudformation cancel-update-stack --stack-name "$STACK_NAME" --region "$REGION" || true
+    
+    log_success "Rollback initiated"
+}
+
+# Main deployment flow
+main() {
+    echo -e "${BLUE}🚀 {{.ProjectName}} - Lambda Event Processing Deployment${NC}"
+    echo -e "${BLUE}=================================================${NC}"
+    echo
+    
+    parse_args "$@"
+    set_defaults
+    
+    if [[ "$ROLLBACK" == "true" ]]; then
+        rollback_deployment
+        return 0
+    fi
+    
+    validate_environment
+    clean_artifacts
+    
+    if [[ "$VALIDATE_ONLY" != "true" ]]; then
+        build_function
+        run_tests
+    fi
+    
+    validate_template
+    
+    if [[ "$VALIDATE_ONLY" == "true" ]]; then
+        log_success "Validation completed successfully"
+        return 0
+    fi
+    
+    create_deployment_bucket
+    package_application
+    get_deployment_confirmation
+    deploy_application
+    show_outputs
+    
+    echo
+    echo -e "${GREEN}✅ Deployment completed successfully!${NC}"
+    echo -e "${BLUE}📊 Monitor your application:${NC}"
+    echo "   CloudWatch Logs: https://console.aws.amazon.com/cloudwatch/home?region=$REGION#logs:"
+    echo "   Lambda Console: https://console.aws.amazon.com/lambda/home?region=$REGION#/functions/$STACK_NAME-event-processor"
+{{- if ne .ObservabilityLevel "basic"}}
+    echo "   Monitoring Dashboard: Check stack outputs for dashboard URL"
+{{- end}}
+    echo
+    log_success "All deployment steps completed successfully"
+}
+
+# Run main function with all arguments
+main "$@"

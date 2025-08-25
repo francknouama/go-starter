@@ -1,0 +1,219 @@
+# SAM CLI configuration for {{.ProjectName}}
+# This file provides environment-specific configurations for different deployment targets
+
+version = 0.1
+
+[default]
+[default.build.parameters]
+use_container = false
+cached = true
+parallel = true
+
+[default.validate.parameters]
+lint = true
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+fail_on_empty_changeset = false
+parameter_overrides = "Environment=dev"
+
+[default.package.parameters]
+resolve_s3 = true
+
+[default.sync.parameters]
+watch = true
+
+[default.local_start_api.parameters]
+warm_containers = "EAGER"
+
+[default.local_start_lambda.parameters]
+warm_containers = "EAGER"
+
+# Development environment configuration
+[dev]
+[dev.build.parameters]
+use_container = false
+cached = true
+parallel = true
+
+[dev.validate.parameters]
+lint = true
+
+[dev.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false  # Skip confirmation for dev
+resolve_s3 = true
+s3_prefix = "{{.ProjectName}}-dev"
+region = "us-east-1"
+stack_name = "{{.ProjectName}}-dev"
+parameter_overrides = [
+    "Environment=dev",
+    "LogLevel=debug"
+]
+tags = [
+    "Environment=dev",
+    "Project={{.ProjectName}}",
+    "Owner=development-team"
+]
+
+[dev.package.parameters]
+s3_prefix = "{{.ProjectName}}-dev"
+resolve_s3 = true
+
+# Staging environment configuration
+[staging]
+[staging.build.parameters]
+use_container = false
+cached = true
+parallel = true
+
+[staging.validate.parameters]
+lint = true
+
+[staging.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "{{.ProjectName}}-staging"
+region = "us-east-1"
+stack_name = "{{.ProjectName}}-staging"
+parameter_overrides = [
+    "Environment=staging",
+    "LogLevel=info"
+]
+tags = [
+    "Environment=staging",
+    "Project={{.ProjectName}}",
+    "Owner=development-team"
+]
+
+[staging.package.parameters]
+s3_prefix = "{{.ProjectName}}-staging"
+resolve_s3 = true
+
+# Production environment configuration
+[production]
+[production.build.parameters]
+use_container = true  # Use container build for production for consistency
+cached = false  # Disable cache for production builds
+parallel = true
+
+[production.validate.parameters]
+lint = true
+
+[production.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "{{.ProjectName}}-prod"
+region = "us-east-1"  # Adjust as needed
+stack_name = "{{.ProjectName}}-prod"
+parameter_overrides = [
+    "Environment=prod",
+    "LogLevel=warn"
+]
+tags = [
+    "Environment=prod",
+    "Project={{.ProjectName}}",
+    "Owner=platform-team",
+    "CostCenter=engineering",
+    "Compliance=required"
+]
+on_failure = "ROLLBACK"  # Rollback on failure in production
+stack_tags = [
+    "Environment=prod",
+    "Project={{.ProjectName}}"
+]
+
+[production.package.parameters]
+s3_prefix = "{{.ProjectName}}-prod"
+resolve_s3 = true
+
+# Alternative production configuration with different region
+[prod-west]
+[prod-west.build.parameters]
+use_container = true
+cached = false
+parallel = true
+
+[prod-west.validate.parameters]
+lint = true
+
+[prod-west.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+resolve_s3 = true
+s3_prefix = "{{.ProjectName}}-prod-west"
+region = "us-west-2"
+stack_name = "{{.ProjectName}}-prod-west"
+parameter_overrides = [
+    "Environment=prod",
+    "LogLevel=warn"
+]
+tags = [
+    "Environment=prod",
+    "Project={{.ProjectName}}",
+    "Owner=platform-team",
+    "Region=us-west-2"
+]
+
+[prod-west.package.parameters]
+s3_prefix = "{{.ProjectName}}-prod-west"
+resolve_s3 = true
+
+# Local development configuration
+[local]
+[local.build.parameters]
+use_container = false
+cached = true
+parallel = true
+
+[local.local_start_api.parameters]
+host = "0.0.0.0"
+port = 3000
+warm_containers = "EAGER"
+parameter_overrides = [
+    "Environment=local",
+    "LogLevel=debug"
+]
+
+[local.local_start_lambda.parameters]
+host = "0.0.0.0"
+port = 3001
+warm_containers = "EAGER"
+parameter_overrides = [
+    "Environment=local",
+    "LogLevel=debug"
+]
+
+# Testing configuration
+[test]
+[test.build.parameters]
+use_container = false
+cached = false  # Always rebuild for tests
+parallel = true
+
+[test.validate.parameters]
+lint = true
+
+# CI/CD configuration
+[cicd]
+[cicd.build.parameters]
+use_container = true  # Use container for consistent CI/CD builds
+cached = false
+parallel = true
+
+[cicd.validate.parameters]
+lint = true
+
+[cicd.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false  # No interactive confirmation in CI/CD
+resolve_s3 = true
+fail_on_empty_changeset = false
+on_failure = "ROLLBACK"
+
+[cicd.package.parameters]
+resolve_s3 = true

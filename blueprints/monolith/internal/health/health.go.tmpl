@@ -1,0 +1,486 @@
+package health
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+{{- if eq .SessionStore "redis"}}
+	"github.com/redis/go-redis/v9"
+{{- end}}
+
+	"{{.ModulePath}}/config"
+	"{{.ModulePath}}/internal/logger"
+	{{- if .EnableCaching}}
+	"{{.ModulePath}}/internal/cache"
+	{{- end}}
+	{{- if .EnableJobs}}
+	"{{.ModulePath}}/internal/jobs"
+	{{- end}}
+)
+
+// Status represents the health status
+type Status string
+
+const (
+	StatusUp      Status = "up"
+	StatusDown    Status = "down"
+	StatusDegraded Status = "degraded"
+)
+
+// CheckResult represents the result of a health check
+type CheckResult struct {
+	Status    Status                 `json:"status"`
+	Timestamp time.Time              `json:"timestamp"`
+	Duration  time.Duration          `json:"duration"`
+	Error     string                 `json:"error,omitempty"`
+	Details   map[string]interface{} `json:"details,omitempty"`
+}
+
+// HealthReport represents the overall health report
+type HealthReport struct {
+	Status       Status                    `json:"status"`
+	Timestamp    time.Time                 `json:"timestamp"`
+	ServiceInfo  ServiceInfo               `json:"service_info"`
+	Checks       map[string]CheckResult    `json:"checks"`
+	Dependencies map[string]CheckResult    `json:"dependencies"`
+	Metrics      map[string]interface{}    `json:"metrics"`
+	Uptime       time.Duration            `json:"uptime"`
+}
+
+// ServiceInfo contains basic service information
+type ServiceInfo struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	Environment string `json:"environment"`
+	GoVersion   string `json:"go_version"`
+}
+
+// HealthChecker manages health checks for the application
+type HealthChecker struct {
+	config      *config.Config
+	logger      logger.Logger
+	startTime   time.Time
+	db          *sql.DB
+{{- if eq .SessionStore "redis"}}
+	redisClient *redis.Client
+{{- end}}
+{{- if .EnableCaching}}
+	cacheManager *cache.CacheManager
+{{- end}}
+{{- if .EnableJobs}}
+	jobQueue     *jobs.JobQueue
+{{- end}}
+	customChecks map[string]HealthCheckFunc
+	mu          sync.RWMutex
+}
+
+// HealthCheckFunc defines a custom health check function
+type HealthCheckFunc func(ctx context.Context) CheckResult
+
+// NewHealthChecker creates a new health checker
+func NewHealthChecker(cfg *config.Config, log logger.Logger) *HealthChecker {
+	return &HealthChecker{
+		config:       cfg,
+		logger:       log,
+		startTime:    time.Now(),
+		customChecks: make(map[string]HealthCheckFunc),
+	}
+}
+
+// SetDatabase sets the database connection for health checks
+func (h *HealthChecker) SetDatabase(db *sql.DB) {
+	h.db = db
+}
+
+{{- if eq .SessionStore "redis"}}
+// SetRedisClient sets the Redis client for health checks
+func (h *HealthChecker) SetRedisClient(client *redis.Client) {
+	h.redisClient = client
+}
+{{- end}}
+
+{{- if .EnableCaching}}
+// SetCacheManager sets the cache manager for health checks
+func (h *HealthChecker) SetCacheManager(cm *cache.CacheManager) {
+	h.cacheManager = cm
+}
+{{- end}}
+
+{{- if .EnableJobs}}
+// SetJobQueue sets the job queue for health checks
+func (h *HealthChecker) SetJobQueue(jq *jobs.JobQueue) {
+	h.jobQueue = jq
+}
+{{- end}}
+
+// AddCustomCheck adds a custom health check
+func (h *HealthChecker) AddCustomCheck(name string, check HealthCheckFunc) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.customChecks[name] = check
+}
+
+// RemoveCustomCheck removes a custom health check
+func (h *HealthChecker) RemoveCustomCheck(name string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.customChecks, name)
+}
+
+// Check performs all health checks and returns a comprehensive report
+func (h *HealthChecker) Check(ctx context.Context) HealthReport {
+	report := HealthReport{
+		Timestamp: time.Now(),
+		ServiceInfo: ServiceInfo{
+			Name:        h.config.App.Name,
+			Version:     h.config.App.Version,
+			Environment: h.config.App.Environment,
+			GoVersion:   "{{.GoVersion}}",
+		},
+		Checks:       make(map[string]CheckResult),
+		Dependencies: make(map[string]CheckResult),
+		Metrics:      make(map[string]interface{}),
+		Uptime:       time.Since(h.startTime),
+	}
+
+	// Basic application health
+	report.Checks["application"] = h.checkApplication(ctx)
+
+	{{- if ne .DatabaseDriver ""}}
+	// Database health
+	if h.db != nil {
+		report.Dependencies["database"] = h.checkDatabase(ctx)
+	}
+	{{- end}}
+
+	{{- if eq .SessionStore "redis"}}
+	// Redis health
+	if h.redisClient != nil {
+		report.Dependencies["redis"] = h.checkRedis(ctx)
+	}
+	{{- end}}
+
+	{{- if .EnableCaching}}
+	// Cache health
+	if h.cacheManager != nil {
+		report.Checks["cache"] = h.checkCache(ctx)
+	}
+	{{- end}}
+
+	{{- if .EnableJobs}}
+	// Job queue health
+	if h.jobQueue != nil {
+		report.Checks["job_queue"] = h.checkJobQueue(ctx)
+	}
+	{{- end}}
+
+	// Custom health checks
+	h.mu.RLock()
+	for name, check := range h.customChecks {
+		report.Checks[name] = check(ctx)
+	}
+	h.mu.RUnlock()
+
+	// Determine overall status
+	report.Status = h.determineOverallStatus(report)
+
+	// Add metrics
+	report.Metrics = h.collectMetrics()
+
+	return report
+}
+
+// checkApplication performs basic application health checks
+func (h *HealthChecker) checkApplication(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	result := CheckResult{
+		Status:    StatusUp,
+		Timestamp: start,
+		Details:   make(map[string]interface{}),
+	}
+	
+	// Basic checks
+	result.Details["memory_usage"] = "healthy" // Could add actual memory monitoring
+	result.Details["goroutines"] = "stable"   // Could add goroutine monitoring
+	
+	result.Duration = time.Since(start)
+	return result
+}
+
+{{- if ne .DatabaseDriver ""}}
+// checkDatabase performs database health checks
+func (h *HealthChecker) checkDatabase(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	result := CheckResult{
+		Status:    StatusUp,
+		Timestamp: start,
+		Details:   make(map[string]interface{}),
+	}
+
+	// Ping database
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	
+	if err := h.db.PingContext(pingCtx); err != nil {
+		result.Status = StatusDown
+		result.Error = fmt.Sprintf("database ping failed: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	// Check database stats
+	stats := h.db.Stats()
+	result.Details["open_connections"] = stats.OpenConnections
+	result.Details["in_use"] = stats.InUse
+	result.Details["idle"] = stats.Idle
+	result.Details["wait_count"] = stats.WaitCount
+	result.Details["wait_duration"] = stats.WaitDuration.String()
+
+	// Warn if connection pool is stressed
+	maxOpen := stats.MaxOpenConnections
+	if maxOpen > 0 && stats.OpenConnections > int(float64(maxOpen)*0.8) {
+		result.Status = StatusDegraded
+		result.Details["warning"] = "connection pool usage is high"
+	}
+
+	result.Duration = time.Since(start)
+	return result
+}
+{{- end}}
+
+{{- if eq .SessionStore "redis"}}
+// checkRedis performs Redis health checks
+func (h *HealthChecker) checkRedis(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	result := CheckResult{
+		Status:    StatusUp,
+		Timestamp: start,
+		Details:   make(map[string]interface{}),
+	}
+
+	// Ping Redis
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	
+	pong, err := h.redisClient.Ping(pingCtx).Result()
+	if err != nil {
+		result.Status = StatusDown
+		result.Error = fmt.Sprintf("redis ping failed: %v", err)
+		result.Duration = time.Since(start)
+		return result
+	}
+
+	result.Details["ping_response"] = pong
+
+	// Get Redis info
+	infoCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	
+	info, err := h.redisClient.Info(infoCtx, "memory").Result()
+	if err == nil {
+		result.Details["memory_info"] = "available"
+	}
+
+	result.Duration = time.Since(start)
+	return result
+}
+{{- end}}
+
+{{- if .EnableCaching}}
+// checkCache performs cache health checks
+func (h *HealthChecker) checkCache(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	result := CheckResult{
+		Status:    StatusUp,
+		Timestamp: start,
+		Details:   make(map[string]interface{}),
+	}
+
+	// Get cache stats
+	stats := h.cacheManager.GetStats()
+	result.Details["hits"] = stats.Hits
+	result.Details["misses"] = stats.Misses
+	result.Details["sets"] = stats.Sets
+	result.Details["errors"] = stats.Errors
+	result.Details["key_count"] = stats.KeyCount
+
+	// Calculate hit ratio
+	totalRequests := stats.Hits + stats.Misses
+	if totalRequests > 0 {
+		hitRatio := float64(stats.Hits) / float64(totalRequests)
+		result.Details["hit_ratio"] = fmt.Sprintf("%.2f%%", hitRatio*100)
+		
+		// Warn if hit ratio is too low
+		if hitRatio < 0.5 {
+			result.Status = StatusDegraded
+			result.Details["warning"] = "cache hit ratio is low"
+		}
+	}
+
+	result.Duration = time.Since(start)
+	return result
+}
+{{- end}}
+
+{{- if .EnableJobs}}
+// checkJobQueue performs job queue health checks
+func (h *HealthChecker) checkJobQueue(ctx context.Context) CheckResult {
+	start := time.Now()
+	
+	result := CheckResult{
+		Status:    StatusUp,
+		Timestamp: start,
+		Details:   make(map[string]interface{}),
+	}
+
+	// Get job queue metrics
+	metrics := h.jobQueue.GetMetrics()
+	result.Details["jobs_queued"] = metrics.JobsQueued
+	result.Details["jobs_completed"] = metrics.JobsCompleted
+	result.Details["jobs_failed"] = metrics.JobsFailed
+	result.Details["jobs_retried"] = metrics.JobsRetried
+	result.Details["worker_count"] = metrics.WorkerCount
+	result.Details["queue_length"] = metrics.QueueLength
+
+	// Warn if queue is backing up
+	if metrics.QueueLength > 100 {
+		result.Status = StatusDegraded
+		result.Details["warning"] = "job queue is backing up"
+	}
+
+	// Warn if too many failures
+	totalJobs := metrics.JobsCompleted + metrics.JobsFailed
+	if totalJobs > 0 {
+		failureRate := float64(metrics.JobsFailed) / float64(totalJobs)
+		if failureRate > 0.1 { // More than 10% failure rate
+			result.Status = StatusDegraded
+			result.Details["warning"] = "high job failure rate"
+		}
+	}
+
+	result.Duration = time.Since(start)
+	return result
+}
+{{- end}}
+
+// determineOverallStatus determines the overall health status
+func (h *HealthChecker) determineOverallStatus(report HealthReport) Status {
+	hasDown := false
+	hasDegraded := false
+
+	// Check all checks
+	for _, result := range report.Checks {
+		if result.Status == StatusDown {
+			hasDown = true
+		} else if result.Status == StatusDegraded {
+			hasDegraded = true
+		}
+	}
+
+	// Check all dependencies
+	for _, result := range report.Dependencies {
+		if result.Status == StatusDown {
+			hasDown = true
+		} else if result.Status == StatusDegraded {
+			hasDegraded = true
+		}
+	}
+
+	if hasDown {
+		return StatusDown
+	}
+	if hasDegraded {
+		return StatusDegraded
+	}
+	return StatusUp
+}
+
+// collectMetrics collects various application metrics
+func (h *HealthChecker) collectMetrics() map[string]interface{} {
+	metrics := make(map[string]interface{})
+	
+	metrics["uptime_seconds"] = time.Since(h.startTime).Seconds()
+	metrics["timestamp"] = time.Now().Unix()
+	
+	// Could add more metrics here:
+	// - Memory usage
+	// - Goroutine count  
+	// - Request rate
+	// - Response times
+	
+	return metrics
+}
+
+// HTTPHandler returns an HTTP handler for health checks
+func (h *HealthChecker) HTTPHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+
+		report := h.Check(ctx)
+
+		w.Header().Set("Content-Type", "application/json")
+		
+		// Set HTTP status code based on health status
+		switch report.Status {
+		case StatusUp:
+			w.WriteHeader(http.StatusOK)
+		case StatusDegraded:
+			w.WriteHeader(http.StatusOK) // 200 but degraded
+		case StatusDown:
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+
+		if err := json.NewEncoder(w).Encode(report); err != nil {
+			h.logger.Error("Failed to encode health report", "error", err)
+			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			return
+		}
+	}
+}
+
+// ReadinessHandler returns a simple readiness check handler
+func (h *HealthChecker) ReadinessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+
+		// Perform minimal checks for readiness
+		ready := true
+		
+		{{- if ne .DatabaseDriver ""}}
+		// Check database connection
+		if h.db != nil {
+			if err := h.db.PingContext(ctx); err != nil {
+				ready = false
+			}
+		}
+		{{- end}}
+
+		if ready {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte("ready"))
+		} else {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			w.Write([]byte("not ready"))
+		}
+	}
+}
+
+// LivenessHandler returns a simple liveness check handler
+func (h *HealthChecker) LivenessHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Simple liveness check - if we can respond, we're alive
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("alive"))
+	}
+}
