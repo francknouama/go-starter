@@ -15,12 +15,18 @@ import (
 
 // GRPCGatewayTestContext holds test state for gRPC Gateway scenarios
 type GRPCGatewayTestContext struct {
-	workDir          string
-	projectName      string
-	projectPath      string
-	cmdOutput        string
-	cmdError         error
-	exitCode         int
+	workDir            string
+	projectName        string
+	projectPath        string
+	cmdOutput          string
+	cmdError           error
+	exitCode           int
+	generatedFiles     []string
+	auditRequirements  map[string]string
+	serviceMeshConfig  map[string]string
+	securityFeatures   []string
+	complianceLevel    string
+	performanceMetrics map[string]float64
 }
 
 // TestFeatures runs the gRPC Gateway BDD tests
@@ -35,6 +41,9 @@ func TestFeatures(t *testing.T) {
 				return ctx, nil
 			})
 			ctx.RegisterSteps(s)
+			ctx.RegisterProductionAuditSteps(s)
+			ctx.RegisterServiceMeshSteps(s)
+			ctx.RegisterSecurityComplianceSteps(s)
 		},
 		Options: &godog.Options{
 			Format:   "pretty",
