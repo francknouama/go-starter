@@ -2,34 +2,35 @@ package templates
 
 import (
 	"io/fs"
+
+	"github.com/francknouama/go-starter/pkg/embedfs"
 )
 
-// templatesFS holds the embedded filesystem set by the main package
+// templatesFS holds a custom filesystem set by tests
 var templatesFS fs.FS
 
-// SetTemplatesFS sets the embedded filesystem (called from main package or tests)
+// SetTemplatesFS sets a custom filesystem (primarily used by tests)
 func SetTemplatesFS(fs fs.FS) {
 	templatesFS = fs
 }
 
 // GetTemplatesFS returns the filesystem for templates
 func GetTemplatesFS() fs.FS {
-	if templatesFS == nil {
-		panic("templates filesystem not initialized - ensure SetTemplatesFS is called from main")
-	}
-
-	// Check if we need to strip the "blueprints" prefix
-	// For embedded FS from root, we need to strip it
-	// For test DirFS pointing directly to blueprints, we don't
-	if _, err := fs.Stat(templatesFS, "blueprints"); err == nil {
-		// This is likely the embedded FS with "blueprints" directory
-		subFS, err := fs.Sub(templatesFS, "blueprints")
-		if err != nil {
-			panic("failed to create sub-filesystem for blueprints: " + err.Error())
+	// If a custom filesystem is set (for tests), use it
+	if templatesFS != nil {
+		// Check if we need to strip the "blueprints" prefix
+		if _, err := fs.Stat(templatesFS, "blueprints"); err == nil {
+			// This is likely an embedded FS with "blueprints" directory
+			subFS, err := fs.Sub(templatesFS, "blueprints")
+			if err != nil {
+				panic("failed to create sub-filesystem for blueprints: " + err.Error())
+			}
+			return subFS
 		}
-		return subFS
+		// This is likely a DirFS pointing directly to templates directory
+		return templatesFS
 	}
 
-	// This is likely a DirFS pointing directly to templates directory
-	return templatesFS
+	// Use the shared embedded/filesystem source
+	return embedfs.GetBlueprintsFS()
 }

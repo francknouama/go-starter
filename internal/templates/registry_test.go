@@ -83,10 +83,10 @@ func TestRegistry_Get(t *testing.T) {
 func TestRegistry_List(t *testing.T) {
 	registry := NewRegistry()
 
-	// Test registry with pre-loaded templates (web-api-standard, web-api-clean, web-api-ddd, cli-standard, library-standard, lambda-standard, microservice-standard)
+	// Test registry with pre-loaded templates (all 20 real blueprints)
 	templates := registry.List()
-	if len(templates) != 7 {
-		t.Errorf("Expected 7 templates (pre-loaded), got %d", len(templates))
+	if len(templates) != 20 {
+		t.Errorf("Expected 20 templates (pre-loaded), got %d", len(templates))
 	}
 
 	// Add some templates
@@ -97,8 +97,8 @@ func TestRegistry_List(t *testing.T) {
 	_ = registry.Register(template2)
 
 	templates = registry.List()
-	if len(templates) != 9 {
-		t.Errorf("Expected 9 templates (7 pre-loaded + 2 added), got %d", len(templates))
+	if len(templates) != 22 {
+		t.Errorf("Expected 22 templates (20 pre-loaded + 2 added), got %d", len(templates))
 	}
 }
 
@@ -141,8 +141,8 @@ func TestRegistry_GetByType(t *testing.T) {
 	}
 
 	cliTemplates := registry.GetByType("cli")
-	if len(cliTemplates) != 2 {
-		t.Errorf("Expected 2 CLI templates (1 pre-loaded + 1 added), got %d", len(cliTemplates))
+	if len(cliTemplates) != 3 {
+		t.Errorf("Expected 3 CLI templates (2 pre-loaded + 1 added), got %d", len(cliTemplates))
 	}
 
 	nonExistentTemplates := registry.GetByType("non-existent")

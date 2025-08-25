@@ -7,6 +7,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Masterminds/sprig/v3"
 	"github.com/francknouama/go-starter/pkg/types"
 )
 
@@ -43,7 +44,7 @@ func (v *TemplateSecurityValidator) ValidateTemplate(content string) error {
 	}
 
 	// Attempt to parse template to check for syntax issues
-	tmpl, err := template.New("security-check").Parse(content)
+	tmpl, err := template.New("security-check").Funcs(sprig.TxtFuncMap()).Parse(content)
 	if err != nil {
 		return types.NewValidationError("template syntax validation failed", err)
 	}
