@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -33,11 +33,11 @@ type Claims struct {
 // AuthMiddleware provides JWT authentication middleware
 type AuthMiddleware struct {
 	config *config.Config
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger *slog.Logger
@@ -46,10 +46,10 @@ type AuthMiddleware struct {
 }
 
 // NewAuthMiddleware creates a new authentication middleware
-func NewAuthMiddleware(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *AuthMiddleware {
+func NewAuthMiddleware(cfg *config.Config{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *AuthMiddleware {
 	return &AuthMiddleware{
 		config:    cfg,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:    logger,
 {{end}}
 		jwtSecret: []byte(cfg.Security.JWT.Secret),
@@ -63,11 +63,11 @@ func (a *AuthMiddleware) Middleware() func(http.Handler) http.Handler {
 			// Extract token from Authorization header
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				a.logger.Warn("Missing Authorization header", zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				a.logger.WithField("path", r.URL.Path).Warn("Missing Authorization header")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().Str("path", r.URL.Path).Msg("Missing Authorization header")
 {{else}}
 				a.logger.Warn("Missing Authorization header", "path", r.URL.Path)
@@ -79,11 +79,11 @@ func (a *AuthMiddleware) Middleware() func(http.Handler) http.Handler {
 			// Extract token from "Bearer <token>" format
 			tokenString := strings.TrimPrefix(authHeader, "Bearer ")
 			if tokenString == authHeader {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				a.logger.Warn("Invalid Authorization header format", zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				a.logger.WithField("path", r.URL.Path).Warn("Invalid Authorization header format")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().Str("path", r.URL.Path).Msg("Invalid Authorization header format")
 {{else}}
 				a.logger.Warn("Invalid Authorization header format", "path", r.URL.Path)
@@ -95,16 +95,16 @@ func (a *AuthMiddleware) Middleware() func(http.Handler) http.Handler {
 			// Parse and validate token
 			claims, err := a.validateToken(tokenString)
 			if err != nil {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				a.logger.Warn("Token validation failed", 
 					zap.Error(err), 
 					zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				a.logger.WithFields(logrus.Fields{
 					"error": err,
 					"path":  r.URL.Path,
 				}).Warn("Token validation failed")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().Err(err).Str("path", r.URL.Path).Msg("Token validation failed")
 {{else}}
 				a.logger.Warn("Token validation failed", "error", err, "path", r.URL.Path)
@@ -119,18 +119,18 @@ func (a *AuthMiddleware) Middleware() func(http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, "username", claims.Username)
 			ctx = context.WithValue(ctx, "user_roles", claims.Roles)
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			a.logger.Debug("User authenticated", 
 				zap.String("user_id", claims.UserID),
 				zap.String("username", claims.Username),
 				zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			a.logger.WithFields(logrus.Fields{
 				"user_id":  claims.UserID,
 				"username": claims.Username,
 				"path":     r.URL.Path,
 			}).Debug("User authenticated")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			log.Debug().
 				Str("user_id", claims.UserID).
 				Str("username", claims.Username).
@@ -195,20 +195,20 @@ func (a *AuthMiddleware) RequireRole(roles ...string) func(http.Handler) http.Ha
 			}
 
 			if !hasRole {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				a.logger.Warn("Insufficient permissions", 
 					zap.String("user_id", claims.UserID),
 					zap.Strings("required_roles", roles),
 					zap.Strings("user_roles", claims.Roles),
 					zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				a.logger.WithFields(logrus.Fields{
 					"user_id":        claims.UserID,
 					"required_roles": roles,
 					"user_roles":     claims.Roles,
 					"path":           r.URL.Path,
 				}).Warn("Insufficient permissions")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().
 					Str("user_id", claims.UserID).
 					Strs("required_roles", roles).
@@ -344,11 +344,11 @@ func HasRole(ctx context.Context, role string) bool {
 // APIKeyMiddleware provides API key authentication
 type APIKeyMiddleware struct {
 	validKeys map[string]string // key -> user_id
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger    *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger    *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger    *slog.Logger
@@ -356,10 +356,10 @@ type APIKeyMiddleware struct {
 }
 
 // NewAPIKeyMiddleware creates a new API key middleware
-func NewAPIKeyMiddleware(keys map[string]string{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *APIKeyMiddleware {
+func NewAPIKeyMiddleware(keys map[string]string{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *APIKeyMiddleware {
 	return &APIKeyMiddleware{
 		validKeys: keys,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:    logger,
 {{end}}
 	}
@@ -386,11 +386,11 @@ func (a *APIKeyMiddleware) Middleware() func(http.Handler) http.Handler {
 			}
 
 			if apiKey == "" {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				a.logger.Warn("Missing API key", zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				a.logger.WithField("path", r.URL.Path).Warn("Missing API key")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().Str("path", r.URL.Path).Msg("Missing API key")
 {{else}}
 				a.logger.Warn("Missing API key", "path", r.URL.Path)
@@ -402,16 +402,16 @@ func (a *APIKeyMiddleware) Middleware() func(http.Handler) http.Handler {
 			// Validate API key
 			userID, valid := a.validKeys[apiKey]
 			if !valid {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				a.logger.Warn("Invalid API key", 
 					zap.String("path", r.URL.Path),
 					zap.String("api_key_prefix", apiKey[:min(len(apiKey), 8)]))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				a.logger.WithFields(logrus.Fields{
 					"path":           r.URL.Path,
 					"api_key_prefix": apiKey[:min(len(apiKey), 8)],
 				}).Warn("Invalid API key")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().
 					Str("path", r.URL.Path).
 					Str("api_key_prefix", apiKey[:min(len(apiKey), 8)]).
@@ -429,16 +429,16 @@ func (a *APIKeyMiddleware) Middleware() func(http.Handler) http.Handler {
 			ctx := context.WithValue(r.Context(), "user_id", userID)
 			ctx = context.WithValue(ctx, "auth_method", "api_key")
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			a.logger.Debug("API key authenticated", 
 				zap.String("user_id", userID),
 				zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			a.logger.WithFields(logrus.Fields{
 				"user_id": userID,
 				"path":    r.URL.Path,
 			}).Debug("API key authenticated")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			log.Debug().
 				Str("user_id", userID).
 				Str("path", r.URL.Path).

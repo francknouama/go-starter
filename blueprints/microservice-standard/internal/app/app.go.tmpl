@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 {{else}}
@@ -39,11 +39,11 @@ import (
 // App represents the microservice application
 type App struct {
 	config   *config.Config
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger   *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger   *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger   zerolog.Logger
 {{else}}
 	logger   *slog.Logger
@@ -86,11 +86,11 @@ func New() (*App, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger.Info("Application initializing", zap.String("service", "{{.ProjectName}}"))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger.WithField("service", "{{.ProjectName}}").Info("Application initializing")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger.Info().Str("service", "{{.ProjectName}}").Msg("Application initializing")
 {{else}}
 	logger.Info("Application initializing", "service", "{{.ProjectName}}")
@@ -107,11 +107,11 @@ func New() (*App, error) {
 		return nil, fmt.Errorf("failed to initialize components: %w", err)
 	}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger.Info("Application initialized successfully")
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger.Info("Application initialized successfully")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger.Info().Msg("Application initialized successfully")
 {{else}}
 	logger.Info("Application initialized successfully")
@@ -121,8 +121,8 @@ func New() (*App, error) {
 }
 
 // initLogger initializes the logger based on configuration
-func initLogger(cfg *config.Config) ({{if eq .Logger "zap"}}*zap.Logger{{else if eq .Logger "logrus"}}*logrus.Logger{{else if eq .Logger "zerolog"}}zerolog.Logger{{else}}*slog.Logger{{end}}, error) {
-{{if eq .Logger "zap"}}
+func initLogger(cfg *config.Config) ({{if eq .LoggerType "zap"}}*zap.Logger{{else if eq .LoggerType "logrus"}}*logrus.Logger{{else if eq .LoggerType "zerolog"}}zerolog.Logger{{else}}*slog.Logger{{end}}, error) {
+{{if eq .LoggerType "zap"}}
 	var logger *zap.Logger
 	var err error
 
@@ -145,7 +145,7 @@ func initLogger(cfg *config.Config) ({{if eq .Logger "zap"}}*zap.Logger{{else if
 
 	return logger, nil
 
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger := logrus.New()
 
 	// Set log level
@@ -180,7 +180,7 @@ func initLogger(cfg *config.Config) ({{if eq .Logger "zap"}}*zap.Logger{{else if
 
 	return logger, nil
 
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// Set global log level
 	switch cfg.Logging.Level {
 	case "debug":
@@ -329,11 +329,11 @@ func (a *App) Run(ctx context.Context) error {
 		return a.handleShutdownSignals(ctx, cancel)
 	})
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	a.logger.Info("Application started, waiting for shutdown signal")
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	a.logger.Info("Application started, waiting for shutdown signal")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	a.logger.Info().Msg("Application started, waiting for shutdown signal")
 {{else}}
 	a.logger.Info("Application started, waiting for shutdown signal")
@@ -358,16 +358,16 @@ func (a *App) startMainServer(ctx context.Context) error {
 {{if eq .CommunicationProtocol "grpc"}}
 // startGRPCServer starts the gRPC server
 func (a *App) startGRPCServer(ctx context.Context) error {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	a.logger.Info("Starting gRPC server",
 		zap.String("host", a.config.Server.Host),
 		zap.Int("port", a.config.Server.Port))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	a.logger.WithFields(logrus.Fields{
 		"host": a.config.Server.Host,
 		"port": a.config.Server.Port,
 	}).Info("Starting gRPC server")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	a.logger.Info().
 		Str("host", a.config.Server.Host).
 		Int("port", a.config.Server.Port).
@@ -387,16 +387,16 @@ func (a *App) startGRPCServer(ctx context.Context) error {
 
 // startHTTPServer starts the HTTP server
 func (a *App) startHTTPServer(ctx context.Context) error {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	a.logger.Info("Starting HTTP server",
 		zap.String("host", a.config.Server.Host),
 		zap.Int("port", a.config.Server.Port))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	a.logger.WithFields(logrus.Fields{
 		"host": a.config.Server.Host,
 		"port": a.config.Server.Port,
 	}).Info("Starting HTTP server")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	a.logger.Info().
 		Str("host", a.config.Server.Host).
 		Int("port", a.config.Server.Port).
@@ -420,11 +420,11 @@ func (a *App) handleShutdownSignals(ctx context.Context, cancel context.CancelFu
 
 	select {
 	case sig := <-sigChan:
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		a.logger.Info("Received shutdown signal", zap.String("signal", sig.String()))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		a.logger.WithField("signal", sig.String()).Info("Received shutdown signal")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		a.logger.Info().Str("signal", sig.String()).Msg("Received shutdown signal")
 {{else}}
 		a.logger.Info("Received shutdown signal", "signal", sig.String())
@@ -438,11 +438,11 @@ func (a *App) handleShutdownSignals(ctx context.Context, cancel context.CancelFu
 
 // Shutdown gracefully shuts down the application
 func (a *App) Shutdown() error {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	a.logger.Info("Application shutdown initiated")
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	a.logger.Info("Application shutdown initiated")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	a.logger.Info().Msg("Application shutdown initiated")
 {{else}}
 	a.logger.Info("Application shutdown initiated")
@@ -463,11 +463,11 @@ func (a *App) Shutdown() error {
 	// Shutdown tracing
 	if a.tracer != nil {
 		if err := a.tracer.Shutdown(ctx); err != nil {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			a.logger.Error("Failed to shutdown tracer", zap.Error(err))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			a.logger.WithError(err).Error("Failed to shutdown tracer")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			a.logger.Error().Err(err).Msg("Failed to shutdown tracer")
 {{else}}
 			a.logger.Error("Failed to shutdown tracer", "error", err)
@@ -476,18 +476,18 @@ func (a *App) Shutdown() error {
 	}
 {{end}}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	// Sync logger
 	if a.logger != nil {
 		_ = a.logger.Sync()
 	}
 {{end}}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	a.logger.Info("Application shutdown completed")
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	a.logger.Info("Application shutdown completed")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	a.logger.Info().Msg("Application shutdown completed")
 {{else}}
 	a.logger.Info("Application shutdown completed")

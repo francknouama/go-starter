@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -36,11 +36,11 @@ type RateLimiter struct {
 	limiters map[string]*rate.Limiter
 	config   RateLimiterConfig
 	metrics  *metrics.Metrics
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger   *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger   *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger   *slog.Logger
@@ -51,7 +51,7 @@ type RateLimiter struct {
 }
 
 // NewRateLimiter creates a new rate limiter
-func NewRateLimiter(config RateLimiterConfig, metrics *metrics.Metrics{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *RateLimiter {
+func NewRateLimiter(config RateLimiterConfig, metrics *metrics.Metrics{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *RateLimiter {
 	if config.RequestsPerSecond <= 0 {
 		config.RequestsPerSecond = 100
 	}
@@ -69,7 +69,7 @@ func NewRateLimiter(config RateLimiterConfig, metrics *metrics.Metrics{{if eq .L
 		limiters: make(map[string]*rate.Limiter),
 		config:   config,
 		metrics:  metrics,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:   logger,
 {{end}}
 		stopChan: make(chan struct{}),
@@ -79,18 +79,18 @@ func NewRateLimiter(config RateLimiterConfig, metrics *metrics.Metrics{{if eq .L
 	rl.wg.Add(1)
 	go rl.cleanup()
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger.Info("Rate limiter initialized",
 		zap.Int("requests_per_second", config.RequestsPerSecond),
 		zap.Int("burst_size", config.BurstSize),
 		zap.Duration("cleanup_interval", config.CleanupInterval))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger.WithFields(logrus.Fields{
 		"requests_per_second": config.RequestsPerSecond,
 		"burst_size":         config.BurstSize,
 		"cleanup_interval":   config.CleanupInterval,
 	}).Info("Rate limiter initialized")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().
 		Int("requests_per_second", config.RequestsPerSecond).
 		Int("burst_size", config.BurstSize).
@@ -155,18 +155,18 @@ func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
 			key := rl.config.KeyExtractor(r)
 			
 			if !rl.Allow(key) {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				rl.logger.Warn("Rate limit exceeded",
 					zap.String("key", key),
 					zap.String("path", r.URL.Path),
 					zap.String("method", r.Method))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				rl.logger.WithFields(logrus.Fields{
 					"key":    key,
 					"path":   r.URL.Path,
 					"method": r.Method,
 				}).Warn("Rate limit exceeded")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().
 					Str("key", key).
 					Str("path", r.URL.Path).
@@ -239,16 +239,16 @@ func (rl *RateLimiter) performCleanup() {
 	cleaned := before - after
 
 	if cleaned > 0 {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		rl.logger.Debug("Rate limiter cleanup completed",
 			zap.Int("cleaned", cleaned),
 			zap.Int("remaining", after))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		rl.logger.WithFields(logrus.Fields{
 			"cleaned":   cleaned,
 			"remaining": after,
 		}).Debug("Rate limiter cleanup completed")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		log.Debug().
 			Int("cleaned", cleaned).
 			Int("remaining", after).
@@ -362,11 +362,11 @@ func PathBasedKeyExtractor(r *http.Request) string {
 type CompositeRateLimiter struct {
 	limiters map[string]*RateLimiter
 	router   func(*http.Request) string // Returns which limiter to use
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger   *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger   *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger   *slog.Logger
@@ -374,11 +374,11 @@ type CompositeRateLimiter struct {
 }
 
 // NewCompositeRateLimiter creates a composite rate limiter
-func NewCompositeRateLimiter(router func(*http.Request) string{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *CompositeRateLimiter {
+func NewCompositeRateLimiter(router func(*http.Request) string{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *CompositeRateLimiter {
 	return &CompositeRateLimiter{
 		limiters: make(map[string]*RateLimiter),
 		router:   router,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:   logger,
 {{end}}
 	}
@@ -399,16 +399,16 @@ func (cl *CompositeRateLimiter) Middleware() func(http.Handler) http.Handler {
 				// Use the specific limiter's middleware
 				limiter.Middleware()(next).ServeHTTP(w, r)
 			} else {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				cl.logger.Warn("No rate limiter found for category",
 					zap.String("category", limiterName),
 					zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				cl.logger.WithFields(logrus.Fields{
 					"category": limiterName,
 					"path":     r.URL.Path,
 				}).Warn("No rate limiter found for category")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Warn().
 					Str("category", limiterName).
 					Str("path", r.URL.Path).

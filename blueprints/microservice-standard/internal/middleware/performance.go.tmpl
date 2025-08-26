@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -46,11 +46,11 @@ type InMemoryCache struct {
 	defaultTTL  time.Duration
 	maxSize     int
 	cleanupFreq time.Duration
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger      *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger      *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger      *slog.Logger
@@ -70,13 +70,13 @@ type CacheMetrics struct {
 }
 
 // NewInMemoryCache creates a new in-memory cache
-func NewInMemoryCache(defaultTTL time.Duration, maxSize int{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *InMemoryCache {
+func NewInMemoryCache(defaultTTL time.Duration, maxSize int{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *InMemoryCache {
 	cache := &InMemoryCache{
 		data:        make(map[string]*CacheEntry),
 		defaultTTL:  defaultTTL,
 		maxSize:     maxSize,
 		cleanupFreq: time.Minute * 5,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:      logger,
 {{end}}
 	}
@@ -217,11 +217,11 @@ func (c *InMemoryCache) cleanup() {
 			c.metrics.CurrentSize -= int64(len(expiredKeys))
 			c.metrics.mu.Unlock()
 			
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			c.logger.Debug("Cleaned up expired cache entries", zap.Int("count", len(expiredKeys)))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			c.logger.WithField("count", len(expiredKeys)).Debug("Cleaned up expired cache entries")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			log.Debug().Int("count", len(expiredKeys)).Msg("Cleaned up expired cache entries")
 {{else}}
 			c.logger.Debug("Cleaned up expired cache entries", "count", len(expiredKeys))
@@ -252,11 +252,11 @@ type ResponseCachingMiddleware struct {
 	cache       *InMemoryCache
 	cacheableStatusCodes map[int]bool
 	cacheableMethods     map[string]bool
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger      *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger      *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger      *slog.Logger
@@ -264,7 +264,7 @@ type ResponseCachingMiddleware struct {
 }
 
 // NewResponseCachingMiddleware creates a new response caching middleware
-func NewResponseCachingMiddleware(cache *InMemoryCache{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *ResponseCachingMiddleware {
+func NewResponseCachingMiddleware(cache *InMemoryCache{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *ResponseCachingMiddleware {
 	return &ResponseCachingMiddleware{
 		cache: cache,
 		cacheableStatusCodes: map[int]bool{
@@ -278,7 +278,7 @@ func NewResponseCachingMiddleware(cache *InMemoryCache{{if eq .Logger "zap"}}, l
 			"GET":  true,
 			"HEAD": true,
 		},
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger: logger,
 {{end}}
 	}
@@ -328,18 +328,18 @@ func (m *ResponseCachingMiddleware) Middleware(ttl time.Duration) func(http.Hand
 				
 				m.cache.Set(cacheKey, entry)
 				
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				m.logger.Debug("Response cached",
 					zap.String("key", cacheKey),
 					zap.Int("status_code", recorder.statusCode),
 					zap.Int("body_size", len(entry.Body)))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				m.logger.WithFields(logrus.Fields{
 					"key":         cacheKey,
 					"status_code": recorder.statusCode,
 					"body_size":   len(entry.Body),
 				}).Debug("Response cached")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Debug().
 					Str("key", cacheKey).
 					Int("status_code", recorder.statusCode).
@@ -440,11 +440,11 @@ func (r *cacheResponseRecorder) Write(data []byte) (int, error) {
 // RequestDeduplicationMiddleware prevents duplicate concurrent requests
 type RequestDeduplicationMiddleware struct {
 	group   *singleflight.Group
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger  *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger  *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger  *slog.Logger
@@ -453,10 +453,10 @@ type RequestDeduplicationMiddleware struct {
 }
 
 // NewRequestDeduplicationMiddleware creates a new request deduplication middleware
-func NewRequestDeduplicationMiddleware({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *RequestDeduplicationMiddleware {
+func NewRequestDeduplicationMiddleware({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *RequestDeduplicationMiddleware {
 	return &RequestDeduplicationMiddleware{
 		group: &singleflight.Group{},
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger: logger,
 {{end}}
 		enabled: map[string]bool{
@@ -516,11 +516,11 @@ func (m *RequestDeduplicationMiddleware) Middleware() func(http.Handler) http.Ha
 			// Add deduplication header
 			if shared {
 				w.Header().Set("X-Deduplicated", "true")
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				m.logger.Debug("Request deduplicated", zap.String("key", key))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				m.logger.WithField("key", key).Debug("Request deduplicated")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				log.Debug().Str("key", key).Msg("Request deduplicated")
 {{else}}
 				m.logger.Debug("Request deduplicated", "key", key)

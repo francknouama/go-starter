@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -21,11 +21,11 @@ import (
 
 // LoggingMiddleware provides structured HTTP request logging
 type LoggingMiddleware struct {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger *slog.Logger
@@ -43,13 +43,13 @@ type LoggingConfig struct {
 }
 
 // NewLoggingMiddleware creates a new logging middleware
-func NewLoggingMiddleware({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, config LoggingConfig) *LoggingMiddleware {
+func NewLoggingMiddleware({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "slog"}}logger *slog.Logger{{end}}, config LoggingConfig) *LoggingMiddleware {
 	if config.MaxBodySize == 0 {
 		config.MaxBodySize = 1024 * 4 // 4KB default
 	}
 
 	return &LoggingMiddleware{
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:          logger,
 {{end}}
 		logRequestBody:  config.LogRequestBody,
@@ -113,7 +113,7 @@ func (l *LoggingMiddleware) Middleware() func(http.Handler) http.Handler {
 
 // logRequest logs the HTTP request with all relevant information
 func (l *LoggingMiddleware) logRequest(r *http.Request, recorder *loggingResponseRecorder, requestID, userID string, duration time.Duration, requestBody, responseBody []byte) {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	fields := []zap.Field{
 		zap.String("request_id", requestID),
 		zap.String("method", r.Method),
@@ -155,7 +155,7 @@ func (l *LoggingMiddleware) logRequest(r *http.Request, recorder *loggingRespons
 		l.logger.Info("HTTP request completed", fields...)
 	}
 
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	fields := logrus.Fields{
 		"request_id":    requestID,
 		"method":        r.Method,
@@ -199,7 +199,7 @@ func (l *LoggingMiddleware) logRequest(r *http.Request, recorder *loggingRespons
 		entry.Info("HTTP request completed")
 	}
 
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	event := log.Info()
 	if recorder.statusCode >= 500 {
 		event = log.Error()

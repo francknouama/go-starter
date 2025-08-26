@@ -8,11 +8,11 @@ import (
 	"strings"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -58,11 +58,11 @@ type Tracer struct {
 	tracer   oteltrace.Tracer
 	provider *trace.TracerProvider
 	config   *config.Config
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger   *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger   *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger   *slog.Logger
@@ -72,13 +72,13 @@ type Tracer struct {
 }
 
 // NewTracer creates a new tracer instance with configurable exporters
-func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) (*Tracer, error) {
+func NewTracer(cfg *config.Config{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) (*Tracer, error) {
 	if !cfg.Observability.Tracing.Enabled {
 		// Return a no-op tracer
 		return &Tracer{
 			tracer: otel.Tracer("noop"),
 			config: cfg,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 			logger: logger,
 {{end}}
 			exporterType: NoopExporter,
@@ -138,18 +138,18 @@ func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{el
 
 	tracer := otel.Tracer(cfg.Observability.Tracing.ServiceName)
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger.Info("Tracing initialized",
 		zap.String("service_name", cfg.Observability.Tracing.ServiceName),
 		zap.String("endpoint", cfg.Observability.Tracing.Endpoint),
 		zap.Float64("sample_rate", cfg.Observability.Tracing.SampleRate))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger.WithFields(logrus.Fields{
 		"service_name": cfg.Observability.Tracing.ServiceName,
 		"endpoint":     cfg.Observability.Tracing.Endpoint,
 		"sample_rate":  cfg.Observability.Tracing.SampleRate,
 	}).Info("Tracing initialized")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().
 		Str("service_name", cfg.Observability.Tracing.ServiceName).
 		Str("endpoint", cfg.Observability.Tracing.Endpoint).
@@ -166,7 +166,7 @@ func NewTracer(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{el
 		tracer:   tracer,
 		provider: tp,
 		config:   cfg,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:   logger,
 {{end}}
 		exporterType: exporterType,
@@ -294,11 +294,11 @@ func (t *Tracer) Shutdown(ctx context.Context) error {
 		return nil
 	}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	t.logger.Info("Shutting down tracer")
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	t.logger.Info("Shutting down tracer")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().Msg("Shutting down tracer")
 {{else}}
 	t.logger.Info("Shutting down tracer")

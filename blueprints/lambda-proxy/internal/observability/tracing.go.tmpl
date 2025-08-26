@@ -3,7 +3,9 @@ package observability
 import (
 	"context"
 	"os"
+	"time"
 
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-xray-sdk-go/xray"
 	xraylog "github.com/aws/aws-xray-sdk-go/xraylog"
 )
@@ -93,4 +95,53 @@ func AddTraceMetadata(ctx context.Context, namespace string, data interface{}) {
 	if seg := xray.GetSegment(ctx); seg != nil {
 		seg.AddMetadata(namespace, data)
 	}
+}
+
+// TraceAPIGatewayRequest traces an API Gateway Lambda proxy request
+func TraceAPIGatewayRequest(ctx context.Context, request events.APIGatewayProxyRequest, handler func(context.Context) (events.APIGatewayProxyResponse, error)) (events.APIGatewayProxyResponse, error) {
+	if !tracingEnabled {
+		return handler(ctx)
+	}
+	
+	segmentName := tracingService + "-api-request"
+	_, seg := xray.BeginSegment(ctx, segmentName)
+	defer seg.Close(nil)
+	
+	// Add request metadata
+	seg.AddAnnotation("service", tracingService)
+	seg.AddAnnotation("http.method", request.HTTPMethod)
+	seg.AddAnnotation("http.url", request.Path)
+	seg.AddAnnotation("api.stage", request.RequestContext.Stage)
+	seg.AddAnnotation("api.request_id", request.RequestContext.RequestID)
+	
+	startTime := time.Now()
+	response, err := handler(ctx)
+	duration := time.Since(startTime)
+	
+	// Add response metadata
+	seg.AddAnnotation("http.status_code", response.StatusCode)
+	seg.AddAnnotation("duration_ms", duration.Milliseconds())
+	
+	if err != nil {
+		seg.AddError(err)
+		seg.AddAnnotation("error", true)
+		LogError("API Gateway request failed", map[string]interface{}{
+			"method":     request.HTTPMethod,
+			"path":       request.Path,
+			"error":      err.Error(),
+			"duration":   duration.String(),
+			"request_id": request.RequestContext.RequestID,
+		})
+	} else {
+		seg.AddAnnotation("error", false)
+		LogInfo("API Gateway request completed", map[string]interface{}{
+			"method":     request.HTTPMethod,
+			"path":       request.Path,
+			"status":     response.StatusCode,
+			"duration":   duration.String(),
+			"request_id": request.RequestContext.RequestID,
+		})
+	}
+	
+	return response, err
 }

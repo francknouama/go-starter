@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"runtime/debug"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -18,11 +18,11 @@ import (
 
 // RecoveryMiddleware provides panic recovery for HTTP handlers
 type RecoveryMiddleware struct {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger *slog.Logger
@@ -38,9 +38,9 @@ type RecoveryConfig struct {
 }
 
 // NewRecoveryMiddleware creates a new recovery middleware
-func NewRecoveryMiddleware({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, config RecoveryConfig) *RecoveryMiddleware {
+func NewRecoveryMiddleware({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, config RecoveryConfig) *RecoveryMiddleware {
 	return &RecoveryMiddleware{
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:        logger,
 {{end}}
 		printStack:    config.PrintStack,
@@ -78,7 +78,7 @@ func (r *RecoveryMiddleware) handlePanic(w http.ResponseWriter, req *http.Reques
 	}
 
 	// Log the panic
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	fields := []zap.Field{
 		zap.String("request_id", requestID),
 		zap.String("method", req.Method),
@@ -97,7 +97,7 @@ func (r *RecoveryMiddleware) handlePanic(w http.ResponseWriter, req *http.Reques
 
 	r.logger.Error("Panic recovered in HTTP handler", fields...)
 
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	fields := logrus.Fields{
 		"request_id":  requestID,
 		"method":      req.Method,
@@ -116,7 +116,7 @@ func (r *RecoveryMiddleware) handlePanic(w http.ResponseWriter, req *http.Reques
 
 	r.logger.WithFields(fields).Error("Panic recovered in HTTP handler")
 
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	event := log.Error().
 		Str("request_id", requestID).
 		Str("method", req.Method).
@@ -174,20 +174,20 @@ func (r *RecoveryMiddleware) handlePanic(w http.ResponseWriter, req *http.Reques
 }
 
 // DefaultRecoveryHandler provides a default panic handler
-func DefaultRecoveryHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) func(http.ResponseWriter, *http.Request, interface{}) {
+func DefaultRecoveryHandler({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) func(http.ResponseWriter, *http.Request, interface{}) {
 	return func(w http.ResponseWriter, r *http.Request, panicErr interface{}) {
 		requestID := r.Header.Get("X-Request-ID")
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		logger.Error("Custom panic handler invoked",
 			zap.String("request_id", requestID),
 			zap.Any("panic", panicErr))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		logger.WithFields(logrus.Fields{
 			"request_id": requestID,
 			"panic":      panicErr,
 		}).Error("Custom panic handler invoked")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		log.Error().
 			Str("request_id", requestID).
 			Interface("panic", panicErr).
@@ -212,8 +212,8 @@ func DefaultRecoveryHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if e
 }
 
 // SafeHandler wraps individual handlers with panic recovery
-func SafeHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, handler http.HandlerFunc) http.HandlerFunc {
-	recovery := NewRecoveryMiddleware({{if ne .Logger "zerolog"}}logger, {{end}}RecoveryConfig{
+func SafeHandler({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, handler http.HandlerFunc) http.HandlerFunc {
+	recovery := NewRecoveryMiddleware({{if ne .LoggerType "zerolog"}}logger, {{end}}RecoveryConfig{
 		PrintStack: true,
 	})
 
@@ -221,21 +221,21 @@ func SafeHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "
 }
 
 // SafeWrapper wraps any function with panic recovery
-func SafeWrapper({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, fn func()) {
+func SafeWrapper({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}, fn func()) {
 	defer func() {
 		if err := recover(); err != nil {
 			stack := debug.Stack()
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			logger.Error("Panic recovered in function",
 				zap.Any("panic", err),
 				zap.String("stack", string(stack)))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			logger.WithFields(logrus.Fields{
 				"panic": err,
 				"stack": string(stack),
 			}).Error("Panic recovered in function")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			log.Error().
 				Interface("panic", err).
 				Str("stack", string(stack)).

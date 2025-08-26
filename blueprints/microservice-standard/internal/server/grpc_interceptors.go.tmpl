@@ -6,11 +6,11 @@ import (
 	"runtime/debug"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog"
 {{else}}
 	"log/slog"
@@ -37,11 +37,11 @@ import (
 
 // unaryLoggingInterceptor logs all unary gRPC requests with structured logging
 func unaryLoggingInterceptor(
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger,
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger,
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger zerolog.Logger,
 {{else}}
 	logger *slog.Logger,
@@ -74,7 +74,7 @@ func unaryLoggingInterceptor(
 			status = "error"
 		}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		logger.Info("gRPC request",
 			zap.String("method", info.FullMethod),
 			zap.String("client_ip", clientIP),
@@ -82,7 +82,7 @@ func unaryLoggingInterceptor(
 			zap.String("status", status),
 			zap.Duration("duration", duration),
 			zap.Error(err))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		logger.WithFields(logrus.Fields{
 			"method":     info.FullMethod,
 			"client_ip":  clientIP,
@@ -93,7 +93,7 @@ func unaryLoggingInterceptor(
 		if err != nil {
 			logger.WithError(err).Error("gRPC request error")
 		}
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		logger.Info().
 			Str("method", info.FullMethod).
 			Str("client_ip", clientIP).
@@ -118,11 +118,11 @@ func unaryLoggingInterceptor(
 
 // unaryRecoveryInterceptor recovers from panics in unary gRPC handlers
 func unaryRecoveryInterceptor(
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger,
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger,
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger zerolog.Logger,
 {{else}}
 	logger *slog.Logger,
@@ -132,18 +132,18 @@ func unaryRecoveryInterceptor(
 		defer func() {
 			if r := recover(); r != nil {
 				stack := string(debug.Stack())
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				logger.Error("Panic in gRPC handler",
 					zap.String("method", info.FullMethod),
 					zap.Any("panic", r),
 					zap.String("stack", stack))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				logger.WithFields(logrus.Fields{
 					"method": info.FullMethod,
 					"panic":  r,
 					"stack":  stack,
 				}).Error("Panic in gRPC handler")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				logger.Error().
 					Str("method", info.FullMethod).
 					Interface("panic", r).
@@ -250,11 +250,11 @@ func unaryValidationInterceptor() grpc.UnaryServerInterceptor {
 
 // streamLoggingInterceptor logs all streaming gRPC requests
 func streamLoggingInterceptor(
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger,
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger,
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger zerolog.Logger,
 {{else}}
 	logger *slog.Logger,
@@ -277,14 +277,14 @@ func streamLoggingInterceptor(
 			status = "error"
 		}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		logger.Info("gRPC stream request",
 			zap.String("method", info.FullMethod),
 			zap.String("client_ip", clientIP),
 			zap.String("status", status),
 			zap.Duration("duration", duration),
 			zap.Error(err))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		logger.WithFields(logrus.Fields{
 			"method":    info.FullMethod,
 			"client_ip": clientIP,
@@ -294,7 +294,7 @@ func streamLoggingInterceptor(
 		if err != nil {
 			logger.WithError(err).Error("gRPC stream request error")
 		}
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		logger.Info().
 			Str("method", info.FullMethod).
 			Str("client_ip", clientIP).
@@ -317,11 +317,11 @@ func streamLoggingInterceptor(
 
 // streamRecoveryInterceptor recovers from panics in streaming gRPC handlers
 func streamRecoveryInterceptor(
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger,
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger,
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger zerolog.Logger,
 {{else}}
 	logger *slog.Logger,
@@ -331,18 +331,18 @@ func streamRecoveryInterceptor(
 		defer func() {
 			if r := recover(); r != nil {
 				stack := string(debug.Stack())
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 				logger.Error("Panic in gRPC stream handler",
 					zap.String("method", info.FullMethod),
 					zap.Any("panic", r),
 					zap.String("stack", stack))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 				logger.WithFields(logrus.Fields{
 					"method": info.FullMethod,
 					"panic":  r,
 					"stack":  stack,
 				}).Error("Panic in gRPC stream handler")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 				logger.Error().
 					Str("method", info.FullMethod).
 					Interface("panic", r).

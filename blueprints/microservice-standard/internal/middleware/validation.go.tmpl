@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -36,11 +36,11 @@ type ValidationResponse struct {
 
 // RequestValidator provides request validation functionality
 type RequestValidator struct {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger *slog.Logger
@@ -51,9 +51,9 @@ type RequestValidator struct {
 }
 
 // NewRequestValidator creates a new request validator
-func NewRequestValidator({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *RequestValidator {
+func NewRequestValidator({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .Logger "slog"}}logger *slog.Logger{{end}}) *RequestValidator {
 	return &RequestValidator{
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:      logger,
 {{end}}
 		maxBodySize: 1024 * 1024, // 1MB default
@@ -351,18 +351,18 @@ func (v *RequestValidator) validateSecurityHeaders(r *http.Request) error {
 	for _, header := range dangerousHeaders {
 		if value := r.Header.Get(header); value != "" {
 			// Log suspicious header but don't block (might be legitimate proxy usage)
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			v.logger.Warn("Suspicious header detected",
 				zap.String("header", header),
 				zap.String("value", value),
 				zap.String("remote_addr", r.RemoteAddr))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			v.logger.WithFields(logrus.Fields{
 				"header":      header,
 				"value":       value,
 				"remote_addr": r.RemoteAddr,
 			}).Warn("Suspicious header detected")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			log.Warn().
 				Str("header", header).
 				Str("value", value).
@@ -406,11 +406,11 @@ func (v *RequestValidator) writeValidationError(w http.ResponseWriter, r *http.R
 	w.WriteHeader(statusCode)
 	
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		v.logger.Error("Failed to encode validation error response", zap.Error(err))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		v.logger.WithError(err).Error("Failed to encode validation error response")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		log.Error().Err(err).Msg("Failed to encode validation error response")
 {{else}}
 		v.logger.Error("Failed to encode validation error response", "error", err)
@@ -418,14 +418,14 @@ func (v *RequestValidator) writeValidationError(w http.ResponseWriter, r *http.R
 	}
 	
 	// Log validation errors for monitoring
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	v.logger.Info("Request validation failed",
 		zap.String("method", r.Method),
 		zap.String("path", r.URL.Path),
 		zap.String("remote_addr", r.RemoteAddr),
 		zap.Int("status_code", statusCode),
 		zap.Int("error_count", len(errors)))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	v.logger.WithFields(logrus.Fields{
 		"method":      r.Method,
 		"path":        r.URL.Path,
@@ -433,7 +433,7 @@ func (v *RequestValidator) writeValidationError(w http.ResponseWriter, r *http.R
 		"status_code": statusCode,
 		"error_count": len(errors),
 	}).Info("Request validation failed")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().
 		Str("method", r.Method).
 		Str("path", r.URL.Path).

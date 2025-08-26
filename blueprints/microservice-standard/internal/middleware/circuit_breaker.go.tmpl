@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -34,11 +34,11 @@ type CircuitBreakerConfig struct {
 type CircuitBreakerManager struct {
 	breakers map[string]*gobreaker.CircuitBreaker
 	metrics  *metrics.Metrics
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger   *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger   *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger   *slog.Logger
@@ -47,11 +47,11 @@ type CircuitBreakerManager struct {
 }
 
 // NewCircuitBreakerManager creates a new circuit breaker manager
-func NewCircuitBreakerManager(metrics *metrics.Metrics{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *CircuitBreakerManager {
+func NewCircuitBreakerManager(metrics *metrics.Metrics{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *CircuitBreakerManager {
 	return &CircuitBreakerManager{
 		breakers: make(map[string]*gobreaker.CircuitBreaker),
 		metrics:  metrics,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:   logger,
 {{end}}
 	}
@@ -93,18 +93,18 @@ func (m *CircuitBreakerManager) GetOrCreateBreaker(name string, config CircuitBr
 
 	// Create state change callback
 	onStateChange := func(cbName string, from gobreaker.State, to gobreaker.State) {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 		m.logger.Info("Circuit breaker state changed",
 			zap.String("name", cbName),
 			zap.String("from", from.String()),
 			zap.String("to", to.String()))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 		m.logger.WithFields(logrus.Fields{
 			"name": cbName,
 			"from": from.String(),
 			"to":   to.String(),
 		}).Info("Circuit breaker state changed")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 		log.Info().
 			Str("name", cbName).
 			Str("from", from.String()).
@@ -147,20 +147,20 @@ func (m *CircuitBreakerManager) GetOrCreateBreaker(name string, config CircuitBr
 	breaker := gobreaker.NewCircuitBreaker(settings)
 	m.breakers[name] = breaker
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	m.logger.Info("Circuit breaker created",
 		zap.String("name", name),
 		zap.Uint32("max_requests", config.MaxRequests),
 		zap.Duration("interval", config.Interval),
 		zap.Duration("timeout", config.Timeout))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	m.logger.WithFields(logrus.Fields{
 		"name":         name,
 		"max_requests": config.MaxRequests,
 		"interval":     config.Interval,
 		"timeout":      config.Timeout,
 	}).Info("Circuit breaker created")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().
 		Str("name", name).
 		Uint32("max_requests", config.MaxRequests).
@@ -225,16 +225,16 @@ func (m *CircuitBreakerManager) HTTPCircuitBreakerMiddleware(breakerName string)
 			if err != nil {
 				if err == gobreaker.ErrOpenState {
 					// Circuit breaker is open
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 					m.logger.Warn("Circuit breaker is open, rejecting request",
 						zap.String("breaker", breakerName),
 						zap.String("path", r.URL.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 					m.logger.WithFields(logrus.Fields{
 						"breaker": breakerName,
 						"path":    r.URL.Path,
 					}).Warn("Circuit breaker is open, rejecting request")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 					log.Warn().
 						Str("breaker", breakerName).
 						Str("path", r.URL.Path).
@@ -419,11 +419,11 @@ func (m *CircuitBreakerManager) ResetBreaker(name string) error {
 	delete(m.breakers, name)
 	m.GetOrCreateBreaker(name, config)
 	
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	m.logger.Info("Circuit breaker reset", zap.String("name", name))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	m.logger.WithField("name", name).Info("Circuit breaker reset")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().Str("name", name).Msg("Circuit breaker reset")
 {{else}}
 	m.logger.Info("Circuit breaker reset", "name", name)

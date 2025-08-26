@@ -1,11 +1,11 @@
 package handler
 
 import (
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -14,11 +14,11 @@ import (
 
 // ServiceHandler defines the interface for our service logic
 type ServiceHandler struct {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	logger zerolog.Logger
 {{else}}
 	logger *slog.Logger
@@ -26,7 +26,7 @@ type ServiceHandler struct {
 }
 
 // NewServiceHandler creates a new ServiceHandler instance
-func NewServiceHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Logger "logrus"}}logger *logrus.Logger{{else if eq .Logger "zerolog"}}logger zerolog.Logger{{else}}logger *slog.Logger{{end}}) *ServiceHandler {
+func NewServiceHandler({{if eq .LoggerType "zap"}}logger *zap.Logger{{else if eq .LoggerType "logrus"}}logger *logrus.Logger{{else if eq .LoggerType "zerolog"}}logger zerolog.Logger{{else}}logger *slog.Logger{{end}}) *ServiceHandler {
 	return &ServiceHandler{
 		logger: logger,
 	}
@@ -35,11 +35,11 @@ func NewServiceHandler({{if eq .Logger "zap"}}logger *zap.Logger{{else if eq .Lo
 // SayHello returns a greeting message
 func (h *ServiceHandler) SayHello(name string) string {
 	message := "Hello " + name
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	h.logger.Info("SayHello called", zap.String("name", name), zap.String("message", message))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	h.logger.WithFields(logrus.Fields{"name": name, "message": message}).Info("SayHello called")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	h.logger.Info().Str("name", name).Str("message", message).Msg("SayHello called")
 {{else}}
 	h.logger.Info("SayHello called", "name", name, "message", message)

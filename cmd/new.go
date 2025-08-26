@@ -189,7 +189,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 			}
 			// Set default module path if not provided
 			if projectModule == "" && projectName != "" {
-				projectModule = "github.com/username/" + projectName
+				projectModule = "example.com/" + projectName
 			}
 		}
 	}
@@ -210,8 +210,10 @@ func runNew(cmd *cobra.Command, args []string) error {
 				actualFramework = "gin"
 			case "microservice", "grpc-pure":
 				actualFramework = "gin"
+			case "lambda-proxy":
+				actualFramework = "gin"
 			default:
-				// Library and lambda don't need frameworks
+				// Library and lambda-standard don't need frameworks
 			}
 		}
 
@@ -222,7 +224,7 @@ func runNew(cmd *cobra.Command, args []string) error {
 
 		// Set default module path for testing scenarios
 		if projectModule == "" && projectName != "" {
-			projectModule = "github.com/username/" + projectName
+			projectModule = "example.com/" + projectName
 		}
 	}
 

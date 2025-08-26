@@ -7,11 +7,11 @@ import (
 	"strconv"
 	"time"
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	"go.uber.org/zap"
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	"github.com/sirupsen/logrus"
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	"github.com/rs/zerolog/log"
 {{else}}
 	"log/slog"
@@ -53,11 +53,11 @@ type Metrics struct {
 	BusinessOperationDuration  *prometheus.HistogramVec
 
 	config *config.Config
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	logger *zap.Logger
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	logger *logrus.Logger
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	// zerolog uses global logger
 {{else}}
 	logger *slog.Logger
@@ -66,12 +66,12 @@ type Metrics struct {
 }
 
 // NewMetrics creates a new metrics instance
-func NewMetrics(cfg *config.Config{{if eq .Logger "zap"}}, logger *zap.Logger{{else if eq .Logger "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *Metrics {
+func NewMetrics(cfg *config.Config{{if eq .LoggerType "zap"}}, logger *zap.Logger{{else if eq .LoggerType "logrus"}}, logger *logrus.Logger{{else if eq .Logger "slog"}}, logger *slog.Logger{{end}}) *Metrics {
 	registry := prometheus.NewRegistry()
 
 	m := &Metrics{
 		config:   cfg,
-{{if ne .Logger "zerolog"}}
+{{if ne .LoggerType "zerolog"}}
 		logger:   logger,
 {{end}}
 		registry: registry,
@@ -357,16 +357,16 @@ func (m *Metrics) StartHTTPServer(ctx context.Context) error {
 		Handler: mux,
 	}
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	m.logger.Info("Starting metrics server",
 		zap.Int("port", m.config.Observability.Metrics.Port),
 		zap.String("path", m.config.Observability.Metrics.Path))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	m.logger.WithFields(logrus.Fields{
 		"port": m.config.Observability.Metrics.Port,
 		"path": m.config.Observability.Metrics.Path,
 	}).Info("Starting metrics server")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().
 		Int("port", m.config.Observability.Metrics.Port).
 		Str("path", m.config.Observability.Metrics.Path).
@@ -379,11 +379,11 @@ func (m *Metrics) StartHTTPServer(ctx context.Context) error {
 
 	go func() {
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 			m.logger.Error("Metrics server error", zap.Error(err))
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 			m.logger.WithError(err).Error("Metrics server error")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 			log.Error().Err(err).Msg("Metrics server error")
 {{else}}
 			m.logger.Error("Metrics server error", "error", err)
@@ -394,11 +394,11 @@ func (m *Metrics) StartHTTPServer(ctx context.Context) error {
 	// Wait for context cancellation
 	<-ctx.Done()
 
-{{if eq .Logger "zap"}}
+{{if eq .LoggerType "zap"}}
 	m.logger.Info("Shutting down metrics server")
-{{else if eq .Logger "logrus"}}
+{{else if eq .LoggerType "logrus"}}
 	m.logger.Info("Shutting down metrics server")
-{{else if eq .Logger "zerolog"}}
+{{else if eq .LoggerType "zerolog"}}
 	log.Info().Msg("Shutting down metrics server")
 {{else}}
 	m.logger.Info("Shutting down metrics server")
