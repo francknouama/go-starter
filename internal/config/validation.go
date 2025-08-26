@@ -182,18 +182,42 @@ func ValidateGoVersion(version string) error {
 // ValidateTemplateType validates a template type
 func ValidateTemplateType(templateType string) error {
 	validTypes := map[string]bool{
-		"web-api":                true,
+		// CLI templates
 		"cli":                    true,
+		"cli-simple":             true,
+		"cli-standard":           true,
+		
+		// Web API templates  
+		"web-api":                true,
+		"web-api-standard":       true,
+		"web-api-clean":          true,
+		"web-api-ddd":            true,
+		"web-api-hexagonal":      true,
+		"web-api-chi":            true,
+		"web-api-echo":           true,
+		"web-api-fiber":          true,
+		
+		// Library templates
 		"library":                true,
+		"library-standard":       true,
+		
+		// Lambda templates
 		"lambda":                 true,
+		"lambda-standard":        true,
 		"lambda-proxy":           true,
 		"lambda-event-processing": true,
+		
+		// Architecture templates
 		"event-driven":           true,
-		"microservice":           true,
+		"microservice-standard":  true,
 		"monolith":               true,
 		"workspace":              true,
+		
+		// gRPC templates
 		"grpc-pure":              true,
 		"grpc-gateway":           true,
+		
+		// GraphQL templates
 		"graphql-api":            true,
 	}
 
