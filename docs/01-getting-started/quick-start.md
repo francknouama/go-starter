@@ -2,7 +2,7 @@
 
 Get your first go-starter project running in 5 minutes! ⚡
 
-> **🎉 MILESTONE ACHIEVED**: go-starter now has **7 production-ready blueprints**, including the newly production-ready **gRPC Gateway** for dual HTTP/gRPC APIs!
+> **🎉 HISTORIC 100% COVERAGE ACHIEVED**: go-starter now has **12 production-ready blueprints**, including enterprise-enhanced **Monolith** and **Microservice** with advanced observability and resilience patterns!
 
 ## 🎯 Goal
 

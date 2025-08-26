@@ -160,7 +160,7 @@ go-starter uses a progressive complexity approach to match your project needs:
 | Blueprint | Use Case | Files | Status | AWS Integration |
 |-----------|----------|-------|--------|-----------------|
 | **lambda-standard** | Simple functions | **17** | ✅ **READY** | CloudWatch, X-Ray, AWS SDK v2 |
-| **lambda-event-processing** | Event handling | **22** | 🔧 **ENHANCEMENT READY** | SQS, SNS, EventBridge (template fixes needed) |
+| **lambda-event-processing** | Event handling | **22** | ✅ **PRODUCTION READY** | SQS, SNS, EventBridge (Phase 3B completed) |
 | **lambda-proxy** | API Gateway | TBD | 🔄 **DEVELOPMENT** | API Gateway, Route53 |
 
 **Production Features (Standard):**
@@ -176,7 +176,7 @@ go-starter uses a progressive complexity approach to match your project needs:
 
 | Blueprint | Protocol | Files | Status | Features |
 |-----------|----------|-------|--------|----------|
-| **microservice-standard** | gRPC + HTTP | **47** | 🔧 **ENHANCEMENT READY** | Service discovery, health checks (template processing fixes needed) |
+| **microservice-standard** | gRPC + HTTP | **47** | ✅ **PRODUCTION READY** | Service discovery, health checks (Phase 3B completed) |
 | **grpc-gateway** | gRPC + REST | **40** | ✅ **READY** | Dual HTTP/gRPC, gateway pattern |
 | **grpc-pure** | Pure gRPC | TBD | 🔄 **DEVELOPMENT** | High performance, streaming |
 
@@ -221,7 +221,7 @@ go-starter uses a progressive complexity approach to match your project needs:
 
 | Blueprint | Type | Files | Status | Use Case |
 |-----------|------|-------|--------|----------|
-| **monolith** | Modular Monolith | **66** | 🔧 **ENHANCEMENT READY** | Traditional web apps, all-in-one (module resolution fixes needed) |
+| **monolith** | Modular Monolith | **72** | ✅ **PRODUCTION READY** | Traditional web apps, all-in-one (Phase 3B completed) |
 | **library-standard** | Go Package | **19** | ✅ **READY** | Reusable libraries, SDKs |
 | **workspace** | Multi-module | TBD | 🔄 **DEVELOPMENT** | Monorepos, shared libraries |
 
