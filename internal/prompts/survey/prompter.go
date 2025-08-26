@@ -475,11 +475,11 @@ func (p *SurveyPrompter) promptProjectNameSurvey() (string, error) {
 }
 
 func (p *SurveyPrompter) promptModulePathSurvey(projectName string) (string, error) {
-	defaultModule := fmt.Sprintf("github.com/username/%s", projectName)
+	defaultModule := fmt.Sprintf("example.com/%s", projectName)
 	prompt := &survey.Input{
 		Message: "Module path:",
 		Default: defaultModule,
-		Help:    "Go module path for imports (e.g., github.com/username/project)",
+		Help:    "Go module path for imports (e.g., example.com/project)",
 	}
 	var result string
 	err := p.surveyAdapter.AskOne(prompt, &result, survey.WithValidator(survey.Required))

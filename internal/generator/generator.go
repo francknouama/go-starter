@@ -455,8 +455,10 @@ func (g *Generator) generateProjectFiles(tmpl types.Template, config types.Proje
 				continue
 			}
 		}
+		// Add file to processing list (both conditional and unconditional files)
 		filesToProcess = append(filesToProcess, templateFile)
 	}
+
 
 	// Use parallel processing for better performance
 	numWorkers := runtime.NumCPU()

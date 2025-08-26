@@ -1,0 +1,221 @@
+package unit
+
+import (
+	"io"
+	"net/http"
+	"testing"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/internal/middleware"
+)
+
+// MiddlewareTestSuite tests middleware functions
+type MiddlewareTestSuite struct {
+	suite.Suite
+	app *fiber.App
+}
+
+func (suite *MiddlewareTestSuite) SetupTest() {
+	suite.app = fiber.New()
+}
+
+func (suite *MiddlewareTestSuite) TestCORSMiddleware() {
+	// Apply CORS middleware
+	suite.app.Use(middleware.CORS())
+
+	// Create a test route
+	suite.app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("test")
+	})
+
+	// Create request
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+
+	// Test
+	resp, err := suite.app.Test(req, -1)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+	
+	// Check CORS headers are set
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Allow-Origin")
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Allow-Methods")
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Allow-Headers")
+}
+
+func (suite *MiddlewareTestSuite) TestCORSPreflightRequest() {
+	// Apply CORS middleware
+	suite.app.Use(middleware.CORS())
+
+	// Create preflight request
+	req, _ := http.NewRequest(http.MethodOptions, "/test", nil)
+	req.Header.Set("Origin", "http://localhost:3000")
+	req.Header.Set("Access-Control-Request-Method", "POST")
+	req.Header.Set("Access-Control-Request-Headers", "Content-Type")
+
+	// Test
+	resp, err := suite.app.Test(req, -1)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	
+	// Check CORS headers are set for preflight
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Allow-Origin")
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Allow-Methods")
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Allow-Headers")
+	assert.Contains(suite.T(), resp.Header, "Access-Control-Max-Age")
+}
+
+func (suite *MiddlewareTestSuite) TestSecurityMiddleware() {
+	// Apply Security middleware
+	suite.app.Use(middleware.Security())
+
+	// Create a test route
+	suite.app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("test")
+	})
+
+	// Create request
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+
+	// Test
+	resp, err := suite.app.Test(req, -1)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+	
+	// Check security headers are set
+	assert.Contains(suite.T(), resp.Header, "X-Frame-Options")
+	assert.Contains(suite.T(), resp.Header, "X-Content-Type-Options")
+	assert.Contains(suite.T(), resp.Header, "X-Xss-Protection")
+	assert.Contains(suite.T(), resp.Header, "Strict-Transport-Security")
+	assert.Contains(suite.T(), resp.Header, "Content-Security-Policy")
+}
+
+func (suite *MiddlewareTestSuite) TestCompressionMiddleware() {
+	// Apply Compression middleware
+	suite.app.Use(middleware.Compression())
+
+	// Create a test route
+	suite.app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("test response data that should be compressed")
+	})
+
+	// Create request with compression accept header
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Accept-Encoding", "gzip")
+
+	// Test
+	resp, err := suite.app.Test(req, -1)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+
+	// Check if compression header is set (Fiber middleware handles this)
+	body, err := io.ReadAll(resp.Body)
+	assert.NoError(suite.T(), err)
+	assert.NotEmpty(suite.T(), body)
+}
+
+func (suite *MiddlewareTestSuite) TestRateLimiterMiddleware() {
+	// Apply Rate Limiter middleware
+	suite.app.Use(middleware.RateLimiter())
+
+	// Create a test route
+	suite.app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("test")
+	})
+
+	// Create multiple requests to test rate limiting
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+
+	// Test - first request should succeed
+	resp, err := suite.app.Test(req, -1)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, resp.StatusCode)
+
+	// Check rate limit headers (if implemented)
+	// Note: The actual rate limiting behavior depends on the implementation
+}
+
+{{- if ne .AuthType ""}}
+func (suite *MiddlewareTestSuite) TestAuthMiddleware_MissingToken() {
+	// Apply Auth middleware
+	suite.app.Use(middleware.Auth())
+
+	// Create a test route
+	suite.app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("authenticated")
+	})
+
+	// Create request without auth header
+	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
+
+	// Test
+	resp, err := suite.app.Test(req, -1)
+
+	// Should fail due to missing token
+	assert.NoError(suite.T(), err)
+	assert.NotEqual(suite.T(), http.StatusOK, resp.StatusCode)
+}
+{{- end}}
+
+func (suite *MiddlewareTestSuite) TestRecoveryMiddleware() {
+	// Apply Recovery middleware
+	suite.app.Use(middleware.Recovery())
+
+	// Create a test route that panics
+	suite.app.Get("/panic", func(c *fiber.Ctx) error {
+		panic("test panic")
+	})
+
+	// Create request
+	req, _ := http.NewRequest(http.MethodGet, "/panic", nil)
+
+	// Test - should not crash the server
+	resp, err := suite.app.Test(req, -1)
+	
+	// Assertions - recovery should handle the panic
+	assert.NoError(suite.T(), err)
+	// Status should be 500 Internal Server Error
+	assert.Equal(suite.T(), http.StatusInternalServerError, resp.StatusCode)
+}
+
+func (suite *MiddlewareTestSuite) TestCacheMiddleware() {
+	// Apply Cache middleware
+	suite.app.Use(middleware.Cache())
+
+	// Create a test route
+	suite.app.Get("/test", func(c *fiber.Ctx) error {
+		return c.SendString("cached response")
+	})
+
+	// Create request
+	req1, _ := http.NewRequest(http.MethodGet, "/test", nil)
+
+	// First request
+	resp1, err := suite.app.Test(req1, -1)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, resp1.StatusCode)
+
+	// Second request (should potentially be cached)
+	req2, _ := http.NewRequest(http.MethodGet, "/test", nil)
+	resp2, err := suite.app.Test(req2, -1)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, resp2.StatusCode)
+
+	// Check cache headers if implemented
+	// Note: The actual caching behavior depends on the middleware implementation
+}
+
+// Run the test suite
+func TestMiddlewareTestSuite(t *testing.T) {
+	suite.Run(t, new(MiddlewareTestSuite))
+}

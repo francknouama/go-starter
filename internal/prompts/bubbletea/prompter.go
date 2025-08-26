@@ -321,8 +321,8 @@ func (p *BubbleTeaPrompter) promptProjectName() (string, error) {
 
 // promptModulePath prompts for Go module path using Bubble Tea UI
 func (p *BubbleTeaPrompter) promptModulePath(projectName string) (string, error) {
-	defaultModule := fmt.Sprintf("github.com/username/%s", projectName)
-	help := "Go module path for imports (e.g., github.com/username/project)"
+	defaultModule := fmt.Sprintf("example.com/%s", projectName)
+	help := "Go module path for imports (e.g., example.com/project)"
 
 	return p.RunTextInput("Module path:", help, defaultModule)
 }

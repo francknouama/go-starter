@@ -1,0 +1,440 @@
+package unit
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"testing"
+	"time"
+
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/suite"
+
+	"{{.ModulePath}}/internal/handlers"
+	"{{.ModulePath}}/internal/models"
+)
+
+// MockUserService is a mock implementation of UserService for handler tests
+type MockUserService struct {
+	mock.Mock
+}
+
+func (m *MockUserService) GetUsers(page, limit int) ([]models.User, int, error) {
+	args := m.Called(page, limit)
+	return args.Get(0).([]models.User), args.Int(1), args.Error(2)
+}
+
+func (m *MockUserService) GetUserByID(id uint) (*models.User, error) {
+	args := m.Called(id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) GetUserByEmail(email string) (*models.User, error) {
+	args := m.Called(email)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) CreateUser(req models.CreateUserRequest) (*models.User, error) {
+	args := m.Called(req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) UpdateUser(id uint, req models.UpdateUserRequest) (*models.User, error) {
+	args := m.Called(id, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockUserService) DeleteUser(id uint) error {
+	args := m.Called(id)
+	return args.Error(0)
+}
+
+{{- if ne .AuthType ""}}
+// MockAuthService is a mock implementation of AuthService for handler tests
+type MockAuthService struct {
+	mock.Mock
+}
+
+func (m *MockAuthService) Login(email, password string) (string, *models.User, error) {
+	args := m.Called(email, password)
+	if args.Get(1) == nil {
+		return args.String(0), nil, args.Error(2)
+	}
+	return args.String(0), args.Get(1).(*models.User), args.Error(2)
+}
+
+func (m *MockAuthService) Register(req models.CreateUserRequest, password string) (*models.User, error) {
+	args := m.Called(req, password)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.User), args.Error(1)
+}
+
+func (m *MockAuthService) ValidateToken(token string) (*models.JWTClaims, error) {
+	args := m.Called(token)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*models.JWTClaims), args.Error(1)
+}
+
+func (m *MockAuthService) HashPassword(password string) (string, error) {
+	args := m.Called(password)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockAuthService) ComparePasswords(hashedPassword, password string) error {
+	args := m.Called(hashedPassword, password)
+	return args.Error(0)
+}
+{{- end}}
+
+// UserHandlerTestSuite tests the UserHandler
+type UserHandlerTestSuite struct {
+	suite.Suite
+	echo        *echo.Echo
+	mockService *MockUserService
+	handler     *handlers.UserHandler
+}
+
+func (suite *UserHandlerTestSuite) SetupTest() {
+	suite.echo = echo.New()
+	suite.mockService = new(MockUserService)
+	suite.handler = handlers.NewUserHandler(suite.mockService)
+}
+
+func (suite *UserHandlerTestSuite) TestGetUsers_Success() {
+	// Setup mock data
+	expectedUsers := []models.User{
+		{ID: 1, Name: "User 1", Email: "user1@example.com", CreatedAt: time.Now()},
+		{ID: 2, Name: "User 2", Email: "user2@example.com", CreatedAt: time.Now()},
+	}
+	expectedTotal := 2
+
+	suite.mockService.On("GetUsers", 1, 10).Return(expectedUsers, expectedTotal, nil)
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users?page=1&limit=10", nil)
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(req, rec)
+
+	// Test
+	err := suite.handler.GetUsers(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+
+func (suite *UserHandlerTestSuite) TestGetUser_Success() {
+	// Setup mock data
+	expectedUser := &models.User{
+		ID:    1,
+		Name:  "Test User",
+		Email: "test@example.com",
+	}
+
+	suite.mockService.On("GetUserByID", uint(1)).Return(expectedUser, nil)
+
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/users/1", nil)
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	// Test
+	err := suite.handler.GetUser(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+
+func (suite *UserHandlerTestSuite) TestCreateUser_Success() {
+	// Setup
+	req := models.CreateUserRequest{
+		Name:  "New User",
+		Email: "newuser@example.com",
+	}
+
+	expectedUser := &models.User{
+		ID:    1,
+		Name:  req.Name,
+		Email: req.Email,
+	}
+
+	suite.mockService.On("CreateUser", req).Return(expectedUser, nil)
+
+	// Create request
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/api/v1/users", bytes.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(httpReq, rec)
+
+	// Test
+	err := suite.handler.CreateUser(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+
+func (suite *UserHandlerTestSuite) TestUpdateUser_Success() {
+	// Setup
+	userID := uint(1)
+	newName := "Updated Name"
+	req := models.UpdateUserRequest{
+		Name: &newName,
+	}
+
+	expectedUser := &models.User{
+		ID:   userID,
+		Name: newName,
+	}
+
+	suite.mockService.On("UpdateUser", userID, req).Return(expectedUser, nil)
+
+	// Create request
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPut, "/api/v1/users/1", bytes.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(httpReq, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	// Test
+	err := suite.handler.UpdateUser(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+
+func (suite *UserHandlerTestSuite) TestDeleteUser_Success() {
+	// Setup
+	userID := uint(1)
+	suite.mockService.On("DeleteUser", userID).Return(nil)
+
+	// Create request
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/users/1", nil)
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(req, rec)
+	c.SetPath("/api/v1/users/:id")
+	c.SetParamNames("id")
+	c.SetParamValues("1")
+
+	// Test
+	err := suite.handler.DeleteUser(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+
+// HealthHandlerTestSuite tests the HealthHandler
+type HealthHandlerTestSuite struct {
+	suite.Suite
+	echo    *echo.Echo
+	handler *handlers.HealthHandler
+}
+
+func (suite *HealthHandlerTestSuite) SetupTest() {
+	suite.echo = echo.New()
+	suite.handler = handlers.NewHealthHandler()
+}
+
+func (suite *HealthHandlerTestSuite) TestHealthCheck() {
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(req, rec)
+
+	// Test
+	err := suite.handler.Check(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "healthy", response["status"])
+}
+
+func (suite *HealthHandlerTestSuite) TestHealthReady() {
+	// Create request
+	req := httptest.NewRequest(http.MethodGet, "/health/ready", nil)
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(req, rec)
+
+	// Test
+	err := suite.handler.Ready(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "ready", response["status"])
+}
+
+{{- if ne .AuthType ""}}
+// AuthHandlerTestSuite tests the AuthHandler
+type AuthHandlerTestSuite struct {
+	suite.Suite
+	echo        *echo.Echo
+	mockService *MockAuthService
+	handler     *handlers.AuthHandler
+}
+
+func (suite *AuthHandlerTestSuite) SetupTest() {
+	suite.echo = echo.New()
+	suite.mockService = new(MockAuthService)
+	suite.handler = handlers.NewAuthHandler(suite.mockService)
+}
+
+func (suite *AuthHandlerTestSuite) TestLogin_Success() {
+	// Setup
+	req := models.LoginRequest{
+		Email:    "test@example.com",
+		Password: "password123",
+	}
+
+	expectedUser := &models.User{
+		ID:    1,
+		Name:  "Test User",
+		Email: req.Email,
+	}
+
+	expectedToken := "jwt.token.here"
+
+	suite.mockService.On("Login", req.Email, req.Password).Return(expectedToken, expectedUser, nil)
+
+	// Create request
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/auth/login", bytes.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(httpReq, rec)
+
+	// Test
+	err := suite.handler.Login(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+
+func (suite *AuthHandlerTestSuite) TestRegister_Success() {
+	// Setup
+	req := models.RegisterRequest{
+		Name:     "New User",
+		Email:    "newuser@example.com",
+		Password: "password123",
+	}
+
+	expectedUser := &models.User{
+		ID:    1,
+		Name:  req.Name,
+		Email: req.Email,
+	}
+
+	suite.mockService.On("Register", mock.AnythingOfType("models.CreateUserRequest"), req.Password).Return(expectedUser, nil)
+
+	// Create request
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/auth/register", bytes.NewReader(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	c := suite.echo.NewContext(httpReq, rec)
+
+	// Test
+	err := suite.handler.Register(c)
+
+	// Assertions
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
+
+	var response map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &response)
+	assert.NoError(suite.T(), err)
+	assert.Equal(suite.T(), "success", response["status"])
+	suite.mockService.AssertExpectations(suite.T())
+}
+{{- end}}
+
+// Run the test suites
+func TestUserHandlerTestSuite(t *testing.T) {
+	suite.Run(t, new(UserHandlerTestSuite))
+}
+
+func TestHealthHandlerTestSuite(t *testing.T) {
+	suite.Run(t, new(HealthHandlerTestSuite))
+}
+
+{{- if ne .AuthType ""}}
+func TestAuthHandlerTestSuite(t *testing.T) {
+	suite.Run(t, new(AuthHandlerTestSuite))
+}
+{{- end}}

@@ -157,7 +157,7 @@ func outputGenerationCommand(rec *advisor.ArchitectureRecommendation) error {
 	}
 	
 	// Add module path placeholder
-	cmd += " --module=github.com/username/my-project"
+	cmd += " --module=example.com/my-project"
 	
 	fmt.Printf("  %s\n", cmd)
 	fmt.Println()
