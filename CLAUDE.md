@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 ## Project Overview
 
-**go-starter** - A comprehensive Go project generator combining create-react-app simplicity with Spring Initializr flexibility. Features progressive disclosure for beginners and advanced developers.
+**go-starter** - A comprehensive Go project generator combining create-react-app simplicity with Spring Initializr flexibility. Features progressive disclosure for beginners and advanced developers with an interactive CLI interface.
 
-## 🎯 Interactive Mode (Primary Interface)
+## 🎯 Interactive CLI System
 
-go-starter features a **powerful interactive mode** that guides you through project creation with intelligent prompts:
+### 💻 CLI Interactive Mode
+
+go-starter features a **powerful interactive CLI mode** that guides you through project creation with intelligent prompts:
 
 ### Interactive Features
 - **Smart prompts** - Only asks relevant questions based on your choices
@@ -17,19 +19,18 @@ go-starter features a **powerful interactive mode** that guides you through proj
 - **Validation** - Ensures valid project names, module paths, and configurations
 - **Preview mode** - See what will be generated before creation
 
-### Interactive Usage
+### Usage
 ```bash
-# Start interactive mode (recommended for all users)
-go-starter new
+# Interactive Mode (Recommended)
+go-starter new                              # Start guided project creation
+go-starter new --advanced                   # Interactive with all options
+go-starter new --type=web-api               # Interactive for specific blueprint
 
-# Interactive with advanced options
-go-starter new --advanced
-
-# Interactive for specific blueprint type
-go-starter new --type=web-api  # Still prompts for remaining options
+# Direct Mode (Skip interactive)
+go-starter new my-app --type=cli            # Non-interactive generation
 ```
 
-### Interactive Flow Example
+### CLI Interactive Flow
 1. **Project name** → Enter name or use random generator
 2. **Blueprint type** → Choose from 12 templates with descriptions
 3. **Complexity level** → Simple, Standard, Advanced, or Expert
@@ -45,7 +46,7 @@ go-starter new --type=web-api  # Still prompts for remaining options
 go build -o bin/go-starter main.go
 make build && make install
 
-# Interactive Mode (Recommended)
+# Interactive Mode
 go-starter new                          # Start guided project creation
 go-starter new --advanced               # Interactive with all options
 
@@ -68,29 +69,31 @@ go generate ./...                       # Embed blueprints
 - `--basic/--advanced` - Help mode toggle
 - `--dry-run` - Preview without creating
 
-### File Count by Complexity
+### CLI Features
 - **Simple CLI**: 8 files (learning/prototypes)
 - **Standard CLI**: 29 files (production-ready)
 - **Web API**: Varies by architecture pattern
 
-## Production-Ready Blueprints - 12 PRODUCTION-READY ✨ **100% COVERAGE ACHIEVED!**
+## Production-Ready Blueprints - 12 PRODUCTION-READY ✨ **100% COVERAGE!**
+
+**ACHIEVEMENT**: Complete CLI system with all 12 production-ready blueprints
 
 | Blueprint | Complexity | Files | Use Case | Production Features |
-|-----------|------------|-------|----------|--------------------|
+|-----------|------------|-------|----------|------------------------------|
 | **CLI Simple** ✅ | Beginner | 8 | Quick utilities, learning | Basic logging, Makefile |
 | **CLI Standard** ✅ | Intermediate | 29 | Production CLIs | Full CLI framework, tests |
 | **Library Standard** ✅ | Beginner | ~10 | Reusable packages | API design, examples |
 | **Web API Standard** ✅ | Intermediate | ~25 | REST APIs, CRUD | HTTP framework, middleware |
 | **Web API Clean** ✅ | Advanced | ~40 | Enterprise APIs | Layered architecture, DI |
-| **Web API Echo** ✅ **NEW** | Intermediate | ~25 | Echo REST APIs | High-performance middleware |
-| **Web API Fiber** ✅ **NEW** | Intermediate | ~25 | Fiber REST APIs | Ultra-fast performance |
+| **Web API Echo** ✅ **PHASE 3A** | Intermediate | ~25 | Echo REST APIs | High-performance middleware |
+| **Web API Fiber** ✅ **PHASE 3A** | Intermediate | ~25 | Fiber REST APIs | Ultra-fast performance |
 | **Lambda Standard** ✅ | Beginner | ~15 | Serverless functions | AWS SDK, X-Ray tracing |
-| **Lambda Proxy** ✅ **NEW** | Intermediate | ~20 | API Gateway | HTTP routing, serverless |
+| **Lambda Proxy** ✅ **PHASE 3A** | Intermediate | ~20 | API Gateway | HTTP routing, serverless |
 | **gRPC Gateway** ✅ | Advanced | 45 | **Dual HTTP/gRPC APIs** | **🚀 Enhanced interceptors, unified middleware** |
 | **Monolith** ✅ **PHASE 3B** | Intermediate | 72 | **Production web apps** | **🚀 Background jobs, multi-layer caching, performance monitoring** |
 | **Microservice** ✅ **PHASE 3B** | Advanced | 47 | **Enterprise gRPC services** | **🚀 OpenTelemetry, rate limiting, resilience patterns** |
 
-**HISTORIC ACHIEVEMENT**: Phase 3B completion achieved **12 production-ready blueprints** - **100% BLUEPRINT COVERAGE!** This represents the completion of the Extended Blueprint System initiative with complete production-grade coverage across all blueprint types.
+**ACHIEVEMENT**: Achieved **12 production-ready blueprints** with complete CLI system. This represents the completion of the Extended Blueprint System (Phase 3) with progressive disclosure capabilities.
 
 ## Architecture Components
 
@@ -102,13 +105,11 @@ go generate ./...                       # Embed blueprints
   /prompts      # Interactive UI & progressive disclosure
   /templates    # Blueprint engine (embed.FS)
 /blueprints     # Template definitions
-/web            # React UI (Phase 3)
+/web            # React UI (Under Development)
 /tests          # ATDD & integration tests
 ```
 
-### Progressive Disclosure System
-
-#### Core Implementation
+### CLI Progressive Disclosure
 - **Location**: `internal/prompts/progressive.go`
 - **Complexity Levels**: Simple → Standard → Advanced → Expert
 - **Disclosure Modes**: Basic (14 flags) → Advanced (18+ flags)
@@ -417,7 +418,7 @@ The project includes sophisticated hooks in `.claude-hooks/` that enhance agent 
 **File Pattern Triggers**:
 - `blueprints/**/*.tmpl` → `template-variable-auditor` or `blueprint-validator`
 - `blueprints/grpc-*/**` → `grpc-protobuf-specialist`
-- `web/src/**/*.tsx` → `web-ui-designer` or `ux-design-expert`
+- `web/src/**/*.tsx` → `ux-design-expert`
 - `tests/**/*_test.go` → `golang-atdd-qa-engineer`
 - `docs/**/*.md` → `general-purpose` (documentation)
 
@@ -561,12 +562,12 @@ Use for comprehensive documentation creation, architecture, and maintenance:
 - **Background Processing**: Comprehensive job manager with queuing and monitoring
 - **Enterprise Middleware**: Enhanced interceptors with monitoring and security
 
-### Phase 3: Web UI (In Progress)
+### Phase 3: Extended Blueprint System (✅ Complete)
 - React + Vite frontend
 - WebSocket real-time preview
 - RESTful API
 
-### Phase 4: Advanced Features (Future)
+### Phase 4: Web UI (Under Development)
 - GitHub integration
 - Blueprint marketplace
 - Cloud deployments
