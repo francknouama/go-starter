@@ -14,6 +14,9 @@ export const ValidationPatterns = {
   
   // URL
   url: /^https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*)$/,
+  
+  // File/Directory path
+  path: /^[a-zA-Z0-9._\/-]+$/,
 }
 
 // Validation error messages

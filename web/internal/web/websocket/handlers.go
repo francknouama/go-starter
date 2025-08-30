@@ -1,10 +1,16 @@
 package websocket
 
 import (
+	"fmt"
 	"net/http"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/francknouama/go-starter/internal/generator"
+	"github.com/francknouama/go-starter/internal/templates"
+	"github.com/francknouama/go-starter/pkg/types"
 	"github.com/francknouama/go-starter/web/internal/web/models"
 )
 
@@ -194,12 +200,18 @@ func (h *WSHandler) ServeWebSocketInfo(c *gin.Context) {
 			models.WSMessageTypeError,
 			models.WSMessageTypePreview,
 			models.WSMessageTypeStatus,
+			"file_tree",
+			"file_content",
+			"preview_start",
+			"preview_complete",
 		},
 		"clientCommands": []string{
 			"ping",
 			"subscribe",
 			"unsubscribe",
 			"heartbeat",
+			"preview_request",
+			"file_request",
 		},
 		"connectedClients": h.hub.GetClientCount(),
 		"documentation":    "Connect to the WebSocket endpoint to receive real-time updates",
@@ -243,6 +255,197 @@ func (h *WSHandler) DisconnectClient(c *gin.Context) {
 	})
 	
 	c.JSON(http.StatusOK, response)
+}
+
+// HandlePreviewRequest handles real-time preview generation requests
+func (h *WSHandler) HandlePreviewRequest(requestID string, request models.PreviewRequest, clientID ...string) {
+	// Send initial status
+	h.NotifyStatus(requestID, "Initializing preview generation...", clientID...)
+	
+	// Start preview generation in goroutine
+	go func() {
+		// Validate request
+		if err := request.Validate(); err != nil {
+			h.NotifyError(requestID, fmt.Sprintf("Validation failed: %v", err), clientID...)
+			return
+		}
+		
+		// Set defaults
+		request.SetDefaults()
+		
+		// Convert to internal config
+		config := convertToProjectConfig(request.GenerationRequest)
+		
+		h.NotifyStatus(requestID, "Loading blueprint...", clientID...)
+		
+		// Initialize generator and template registry
+		gen := generator.New()
+		registry := templates.NewRegistry()
+		
+		// Determine blueprint ID
+		blueprintID := determineBlueprintID(config)
+		
+		// Get template
+		tmpl, err := registry.Get(blueprintID)
+		if err != nil {
+			// Try fallback: look for templates by type
+			templatesByType := registry.GetByType(config.Type)
+			if len(templatesByType) > 0 {
+				tmpl = templatesByType[0]
+			} else {
+				h.NotifyError(requestID, fmt.Sprintf("Blueprint '%s' not found", blueprintID), clientID...)
+				return
+			}
+		}
+		
+		h.NotifyStatus(requestID, "Generating file structure...", clientID...)
+		
+		// Generate files in memory
+		filesMap, err := gen.GenerateInMemory(&config, tmpl.ID)
+		if err != nil {
+			h.NotifyError(requestID, fmt.Sprintf("Failed to generate preview: %v", err), clientID...)
+			return
+		}
+		
+		// Convert to preview format and send file tree
+		var files []models.GeneratedFile
+		totalFiles := len(filesMap)
+		processed := 0
+		
+		// Track directories for file tree
+		dirs := make(map[string]bool)
+		
+		for filePath, content := range filesMap {
+			// Add parent directories
+			dir := filepath.Dir(filePath)
+			for dir != "." && dir != "/" {
+				dirs[dir] = true
+				dir = filepath.Dir(dir)
+			}
+			
+			// Create file info
+			file := models.GeneratedFile{
+				Path:    filePath,
+				Content: string(content),
+				Size:    int64(len(content)),
+				IsDir:   false,
+				Mode:    "0644",
+				ModTime: time.Now().Format(time.RFC3339),
+			}
+			
+			files = append(files, file)
+			processed++
+			
+			// Send progress update
+			progressData := models.ProgressData{
+				Stage:           "generating",
+				Progress:        float64(processed) / float64(totalFiles),
+				Message:         fmt.Sprintf("Processing %s", filepath.Base(filePath)),
+				CurrentFile:     filePath,
+				TotalFiles:      totalFiles,
+				ProcessedFiles:  processed,
+			}
+			h.NotifyProgress(requestID, progressData, clientID...)
+			
+			// Send individual file content
+			h.SendFileContent(requestID, file, clientID...)
+		}
+		
+		// Add directory entries
+		for dir := range dirs {
+			files = append(files, models.GeneratedFile{
+				Path:    dir,
+				Content: "",
+				Size:    0,
+				IsDir:   true,
+				Mode:    "0755",
+				ModTime: time.Now().Format(time.RFC3339),
+			})
+		}
+		
+		// Build and send file tree
+		fileTree := buildFileTree(files)
+		h.SendFileTree(requestID, fileTree, clientID...)
+		
+		// Send completion notification
+		previewData := map[string]interface{}{
+			"projectName":  config.Name,
+			"modulePath":   config.Module,
+			"type":         config.Type,
+			"architecture": config.Architecture,
+			"framework":    config.Framework,
+			"totalFiles":   len(files),
+			"blueprintUsed": tmpl.ID,
+		}
+		
+		h.NotifyComplete(requestID, previewData, clientID...)
+	}()
+}
+
+// SendFileTree sends file tree structure via WebSocket
+func (h *WSHandler) SendFileTree(requestID string, fileTree *models.FileTreeNode, clientID ...string) {
+	message := models.WebSocketMessage{
+		Type:      "file_tree",
+		Data:      fileTree,
+		Timestamp: time.Now(),
+		RequestID: requestID,
+	}
+	
+	if len(clientID) > 0 && clientID[0] != "" {
+		h.sendToSpecificClient(clientID[0], message)
+	} else {
+		h.hub.Broadcast(message)
+	}
+}
+
+// SendFileContent sends individual file content via WebSocket
+func (h *WSHandler) SendFileContent(requestID string, file models.GeneratedFile, clientID ...string) {
+	message := models.WebSocketMessage{
+		Type:      "file_content",
+		Data:      file,
+		Timestamp: time.Now(),
+		RequestID: requestID,
+	}
+	
+	if len(clientID) > 0 && clientID[0] != "" {
+		h.sendToSpecificClient(clientID[0], message)
+	} else {
+		h.hub.Broadcast(message)
+	}
+}
+
+// NotifyStatus sends a status notification to clients
+func (h *WSHandler) NotifyStatus(requestID string, message string, clientID ...string) {
+	statusData := map[string]interface{}{
+		"message": message,
+		"timestamp": time.Now().Format(time.RFC3339),
+	}
+	
+	wsMessage := models.WebSocketMessage{
+		Type:      models.WSMessageTypeStatus,
+		Data:      statusData,
+		Timestamp: time.Now(),
+		RequestID: requestID,
+	}
+	
+	if len(clientID) > 0 && clientID[0] != "" {
+		h.sendToSpecificClient(clientID[0], wsMessage)
+	} else {
+		h.hub.Broadcast(wsMessage)
+	}
+}
+
+// sendToSpecificClient sends a message to a specific client
+func (h *WSHandler) sendToSpecificClient(clientID string, message models.WebSocketMessage) {
+	h.hub.mutex.RLock()
+	defer h.hub.mutex.RUnlock()
+	
+	for client := range h.hub.clients {
+		if client.ID == clientID {
+			h.hub.SendToClient(client, message)
+			break
+		}
+	}
 }
 
 // WebSocketTestPage serves a simple test page for WebSocket connections
@@ -340,4 +543,156 @@ func (h *WSHandler) WebSocketTestPage(c *gin.Context) {
 	
 	c.Header("Content-Type", "text/html")
 	c.String(http.StatusOK, html)
+}
+
+// Helper functions for preview generation
+
+// convertToProjectConfig converts a GenerationRequest to internal ProjectConfig
+func convertToProjectConfig(req models.GenerationRequest) types.ProjectConfig {
+	config := types.ProjectConfig{
+		Name:         req.Name,
+		Module:       req.ModulePath,
+		Type:         req.Type,
+		Architecture: req.Architecture,
+		Framework:    req.Framework,
+		GoVersion:    req.GoVersion,
+		Logger:       req.Logger,
+		Variables:    make(map[string]string),
+	}
+
+	// Add complexity to variables for blueprint selection
+	if req.Complexity != "" {
+		config.Variables["complexity"] = req.Complexity
+	}
+
+	// Add advanced flag
+	if req.Advanced {
+		config.Variables["advanced"] = "true"
+	}
+
+	// Convert features if present
+	if req.Features != nil {
+		config.Features = &types.Features{}
+
+		if req.Features.Database != nil {
+			config.Features.Database = types.DatabaseConfig{
+				Driver: req.Features.Database.Driver,
+				ORM:    req.Features.Database.ORM,
+			}
+		}
+
+		if req.Features.Authentication != nil {
+			config.Features.Authentication = types.AuthConfig{
+				Type:      req.Features.Authentication.Type,
+				Providers: req.Features.Authentication.Providers,
+			}
+		}
+
+		if req.Features.Deployment != nil {
+			config.Features.Deployment = types.DeployConfig{
+				Targets: req.Features.Deployment.Targets,
+			}
+		}
+
+		if req.Features.Testing != nil {
+			config.Features.Testing = types.TestConfig{
+				Framework: req.Features.Testing.Framework,
+				Coverage:  req.Features.Testing.Coverage,
+			}
+		}
+
+		if req.Features.Logging != nil {
+			config.Features.Logging = types.LoggingConfig{
+				Type:       req.Logger, // Use logger from request
+				Level:      req.Features.Logging.Level,
+				Format:     req.Features.Logging.Format,
+				Structured: true, // Default to structured logging
+			}
+		}
+
+		if req.Features.Monitoring != nil {
+			config.Features.Monitoring = types.MonitorConfig{
+				Metrics: req.Features.Monitoring.Metrics,
+				Tracing: req.Features.Monitoring.Tracing,
+			}
+		}
+	}
+
+	return config
+}
+
+// determineBlueprintID determines the blueprint ID based on the configuration
+func determineBlueprintID(config types.ProjectConfig) string {
+	// Check for complexity-based blueprint selection (e.g., cli-simple)
+	if complexity, exists := config.Variables["complexity"]; exists && complexity == "simple" && config.Type == "cli" {
+		return "cli-simple"
+	}
+
+	// Use architecture-based selection for other types
+	if config.Architecture != "" && config.Architecture != "standard" {
+		return fmt.Sprintf("%s-%s", config.Type, config.Architecture)
+	}
+
+	return config.Type
+}
+
+// buildFileTree builds a hierarchical file tree structure
+func buildFileTree(files []models.GeneratedFile) *models.FileTreeNode {
+	root := &models.FileTreeNode{
+		Name:     "root",
+		Path:     "",
+		IsDir:    true,
+		Children: []*models.FileTreeNode{},
+	}
+
+	// Build tree structure
+	for _, file := range files {
+		if file.Path == "" {
+			continue
+		}
+
+		parts := strings.Split(filepath.Clean(file.Path), string(filepath.Separator))
+		current := root
+
+		// Navigate/create path to file
+		currentPath := ""
+		for i, part := range parts {
+			if currentPath == "" {
+				currentPath = part
+			} else {
+				currentPath = filepath.Join(currentPath, part)
+			}
+
+			// Look for existing child
+			var found *models.FileTreeNode
+			for _, child := range current.Children {
+				if child.Name == part {
+					found = child
+					break
+				}
+			}
+
+			if found == nil {
+				// Create new node
+				isDir := i < len(parts)-1 || file.IsDir
+				newNode := &models.FileTreeNode{
+					Name:     part,
+					Path:     currentPath,
+					IsDir:    isDir,
+					Children: []*models.FileTreeNode{},
+				}
+
+				if !isDir {
+					newNode.Size = file.Size
+				}
+
+				current.Children = append(current.Children, newNode)
+				current = newNode
+			} else {
+				current = found
+			}
+		}
+	}
+
+	return root
 }

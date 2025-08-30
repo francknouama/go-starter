@@ -37,6 +37,9 @@ type Hub struct {
 
 	// Mutex for thread-safe operations
 	mutex sync.RWMutex
+
+	// WebSocket handler for processing preview requests
+	wsHandler interface{}
 }
 
 // NewHub creates a new Hub instance
@@ -47,6 +50,11 @@ func NewHub() *Hub {
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
 	}
+}
+
+// SetWSHandler sets the WebSocket handler for the hub
+func (h *Hub) SetWSHandler(handler interface{}) {
+	h.wsHandler = handler
 }
 
 // Run starts the hub and handles client registration/unregistration and broadcasting

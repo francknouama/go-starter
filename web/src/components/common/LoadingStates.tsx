@@ -391,3 +391,47 @@ export function Pulse({
     </div>
   )
 }
+
+// LoadingStates Component - Main loading state indicator
+interface LoadingStatesProps {
+  message?: string
+  description?: string
+  type?: 'spinner' | 'dots' | 'progress'
+  size?: 'sm' | 'md' | 'lg'
+  className?: string
+}
+
+export function LoadingStates({
+  message = 'Loading...',
+  description,
+  type = 'spinner',
+  size = 'md',
+  className = ''
+}: LoadingStatesProps) {
+  const renderLoader = () => {
+    switch (type) {
+      case 'dots':
+        return <DotsLoader size={size} className="mb-4" />
+      case 'progress':
+        return <ProgressBar value={50} size={size} className="mb-4" />
+      default:
+        return <Spinner size={size === 'sm' ? 'md' : 'lg'} className="mb-4" />
+    }
+  }
+
+  return (
+    <div className={`flex flex-col items-center justify-center text-center ${className}`}>
+      {renderLoader()}
+      {message && (
+        <h3 className="text-lg font-medium text-gray-900 mb-2">
+          {message}
+        </h3>
+      )}
+      {description && (
+        <p className="text-sm text-gray-600 max-w-sm">
+          {description}
+        </p>
+      )}
+    </div>
+  )
+}

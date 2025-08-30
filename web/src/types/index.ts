@@ -86,6 +86,15 @@ export interface ProjectConfig {
     deployment?: {
       targets: string[]
     }
+    advanced?: {
+      [key: string]: {
+        enabled: boolean
+        options?: { [key: string]: any }
+      }
+    }
+    blueprintOptions?: {
+      [key: string]: any
+    }
   }
 }
 
@@ -137,6 +146,66 @@ export interface PreviewUpdate {
   progress?: number
 }
 
+// WebSocket Message Types
+export interface WSMessage {
+  type: WSMessageType
+  data: any
+  timestamp: string
+  requestId?: string
+}
+
+export type WSMessageType = 
+  | 'progress'
+  | 'complete'
+  | 'error'
+  | 'preview'
+  | 'status'
+  | 'file_tree'
+  | 'file_content'
+  | 'preview_start'
+  | 'preview_complete'
+
+export interface WSProgressData {
+  stage: string
+  progress: number // 0.0 to 1.0
+  message: string
+  currentFile?: string
+  totalFiles?: number
+  processedFiles?: number
+}
+
+export interface WSStatusData {
+  message: string
+  timestamp: string
+}
+
+export interface WSFileTreeNode {
+  name: string
+  path: string
+  isDir: boolean
+  size?: number
+  children?: WSFileTreeNode[]
+}
+
+export interface WSFileContent {
+  path: string
+  content: string
+  size: number
+  isDir: boolean
+  mode?: string
+  modTime?: string
+}
+
+export interface WSPreviewCompleteData {
+  projectName: string
+  modulePath: string
+  type: string
+  architecture: string
+  framework: string
+  totalFiles: number
+  blueprintUsed: string
+}
+
 export interface ValidationError {
   field: string
   message: string
@@ -168,4 +237,24 @@ export interface GenerateProjectResponse {
     size: number
     type: string
   }>
+}
+
+// WebSocket Connection State
+export interface WSConnectionState {
+  connected: boolean
+  connecting: boolean
+  error?: string
+  lastReconnectAttempt?: number
+  reconnectAttempts: number
+}
+
+// Real-time Preview State
+export interface RealtimePreviewState {
+  isGenerating: boolean
+  progress: WSProgressData | null
+  fileTree: WSFileTreeNode | null
+  selectedFile: WSFileContent | null
+  files: Map<string, WSFileContent>
+  status: string
+  error?: string
 }

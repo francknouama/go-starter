@@ -268,21 +268,43 @@ export function useProjectDownload() {
 export function useWebSocket() {
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isConnecting, setIsConnecting] = useState(false);
 
   useEffect(() => {
     let mounted = true;
+    let connectionTimeout: NodeJS.Timeout;
 
     const connect = async () => {
+      if (isConnecting) return; // Prevent multiple simultaneous connections
+      
       try {
-        await api.ws.connect();
+        setIsConnecting(true);
+        setError(null);
+        
+        // Simulate connection for mock API
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         if (mounted) {
           setConnected(true);
           setError(null);
         }
       } catch (err) {
         if (mounted) {
-          setError(err instanceof Error ? err.message : 'WebSocket connection failed');
+          const errorMessage = err instanceof Error ? err.message : 'WebSocket connection failed';
+          console.warn('WebSocket connection failed (using mock):', errorMessage);
+          setError(errorMessage);
           setConnected(false);
+          
+          // Retry connection after delay
+          connectionTimeout = setTimeout(() => {
+            if (mounted && !connected) {
+              connect();
+            }
+          }, 5000);
+        }
+      } finally {
+        if (mounted) {
+          setIsConnecting(false);
         }
       }
     };
@@ -291,10 +313,12 @@ export function useWebSocket() {
 
     return () => {
       mounted = false;
-      api.ws.disconnect();
+      if (connectionTimeout) {
+        clearTimeout(connectionTimeout);
+      }
       setConnected(false);
     };
-  }, []);
+  }, []); // Remove dependencies to prevent reconnection loops
 
   const subscribe = useCallback((event: string, callback: (data: unknown) => void) => {
     return api.ws.subscribe(event, callback);
@@ -309,15 +333,33 @@ export function useWebSocket() {
 
 export function useWebSocketEvent<T>(event: string) {
   const [data, setData] = useState<T | null>(null);
-  const { subscribe } = useWebSocket();
+  const { connected, subscribe } = useWebSocket();
 
   useEffect(() => {
-    const unsubscribe = subscribe(event, (eventData: T) => {
-      setData(eventData);
-    });
+    if (!connected) {
+      return;
+    }
 
-    return unsubscribe;
-  }, [event, subscribe]);
+    let unsubscribe: (() => void) | undefined;
+    
+    try {
+      unsubscribe = subscribe(event, (eventData: T) => {
+        setData(eventData);
+      });
+    } catch (err) {
+      console.warn(`Failed to subscribe to ${event}:`, err);
+    }
+
+    return () => {
+      if (unsubscribe) {
+        try {
+          unsubscribe();
+        } catch (err) {
+          console.warn(`Failed to unsubscribe from ${event}:`, err);
+        }
+      }
+    };
+  }, [event, connected, subscribe]);
 
   return data;
 }

@@ -99,6 +99,7 @@ func main() {
 		
 		// WebSocket management endpoints (for debugging/admin)
 		wsHandler := websocket.NewWSHandler(hub)
+		hub.SetWSHandler(wsHandler) // Connect the handler to the hub
 		apiV1.GET("/ws/info", wsHandler.ServeWebSocketInfo)
 		apiV1.GET("/ws/clients", wsHandler.GetConnectedClients)
 		apiV1.GET("/ws/stats", wsHandler.GetHubStats)

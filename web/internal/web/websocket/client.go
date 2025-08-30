@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/google/uuid"
+	"github.com/francknouama/go-starter/web/internal/web/models"
 )
 
 const (
@@ -174,6 +175,14 @@ func (c *Client) handleMessage(message []byte) {
 		// Update last seen time
 		log.Printf("Heartbeat from client %s", c.ID)
 
+	case "preview_request":
+		// Handle preview generation request
+		c.handlePreviewRequest(msg)
+
+	case "file_request":
+		// Handle individual file content request
+		c.handleFileRequest(msg)
+
 	default:
 		log.Printf("Unknown message type '%s' from client %s", msgType, c.ID)
 	}
@@ -243,6 +252,88 @@ func (c *Client) Info() map[string]interface{} {
 		"connectedAt": c.ConnectedAt,
 		"uptime":      time.Since(c.ConnectedAt).String(),
 	}
+}
+
+// handlePreviewRequest handles preview generation requests from clients
+func (c *Client) handlePreviewRequest(msg map[string]interface{}) {
+	// Extract request data
+	requestData, ok := msg["data"].(map[string]interface{})
+	if !ok {
+		log.Printf("Invalid preview request data from client %s", c.ID)
+		c.sendErrorMessage("Invalid request data")
+		return
+	}
+	
+	// Extract request ID if present
+	requestID, _ := msg["requestId"].(string)
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+	
+	// Convert to PreviewRequest
+	var previewReq models.PreviewRequest
+	requestBytes, err := json.Marshal(requestData)
+	if err != nil {
+		log.Printf("Error marshaling preview request: %v", err)
+		c.sendErrorMessage("Failed to process request")
+		return
+	}
+	
+	if err := json.Unmarshal(requestBytes, &previewReq); err != nil {
+		log.Printf("Error unmarshaling preview request: %v", err)
+		c.sendErrorMessage("Invalid preview request format")
+		return
+	}
+	
+	// Get WSHandler from hub and process the request
+	if wsHandler, ok := c.hub.wsHandler.(*WSHandler); ok {
+		wsHandler.HandlePreviewRequest(requestID, previewReq, c.ID)
+	} else {
+		log.Printf("WSHandler not available for client %s", c.ID)
+		c.sendErrorMessage("Service unavailable")
+	}
+}
+
+// handleFileRequest handles individual file content requests
+func (c *Client) handleFileRequest(msg map[string]interface{}) {
+	filePath, ok := msg["path"].(string)
+	if !ok {
+		log.Printf("Invalid file request path from client %s", c.ID)
+		c.sendErrorMessage("Invalid file path")
+		return
+	}
+	
+	requestID, _ := msg["requestId"].(string)
+	if requestID == "" {
+		requestID = uuid.New().String()
+	}
+	
+	// For now, we'll send a placeholder response
+	// In a real implementation, this would fetch the file content
+	response := map[string]interface{}{
+		"type":      "file_content",
+		"requestId": requestID,
+		"data": map[string]interface{}{
+			"path":    filePath,
+			"content": "// File content would be loaded here",
+			"size":    0,
+			"isDir":   false,
+		},
+		"timestamp": time.Now(),
+	}
+	
+	c.sendMessage(response)
+}
+
+// sendErrorMessage sends an error message to the client
+func (c *Client) sendErrorMessage(errorMsg string) {
+	errorResponse := map[string]interface{}{
+		"type":      "error",
+		"data":      errorMsg,
+		"timestamp": time.Now(),
+		"clientId":  c.ID,
+	}
+	c.sendMessage(errorResponse)
 }
 
 // getClientIP extracts the client IP from the request

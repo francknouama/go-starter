@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { ChevronRightIcon, ChevronDownIcon, DocumentIcon, FolderIcon, FolderOpenIcon } from '@heroicons/react/20/solid'
-import { ArrowDownTrayIcon, ClipboardDocumentIcon } from '@heroicons/react/24/outline'
-import type { ProjectConfig } from '../../types'
+import { ArrowDownTrayIcon, ClipboardDocumentIcon, WifiIcon } from '@heroicons/react/24/outline'
+import type { ProjectConfig, WSFileTreeNode, WSFileContent } from '../../types'
+import { useRealtimePreview } from '../../hooks/useRealtimePreview'
 
 interface FileNode {
   name: string
@@ -10,6 +11,17 @@ interface FileNode {
   children?: FileNode[]
   content?: string
   size?: number
+}
+
+// Convert WebSocket file tree to local format
+function convertWSFileTree(wsNode: WSFileTreeNode): FileNode {
+  return {
+    name: wsNode.name,
+    type: wsNode.isDir ? 'directory' : 'file',
+    path: wsNode.path,
+    size: wsNode.size,
+    children: wsNode.children?.map(convertWSFileTree)
+  }
 }
 
 interface PreviewData {
@@ -21,6 +33,10 @@ interface PreviewData {
 interface FileExplorerPanelProps {
   preview?: PreviewData
   config: ProjectConfig
+  enableRealtimePreview?: boolean
+  onFileSelect?: (file: WSFileContent | null) => void
+  onPreviewStart?: () => void
+  onPreviewComplete?: () => void
 }
 
 // Helper function to generate file structure from config
@@ -281,12 +297,42 @@ function generateFileStructureFromConfig(config: ProjectConfig): FileNode[] {
   ]
 }
 
-export default function FileExplorerPanel({ preview, config }: FileExplorerPanelProps) {
+export default function FileExplorerPanel({ 
+  preview, 
+  config, 
+  enableRealtimePreview = false,
+  onFileSelect,
+  onPreviewStart,
+  onPreviewComplete
+}: FileExplorerPanelProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['/', '/cmd', '/internal']))
   const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [showRealtimeView, setShowRealtimeView] = useState(false)
+  
+  // Real-time preview integration
+  const { 
+    previewState, 
+    startPreview, 
+    selectFile, 
+    connectionState, 
+    clearPreview 
+  } = useRealtimePreview({
+    onPreviewComplete: (data) => {
+      console.log('Preview complete:', data)
+      onPreviewComplete?.()
+    },
+    onError: (error) => {
+      console.error('Preview error:', error)
+    }
+  })
 
-  // Generate dynamic file structure based on config
+  // Generate dynamic file structure based on config or real-time data
   const fileStructure: FileNode[] = useMemo(() => {
+    // Use real-time preview data if available and enabled
+    if (enableRealtimePreview && showRealtimeView && previewState.fileTree) {
+      return [convertWSFileTree(previewState.fileTree)]
+    }
+    
     // Use preview data if available, otherwise generate from config
     if (preview?.fileStructure) {
       return preview.fileStructure
@@ -294,7 +340,7 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
     
     // Fallback: Generate file structure from config
     return generateFileStructureFromConfig(config)
-  }, [preview?.fileStructure, config])
+  }, [preview?.fileStructure, config, enableRealtimePreview, showRealtimeView, previewState.fileTree])
 
   const toggleFolder = (path: string) => {
     setExpandedFolders(prev => {
@@ -308,8 +354,29 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
     })
   }
 
-  const selectFile = (path: string) => {
+  const handleSelectFile = (path: string) => {
     setSelectedFile(path)
+    
+    // If using real-time preview, get file content from WebSocket
+    if (enableRealtimePreview && showRealtimeView) {
+      const file = selectFile(path)
+      onFileSelect?.(file)
+    } else {
+      onFileSelect?.(null)
+    }
+  }
+  
+  // Handle real-time preview toggle
+  const handleStartRealtimePreview = () => {
+    setShowRealtimeView(true)
+    clearPreview() // Clear any previous preview
+    startPreview(config)
+    onPreviewStart?.()
+  }
+  
+  const handleStopRealtimePreview = () => {
+    setShowRealtimeView(false)
+    clearPreview()
   }
 
   const copyToClipboard = (text: string) => {
@@ -371,11 +438,11 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
                 : 'hover:bg-gray-100 text-gray-700'
             }`}
             style={{ paddingLeft: `${depth * 16 + 24}px` }}
-            onClick={() => selectFile(node.path)}
+            onClick={() => handleSelectFile(node.path)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
-                selectFile(node.path)
+                handleSelectFile(node.path)
               }
             }}
             tabIndex={0}
@@ -409,9 +476,82 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
     }
     return findFile(fileStructure)
   }, [fileStructure, selectedFile])
+  
+  // Get selected file content (real-time or static)
+  const selectedFileContent = useMemo(() => {
+    if (enableRealtimePreview && showRealtimeView && selectedFile) {
+      const wsFile = previewState.files.get(selectedFile)
+      return wsFile?.content || '// Loading file content...'
+    }
+    return selectedFileNode?.content || '// File content will be shown here'
+  }, [enableRealtimePreview, showRealtimeView, selectedFile, previewState.files, selectedFileNode?.content])
 
   return (
     <div className="h-full flex flex-col">
+      {/* Real-time Preview Controls */}
+      {enableRealtimePreview && (
+        <div className="border-b bg-gray-50 p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <WifiIcon className={`h-4 w-4 ${
+                  connectionState.connected ? 'text-green-500' : 'text-red-500'
+                }`} />
+                <span className="text-sm font-medium">
+                  {connectionState.connected ? 'Connected' : 'Disconnected'}
+                </span>
+              </div>
+              
+              {previewState.status && (
+                <span className="text-sm text-gray-600">
+                  {previewState.status}
+                </span>
+              )}
+            </div>
+            
+            <div className="flex gap-2">
+              {!showRealtimeView ? (
+                <button
+                  onClick={handleStartRealtimePreview}
+                  disabled={!connectionState.connected || previewState.isGenerating}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {previewState.isGenerating ? 'Generating...' : 'Start Real-time Preview'}
+                </button>
+              ) : (
+                <button
+                  onClick={handleStopRealtimePreview}
+                  className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                >
+                  Stop Preview
+                </button>
+              )}
+            </div>
+          </div>
+          
+          {/* Progress Bar */}
+          {previewState.progress && previewState.isGenerating && (
+            <div className="mt-2">
+              <div className="flex justify-between text-xs text-gray-600 mb-1">
+                <span>{previewState.progress.stage}</span>
+                <span>{Math.round(previewState.progress.progress * 100)}%</span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${previewState.progress.progress * 100}%` }}
+                ></div>
+              </div>
+              {previewState.progress.currentFile && (
+                <div className="text-xs text-gray-500 mt-1 truncate">
+                  {previewState.progress.currentFile}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+      
       <div className="flex-1 overflow-hidden flex">
         {/* File Tree */}
         <nav 
@@ -444,8 +584,8 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
                 </div>
               </div>
               <div className="flex-1 p-4 overflow-auto">
-                <pre className="text-sm text-gray-700 whitespace-pre-wrap">
-                  {selectedFileNode.content || '// File content will be shown here'}
+                <pre className="text-sm text-gray-700 whitespace-pre-wrap font-mono">
+                  {selectedFileContent}
                 </pre>
               </div>
             </div>
@@ -464,20 +604,45 @@ export default function FileExplorerPanel({ preview, config }: FileExplorerPanel
         aria-label="Project statistics"
       >
         <div className="text-sm text-gray-600">
-          <span className="font-medium">
-            {fileStructure.reduce((count, node) => {
-              const countFiles = (n: FileNode): number => {
-                if (n.type === 'file') return 1
-                return (n.children || []).reduce((sum, child) => sum + countFiles(child), 0)
-              }
-              return count + countFiles(node)
-            }, 0)} files
-          </span>
-          {preview?.estimatedSize && (
-            <span className="ml-4">
-              Estimated size: <span className="font-medium">{preview.estimatedSize}</span>
-            </span>
-          )}
+          <div className="flex justify-between items-center">
+            <div>
+              <span className="font-medium">
+                {fileStructure.reduce((count, node) => {
+                  const countFiles = (n: FileNode): number => {
+                    if (n.type === 'file') return 1
+                    return (n.children || []).reduce((sum, child) => sum + countFiles(child), 0)
+                  }
+                  return count + countFiles(node)
+                }, 0)} files
+              </span>
+              {preview?.estimatedSize && (
+                <span className="ml-4">
+                  Estimated size: <span className="font-medium">{preview.estimatedSize}</span>
+                </span>
+              )}
+              
+              {/* Real-time preview stats */}
+              {enableRealtimePreview && showRealtimeView && previewState.files.size > 0 && (
+                <span className="ml-4 text-blue-600">
+                  Live files: <span className="font-medium">{previewState.files.size}</span>
+                </span>
+              )}
+            </div>
+            
+            {enableRealtimePreview && (
+              <div className="flex items-center gap-2 text-xs">
+                <div className={`w-2 h-2 rounded-full ${
+                  connectionState.connected ? 'bg-green-500' : 'bg-red-500'
+                }`}></div>
+                <span>{connectionState.connected ? 'Live' : 'Offline'}</span>
+                {previewState.error && (
+                  <span className="text-red-600 ml-2">
+                    Error: {previewState.error}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </footer>
     </div>

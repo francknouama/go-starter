@@ -40,32 +40,8 @@ export interface Blueprint {
   tags: string[];
 }
 
-export interface ProjectConfig {
-  projectName: string;
-  moduleUrl: string;
-  projectType: string;
-  architecture: string;
-  framework: string;
-  logger: string;
-  goVersion: string;
-  features?: {
-    database?: {
-      driver: string;
-      orm: string;
-    };
-    authentication?: {
-      type: string;
-      providers: string[];
-    };
-    testing?: {
-      framework: string;
-      coverage: boolean;
-    };
-    deployment?: {
-      targets: string[];
-    };
-  };
-}
+// Import ProjectConfig from types
+export type { ProjectConfig } from '../types'
 
 export interface PreviewResponse {
   fileStructure: FileNode[];

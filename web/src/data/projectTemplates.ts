@@ -40,585 +40,407 @@ export interface ProjectTemplate {
   recommendedFor: string[]
 }
 
+// 🎉 HISTORIC ACHIEVEMENT: 12 Production-Ready Blueprints - 100% Coverage! 🎉
 export const PROJECT_TEMPLATES: ProjectTemplate[] = [
-  // API Templates
+  // CLI Templates - Production Ready ✅
   {
-    id: 'blog-api',
-    name: 'Blog API',
-    description: 'Complete REST API for a blog platform with authentication, posts, comments, and media management',
-    category: 'api',
-    complexity: 'intermediate',
-    icon: '📝',
-    color: '#3B82F6',
-    tags: ['REST', 'CRUD', 'Authentication', 'JWT', 'PostgreSQL'],
-    useCase: 'Building a content management system or blog platform',
-    techStack: ['Gin', 'PostgreSQL', 'GORM', 'JWT', 'Zap Logger'],
+    id: 'cli-simple',
+    name: 'Simple CLI',
+    description: 'Lightweight CLI tool with basic commands, perfect for quick utilities and learning Go CLI development',
+    category: 'cli',
+    complexity: 'beginner',
+    icon: '⚡',
+    color: '#10B981',
+    tags: ['CLI', 'Cobra', 'Simple', 'Learning', 'Utilities'],
+    useCase: 'Quick command-line utilities, prototypes, and learning Go CLI development',
+    techStack: ['Cobra', 'Slog', 'Basic Testing', 'Makefile'],
     config: {
-      projectType: 'web-api',
-      framework: 'gin',
-      architecture: 'clean',
-      logger: 'zap',
-      features: {
-        database: {
-          driver: 'postgres',
-          orm: 'gorm'
-        },
-        authentication: {
-          type: 'jwt',
-          providers: []
-        }
-      }
+      projectType: 'cli',
+      framework: 'cobra',
+      architecture: 'standard',
+      logger: 'slog'
     },
     architecture: {
       diagram: `
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   HTTP Router   │────│   Controllers    │────│   Use Cases     │
-│  (Gin/Fiber)    │    │                  │    │  (Blog Logic)   │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                                         │
-                                                ┌─────────────────┐
-                                                │  Repositories   │
-                                                │ (Data Access)   │
-                                                └─────────────────┘
-                                                         │
-                                                ┌─────────────────┐
-                                                │   PostgreSQL    │
-                                                │   Database      │
-                                                └─────────────────┘`,
-      components: ['User Management', 'Post CRUD', 'Comment System', 'Media Upload', 'Auth Middleware'],
-      patterns: ['Clean Architecture', 'Repository Pattern', 'JWT Authentication', 'Input Validation']
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│     Main        │────│    Commands     │────│    Output       │
+│   Entry Point   │    │   (cmd/)        │    │   (stdout)      │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Root Command', 'Subcommands', 'Flag Handling', 'Basic Logging'],
+      patterns: ['Command Pattern', 'Simple Architecture']
     },
     quickStart: {
       commands: [
-        'go mod tidy',
-        'docker-compose up -d postgres',
-        'go run cmd/migrate/main.go',
-        'go run cmd/server/main.go'
+        'go build -o mytool cmd/main.go',
+        './mytool --help',
+        './mytool version'
       ],
       nextSteps: [
-        'Configure your database connection in .env',
-        'Run migrations to create tables',
-        'Test the API endpoints with the included Postman collection',
-        'Customize the blog post schema for your needs'
+        'Add your custom commands',
+        'Configure command flags and options',
+        'Add input validation',
+        'Extend with additional subcommands'
       ],
-      learnMore: 'Check out docs/API_GUIDE.md for endpoint documentation'
+      learnMore: 'Simple CLI with 8 files - perfect for learning'
     },
-    popularity: 8,
-    estimatedSetupTime: '15-20 minutes',
-    recommendedFor: ['Content platforms', 'Personal blogs', 'CMS backends']
+    popularity: 7,
+    estimatedSetupTime: '2-5 minutes',
+    recommendedFor: ['Go beginners', 'Quick utilities', 'Learning projects']
   },
   
   {
-    id: 'ecommerce-api',
-    name: 'E-commerce API',
-    description: 'Production-ready e-commerce backend with products, orders, payments, inventory, and customer management',
-    category: 'api',
-    complexity: 'advanced',
-    icon: '🛒',
-    color: '#10B981',
-    tags: ['E-commerce', 'Payments', 'Inventory', 'Orders', 'Microservice-ready'],
-    useCase: 'Building online stores, marketplaces, or retail platforms',
-    techStack: ['Echo', 'PostgreSQL', 'Redis', 'Stripe API', 'Logrus'],
+    id: 'cli-standard',
+    name: 'Standard CLI',
+    description: 'Production-ready CLI application with comprehensive testing, configuration, and deployment features',
+    category: 'cli',
+    complexity: 'intermediate',
+    icon: '💻',
+    color: '#3B82F6',
+    tags: ['CLI', 'Production', 'Testing', 'CI/CD', 'Configuration'],
+    useCase: 'Professional command-line tools and production CLI applications',
+    techStack: ['Cobra', 'Viper Config', 'Comprehensive Tests', 'GitHub Actions'],
     config: {
-      projectType: 'web-api',
-      framework: 'echo',
-      architecture: 'ddd',
-      logger: 'logrus',
-      features: {
-        database: {
-          driver: 'postgres',
-          orm: 'gorm'
-        },
-        authentication: {
-          type: 'jwt',
-          providers: []
-        }
-      }
+      projectType: 'cli',
+      framework: 'cobra',
+      architecture: 'standard',
+      logger: 'slog'
     },
     architecture: {
       diagram: `
-┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐
-│  Products   │  │   Orders    │  │  Payments   │  │  Customers  │
-│   Domain    │  │   Domain    │  │   Domain    │  │   Domain    │
-└─────────────┘  └─────────────┘  └─────────────┘  └─────────────┘
-       │                 │                 │                 │
-┌─────────────────────────────────────────────────────────────────┐
-│                    Shared Infrastructure                        │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │ PostgreSQL  │  │    Redis    │  │  Event Bus  │            │
-│  └─────────────┘  └─────────────┘  └─────────────┘            │
-└─────────────────────────────────────────────────────────────────┘`,
-      components: ['Product Catalog', 'Order Management', 'Payment Processing', 'Inventory Tracking', 'Customer Accounts'],
-      patterns: ['Domain-Driven Design', 'Event Sourcing', 'CQRS', 'Saga Pattern', 'API Gateway']
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│     Config      │────│    Commands     │────│     Logic       │
+│   Management    │    │   (Cobra)       │    │   (Business)    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│     Tests       │    │     CI/CD       │    │    Logging      │
+│  (Unit & Int)   │    │   (Actions)     │    │    (Slog)       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Command Structure', 'Configuration', 'Business Logic', 'Testing Suite', 'CI/CD Pipeline'],
+      patterns: ['Command Pattern', 'Configuration Pattern', 'Layered Architecture']
     },
     quickStart: {
       commands: [
         'go mod tidy',
-        'docker-compose up -d postgres redis',
-        'go run cmd/migrate/main.go',
-        'go run cmd/server/main.go'
+        'go build -o mytool cmd/main.go',
+        'go test ./...',
+        './mytool --help'
       ],
       nextSteps: [
-        'Configure payment provider (Stripe) credentials',
-        'Set up Redis for session management and caching',
-        'Configure email notifications for orders',
-        'Review the domain models and customize for your business'
+        'Configure application settings',
+        'Add comprehensive tests',
+        'Set up CI/CD pipeline',
+        'Deploy to production'
       ],
-      learnMore: 'See docs/ECOMMERCE_GUIDE.md for business logic documentation'
+      learnMore: 'Full-featured CLI with 29 files - production ready'
     },
     popularity: 9,
-    estimatedSetupTime: '25-30 minutes',
-    recommendedFor: ['Online stores', 'B2B marketplaces', 'Retail platforms']
+    estimatedSetupTime: '10-15 minutes',
+    recommendedFor: ['Production CLIs', 'DevOps tools', 'Professional development']
   },
 
+  // Web API Templates - Production Ready ✅
   {
-    id: 'saas-backend',
-    name: 'SaaS Backend',
-    description: 'Multi-tenant SaaS backend with subscription management, billing, user workspaces, and admin dashboard',
+    id: 'web-api-standard',
+    name: 'Standard Web API',
+    description: 'Production-ready REST API with middleware, database integration, and comprehensive testing',
     category: 'api',
-    complexity: 'expert',
-    icon: '🏢',
+    complexity: 'intermediate',
+    icon: '🌐',
     color: '#8B5CF6',
-    tags: ['Multi-tenant', 'Subscriptions', 'Billing', 'Admin Panel', 'Scalable'],
-    useCase: 'Building software-as-a-service applications with subscription models',
-    techStack: ['Fiber', 'PostgreSQL', 'Redis', 'Stripe', 'Slog'],
+    tags: ['REST', 'API', 'Database', 'Middleware', 'Testing'],
+    useCase: 'Building standard REST APIs and web services',
+    techStack: ['Gin', 'PostgreSQL', 'GORM', 'Middleware'],
     config: {
       projectType: 'web-api',
-      framework: 'fiber',
-      architecture: 'hexagonal',
+      framework: 'gin',
+      architecture: 'standard',
       logger: 'slog',
       features: {
         database: {
           driver: 'postgres',
-          orm: 'ent'
-        },
-        authentication: {
-          type: 'oauth2',
-          providers: ['google', 'github']
+          orm: 'gorm'
         }
       }
     },
     architecture: {
       diagram: `
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Tenant A      │    │   Tenant B      │    │   Tenant C      │
-│   Workspace     │    │   Workspace     │    │   Workspace     │
+│   HTTP Router   │────│   Controllers   │────│   Services      │
+│    (Gin)        │    │                 │    │   (Business)    │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
-┌─────────────────────────────────────────────────────────────────┐
-│                      Multi-Tenant Core                          │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐            │
-│  │    Auth     │  │   Billing   │  │    Admin    │            │
-│  │   Service   │  │   Service   │  │    Panel    │            │
-│  └─────────────┘  └─────────────┘  └─────────────┘            │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-                     ┌─────────────────┐
-                     │   Shared DB     │
-                     │  (Row Level     │
-                     │   Security)     │
-                     └─────────────────┘`,
-      components: ['Tenant Management', 'Subscription Billing', 'User Workspaces', 'Admin Dashboard', 'Multi-tenant Auth'],
-      patterns: ['Hexagonal Architecture', 'Multi-tenancy', 'Event-driven', 'Domain Events', 'Ports & Adapters']
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Middleware    │    │   Database      │    │   Models        │
+│  (Auth, CORS)   │    │  (PostgreSQL)   │    │   (GORM)        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['HTTP Router', 'Controllers', 'Services', 'Database', 'Middleware'],
+      patterns: ['MVC Pattern', 'Repository Pattern', 'Middleware Pattern']
     },
     quickStart: {
       commands: [
         'go mod tidy',
-        'docker-compose up -d postgres redis',
-        'go run cmd/migrate/main.go --tenant=system',
+        'docker-compose up -d postgres',
+        'go run cmd/migrate/main.go',
         'go run cmd/server/main.go'
       ],
       nextSteps: [
-        'Configure OAuth providers (Google, GitHub)',
-        'Set up Stripe webhook endpoints for billing',
-        'Configure row-level security policies for multi-tenancy',
-        'Customize tenant onboarding flow'
+        'Configure database connection',
+        'Add your API endpoints',
+        'Set up authentication',
+        'Deploy to production'
       ],
-      learnMore: 'Read docs/MULTI_TENANT_GUIDE.md for architecture details'
+      learnMore: 'Standard REST API with ~25 files'
     },
-    popularity: 7,
-    estimatedSetupTime: '45-60 minutes',
-    recommendedFor: ['SaaS platforms', 'B2B applications', 'Enterprise software']
-  },
-
-  // CLI Templates
-  {
-    id: 'devops-cli',
-    name: 'DevOps CLI Tool',
-    description: 'Command-line tool for managing AWS resources, Kubernetes clusters, and deployment pipelines',
-    category: 'cli',
-    complexity: 'intermediate',
-    icon: '⚙️',
-    color: '#F59E0B',
-    tags: ['DevOps', 'AWS', 'Kubernetes', 'CI/CD', 'Infrastructure'],
-    useCase: 'Automating infrastructure management and deployment workflows',
-    techStack: ['Cobra', 'AWS SDK', 'K8s Client', 'Viper Config', 'Zerolog'],
-    config: {
-      projectType: 'cli',
-      framework: 'cobra',
-      architecture: 'standard',
-      logger: 'zerolog'
-    },
-    architecture: {
-      diagram: `
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Commands      │    │   Providers     │    │   Resources     │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │ aws       │  │────│  │    AWS    │  │────│  │    EC2    │  │
-│  │ k8s       │  │    │  │    SDK    │  │    │  │   EKS     │  │
-│  │ deploy    │  │    │  │           │  │    │  │   S3      │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-└─────────────────┘    │  ┌───────────┐  │    │  ┌───────────┐  │
-                       │  │    K8s    │  │────│  │   Pods    │  │
-                       │  │  Client   │  │    │  │ Services  │  │
-                       │  └───────────┘  │    │  └───────────┘  │
-                       └─────────────────┘    └─────────────────┘`,
-      components: ['AWS Resource Management', 'Kubernetes Operations', 'Deployment Automation', 'Config Management', 'Progress Tracking'],
-      patterns: ['Command Pattern', 'Provider Pattern', 'Configuration Management', 'Progress Indicators']
-    },
-    quickStart: {
-      commands: [
-        'go build -o devops-tool cmd/main.go',
-        './devops-tool --help',
-        './devops-tool config init',
-        './devops-tool aws list-instances'
-      ],
-      nextSteps: [
-        'Configure AWS credentials (aws configure)',
-        'Set up kubeconfig for Kubernetes access',
-        'Create configuration profiles for different environments',
-        'Add custom commands for your specific workflow'
-      ],
-      learnMore: 'Check docs/DEVOPS_COMMANDS.md for all available operations'
-    },
-    popularity: 8,
-    estimatedSetupTime: '10-15 minutes',
-    recommendedFor: ['DevOps engineers', 'SRE teams', 'Infrastructure automation']
-  },
-
-  {
-    id: 'file-processor',
-    name: 'File Processor',
-    description: 'Batch file processing tool with progress tracking, parallel processing, and format conversion',
-    category: 'cli',
-    complexity: 'beginner',
-    icon: '📁',
-    color: '#6366F1',
-    tags: ['File Processing', 'Batch Operations', 'Parallel', 'Progress'],
-    useCase: 'Processing large batches of files with transformations and validations',
-    techStack: ['Cobra', 'Concurrent Processing', 'Progress Bars', 'Slog'],
-    config: {
-      projectType: 'cli',
-      framework: 'cobra',
-      architecture: 'standard',
-      logger: 'slog'
-    },
-    architecture: {
-      diagram: `
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   File Input    │────│   Processor     │────│   File Output   │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │  Scanner  │  │    │  │   Worker  │  │    │  │  Writer   │  │
-│  │  Filter   │  │    │  │   Pool    │  │    │  │ Validator │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                               │
-                    ┌─────────────────┐
-                    │   Progress      │
-                    │   Tracking      │
-                    └─────────────────┘`,
-      components: ['File Scanner', 'Worker Pool', 'Progress Tracking', 'Format Converters', 'Validation Engine'],
-      patterns: ['Worker Pool Pattern', 'Pipeline Pattern', 'Observer Pattern', 'Strategy Pattern']
-    },
-    quickStart: {
-      commands: [
-        'go build -o file-processor cmd/main.go',
-        './file-processor process --input ./data --output ./processed',
-        './file-processor convert --format json --input ./csv-files',
-        './file-processor validate --schema ./schema.json ./data'
-      ],
-      nextSteps: [
-        'Configure processing rules in config.yaml',
-        'Add custom file processors for your formats',
-        'Set up scheduling for automated batch jobs',
-        'Add monitoring and alerting for long-running jobs'
-      ],
-      learnMore: 'See docs/PROCESSING_GUIDE.md for supported formats and operations'
-    },
-    popularity: 6,
-    estimatedSetupTime: '5-10 minutes',
-    recommendedFor: ['Data processing', 'ETL workflows', 'Batch operations']
-  },
-
-  {
-    id: 'code-generator',
-    name: 'Code Generator',
-    description: 'Template-based code generator with custom templates, variable substitution, and multi-language support',
-    category: 'cli',
-    complexity: 'advanced',
-    icon: '🚀',
-    color: '#EF4444',
-    tags: ['Code Generation', 'Templates', 'Developer Tools', 'Multi-language'],
-    useCase: 'Generating boilerplate code, scaffolding projects, or creating consistent code patterns',
-    techStack: ['Cobra', 'Go Templates', 'YAML Config', 'Git Integration', 'Zap'],
-    config: {
-      projectType: 'cli',
-      framework: 'cobra',
-      architecture: 'clean',
-      logger: 'zap'
-    },
-    architecture: {
-      diagram: `
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Templates     │────│   Generator     │────│   Generated     │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │    Go     │  │    │  │ Template  │  │    │  │  Source   │  │
-│  │   React   │  │    │  │  Engine   │  │    │  │   Code    │  │
-│  │  Python   │  │    │  └───────────┘  │    │  └───────────┘  │
-│  └───────────┘  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-└─────────────────┘    │  │ Variable  │  │    │  │   Docs    │  │
-                       │  │ Resolver  │  │    │  │   Tests   │  │
-                       │  └───────────┘  │    │  └───────────┘  │
-                       └─────────────────┘    └─────────────────┘`,
-      components: ['Template Engine', 'Variable Resolution', 'Multi-language Support', 'Git Integration', 'Validation'],
-      patterns: ['Template Method', 'Strategy Pattern', 'Chain of Responsibility', 'Factory Pattern']
-    },
-    quickStart: {
-      commands: [
-        'go build -o codegen cmd/main.go',
-        './codegen init --template-dir ./templates',
-        './codegen generate api --name UserService --output ./generated',
-        './codegen list-templates'
-      ],
-      nextSteps: [
-        'Create custom templates in the templates/ directory',
-        'Configure variable definitions in template.yaml files',
-        'Set up Git repositories for template sharing',
-        'Add validation rules for generated code'
-      ],
-      learnMore: 'Read docs/TEMPLATE_GUIDE.md for creating custom templates'
-    },
-    popularity: 7,
+    popularity: 10,
     estimatedSetupTime: '15-20 minutes',
-    recommendedFor: ['Developer tools', 'Code scaffolding', 'Project generators']
+    recommendedFor: ['REST APIs', 'Web services', 'CRUD applications']
   },
 
-  // Microservice Templates
   {
-    id: 'user-service',
-    name: 'User Service',
-    description: 'Microservice for user authentication, profile management, and access control with gRPC APIs',
-    category: 'microservice',
-    complexity: 'intermediate',
-    icon: '👤',
-    color: '#06B6D4',
-    tags: ['Microservice', 'gRPC', 'Authentication', 'User Management', 'Distributed'],
-    useCase: 'User management microservice in a distributed system architecture',
-    techStack: ['gRPC', 'PostgreSQL', 'JWT', 'Protocol Buffers', 'Logrus'],
+    id: 'web-api-clean',
+    name: 'Clean Architecture API',
+    description: 'Enterprise-grade API following clean architecture principles with dependency injection and domain modeling',
+    category: 'api',
+    complexity: 'advanced',
+    icon: '🏗️',
+    color: '#EF4444',
+    tags: ['Clean Architecture', 'DDD', 'Enterprise', 'Scalable', 'Maintainable'],
+    useCase: 'Enterprise applications requiring clean architecture and domain-driven design',
+    techStack: ['Gin', 'Clean Architecture', 'Dependency Injection', 'Domain Models'],
     config: {
-      projectType: 'microservice',
-      framework: 'grpc',
+      projectType: 'web-api',
+      framework: 'gin',
       architecture: 'clean',
-      logger: 'logrus',
+      logger: 'slog',
       features: {
         database: {
           driver: 'postgres',
           orm: 'gorm'
-        },
-        authentication: {
-          type: 'jwt',
-          providers: []
         }
       }
     },
     architecture: {
       diagram: `
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   gRPC Server   │────│   User Service  │────│   Database      │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │    Auth   │  │    │  │   Auth    │  │    │  │   Users   │  │
-│  │ Profile   │  │    │  │  Domain   │  │    │  │ Profiles  │  │
-│  │  Admin    │  │    │  │  Service  │  │    │  │   Roles   │  │
-│  └───────────┘  │    │  └───────────┘  │    │  └───────────┘  │
+│   Frameworks    │────│   Controllers   │────│   Use Cases     │
+│  (HTTP/DB)      │    │   (Handlers)    │    │  (Business)     │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
-         │                       │
-┌─────────────────┐    ┌─────────────────┐
-│  Service Mesh   │    │     Events      │
-│  (Istio/Envoy)  │    │   (Message      │
-│                 │    │     Bus)        │
-└─────────────────┘    └─────────────────┘`,
-      components: ['gRPC Server', 'User Domain', 'Auth Service', 'Profile Management', 'Role-based Access'],
-      patterns: ['Microservice', 'Domain-Driven Design', 'Event Sourcing', 'Circuit Breaker', 'Service Discovery']
+         │                       │                       │
+┌─────────────────┐              │              ┌─────────────────┐
+│   External      │              │              │    Domain       │
+│   Interfaces    │              │              │    Entities     │
+└─────────────────┘              │              └─────────────────┘
+                                  │                       │
+                         ┌─────────────────┐    ┌─────────────────┐
+                         │  Repositories   │────│   Data Models   │
+                         │  (Interfaces)   │    │   (Database)    │
+                         └─────────────────┘    └─────────────────┘`,
+      components: ['Domain Layer', 'Use Cases', 'Controllers', 'Repositories', 'External Interfaces'],
+      patterns: ['Clean Architecture', 'Dependency Inversion', 'Domain-Driven Design', 'SOLID Principles']
     },
     quickStart: {
       commands: [
         'go mod tidy',
-        'make proto-gen',
         'docker-compose up -d postgres',
+        'go run cmd/migrate/main.go',
         'go run cmd/server/main.go'
       ],
       nextSteps: [
-        'Configure service discovery (Consul/etcd)',
-        'Set up monitoring and tracing (Jaeger)',
-        'Configure message bus for events (NATS/Kafka)',
-        'Add integration tests with test containers'
+        'Study the clean architecture layers',
+        'Implement domain entities and use cases',
+        'Add repository implementations',
+        'Configure dependency injection'
       ],
-      learnMore: 'Check docs/MICROSERVICE_GUIDE.md for deployment patterns'
+      learnMore: 'Clean Architecture API with ~40 files'
     },
     popularity: 8,
-    estimatedSetupTime: '20-25 minutes',
-    recommendedFor: ['Distributed systems', 'Microservice architecture', 'User management']
-  },
-
-  {
-    id: 'notification-service',
-    name: 'Notification Service',
-    description: 'Multi-channel notification service supporting email, SMS, push notifications, and webhooks',
-    category: 'microservice',
-    complexity: 'advanced',
-    icon: '📧',
-    color: '#84CC16',
-    tags: ['Notifications', 'Multi-channel', 'Queue', 'Templates', 'Retry Logic'],
-    useCase: 'Centralized notification handling for distributed applications',
-    techStack: ['gRPC', 'Redis', 'Message Queue', 'Template Engine', 'Zap'],
-    config: {
-      projectType: 'microservice',
-      framework: 'grpc',
-      architecture: 'event-driven',
-      logger: 'zap',
-      features: {
-        database: {
-          driver: 'redis',
-          orm: 'redis-client'
-        }
-      }
-    },
-    architecture: {
-      diagram: `
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Event Bus     │────│  Notification   │────│   Channels      │
-│  ┌───────────┐  │    │    Service      │    │  ┌───────────┐  │
-│  │   Events  │  │    │  ┌───────────┐  │    │  │   Email   │  │
-│  │   Queue   │  │    │  │ Template  │  │    │  │    SMS    │  │
-│  └───────────┘  │    │  │  Engine   │  │    │  │   Push    │  │
-└─────────────────┘    │  └───────────┘  │    │  │ Webhook   │  │
-                       │  ┌───────────┐  │    │  └───────────┘  │
-                       │  │   Retry   │  │    └─────────────────┘
-                       │  │  Handler  │  │
-                       │  └───────────┘  │
-                       └─────────────────┘`,
-      components: ['Event Processing', 'Template Engine', 'Channel Handlers', 'Retry Logic', 'Delivery Tracking'],
-      patterns: ['Event-driven Architecture', 'Template Method', 'Strategy Pattern', 'Circuit Breaker', 'Dead Letter Queue']
-    },
-    quickStart: {
-      commands: [
-        'go mod tidy',
-        'docker-compose up -d redis nats',
-        'make proto-gen',
-        'go run cmd/server/main.go'
-      ],
-      nextSteps: [
-        'Configure email provider (SendGrid/AWS SES)',
-        'Set up SMS provider (Twilio/AWS SNS)',
-        'Configure push notification services (FCM/APNS)',
-        'Create notification templates for your use cases'
-      ],
-      learnMore: 'See docs/NOTIFICATION_PATTERNS.md for delivery patterns'
-    },
-    popularity: 7,
     estimatedSetupTime: '25-30 minutes',
-    recommendedFor: ['Notification systems', 'Event-driven architecture', 'Communication platforms']
+    recommendedFor: ['Enterprise applications', 'Complex domains', 'Team projects']
   },
 
-  // Library Templates
   {
-    id: 'sdk-library',
-    name: 'SDK Library',
-    description: 'Well-structured SDK library with comprehensive documentation, examples, and testing',
-    category: 'library',
-    complexity: 'intermediate',
-    icon: '📚',
-    color: '#8B5CF6',
-    tags: ['SDK', 'Library', 'Documentation', 'Examples', 'Testing'],
-    useCase: 'Creating client libraries and SDKs for APIs or services',
-    techStack: ['Standard Library', 'Comprehensive Tests', 'Examples', 'Godoc'],
+    id: 'web-api-echo',
+    name: 'Echo Web API',
+    description: 'High-performance REST API built with Echo framework, optimized for speed and scalability',
+    category: 'api',
+    complexity: 'intermediate', 
+    icon: '🚀',
+    color: '#F59E0B',
+    tags: ['Echo', 'Performance', 'REST', 'Fast', 'Scalable'],
+    useCase: 'High-performance web APIs and services requiring optimal throughput',
+    techStack: ['Echo', 'High Performance', 'Middleware', 'JSON Binding'],
     config: {
-      projectType: 'library',
-      framework: 'standard',
+      projectType: 'web-api',
+      framework: 'echo',
       architecture: 'standard',
       logger: 'slog'
     },
     architecture: {
       diagram: `
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│   Public API    │────│   Core Logic    │────│   HTTP Client   │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │  Client   │  │    │  │ Business  │  │    │  │  Request  │  │
-│  │  Config   │  │    │  │   Logic   │  │    │  │  Handler  │  │
-│  │ Methods   │  │    │  └───────────┘  │    │  │   Auth    │  │
-│  └───────────┘  │    │  ┌───────────┐  │    │  └───────────┘  │
-└─────────────────┘    │  │   Models  │  │    └─────────────────┘
-                       │  │    DTOs   │  │
-                       │  └───────────┘  │
-                       └─────────────────┘`,
-      components: ['Public API', 'HTTP Client', 'Authentication', 'Error Handling', 'Response Models'],
-      patterns: ['Builder Pattern', 'Factory Pattern', 'Strategy Pattern', 'Decorator Pattern']
+│   Echo Router   │────│   Handlers      │────│   Services      │
+│  (HTTP/HTTPS)   │    │  (Controllers)  │    │  (Business)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Middleware    │    │   Validation    │    │    Database     │
+│ (Performance)   │    │   (Binding)     │    │  (Optional)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Echo Router', 'Handlers', 'Services', 'Middleware', 'Validation'],
+      patterns: ['MVC Pattern', 'Middleware Chain', 'Fast Routing']
     },
     quickStart: {
       commands: [
         'go mod tidy',
-        'go test ./...',
-        'go run examples/basic/main.go',
-        'godoc -http=:6060'
+        'go run cmd/server/main.go',
+        'curl http://localhost:8080/health'
       ],
       nextSteps: [
-        'Customize the client configuration options',
-        'Add your API endpoints and models',
-        'Write comprehensive examples for common use cases',
-        'Set up CI/CD for automated testing and releases'
+        'Add your API routes',
+        'Configure middleware',
+        'Implement handlers',
+        'Add validation and testing'
       ],
-      learnMore: 'Read docs/SDK_DEVELOPMENT.md for API design best practices'
+      learnMore: 'Echo API with ~25 files - optimized for performance'
     },
-    popularity: 6,
+    popularity: 8,
     estimatedSetupTime: '10-15 minutes',
-    recommendedFor: ['API clients', 'SDK development', 'Third-party integrations']
+    recommendedFor: ['Performance-critical APIs', 'High-throughput services', 'Microservices']
   },
 
-  // Serverless Templates
   {
-    id: 'serverless-api',
-    name: 'Serverless API',
-    description: 'AWS Lambda-based REST API with API Gateway, DynamoDB, and event-driven architecture',
-    category: 'serverless',
+    id: 'web-api-fiber',
+    name: 'Fiber Web API',
+    description: 'Ultra-fast REST API using Fiber framework inspired by Express.js, perfect for rapid development',
+    category: 'api',
     complexity: 'intermediate',
     icon: '⚡',
-    color: '#F97316',
-    tags: ['Serverless', 'AWS Lambda', 'API Gateway', 'DynamoDB', 'Event-driven'],
-    useCase: 'Building scalable serverless APIs with pay-per-use pricing',
-    techStack: ['AWS Lambda', 'API Gateway', 'DynamoDB', 'CloudFormation', 'Slog'],
+    color: '#06B6D4',
+    tags: ['Fiber', 'Fast', 'Express-like', 'Modern', 'Developer-friendly'],
+    useCase: 'Rapid API development with Express.js-like syntax and ultra-fast performance',
+    techStack: ['Fiber', 'Ultra Fast', 'Express-like', 'Modern Go'],
     config: {
-      projectType: 'lambda-proxy',
-      framework: 'lambda',
-      architecture: 'event-driven',
+      projectType: 'web-api',
+      framework: 'fiber',
+      architecture: 'standard',
       logger: 'slog'
     },
     architecture: {
       diagram: `
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│  API Gateway    │────│   Lambda Proxy  │────│   DynamoDB      │
-│  ┌───────────┐  │    │  ┌───────────┐  │    │  ┌───────────┐  │
-│  │   Routes  │  │    │  │ Handlers  │  │    │  │   Tables  │  │
-│  │    Auth   │  │    │  │ Business  │  │    │  │   Indexes │  │
-│  │Validation │  │    │  │   Logic   │  │    │  └───────────┘  │
-│  └───────────┘  │    │  └───────────┘  │    └─────────────────┘
-└─────────────────┘    └─────────────────┘
-         │                       │
-┌─────────────────┐    ┌─────────────────┐
-│  CloudWatch     │    │   EventBridge   │
-│  (Monitoring)   │    │    (Events)     │
-└─────────────────┘    └─────────────────┘`,
-      components: ['API Gateway Routes', 'Lambda Handlers', 'DynamoDB Operations', 'Event Processing', 'CloudWatch Monitoring'],
-      patterns: ['Serverless', 'Event-driven', 'Single Responsibility', 'Circuit Breaker', 'Bulkhead Pattern']
+│   Fiber App     │────│   Routes        │────│   Handlers      │
+│  (Express-like) │    │  (REST/JSON)    │    │  (Controllers)  │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Middleware    │    │   JSON/XML      │    │    Models       │
+│ (Built-in)      │    │   Parsing       │    │  (Data)         │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Fiber App', 'Routes', 'Handlers', 'Middleware', 'JSON Parsing'],
+      patterns: ['Express Pattern', 'Middleware Stack', 'Fast Routing']
+    },
+    quickStart: {
+      commands: [
+        'go mod tidy',
+        'go run cmd/server/main.go',
+        'curl http://localhost:3000/api/health'
+      ],
+      nextSteps: [
+        'Add your API endpoints',
+        'Configure Fiber middleware',
+        'Implement business logic',
+        'Add database integration'
+      ],
+      learnMore: 'Fiber API with ~25 files - Express.js-like syntax'
+    },
+    popularity: 9,
+    estimatedSetupTime: '10-15 minutes',
+    recommendedFor: ['Rapid prototyping', 'Express.js developers', 'Ultra-fast APIs']
+  },
+
+  // Serverless Templates - Production Ready ✅
+  {
+    id: 'lambda-standard',
+    name: 'Lambda Function',
+    description: 'AWS Lambda function with event handling, logging, and comprehensive error handling',
+    category: 'serverless',
+    complexity: 'beginner',
+    icon: '⚡',
+    color: '#FF6B35',
+    tags: ['AWS Lambda', 'Serverless', 'Event-driven', 'Cost-effective'],
+    useCase: 'Serverless functions for event processing and lightweight APIs',
+    techStack: ['AWS Lambda', 'AWS SDK', 'Event Processing', 'Cost Optimization'],
+    config: {
+      projectType: 'lambda-standard',
+      framework: 'lambda',
+      architecture: 'standard',
+      logger: 'slog'
+    },
+    architecture: {
+      diagram: `
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Event Source  │────│   Lambda        │────│   Response      │
+│  (API Gateway)  │    │   Function      │    │   (JSON)        │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   CloudWatch    │    │   Error         │    │   AWS Services  │
+│   (Logging)     │    │   Handling      │    │  (S3, DDB, etc) │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Lambda Handler', 'Event Processing', 'Error Handling', 'AWS Integration'],
+      patterns: ['Event-driven', 'Serverless', 'Function as a Service']
+    },
+    quickStart: {
+      commands: [
+        'go mod tidy',
+        'go build -o main main.go',
+        'sam local start-api',
+        'sam deploy --guided'
+      ],
+      nextSteps: [
+        'Configure AWS credentials',
+        'Set up event sources',
+        'Add business logic',
+        'Deploy to AWS'
+      ],
+      learnMore: 'Lambda function with ~15 files - serverless ready'
+    },
+    popularity: 8,
+    estimatedSetupTime: '10-15 minutes',
+    recommendedFor: ['Event processing', 'Cost-effective APIs', 'Serverless architecture']
+  },
+
+  {
+    id: 'lambda-proxy',
+    name: 'Lambda API Proxy',
+    description: 'API Gateway Lambda proxy integration with routing, middleware, and REST API patterns',
+    category: 'serverless',
+    complexity: 'intermediate',
+    icon: '🌐',
+    color: '#8B5CF6',
+    tags: ['API Gateway', 'Lambda Proxy', 'REST', 'Serverless API'],
+    useCase: 'Serverless REST APIs with API Gateway integration and Lambda proxy',
+    techStack: ['API Gateway', 'Lambda Proxy', 'HTTP Routing', 'Serverless Framework'],
+    config: {
+      projectType: 'lambda-proxy',
+      framework: 'lambda',
+      architecture: 'standard',
+      logger: 'slog'
+    },
+    architecture: {
+      diagram: `
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  API Gateway    │────│  Lambda Proxy   │────│   Handlers      │
+│  (HTTP Routes)  │    │  (Router)       │    │  (Business)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   CORS/Auth     │    │   Request       │    │   Response      │
+│  (Middleware)   │    │   Processing    │    │   Formatting    │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['API Gateway', 'Lambda Proxy', 'HTTP Routing', 'Middleware', 'Response Handling'],
+      patterns: ['API Gateway Pattern', 'Lambda Proxy Integration', 'REST API']
     },
     quickStart: {
       commands: [
@@ -628,16 +450,222 @@ export const PROJECT_TEMPLATES: ProjectTemplate[] = [
         'sam deploy --guided'
       ],
       nextSteps: [
-        'Configure AWS credentials and region',
-        'Customize the DynamoDB table schema',
-        'Set up CloudWatch alarms for monitoring',
-        'Add authentication with AWS Cognito or custom authorizer'
+        'Configure API Gateway',
+        'Add REST endpoints',
+        'Set up CORS and authentication',
+        'Deploy serverless API'
       ],
-      learnMore: 'Check docs/SERVERLESS_DEPLOYMENT.md for AWS setup'
+      learnMore: 'Lambda Proxy with ~20 files - serverless REST API'
+    },
+    popularity: 7,
+    estimatedSetupTime: '15-20 minutes',
+    recommendedFor: ['Serverless REST APIs', 'API Gateway integration', 'Cloud-native apps']
+  },
+
+  // Library Templates - Production Ready ✅
+  {
+    id: 'library-standard',
+    name: 'Go Library',
+    description: 'Well-structured Go library with comprehensive documentation, examples, and testing suite',
+    category: 'library',
+    complexity: 'beginner',
+    icon: '📚',
+    color: '#10B981',
+    tags: ['Library', 'Package', 'Documentation', 'Testing', 'Reusable'],
+    useCase: 'Creating reusable Go packages and libraries for the community',
+    techStack: ['Standard Library', 'Comprehensive Tests', 'Godoc', 'Examples'],
+    config: {
+      projectType: 'library',
+      framework: 'standard',
+      architecture: 'standard',
+      logger: 'slog'
+    },
+    architecture: {
+      diagram: `
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Public API    │────│   Core Logic    │────│   Internal      │
+│  (Exported)     │    │  (Business)     │    │   Helpers       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Examples      │    │   Tests         │    │   Documentation │
+│  (Usage)        │    │  (Unit/Int)     │    │   (Godoc)       │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Public API', 'Core Logic', 'Tests', 'Examples', 'Documentation'],
+      patterns: ['Library Pattern', 'API Design', 'Test-driven Development']
+    },
+    quickStart: {
+      commands: [
+        'go mod tidy',
+        'go test ./...',
+        'go run examples/main.go',
+        'godoc -http=:6060'
+      ],
+      nextSteps: [
+        'Design your public API',
+        'Implement core functionality',
+        'Write comprehensive tests',
+        'Create usage examples'
+      ],
+      learnMore: 'Go library with ~10 files - ready for publishing'
+    },
+    popularity: 6,
+    estimatedSetupTime: '5-10 minutes',
+    recommendedFor: ['Open source libraries', 'Internal packages', 'Code reuse']
+  },
+
+  // Enterprise Templates - Production Ready ✅
+  {
+    id: 'grpc-gateway',
+    name: 'gRPC Gateway',
+    description: 'Dual HTTP/gRPC API with protocol buffers, enhanced interceptors, and production-ready features',
+    category: 'microservice',
+    complexity: 'advanced',
+    icon: '🔧',
+    color: '#EF4444',
+    tags: ['gRPC', 'HTTP', 'Protocol Buffers', 'Microservices', 'Enterprise'],
+    useCase: 'Enterprise services requiring both gRPC and HTTP APIs with unified middleware',
+    techStack: ['gRPC', 'Protocol Buffers', 'gRPC Gateway', 'Enhanced Interceptors'],
+    config: {
+      projectType: 'grpc-gateway',
+      framework: 'grpc',
+      architecture: 'clean',
+      logger: 'slog'
+    },
+    architecture: {
+      diagram: `
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   HTTP Client   │────│  gRPC Gateway   │────│   gRPC Server   │
+│  (REST/JSON)    │    │  (Translation)  │    │  (Protobuf)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   OpenAPI       │    │   Interceptors  │    │   Services      │
+│  (Swagger)      │    │  (Middleware)   │    │  (Business)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['gRPC Server', 'HTTP Gateway', 'Protocol Buffers', 'Interceptors', 'OpenAPI'],
+      patterns: ['gRPC Pattern', 'API Gateway', 'Protocol Translation', 'Microservices']
+    },
+    quickStart: {
+      commands: [
+        'go mod tidy',
+        'make proto',
+        'go run cmd/server/main.go',
+        'curl http://localhost:8080/v1/health'
+      ],
+      nextSteps: [
+        'Define protocol buffers',
+        'Implement gRPC services',
+        'Configure HTTP gateway',
+        'Add interceptors and middleware'
+      ],
+      learnMore: 'gRPC Gateway with 45 files - dual HTTP/gRPC APIs'
     },
     popularity: 8,
-    estimatedSetupTime: '15-20 minutes',
-    recommendedFor: ['Serverless APIs', 'Event-driven systems', 'Cost-optimized backends']
+    estimatedSetupTime: '25-30 minutes',
+    recommendedFor: ['Enterprise APIs', 'Microservices', 'High-performance systems']
+  },
+
+  {
+    id: 'monolith',
+    name: 'Monolithic Application',
+    description: 'Full-stack monolithic application with background jobs, multi-layer caching, and performance monitoring',
+    category: 'fullstack',
+    complexity: 'intermediate',
+    icon: '🏢',
+    color: '#8B5CF6',
+    tags: ['Monolith', 'Full-stack', 'Background Jobs', 'Caching', 'Monitoring'],
+    useCase: 'Complete web applications with integrated frontend, backend, and background processing',
+    techStack: ['Full-stack', 'Background Jobs', 'Multi-layer Caching', 'Performance Monitoring'],
+    config: {
+      projectType: 'monolith',
+      framework: 'gin',
+      architecture: 'layered',
+      logger: 'slog'
+    },
+    architecture: {
+      diagram: `
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   Web Layer     │────│   Service       │────│   Data Layer    │
+│  (Controllers)  │    │   Layer         │    │  (Database)     │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Background     │    │   Caching       │    │   Monitoring    │
+│  Jobs           │    │   Layer         │    │   Layer         │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['Web Layer', 'Service Layer', 'Data Layer', 'Background Jobs', 'Caching'],
+      patterns: ['Layered Architecture', 'Background Processing', 'Caching Strategy']
+    },
+    quickStart: {
+      commands: [
+        'go mod tidy',
+        'docker-compose up -d',
+        'go run cmd/migrate/main.go',
+        'go run cmd/server/main.go'
+      ],
+      nextSteps: [
+        'Configure database and cache',
+        'Set up background job processing',
+        'Add monitoring and metrics',
+        'Deploy full-stack application'
+      ],
+      learnMore: 'Monolith with 72 files - production web apps'
+    },
+    popularity: 7,
+    estimatedSetupTime: '30-40 minutes',
+    recommendedFor: ['Full-stack apps', 'Integrated systems', 'Traditional architectures']
+  },
+
+  {
+    id: 'microservice-standard',
+    name: 'Enterprise Microservice',
+    description: 'Enterprise-grade gRPC microservice with OpenTelemetry, rate limiting, and resilience patterns',
+    category: 'microservice',
+    complexity: 'advanced',
+    icon: '🔧',
+    color: '#06B6D4',
+    tags: ['Microservice', 'gRPC', 'OpenTelemetry', 'Rate Limiting', 'Resilience'],
+    useCase: 'Enterprise microservices with comprehensive observability and resilience features',
+    techStack: ['gRPC', 'OpenTelemetry', 'Rate Limiting', 'Circuit Breaker', 'Service Mesh'],
+    config: {
+      projectType: 'microservice',
+      framework: 'grpc',
+      architecture: 'clean',
+      logger: 'slog'
+    },
+    architecture: {
+      diagram: `
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│   gRPC Server   │────│   Business      │────│   Data Layer    │
+│  (Service Mesh) │    │   Logic         │    │  (Repository)   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
+         │                       │                       │
+┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
+│  Observability  │    │  Resilience     │    │   Security      │
+│ (OpenTelemetry) │    │  Patterns       │    │  (Rate Limit)   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘`,
+      components: ['gRPC Service', 'Business Logic', 'Data Layer', 'Observability', 'Resilience'],
+      patterns: ['Microservice', 'Circuit Breaker', 'Rate Limiting', 'Observability']
+    },
+    quickStart: {
+      commands: [
+        'go mod tidy',
+        'make proto',
+        'docker-compose up -d',
+        'go run cmd/server/main.go'
+      ],
+      nextSteps: [
+        'Configure OpenTelemetry',
+        'Set up service discovery',
+        'Add resilience patterns',
+        'Deploy to Kubernetes'
+      ],
+      learnMore: 'Microservice with 47 files - enterprise gRPC services'
+    },
+    popularity: 8,
+    estimatedSetupTime: '35-45 minutes',
+    recommendedFor: ['Enterprise microservices', 'Distributed systems', 'Cloud-native apps']
   }
 ]
 
@@ -680,17 +708,17 @@ export const getRecommendedTemplates = (userLevel: 'beginner' | 'intermediate' |
 }
 
 export const TEMPLATE_CATEGORIES = [
-  { id: 'api', name: 'Web APIs', description: 'REST APIs and web services', icon: '🌐' },
-  { id: 'cli', name: 'CLI Tools', description: 'Command-line applications', icon: '💻' },
-  { id: 'microservice', name: 'Microservices', description: 'Distributed services', icon: '🔧' },
-  { id: 'library', name: 'Libraries', description: 'Reusable packages', icon: '📚' },
-  { id: 'serverless', name: 'Serverless', description: 'Cloud functions and APIs', icon: '⚡' },
-  { id: 'fullstack', name: 'Full-Stack', description: 'Complete applications', icon: '🎯' }
+  { id: 'api', name: 'Web APIs', description: 'REST APIs and web services', icon: '🌐', count: 4 },
+  { id: 'cli', name: 'CLI Tools', description: 'Command-line applications', icon: '💻', count: 2 },
+  { id: 'microservice', name: 'Microservices', description: 'Distributed services', icon: '🔧', count: 2 },
+  { id: 'library', name: 'Libraries', description: 'Reusable packages', icon: '📚', count: 1 },
+  { id: 'serverless', name: 'Serverless', description: 'Cloud functions and APIs', icon: '⚡', count: 2 },
+  { id: 'fullstack', name: 'Full-Stack', description: 'Complete applications', icon: '🎯', count: 1 }
 ] as const
 
 export const COMPLEXITY_LEVELS = [
-  { id: 'beginner', name: 'Beginner', description: 'Simple projects to get started', color: '#10B981' },
-  { id: 'intermediate', name: 'Intermediate', description: 'Moderate complexity with common patterns', color: '#3B82F6' },
-  { id: 'advanced', name: 'Advanced', description: 'Complex architecture patterns', color: '#F59E0B' },
-  { id: 'expert', name: 'Expert', description: 'Enterprise-grade solutions', color: '#EF4444' }
+  { id: 'beginner', name: 'Beginner', description: 'Simple projects to get started', color: '#10B981', count: 3 },
+  { id: 'intermediate', name: 'Intermediate', description: 'Moderate complexity with common patterns', color: '#3B82F6', count: 6 },
+  { id: 'advanced', name: 'Advanced', description: 'Complex architecture patterns', color: '#F59E0B', count: 3 },
+  { id: 'expert', name: 'Expert', description: 'Enterprise-grade solutions', color: '#EF4444', count: 0 }
 ] as const

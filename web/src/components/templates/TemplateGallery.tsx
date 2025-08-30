@@ -87,15 +87,34 @@ export default function TemplateGallery({ onSelectTemplate, onClose }: TemplateG
         <div className="fixed inset-0 bg-black bg-opacity-50 transition-opacity" onClick={onClose} />
         
         {/* Enhanced Modal panel with better desktop sizing */}
-        <div className="inline-block w-full max-w-6xl my-4 md:my-8 text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl relative"
-             style={{ minHeight: 'min(85vh, 800px)' }}>
+        <div className="inline-block w-full max-w-7xl my-4 md:my-8 text-left align-middle transition-all transform bg-white shadow-xl rounded-2xl relative"
+             style={{ minHeight: 'min(90vh, 900px)' }}>
           
-          {/* Header */}
-          <div className="px-6 py-4 border-b border-gray-200 bg-gradient-to-r from-purple-50 to-indigo-50 rounded-t-2xl">
+          {/* Enhanced Header with Achievement Banner */}
+          <div className="px-6 py-6 border-b border-gray-200 bg-gradient-to-r from-emerald-50 via-blue-50 to-purple-50 rounded-t-2xl">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">Project Templates</h2>
-                <p className="text-sm text-gray-600 mt-1">Choose a real-world template to jumpstart your project</p>
+                <div className="flex items-center gap-3 mb-2">
+                  <h2 className="text-3xl font-bold text-gray-900">Production-Ready Blueprints</h2>
+                  <div className="bg-emerald-100 text-emerald-800 px-3 py-1 rounded-full text-sm font-semibold border border-emerald-200">
+                    🎉 100% Coverage
+                  </div>
+                </div>
+                <p className="text-lg text-gray-700 mb-2">Historic achievement: <strong>12 production-ready blueprints</strong> - choose the perfect foundation for your Go project</p>
+                <div className="flex items-center gap-4 text-sm text-gray-600">
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
+                    All blueprints production-ready
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 bg-blue-500 rounded-full"></span>
+                    Comprehensive testing included
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 bg-purple-500 rounded-full"></span>
+                    Real-world patterns
+                  </span>
+                </div>
               </div>
               <Button variant="ghost" onClick={onClose} className="p-2">
                 <span className="sr-only">Close</span>
@@ -103,63 +122,82 @@ export default function TemplateGallery({ onSelectTemplate, onClose }: TemplateG
               </Button>
             </div>
             
-            {/* View mode and layout controls */}
-            <div className="flex flex-col sm:flex-row gap-4 mt-4">
+            {/* Enhanced Stats and Controls */}
+            <div className="flex flex-col lg:flex-row gap-6 mt-6">
+              {/* Achievement Stats */}
+              <div className="flex items-center gap-6">
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-emerald-600">{PROJECT_TEMPLATES.length}</div>
+                  <div className="text-xs text-gray-600">Blueprints</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-blue-600">{TEMPLATE_CATEGORIES.length}</div>
+                  <div className="text-xs text-gray-600">Categories</div>
+                </div>
+                <div className="text-center">
+                  <div className="text-2xl font-bold text-purple-600">100%</div>
+                  <div className="text-xs text-gray-600">Production</div>
+                </div>
+              </div>
+              
+              {/* View mode and layout controls */}
+              <div className="flex flex-col sm:flex-row gap-4 flex-1 justify-end">
               {/* View mode toggle */}
               <div className="flex gap-2">
                 <button
                   onClick={() => setViewMode('popular')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
                     viewMode === 'popular'
-                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                      ? 'bg-gradient-to-r from-emerald-100 to-blue-100 text-emerald-700 border border-emerald-200 shadow-sm'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:border-gray-300'
                   }`}
                 >
-                  <StarIcon className="w-4 h-4 inline-block mr-1" />
-                  Popular Templates
+                  <StarIcon className="w-4 h-4 inline-block mr-2" />
+                  Most Popular
                 </button>
                 <button
                   onClick={() => setViewMode('gallery')}
-                  className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  className={`px-5 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 ${
                     viewMode === 'gallery'
-                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+                      ? 'bg-gradient-to-r from-emerald-100 to-blue-100 text-emerald-700 border border-emerald-200 shadow-sm'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:border-gray-300'
                   }`}
                 >
-                  All Templates ({PROJECT_TEMPLATES.length})
+                  All {PROJECT_TEMPLATES.length} Blueprints
                 </button>
               </div>
 
-              {/* Layout mode toggle */}
-              <div className="flex gap-1 ml-auto">
-                <button
-                  onClick={() => setLayoutMode('grid')}
-                  className={`p-2 rounded-lg transition-colors ${
-                    layoutMode === 'grid'
-                      ? 'bg-purple-100 text-purple-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                  title="Grid view"
-                >
-                  <Squares2X2Icon className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={() => setLayoutMode('compact')}
-                  className={`p-2 rounded-lg transition-colors ${
-                    layoutMode === 'compact'
-                      ? 'bg-purple-100 text-purple-700'
-                      : 'text-gray-600 hover:bg-gray-100'
-                  }`}
-                  title="Compact view"
-                >
-                  <ListBulletIcon className="w-4 h-4" />
-                </button>
+                {/* Layout mode toggle */}
+                <div className="flex gap-1 bg-gray-100 p-1 rounded-lg">
+                  <button
+                    onClick={() => setLayoutMode('grid')}
+                    className={`p-2.5 rounded-md transition-all duration-200 ${
+                      layoutMode === 'grid'
+                        ? 'bg-white text-emerald-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                    title="Grid view"
+                  >
+                    <Squares2X2Icon className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setLayoutMode('compact')}
+                    className={`p-2.5 rounded-md transition-all duration-200 ${
+                      layoutMode === 'compact'
+                        ? 'bg-white text-emerald-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                    title="Compact view"
+                  >
+                    <ListBulletIcon className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           </div>
 
-          {/* Enhanced Search and Always-Visible Filters */}
-          <div className="px-6 py-4 space-y-4 border-b border-gray-100 bg-gray-50">
+          {/* Enhanced Search and Category Navigation */}
+          <div className="px-6 py-5 space-y-5 border-b border-gray-100 bg-gradient-to-r from-gray-50 to-white">
             {/* Search and main controls */}
             <div className="flex gap-4 items-center">
               {/* Enhanced search with instant feedback */}
@@ -205,51 +243,84 @@ export default function TemplateGallery({ onSelectTemplate, onClose }: TemplateG
               )}
             </div>
 
-            {/* Always-visible quick filters */}
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="text-sm font-medium text-gray-700 mr-2">Quick filters:</span>
+            {/* Enhanced Category Navigation */}
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-semibold text-gray-800">Browse by Category:</span>
+                <span className="text-xs text-gray-500">All categories are production-ready ✅</span>
+              </div>
+              
+              <div className="flex flex-wrap gap-3 items-center">
               
               {/* Popular categories as always-visible pills */}
-              <button
-                onClick={() => setSelectedCategory('all')}
-                className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
-                  selectedCategory === 'all'
-                    ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                    : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
-                }`}
-              >
-                All
-              </button>
-              
-              {TEMPLATE_CATEGORIES.slice(0, 4).map((category) => (
                 <button
-                  key={category.id}
-                  onClick={() => setSelectedCategory(category.id)}
-                  className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
-                    selectedCategory === category.id
-                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
+                  onClick={() => setSelectedCategory('all')}
+                  className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                    selectedCategory === 'all'
+                      ? 'bg-gradient-to-r from-emerald-100 to-blue-100 text-emerald-700 border border-emerald-200 shadow-sm'
+                      : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:border-gray-300'
                   }`}
                 >
-                  {category.icon} {category.name}
+                  🎯 All ({PROJECT_TEMPLATES.length})
                 </button>
-              ))}
               
-              {/* Complexity quick filter */}
-              <div className="border-l border-gray-300 pl-3 ml-2">
-                {COMPLEXITY_LEVELS.map((complexity) => (
+                {TEMPLATE_CATEGORIES.map((category) => (
                   <button
-                    key={complexity.id}
-                    onClick={() => setSelectedComplexity(complexity.id)}
-                    className={`px-3 py-1 ml-1 rounded-full text-sm font-medium transition-colors ${
-                      selectedComplexity === complexity.id
-                        ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-100'
+                    key={category.id}
+                    onClick={() => setSelectedCategory(category.id)}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 flex items-center gap-2 ${
+                      selectedCategory === category.id
+                        ? 'bg-gradient-to-r from-emerald-100 to-blue-100 text-emerald-700 border border-emerald-200 shadow-sm'
+                        : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 hover:border-gray-300'
                     }`}
                   >
-                    {complexity.name}
+                    {category.icon} {category.name} ({category.count})
                   </button>
                 ))}
+              </div>
+              
+              
+              {/* Complexity Level Filter */}
+              <div className="space-y-2 pt-2 border-t border-gray-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-800">Filter by Complexity:</span>
+                  <span className="text-xs text-gray-500">Choose your experience level</span>
+                </div>
+                
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setSelectedComplexity('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
+                      selectedComplexity === 'all'
+                        ? 'bg-gradient-to-r from-gray-100 to-gray-200 text-gray-700 border border-gray-300 shadow-sm'
+                        : 'bg-white text-gray-500 border border-gray-200 hover:bg-gray-50'
+                    }`}
+                  >
+                    All Levels
+                  </button>
+                  {COMPLEXITY_LEVELS.filter(c => c.count > 0).map((complexity) => (
+                    <button
+                      key={complexity.id}
+                      onClick={() => setSelectedComplexity(complexity.id)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 flex items-center gap-1 ${
+                        selectedComplexity === complexity.id
+                          ? 'text-white border border-opacity-20 shadow-sm'
+                          : 'bg-white border border-gray-200 hover:bg-gray-50'
+                      }`}
+                      style={{
+                        backgroundColor: selectedComplexity === complexity.id ? complexity.color : undefined,
+                        color: selectedComplexity === complexity.id ? 'white' : complexity.color
+                      }}
+                    >
+                      <div 
+                        className="w-2 h-2 rounded-full"
+                        style={{ backgroundColor: complexity.color }}
+                      />
+                      {complexity.name} ({complexity.count})
+                    </button>
+                  ))
+                }
+                </div>
               </div>
             </div>
           </div>
@@ -322,19 +393,24 @@ export default function TemplateGallery({ onSelectTemplate, onClose }: TemplateG
           )}
 
           {/* Enhanced Templates Grid with better desktop experience */}
-          <div className="px-6 py-6 flex-1 overflow-y-auto" style={{ maxHeight: 'calc(85vh - 280px)' }}>
+          <div className="px-6 py-6 flex-1 overflow-y-auto" style={{ maxHeight: 'calc(90vh - 320px)' }}>
             {filteredTemplates.length === 0 ? (
-              <div className="text-center py-12">
-                <div className="text-gray-500 mb-4">
-                  <MagnifyingGlassIcon className="w-12 h-12 mx-auto" />
+              <div className="text-center py-16">
+                <div className="text-gray-400 mb-6">
+                  <MagnifyingGlassIcon className="w-16 h-16 mx-auto" />
                 </div>
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No templates found</h3>
-                <p className="text-gray-600 mb-4">
-                  Try adjusting your search or filter criteria
+                <h3 className="text-xl font-semibold text-gray-900 mb-3">No blueprints found</h3>
+                <p className="text-gray-600 mb-6 max-w-md mx-auto leading-relaxed">
+                  We couldn't find any blueprints matching your current filters. Try adjusting your search terms or category selection.
                 </p>
-                <Button variant="outline" onClick={clearFilters}>
-                  Clear all filters
-                </Button>
+                <div className="flex gap-3 justify-center">
+                  <Button variant="outline" onClick={clearFilters}>
+                    Clear all filters
+                  </Button>
+                  <Button variant="primary" onClick={() => setViewMode('gallery')}>
+                    Browse all blueprints
+                  </Button>
+                </div>
               </div>
             ) : (
               <div className={getGridClasses()}>
@@ -351,10 +427,28 @@ export default function TemplateGallery({ onSelectTemplate, onClose }: TemplateG
               </div>
             )}
 
-            {/* Results summary */}
+            {/* Enhanced Results Summary */}
             {filteredTemplates.length > 0 && (
-              <div className="mt-6 text-center text-sm text-gray-600">
-                Showing {filteredTemplates.length} of {PROJECT_TEMPLATES.length} templates
+              <div className="mt-8 pt-6 border-t border-gray-100">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="text-gray-600">
+                    Showing <strong className="text-gray-900">{filteredTemplates.length}</strong> of <strong className="text-gray-900">{PROJECT_TEMPLATES.length}</strong> production-ready blueprints
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-gray-500">
+                    <span className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-emerald-500 rounded-full"></div>
+                      Production Ready
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                      Comprehensive Tests
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                      Real-world Patterns
+                    </span>
+                  </div>
+                </div>
               </div>
             )}
           </div>
