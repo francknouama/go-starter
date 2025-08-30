@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/cucumber/godog"
@@ -314,7 +313,9 @@ func (ctx *GRPCGatewayTestContext) generateGRPCGatewayProject(options map[string
 	}
 	
 	cmd := exec.Command("go-starter", args...)
-	ctx.cmdOutput, ctx.cmdError = cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
+	ctx.cmdError = err
+	ctx.cmdOutput = string(output)
 	
 	if ctx.cmdError != nil {
 		return fmt.Errorf("failed to generate gRPC Gateway project: %v\nOutput: %s", ctx.cmdError, ctx.cmdOutput)
@@ -323,10 +324,7 @@ func (ctx *GRPCGatewayTestContext) generateGRPCGatewayProject(options map[string
 	return nil
 }
 
-func (ctx *GRPCGatewayTestContext) fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
+// fileExists helper method removed - using shared method from main test file
 
 func (ctx *GRPCGatewayTestContext) verifyImplementationPattern(feature string, files []string, patterns []string) error {
 	for _, file := range files {
@@ -582,7 +580,7 @@ func (ctx *GRPCGatewayTestContext) projectShouldIncludeOptimizedDockerfile() err
 }
 
 func (ctx *GRPCGatewayTestContext) containerShouldSupportMultiStageBuilds() error {
-	dockerFile := filepath.Join(ctx.projectPath, "Dockerfile")
+	_ = filepath.Join(ctx.projectPath, "Dockerfile")
 	return ctx.verifyImplementationPattern("multi-stage builds", 
 		[]string{"Dockerfile"}, 
 		[]string{"FROM", "AS", "stage"})

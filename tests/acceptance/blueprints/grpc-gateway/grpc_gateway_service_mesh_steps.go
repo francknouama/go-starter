@@ -2,8 +2,6 @@ package grpcgateway
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/cucumber/godog"

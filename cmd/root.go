@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"os"
 
-	"github.com/charmbracelet/fang"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/francknouama/go-starter/internal/ascii"
 	"github.com/francknouama/go-starter/internal/templates"
@@ -74,8 +72,8 @@ func buildLongDescription() string {
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
-	// Use Fang for enhanced CLI experience with styled output
-	if err := fang.Execute(context.Background(), rootCmd); err != nil {
+	// Use standard Cobra execution to avoid interactive blocking issues
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }

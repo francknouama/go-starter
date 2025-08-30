@@ -72,7 +72,10 @@ func runAdvisor(cmd *cobra.Command, args []string) error {
 	
 	if advisorQuickMode {
 		// Quick recommendation mode
-		fmt.Printf("🤖 Generating quick architecture recommendation...\n")
+		// Only show progress message for non-JSON output to avoid parsing issues
+		if advisorOutputFormat != "json" {
+			fmt.Printf("🤖 Generating quick architecture recommendation...\n")
+		}
 		
 		recommendation, err = interactiveAdvisor.QuickRecommendation(
 			advisorProjectType, 

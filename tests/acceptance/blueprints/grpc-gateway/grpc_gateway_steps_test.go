@@ -13,21 +13,7 @@ import (
 	"github.com/cucumber/godog"
 )
 
-// GRPCGatewayTestContext holds test state for gRPC Gateway scenarios
-type GRPCGatewayTestContext struct {
-	workDir            string
-	projectName        string
-	projectPath        string
-	cmdOutput          string
-	cmdError           error
-	exitCode           int
-	generatedFiles     []string
-	auditRequirements  map[string]string
-	serviceMeshConfig  map[string]string
-	securityFeatures   []string
-	complianceLevel    string
-	performanceMetrics map[string]float64
-}
+// GRPCGatewayTestContext is now defined in context.go
 
 // TestFeatures runs the gRPC Gateway BDD tests
 func TestFeatures(t *testing.T) {
@@ -841,26 +827,29 @@ func (ctx *GRPCGatewayTestContext) theProtobufDefinitionsShouldIncludeValidation
 	return ctx.fileContainsPattern(filepath.Join(ctx.projectPath, "proto"), "validate", ".proto")
 }
 func (ctx *GRPCGatewayTestContext) theGRPCServiceShouldValidateInputMessages() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/validation"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/validation")) {
+		return fmt.Errorf("validation directory does not exist")
+	}
+	return nil
 }
 func (ctx *GRPCGatewayTestContext) theRESTGatewayShouldValidateHTTPRequests() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/validation.go"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/validation.go")) {
+		return fmt.Errorf("gateway validation file does not exist")
+	}
+	return nil
 }
 func (ctx *GRPCGatewayTestContext) theValidationErrorsShouldBeProperlyFormatted() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/errors/validation.go"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/errors/validation.go")) {
+		return fmt.Errorf("validation errors file does not exist")
+	}
+	return nil
 }
 func (ctx *GRPCGatewayTestContext) theValidationShouldBeConsistentAcrossProtocols() error { return nil }
 
 // Additional placeholder implementations for remaining scenarios...
 // (Each following the same pattern of command execution, file existence checks, etc.)
 
-// Helper methods
-func (ctx *GRPCGatewayTestContext) fileExists(path string) error {
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return fmt.Errorf("file does not exist: %s", path)
-	}
-	return nil
-}
+// Helper methods moved to context.go
 
 func (ctx *GRPCGatewayTestContext) fileContainsPattern(dir, pattern, extension string) error {
 	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -893,12 +882,18 @@ func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeMultipleProtobufServic
 	return ctx.directoryHasFiles(filepath.Join(ctx.projectPath, "proto"), ".proto", 2)
 }
 func (ctx *GRPCGatewayTestContext) theGatewayShouldRouteToAppropriateGRPCServices() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/router.go"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/router.go")) {
+		return fmt.Errorf("gateway router file does not exist")
+	}
+	return nil
 }
 func (ctx *GRPCGatewayTestContext) theRESTAPIShouldIncludeAllServiceEndpoints() error { return nil }
 func (ctx *GRPCGatewayTestContext) theOpenAPIDocumentationShouldCoverAllServices() error { return nil }
 func (ctx *GRPCGatewayTestContext) theServiceDiscoveryShouldSupportMultipleBackends() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/discovery"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/discovery")) {
+		return fmt.Errorf("service discovery directory does not exist")
+	}
+	return nil
 }
 
 func (ctx *GRPCGatewayTestContext) iWantGRPCGatewaysWithStreamingCapabilities() error { return nil }
@@ -916,7 +911,10 @@ func (ctx *GRPCGatewayTestContext) theServiceShouldSupportBidirectionalStreaming
 	return ctx.fileContainsPattern(filepath.Join(ctx.projectPath, "proto"), "stream", ".proto")
 }
 func (ctx *GRPCGatewayTestContext) theGatewayShouldHandleStreamingOverHTTP() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/streaming.go"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/streaming.go")) {
+		return fmt.Errorf("gateway streaming file does not exist")
+	}
+	return nil
 }
 func (ctx *GRPCGatewayTestContext) theStreamingShouldIncludeProperErrorHandling() error { return nil }
 
@@ -962,10 +960,13 @@ func (ctx *GRPCGatewayTestContext) iGenerateAGrpcGatewayWithMiddlewareSupport() 
 	return ctx.iRunTheCommand("go-starter new grpc-middleware-gateway --type=grpc-gateway --middleware=true --module=github.com/example/grpc-middleware-gateway --no-git")
 }
 func (ctx *GRPCGatewayTestContext) theServiceShouldIncludeGRPCInterceptorChain() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/interceptor"))
+	if !ctx.fileExists(filepath.Join(ctx.projectPath, "internal/interceptor")) {
+		return fmt.Errorf("interceptor directory does not exist")
+	}
+	return nil
 }
 func (ctx *GRPCGatewayTestContext) theGatewayShouldIncludeHTTPMiddlewareChain() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/middleware"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "internal/middleware"))
 }
 func (ctx *GRPCGatewayTestContext) theMiddlewareShouldBeConfigurable() error { return nil }
 func (ctx *GRPCGatewayTestContext) theServiceShouldSupportCustomInterceptors() error { return nil }
@@ -976,10 +977,10 @@ func (ctx *GRPCGatewayTestContext) iGenerateAGrpcGatewayWithHealthChecks() error
 	return ctx.iRunTheCommand("go-starter new grpc-health-gateway --type=grpc-gateway --health-checks=true --module=github.com/example/grpc-health-gateway --no-git")
 }
 func (ctx *GRPCGatewayTestContext) theServiceShouldIncludeGRPCHealthService() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/health"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "internal/health"))
 }
 func (ctx *GRPCGatewayTestContext) theGatewayShouldIncludeHTTPHealthEndpoints() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/gateway/health.go"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "internal/gateway/health.go"))
 }
 func (ctx *GRPCGatewayTestContext) theHealthChecksShouldVerifyDatabaseConnectivity() error { return nil }
 func (ctx *GRPCGatewayTestContext) theHealthChecksShouldVerifyExternalDependencies() error { return nil }
@@ -1040,17 +1041,17 @@ func (ctx *GRPCGatewayTestContext) iGenerateAGrpcGatewayWithTestInfrastructure()
 	return ctx.iRunTheCommand("go-starter new grpc-test-gateway --type=grpc-gateway --test-infrastructure=true --module=github.com/example/grpc-test-gateway --no-git")
 }
 func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeUnitTestsForGRPCServices() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "internal/service/*_test.go"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "internal/service/*_test.go"))
 }
 func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeIntegrationTestsForRESTEndpoints() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "tests/integration"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "tests/integration"))
 }
 func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeEndToEndTests() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "tests/e2e"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "tests/e2e"))
 }
 func (ctx *GRPCGatewayTestContext) theTestsShouldCoverBothProtocols() error { return nil }
 func (ctx *GRPCGatewayTestContext) theTestingShouldIncludeMockGeneration() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "mocks"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "mocks"))
 }
 
 func (ctx *GRPCGatewayTestContext) iWantContainerizedGRPCGateways() error { return nil }
@@ -1058,13 +1059,13 @@ func (ctx *GRPCGatewayTestContext) iGenerateAGrpcGatewayWithContainerSupport() e
 	return ctx.iRunTheCommand("go-starter new grpc-container-gateway --type=grpc-gateway --containerization=true --module=github.com/example/grpc-container-gateway --no-git")
 }
 func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeOptimizedDockerfile() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "Dockerfile"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "Dockerfile"))
 }
 func (ctx *GRPCGatewayTestContext) theContainerShouldSupportMultiStageBuilds() error { return nil }
 func (ctx *GRPCGatewayTestContext) theServiceShouldIncludeContainerHealthChecks() error { return nil }
 func (ctx *GRPCGatewayTestContext) theContainerShouldFollowSecurityBestPractices() error { return nil }
 func (ctx *GRPCGatewayTestContext) theDeploymentShouldSupportKubernetes() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "k8s"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "k8s"))
 }
 
 func (ctx *GRPCGatewayTestContext) iWantWellDocumentedGRPCGateways() error { return nil }
@@ -1072,14 +1073,14 @@ func (ctx *GRPCGatewayTestContext) iGenerateAGrpcGatewayWithDocumentation() erro
 	return ctx.iRunTheCommand("go-starter new grpc-docs-gateway --type=grpc-gateway --documentation=true --module=github.com/example/grpc-docs-gateway --no-git")
 }
 func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeComprehensiveREADME() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "README.md"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "README.md"))
 }
 func (ctx *GRPCGatewayTestContext) theProjectShouldIncludeAPIDocumentation() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "docs/api"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "docs/api"))
 }
 func (ctx *GRPCGatewayTestContext) theProtobufDefinitionsShouldBeWellDocumented() error { return nil }
 func (ctx *GRPCGatewayTestContext) theServiceShouldIncludeUsageExamples() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "examples"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "examples"))
 }
 func (ctx *GRPCGatewayTestContext) theDocumentationShouldBeUpToDate() error { return nil }
 
@@ -1091,5 +1092,5 @@ func (ctx *GRPCGatewayTestContext) theGatewayShouldIncludeResponseCompression() 
 func (ctx *GRPCGatewayTestContext) theServiceShouldSupportHTTP2() error { return nil }
 func (ctx *GRPCGatewayTestContext) theServiceShouldIncludeRequestBuffering() error { return nil }
 func (ctx *GRPCGatewayTestContext) thePerformanceShouldBeMeasurableWithBenchmarks() error {
-	return ctx.fileExists(filepath.Join(ctx.projectPath, "benchmarks"))
+	return ctx.ensureFileExists(filepath.Join(ctx.projectPath, "benchmarks"))
 }

@@ -20,12 +20,17 @@ import (
 type GeneratorHandler struct {
 	// In-memory storage for generated projects (in production, use Redis or similar)
 	projects map[string]*models.GeneratedProject
-	mutex    sync.RWMutex
+	// Generation status tracking
+	generationStatus map[string]*models.GenerationStatus
+	mutex            sync.RWMutex
+	systemHandler    *SystemHandler
 }
 
-func NewGeneratorHandler() *GeneratorHandler {
+func NewGeneratorHandler(systemHandler *SystemHandler) *GeneratorHandler {
 	handler := &GeneratorHandler{
-		projects: make(map[string]*models.GeneratedProject),
+		projects:         make(map[string]*models.GeneratedProject),
+		generationStatus: make(map[string]*models.GenerationStatus),
+		systemHandler:    systemHandler,
 	}
 
 	// Start cleanup goroutine
@@ -77,6 +82,17 @@ func (h *GeneratorHandler) GenerateProject(c *gin.Context) {
 	// Generate unique ID for this generation
 	generationID := uuid.New().String()
 
+	// Initialize generation status
+	initialStatus := models.GenerationStatus{
+		ID:             generationID,
+		Status:         "generating",
+		Progress:       0,
+		FilesGenerated: 0,
+		TotalFiles:     0,
+		CurrentFile:    "Initializing...",
+	}
+	h.updateGenerationStatus(generationID, initialStatus)
+
 	// Convert web config to internal config
 	config := &types.ProjectConfig{
 		Name:         req.Config.ProjectName,
@@ -92,9 +108,26 @@ func (h *GeneratorHandler) GenerateProject(c *gin.Context) {
 	startTime := time.Now()
 	gen := generator.New()
 	
+	// Update status
+	h.updateGenerationStatus(generationID, models.GenerationStatus{
+		ID:             generationID,
+		Status:         "generating",
+		Progress:       10,
+		FilesGenerated: 0,
+		TotalFiles:     0,
+		CurrentFile:    "Loading blueprint...",
+	})
+	
 	// For web mode, we generate to a temporary in-memory buffer
 	files, err := gen.GenerateInMemory(config, req.Blueprint)
 	if err != nil {
+		// Update status with error
+		h.updateGenerationStatus(generationID, models.GenerationStatus{
+			ID:      generationID,
+			Status:  "error",
+			Error:   err.Error(),
+		})
+		
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "Failed to generate project",
 			"code":  "GENERATION_FAILED",
@@ -103,6 +136,21 @@ func (h *GeneratorHandler) GenerateProject(c *gin.Context) {
 	}
 
 	generationTime := time.Since(startTime)
+
+	// Update status to completed
+	h.updateGenerationStatus(generationID, models.GenerationStatus{
+		ID:             generationID,
+		Status:         "completed",
+		Progress:       100,
+		FilesGenerated: len(files),
+		TotalFiles:     len(files),
+		CurrentFile:    "Generation completed",
+	})
+
+	// Increment system stats
+	if h.systemHandler != nil {
+		h.systemHandler.IncrementProjectCount()
+	}
 
 	// Create ZIP archive
 	zipBuffer, err := createZipArchive(files)
@@ -144,7 +192,7 @@ func (h *GeneratorHandler) GenerateProject(c *gin.Context) {
 		Status:         "completed",
 		FilesGenerated: len(files),
 		GenerationTime: generationTime.String(),
-		DownloadURL:    fmt.Sprintf("/api/v1/download/%s", generationID),
+		DownloadURL:    fmt.Sprintf("/api/v1/generation/%s/download", generationID),
 		ExpiresAt:      project.ExpiresAt.Format(time.RFC3339),
 		Files:          fileList,
 	})
@@ -302,6 +350,32 @@ func getLanguage(path string) string {
 	return getFileType(path)
 }
 
+// GetGenerationStatus returns the status of a generation request
+func (h *GeneratorHandler) GetGenerationStatus(c *gin.Context) {
+	generationID := c.Param("id")
+
+	h.mutex.RLock()
+	status, exists := h.generationStatus[generationID]
+	h.mutex.RUnlock()
+
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{
+			"error": "Generation not found",
+			"code":  "GENERATION_NOT_FOUND",
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, status)
+}
+
+// updateGenerationStatus updates the status of a generation
+func (h *GeneratorHandler) updateGenerationStatus(id string, status models.GenerationStatus) {
+	h.mutex.Lock()
+	h.generationStatus[id] = &status
+	h.mutex.Unlock()
+}
+
 // cleanupExpiredProjects removes expired projects from memory
 func (h *GeneratorHandler) cleanupExpiredProjects() {
 	ticker := time.NewTicker(1 * time.Hour)
@@ -314,6 +388,7 @@ func (h *GeneratorHandler) cleanupExpiredProjects() {
 		for id, project := range h.projects {
 			if now.After(project.ExpiresAt) {
 				delete(h.projects, id)
+				delete(h.generationStatus, id) // Also cleanup status
 			}
 		}
 		h.mutex.Unlock()

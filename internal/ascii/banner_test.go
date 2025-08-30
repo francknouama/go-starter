@@ -65,9 +65,9 @@ func TestBannerFormat(t *testing.T) {
 	banner := Banner()
 	lines := strings.Split(banner, "\n")
 
-	// Test that no line is excessively long (ASCII art can be wide, so allow up to 200 chars)
+	// Test that no line is excessively long (ASCII art can be wide, allow up to 250 chars for colored output)
 	for i, line := range lines {
-		if len(line) > 200 {
+		if len(line) > 250 {
 			t.Errorf("Line %d is too long (%d characters)", i, len(line))
 		}
 	}
@@ -124,7 +124,7 @@ func TestBannerWithConfig(t *testing.T) {
 				Style:   StyleMinimal,
 				Colors:  true,
 			},
-			expected: "STARTER", // Should contain part of logo
+			expected: "go-starter", // Should contain logo text
 		},
 		{
 			name: "full style banner",
@@ -154,7 +154,7 @@ func TestLogo(t *testing.T) {
 	logo := Logo()
 	
 	assert.NotEmpty(t, logo)
-	assert.Contains(t, logo, "STARTER")
+	assert.Contains(t, logo, "go-starter")
 }
 
 func TestLogoWithConfig(t *testing.T) {
@@ -198,7 +198,7 @@ func TestLogoWithConfig(t *testing.T) {
 			
 			if tt.expected {
 				assert.NotEmpty(t, result)
-				assert.Contains(t, result, "STARTER")
+				assert.Contains(t, result, "go-starter")
 			} else {
 				assert.Empty(t, result)
 			}

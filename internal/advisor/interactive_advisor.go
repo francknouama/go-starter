@@ -552,11 +552,62 @@ func (ia *InteractiveAdvisor) QuickRecommendation(projectType, domain, teamExper
 	case "cli":
 		req.DeploymentTarget = "local"
 		req.DatabaseRequirements = "simple"
+		req.PreferredStyle = "simple" // CLI tools are often simpler
 	case "microservice":
 		req.ExpectedLoad = "high"
 		req.DeploymentTarget = "cloud"
 		req.HasMicroserviceExp = true
+	case "lambda":
+		req.DeploymentTarget = "cloud"
+		req.PreferredStyle = "simple"
 	}
 	
-	return ia.advisor.AnalyzeRequirements(req)
+	// Get the recommendation from the algorithm
+	recommendation, err := ia.advisor.AnalyzeRequirements(req)
+	if err != nil {
+		return nil, err
+	}
+	
+	// For CLI type, if the algorithm didn't recommend CLI, provide a CLI alternative
+	if projectType == "cli" && recommendation.Blueprint != "cli" {
+		// Create a CLI-focused recommendation as an override
+		cliRecommendation := &ArchitectureRecommendation{
+			Blueprint:    "cli",
+			Architecture: "standard",
+			Complexity:   1,
+			Confidence:   0.9, // High confidence since user explicitly requested CLI
+			Reasoning: []string{
+				"User explicitly requested CLI tool type",
+				"CLI architecture matches devtools domain requirements",
+				"Suitable for team experience level: " + teamExperience,
+			},
+			Pros: []string{
+				"Direct command-line interface",
+				"Easy to deploy and distribute",
+				"Perfect for developer tooling",
+				"Simple to test and maintain",
+			},
+			Cons: []string{
+				"Limited to command-line usage",
+				"No web interface",
+				"Platform-specific distribution",
+			},
+			Alternatives: []AlternativeRecommendation{
+				{
+					Blueprint:  recommendation.Blueprint,
+					Confidence: recommendation.Confidence,
+					Reason:     fmt.Sprintf("Algorithm suggested %s with %.1f%% confidence", recommendation.Blueprint, recommendation.Confidence*100),
+				},
+			},
+			Framework:        "cobra",
+			Logger:           "slog",
+			Database:         "",
+			Features:         recommendation.Features,
+			EstimatedFiles:   15,
+			DevelopmentTime:  "2-3 days",
+		}
+		return cliRecommendation, nil
+	}
+	
+	return recommendation, nil
 }

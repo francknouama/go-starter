@@ -1,7 +1,6 @@
 package cli_simple
 
 import (
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,16 +83,16 @@ func TestCliSimpleBlueprintATDD(t *testing.T) {
 		// Verify generated structure
 		projectDir := filepath.Join(tmpDir, "test-cli-simple")
 
-		// Verify essential files exist (minimal set - 8 files)
+		// Verify essential files exist (minimal set - 7 files as per template.yaml)
 		essentialFiles := []string{
 			"main.go",
 			"go.mod",
 			"README.md",
 			".gitignore",
 			"cmd/root.go",
-			"internal/logger/logger.go",
+			"cmd/version.go",
+			"config.go",
 			"Makefile",
-			"version.go",
 		}
 
 		for _, file := range essentialFiles {
@@ -120,9 +119,9 @@ func TestCliSimpleBlueprintATDD(t *testing.T) {
 
 		// Verify NO over-complex structure (should NOT have these directories/files)
 		complexFiles := []string{
-			"cmd/version.go",     // Version should be in root
 			"internal/config/",   // No complex config management
 			"internal/commands/", // No command separation
+			"internal/logger/",   // No separate logger files
 			"pkg/",               // No public packages
 			"docs/",              // No extensive documentation
 			"examples/",          // No examples in simple CLI
@@ -245,12 +244,10 @@ func TestCliSimpleBlueprintATDD(t *testing.T) {
 		t.Logf("CLI run output: %s", string(output))
 	})
 
-	t.Run("cli_simple_supports_multiple_loggers", func(t *testing.T) {
-		// GIVEN: cli-simple blueprint with different logger configurations
-		// WHEN: Generating projects with different loggers
-		// THEN: Each should generate appropriate logger setup and compile successfully
-
-		loggers := []string{"slog", "zap", "logrus", "zerolog"}
+	t.Run("cli_simple_uses_hardcoded_slog", func(t *testing.T) {
+		// GIVEN: cli-simple blueprint (designed to be truly minimal)
+		// WHEN: Generating a project
+		// THEN: Should always use slog (hardcoded, no configurability by design)
 
 		tmpDir := t.TempDir()
 		originalDir, _ := os.Getwd()
@@ -259,59 +256,42 @@ func TestCliSimpleBlueprintATDD(t *testing.T) {
 		defer func() { _ = os.Chdir(originalDir) }()
 		_ = os.Chdir(tmpDir)
 
-		// Build go-starter once
+		// Build go-starter
 		buildCmd := exec.Command("go", "build", "-o", filepath.Join(tmpDir, "go-starter"), ".")
 		buildCmd.Dir = projectRoot
 		_, err := buildCmd.CombinedOutput()
 		require.NoError(t, err)
 
-		for _, logger := range loggers {
-			t.Run(logger, func(t *testing.T) {
-				projectName := fmt.Sprintf("test-log-%s", logger)
+		projectName := "test-slog"
+		generateCmd := exec.Command("./go-starter", "new", projectName,
+			"--type=cli-simple",
+			"--module=github.com/test/"+projectName,
+			"--no-git")
+		output, err := generateCmd.CombinedOutput()
+		require.NoError(t, err, "Should generate successfully: %s", string(output))
 
-				generateCmd := exec.Command("./go-starter", "new", projectName,
-					"--type=cli",
-					"--complexity=simple",
-					"--module=github.com/test/"+projectName,
-					"--logger="+logger,
-					"--no-git")
-				output, err := generateCmd.CombinedOutput()
-				require.NoError(t, err, "Should generate successfully with %s logger: %s", logger, string(output))
+		projectDir := filepath.Join(tmpDir, projectName)
 
-				projectDir := filepath.Join(tmpDir, projectName)
+		// Check that slog is used in main.go (no separate logger files)
+		mainContent, err := os.ReadFile(filepath.Join(projectDir, "main.go"))
+		require.NoError(t, err)
+		mainStr := string(mainContent)
+		
+		assert.Contains(t, mainStr, "log/slog", "Should import slog")
+		assert.Contains(t, mainStr, "slog.New", "Should initialize slog")
+		assert.Contains(t, mainStr, "slog.SetDefault", "Should set default logger")
 
-				// Check that logger setup exists
-				assert.FileExists(t, filepath.Join(projectDir, "internal", "logger", "logger.go"),
-					"Logger setup should exist for %s", logger)
+		// Verify no internal logger directory (by design)
+		_, err = os.Stat(filepath.Join(projectDir, "internal"))
+		assert.True(t, os.IsNotExist(err), "cli-simple should not have internal directory")
 
-				// Check logger-specific imports in logger.go
-				loggerContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "logger", "logger.go"))
-				require.NoError(t, err)
-				loggerStr := string(loggerContent)
+		// Project should compile
+		buildCmd = exec.Command("go", "build", "-o", "test-build", ".")
+		buildCmd.Dir = projectDir
+		buildOutput, buildErr := buildCmd.CombinedOutput()
+		assert.NoError(t, buildErr, "Project should compile: %s", string(buildOutput))
 
-				switch logger {
-				case "slog":
-					assert.Contains(t, loggerStr, "log/slog", "Should import slog for %s", logger)
-				case "zap":
-					assert.Contains(t, loggerStr, "go.uber.org/zap", "Should import zap for %s", logger)
-				case "logrus":
-					assert.Contains(t, loggerStr, "github.com/sirupsen/logrus", "Should import logrus for %s", logger)
-				case "zerolog":
-					assert.Contains(t, loggerStr, "github.com/rs/zerolog", "Should import zerolog for %s", logger)
-				}
-
-				// Verify project compiles with the logger
-				modTidyCmd := exec.Command("go", "mod", "tidy")
-				modTidyCmd.Dir = projectDir
-				_, err = modTidyCmd.CombinedOutput()
-				require.NoError(t, err)
-
-				buildGeneratedCmd := exec.Command("go", "build", "-o", "test-"+logger, ".")
-				buildGeneratedCmd.Dir = projectDir
-				output, err = buildGeneratedCmd.CombinedOutput()
-				require.NoError(t, err, "cli-simple with %s logger should compile: %s", logger, string(output))
-			})
-		}
+		assert.FileExists(t, filepath.Join(projectDir, "test-build"), "Binary should be created")
 	})
 
 	t.Run("cli_simple_progressive_disclosure_compliance", func(t *testing.T) {
@@ -360,10 +340,11 @@ func TestCliSimpleBlueprintATDD(t *testing.T) {
 		assert.LessOrEqual(t, fileCount, 11, "Progressive disclosure should generate simple CLI (was %d files)", fileCount)
 
 		// Verify smart defaults were applied (should use slog logger by default)
-		loggerContent, err := os.ReadFile(filepath.Join(projectDir, "internal", "logger", "logger.go"))
+		mainContent, err := os.ReadFile(filepath.Join(projectDir, "main.go"))
 		require.NoError(t, err)
-		loggerStr := string(loggerContent)
-		assert.Contains(t, loggerStr, "slog", "Should default to slog logger in progressive disclosure")
+		mainStr := string(mainContent)
+		assert.Contains(t, mainStr, "log/slog", "Should default to slog logger in progressive disclosure")
+		assert.Contains(t, mainStr, "slog.New", "Should initialize slog logger")
 
 		// Check no interactive prompts were needed (all defaults applied)
 		outputStr := string(output)
@@ -640,8 +621,7 @@ func TestCliSimpleVsStandardComparison(t *testing.T) {
 			"internal/config/",     // No config management
 			"internal/middleware/", // No middleware
 
-			// Advanced files
-			"cmd/version.go",     // Version in separate file
+			// Advanced files  
 			"cmd/completion.go",  // Shell completion
 			"docker-compose.yml", // No Docker setup
 			"Dockerfile",         // No containerization
