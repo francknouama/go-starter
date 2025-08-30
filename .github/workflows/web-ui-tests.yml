@@ -1,0 +1,504 @@
+name: Web UI Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths: 
+      - 'web/**'
+      - 'internal/web/**'
+      - '.github/workflows/web-ui-tests.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'web/**'
+      - 'internal/web/**'
+      - '.github/workflows/web-ui-tests.yml'
+
+env:
+  GO_VERSION: '1.21'
+  NODE_VERSION: '18'
+
+jobs:
+  # Backend API Tests
+  backend-tests:
+    name: Backend API & WebSocket Tests
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: go_starter_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Cache Go modules
+      uses: actions/cache@v3
+      with:
+        path: ~/go/pkg/mod
+        key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-
+          
+    - name: Install Go dependencies
+      run: go mod download
+      
+    - name: Run Go backend tests
+      run: |
+        go test -v -race -coverprofile=backend-coverage.out \
+          ./internal/web/handlers/... \
+          ./internal/web/middleware/... \
+          ./internal/web/websocket/...
+          
+    - name: Upload backend coverage
+      uses: actions/upload-artifact@v3
+      with:
+        name: backend-coverage
+        path: backend-coverage.out
+
+  # Frontend Unit & Integration Tests  
+  frontend-tests:
+    name: Frontend Unit & Integration Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install frontend dependencies
+      working-directory: ./web
+      run: npm ci
+      
+    - name: Run ESLint
+      working-directory: ./web
+      run: npm run lint
+      
+    - name: Run TypeScript compilation
+      working-directory: ./web
+      run: npx tsc --noEmit
+      
+    - name: Run Jest unit tests
+      working-directory: ./web
+      run: npm run test:ci
+      
+    - name: Upload frontend coverage
+      uses: actions/upload-artifact@v3
+      with:
+        name: frontend-coverage
+        path: web/coverage/
+        
+    - name: Upload test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: jest-results
+        path: web/test-results.json
+
+  # End-to-End Tests
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install Go dependencies
+      run: go mod download
+      
+    - name: Install frontend dependencies
+      working-directory: ./web
+      run: npm ci
+      
+    - name: Install Playwright browsers
+      working-directory: ./web
+      run: npx playwright install --with-deps
+      
+    - name: Build frontend
+      working-directory: ./web
+      run: npm run build
+      
+    - name: Start backend server
+      run: |
+        go build -o bin/web-server ./web/cmd/web-server
+        ./bin/web-server &
+        echo $! > backend.pid
+        sleep 5
+        curl --retry 10 --retry-delay 1 --retry-connrefused http://localhost:8080/api/v1/health
+        
+    - name: Start frontend server
+      working-directory: ./web
+      run: |
+        npm run preview &
+        echo $! > frontend.pid
+        sleep 5
+        curl --retry 10 --retry-delay 1 --retry-connrefused http://localhost:3000
+        
+    - name: Run Playwright tests
+      working-directory: ./web
+      run: npm run test:e2e
+      env:
+        CI: true
+        
+    - name: Upload E2E test results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: playwright-results
+        path: |
+          web/test-results/
+          web/playwright-report/
+          
+    - name: Stop servers
+      if: always()
+      run: |
+        if [ -f backend.pid ]; then kill $(cat backend.pid) || true; fi
+        if [ -f web/frontend.pid ]; then kill $(cat web/frontend.pid) || true; fi
+
+  # Visual Regression Tests
+  visual-tests:
+    name: Visual Regression Tests
+    runs-on: ubuntu-latest
+    needs: [frontend-tests]
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install dependencies
+      working-directory: ./web
+      run: npm ci
+      
+    - name: Install Playwright browsers
+      working-directory: ./web
+      run: npx playwright install --with-deps chromium
+      
+    - name: Run visual regression tests
+      working-directory: ./web
+      run: npx playwright test --project=visual-regression
+      
+    - name: Upload visual test results
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: visual-test-results
+        path: web/test-results/
+
+  # Accessibility Tests
+  accessibility-tests:
+    name: Accessibility Tests
+    runs-on: ubuntu-latest
+    needs: [frontend-tests]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install dependencies
+      working-directory: ./web
+      run: npm ci
+      
+    - name: Install Playwright browsers
+      working-directory: ./web
+      run: npx playwright install --with-deps
+      
+    - name: Run accessibility tests
+      working-directory: ./web
+      run: npx playwright test accessibility
+      
+    - name: Upload accessibility results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: accessibility-results
+        path: web/accessibility-report/
+
+  # Performance Tests
+  performance-tests:
+    name: Performance & Load Tests
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: ${{ env.GO_VERSION }}
+        
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install dependencies
+      run: |
+        go mod download
+        cd web && npm ci
+        
+    - name: Build and start servers
+      run: |
+        go build -o bin/web-server ./web/cmd/web-server
+        cd web && npm run build
+        
+    - name: Run performance tests
+      run: |
+        # Start backend
+        ./bin/web-server &
+        BACKEND_PID=$!
+        
+        # Start frontend
+        cd web && npm run preview &
+        FRONTEND_PID=$!
+        
+        # Wait for servers
+        sleep 10
+        
+        # Run performance tests
+        cd web && npm run test:performance
+        
+        # Cleanup
+        kill $BACKEND_PID $FRONTEND_PID || true
+        
+    - name: Upload performance results
+      uses: actions/upload-artifact@v3
+      with:
+        name: performance-results
+        path: web/performance-report/
+
+  # Security Tests
+  security-tests:
+    name: Security Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: web/package-lock.json
+        
+    - name: Install dependencies
+      working-directory: ./web
+      run: npm ci
+      
+    - name: Run npm audit
+      working-directory: ./web
+      run: npm audit --audit-level=moderate
+      
+    - name: Run security linting
+      working-directory: ./web
+      run: npm run lint:security || true
+      
+    - name: Upload security results
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: security-results
+        path: web/security-report/
+
+  # Coverage Report & Quality Gates
+  coverage-report:
+    name: Coverage Report & Quality Gates
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, e2e-tests]
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        
+    - name: Download coverage artifacts
+      uses: actions/download-artifact@v3
+      with:
+        path: coverage-artifacts/
+        
+    - name: Install coverage tools
+      run: |
+        npm install -g nyc lcov-result-merger
+        
+    - name: Merge coverage reports
+      run: |
+        mkdir -p merged-coverage
+        
+        # Copy frontend coverage
+        if [ -d "coverage-artifacts/frontend-coverage" ]; then
+          cp -r coverage-artifacts/frontend-coverage/* merged-coverage/
+        fi
+        
+        # Convert backend coverage to lcov
+        if [ -f "coverage-artifacts/backend-coverage/backend-coverage.out" ]; then
+          go tool cover -html=coverage-artifacts/backend-coverage/backend-coverage.out -o merged-coverage/backend.html
+        fi
+        
+    - name: Generate combined coverage report
+      run: |
+        # Generate HTML report
+        if [ -f "merged-coverage/lcov.info" ]; then
+          npx nyc report --reporter=html --report-dir=final-coverage
+        fi
+        
+    - name: Upload final coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: combined-coverage-report
+        path: final-coverage/
+        
+    - name: Coverage quality gate
+      run: |
+        # Check coverage thresholds
+        if [ -f "merged-coverage/coverage-summary.json" ]; then
+          node -e "
+            const fs = require('fs');
+            const coverage = JSON.parse(fs.readFileSync('merged-coverage/coverage-summary.json'));
+            const total = coverage.total;
+            
+            const thresholds = { statements: 80, branches: 80, functions: 80, lines: 80 };
+            let failed = false;
+            
+            for (const [metric, threshold] of Object.entries(thresholds)) {
+              const actual = total[metric].pct;
+              console.log(\`\${metric}: \${actual}% (threshold: \${threshold}%)\`);
+              if (actual < threshold) {
+                console.log(\`❌ \${metric} coverage below threshold\`);
+                failed = true;
+              } else {
+                console.log(\`✅ \${metric} coverage meets threshold\`);
+              }
+            }
+            
+            if (failed) {
+              console.log('Coverage quality gate failed');
+              process.exit(1);
+            } else {
+              console.log('Coverage quality gate passed');
+            }
+          "
+        fi
+        
+    - name: Comment PR with coverage
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          if (fs.existsSync('merged-coverage/coverage-summary.json')) {
+            const coverage = JSON.parse(fs.readFileSync('merged-coverage/coverage-summary.json'));
+            const total = coverage.total;
+            
+            const comment = `## 📊 Test Coverage Report
+            
+            | Metric | Coverage | Status |
+            |--------|----------|--------|
+            | Statements | ${total.statements.pct}% | ${total.statements.pct >= 80 ? '✅' : '❌'} |
+            | Branches | ${total.branches.pct}% | ${total.branches.pct >= 80 ? '✅' : '❌'} |
+            | Functions | ${total.functions.pct}% | ${total.functions.pct >= 80 ? '✅' : '❌'} |
+            | Lines | ${total.lines.pct}% | ${total.lines.pct >= 80 ? '✅' : '❌'} |
+            
+            [View detailed report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          }
+
+  # Quality Summary
+  quality-summary:
+    name: Quality Summary
+    runs-on: ubuntu-latest
+    needs: [backend-tests, frontend-tests, e2e-tests, accessibility-tests, performance-tests, security-tests, coverage-report]
+    if: always()
+    
+    steps:
+    - name: Generate quality summary
+      run: |
+        echo "# 🎯 Web UI Quality Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Test Suite | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Backend Tests | ${{ needs.backend-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Frontend Tests | ${{ needs.frontend-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| E2E Tests | ${{ needs.e2e-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Accessibility | ${{ needs.accessibility-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Performance | ${{ needs.performance-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Security | ${{ needs.security-tests.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "| Coverage | ${{ needs.coverage-report.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        if [[ "${{ needs.backend-tests.result }}" == "success" && 
+              "${{ needs.frontend-tests.result }}" == "success" && 
+              "${{ needs.e2e-tests.result }}" == "success" && 
+              "${{ needs.coverage-report.result }}" == "success" ]]; then
+          echo "## 🎉 All critical tests passed!" >> $GITHUB_STEP_SUMMARY
+          echo "The Web UI is ready for deployment." >> $GITHUB_STEP_SUMMARY
+        else
+          echo "## ⚠️ Some tests failed" >> $GITHUB_STEP_SUMMARY
+          echo "Please review the failed tests before deployment." >> $GITHUB_STEP_SUMMARY
+        fi

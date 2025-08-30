@@ -1,0 +1,804 @@
+# Blueprint Selection Guide
+
+Comprehensive guide to choosing the right blueprint for your Go project. This guide helps you make informed decisions based on project requirements, team expertise, and architectural needs.
+
+> **⚡ Status Update**: After comprehensive ATDD validation, 7 blueprints are production-ready. See **[Blueprint Status Guide](BLUEPRINT_STATUS_GUIDE.md)** for current validation status.
+
+## 🚀 Phase 2 Production Enhancements
+
+**Major Update**: Three blueprints have been significantly enhanced with enterprise production features:
+
+### ✨ Enhanced Blueprints
+
+| Blueprint | Enhancement Summary | Key Features Added |
+|-----------|--------------------|--------------------|
+| **Microservice** | Enterprise observability & resilience | OpenTelemetry tracing, rate limiting, circuit breakers, request deduplication |
+| **Monolith** | Background processing & caching | Job manager, multi-layer caching, performance monitoring |
+| **gRPC Gateway** | Advanced middleware & monitoring | Enhanced interceptors, unified metrics, dual-protocol support |
+
+### 🎯 When to Choose Enhanced Blueprints
+
+- **Production workloads** requiring enterprise-grade reliability
+- **High-traffic applications** needing performance optimization
+- **Distributed systems** requiring comprehensive observability
+- **Security-sensitive** applications with strict validation requirements
+- **Mission-critical** services needing resilience patterns
+
+### 🔧 Shared Production Components
+
+All enhanced blueprints include these production-ready components:
+
+- **Shared Error Handling System**: Consistent error handling across all enhanced blueprints with severity levels and structured responses
+- **OpenTelemetry Integration**: Distributed tracing with multiple exporters (Jaeger, OTLP, stdout)
+- **Prometheus Metrics**: Production-ready metrics collection and monitoring
+- **Security Middleware**: Input validation, CORS, security headers
+- **Graceful Shutdown**: Proper resource cleanup and connection handling
+- **Health Checks**: Kubernetes-ready health and readiness probes
+
+## 🎯 Quick Decision Tree
+
+```
+Start Here: What are you building?
+│
+├── Command-line tool?
+│   ├── Simple utility? → CLI Simple
+│   └── Production tool? → CLI Standard
+│
+├── Web API/Backend?
+│   ├── Simple REST API? → Web API Standard
+│   ├── Enterprise system? → Web API Clean
+│   ├── Complex domain? → Web API DDD
+│   └── Maximum testability? → Web API Hexagonal
+│
+├── Serverless function?
+│   ├── Event processing? → Lambda Standard
+│   └── API Gateway? → Lambda Proxy
+│
+├── Shared code?
+│   └── Reusable package? → Library
+│
+├── Distributed system?
+│   └── Service architecture? → Microservice
+│
+├── Traditional web app?
+│   └── All-in-one deployment? → Monolith
+│
+└── Multiple related services?
+    └── Monorepo structure? → Workspace
+```
+
+## 📊 Blueprint Comparison Matrix
+
+| Blueprint | Complexity | Files | Learning Curve | Team Size | Maintenance | Performance | Status |
+|-----------|------------|-------|----------------|-----------|-------------|-------------|---------|
+| **CLI Simple** | ⭐ | 10 | Easy | 1 | Low | Good | ✅ **READY** |
+| **CLI Standard** | ⭐⭐ | 28 | Moderate | 1-3 | Medium | Good | ✅ **READY** |
+| **Web API Standard** | ⭐⭐ | 44 | Moderate | 2-5 | Medium | Excellent | ✅ **READY** |
+| **Web API Clean** | ⭐⭐⭐ | 69 | Hard | 3-8 | High | Excellent | ✅ **READY** |
+| **Web API DDD** | ⭐⭐⭐⭐ | TBD | Very Hard | 4-10 | High | Good | 🔄 **DEV** |
+| **Web API Hexagonal** | ⭐⭐⭐⭐⭐ | TBD | Expert | 5-12 | Very High | Good | 🔄 **DEV** |
+| **Lambda Standard** | ⭐ | 17 | Easy | 1-2 | Low | Excellent | ✅ **READY** |
+| **Lambda Proxy** | ⭐⭐ | TBD | Moderate | 2-4 | Medium | Excellent | 🔄 **DEV** |
+| **Library** | ⭐ | 19 | Easy | 1-3 | Low | N/A | ✅ **READY** |
+| **Microservice** | ⭐⭐⭐⭐ | TBD | Very Hard | 4-8 | High | Excellent | 🔄 **DEV** |
+| **gRPC Gateway** | ⭐⭐⭐⭐ | 45 | Very Hard | 4-8 | High | Excellent | ✅ **READY** |
+| **Monolith** | ⭐⭐⭐ | TBD | Hard | 3-8 | High | Good | 🔄 **DEV** |
+| **Workspace** | ⭐⭐⭐ | TBD | Hard | 3-10 | High | Good | 🔄 **DEV** |
+
+## 🏗️ Architecture Pattern Comparison
+
+### Standard Architecture
+> **Best for**: Most projects, rapid development, small to medium teams
+
+**Structure**: Traditional layered architecture
+```
+handlers/ → services/ → repository/ → database
+```
+
+**Pros**:
+- ✅ Simple and familiar
+- ✅ Fast development
+- ✅ Easy to understand
+- ✅ Good for most use cases
+
+**Cons**:
+- ❌ Can become monolithic
+- ❌ Less testable
+- ❌ Tight coupling possible
+
+**When to Choose**:
+- Building MVP or prototype
+- Small to medium team
+- Straightforward business logic
+- Time-to-market is priority
+
+### Clean Architecture
+> **Best for**: Enterprise applications, complex business logic, long-term projects
+
+**Structure**: Dependency inversion with clear boundaries
+```
+adapters/ ← usecases/ ← domain/
+```
+
+**Pros**:
+- ✅ Highly testable
+- ✅ Independent of frameworks
+- ✅ Clear separation of concerns
+- ✅ Maintainable long-term
+
+**Cons**:
+- ❌ Higher initial complexity
+- ❌ More files and interfaces
+- ❌ Steeper learning curve
+
+**When to Choose**:
+- Enterprise applications
+- Complex business requirements
+- Long-term maintainability needed
+- Team familiar with clean architecture
+
+### Domain-Driven Design (DDD)
+> **Best for**: Complex domains, rich business models, event-driven systems
+
+**Structure**: Domain-centric with aggregates and bounded contexts
+```
+domain/ (aggregates, entities, services) → application/ → infrastructure/
+```
+
+**Pros**:
+- ✅ Rich domain models
+- ✅ Business logic centralization
+- ✅ Clear business boundaries
+- ✅ Event-driven capabilities
+
+**Cons**:
+- ❌ Very complex initially
+- ❌ Requires domain expertise
+- ❌ Can be over-engineered
+
+**When to Choose**:
+- Complex business domains
+- Rich business rules
+- Event-driven architecture
+- Domain experts available
+
+### Hexagonal Architecture
+> **Best for**: Maximum testability, multiple interfaces, ports & adapters
+
+**Structure**: Ports and adapters with business logic at center
+```
+primary adapters → application (ports) → secondary adapters
+```
+
+**Pros**:
+- ✅ Maximum testability
+- ✅ Multiple interface support
+- ✅ Technology independence
+- ✅ Easy adapter swapping
+
+**Cons**:
+- ❌ Highest complexity
+- ❌ Many interfaces
+- ❌ Can be over-abstracted
+
+**When to Choose**:
+- Multiple interfaces needed (HTTP, gRPC, CLI)
+- Maximum testability required
+- Frequent technology changes
+- Expert team available
+
+## 📋 Detailed Blueprint Analysis
+
+### CLI Applications
+
+#### CLI Simple
+**Perfect for**:
+- Learning Go fundamentals
+- Quick automation scripts
+- Personal utilities
+- Prototyping CLI tools
+
+**Generated Structure**:
+```
+my-tool/
+├── main.go          # Entry point
+├── cmd/             # Commands
+├── config.go        # Simple config
+├── Makefile         # Build automation
+└── README.md        # Documentation
+```
+
+**Command**: `go-starter new my-tool --type=cli --complexity=simple`
+
+#### CLI Standard
+**Perfect for**:
+- Production CLI tools
+- Developer tools
+- System administration utilities
+- CI/CD tools
+
+**Advanced Features**:
+- Multiple subcommands
+- Configuration files
+- Interactive prompts
+- Shell completion
+- Structured logging
+- Comprehensive testing
+
+**Command**: `go-starter new my-tool --type=cli --complexity=standard`
+
+### Web APIs
+
+#### Web API Standard
+**Perfect for**:
+- REST APIs
+- Microservices
+- Backend services
+- API-first applications
+
+**Key Features**:
+- HTTP framework integration (Gin, Echo, Fiber)
+- Database support (PostgreSQL, MySQL, MongoDB)
+- Authentication (JWT, OAuth2)
+- Middleware stack
+- OpenAPI documentation
+
+**Command**: 
+```bash
+go-starter new my-api --type=web-api \
+  --framework=gin \
+  --database-driver=postgres \
+  --auth-type=jwt
+```
+
+#### Web API Clean
+**Perfect for**:
+- Enterprise applications
+- Complex business logic
+- Long-term projects
+- High testability requirements
+
+**Architecture Benefits**:
+- Clear separation of concerns
+- Framework independence
+- Testable business logic
+- Dependency inversion
+
+**Command**:
+```bash
+go-starter new my-api --type=web-api --architecture=clean \
+  --database-driver=postgres \
+  --auth-type=jwt
+```
+
+#### Web API DDD
+**Perfect for**:
+- Complex business domains
+- Rich domain models
+- Event-driven systems
+- Domain expert collaboration
+
+**Domain Features**:
+- Aggregates and entities
+- Domain services
+- Specifications (business rules)
+- Domain events
+- Bounded contexts
+
+**Command**:
+```bash
+go-starter new my-api --type=web-api --architecture=ddd \
+  --database-driver=postgres \
+  --auth-type=jwt
+```
+
+#### Web API Hexagonal
+**Perfect for**:
+- Maximum testability
+- Multiple adapters
+- Technology independence
+- Complex integration requirements
+
+**Hexagonal Benefits**:
+- Ports and adapters pattern
+- Multiple primary adapters (HTTP, gRPC, CLI)
+- Multiple secondary adapters (DB, cache, email)
+- Complete isolation of business logic
+
+**Command**:
+```bash
+go-starter new my-api --type=web-api --architecture=hexagonal \
+  --database-driver=postgres \
+  --auth-type=jwt
+```
+
+### Serverless
+
+#### Lambda Standard
+**Perfect for**:
+- Event processing
+- Background tasks
+- Webhooks
+- Simple serverless functions
+
+**AWS Integration**:
+- CloudWatch Events
+- X-Ray tracing
+- CloudWatch metrics
+- SAM deployment
+
+**Command**: `go-starter new my-lambda --type=lambda`
+
+#### Lambda Proxy
+**Perfect for**:
+- REST APIs on Lambda
+- API Gateway integration
+- Serverless web backends
+- Cost-optimized APIs
+
+**API Features**:
+- API Gateway integration
+- HTTP routing
+- Request/response handling
+- Serverless deployment
+
+**Command**: `go-starter new my-api --type=lambda-proxy`
+
+### Specialized Blueprints
+
+#### Library
+**Perfect for**:
+- Reusable packages
+- SDK development
+- Open-source projects
+- Shared utilities
+
+**Library Features**:
+- Public API design
+- Comprehensive examples
+- Documentation generation
+- Versioning support
+
+**Command**: `go-starter new my-lib --type=library`
+
+#### Microservice ✨ Enhanced
+**Perfect for**:
+- Enterprise distributed systems
+- Service mesh architectures
+- Cloud-native applications
+- High-performance backends
+
+**Production Features**:
+- **Observability**: OpenTelemetry tracing with multiple exporters (Jaeger, OTLP, stdout)
+- **Security**: Request validation with comprehensive input sanitization
+- **Performance**: In-memory caching, request deduplication, connection pooling
+- **Resilience**: Circuit breakers, retry mechanisms, bulkhead isolation
+- **Enhanced Error Handling**: Severity levels, structured error responses
+- **Monitoring**: Prometheus metrics, health checks, distributed tracing
+- gRPC server/client with enhanced interceptors
+- Kubernetes deployment with service mesh support
+
+**Command**: `go-starter new my-service --type=microservice`
+
+#### Monolith ✨ Enhanced
+**Perfect for**:
+- Production web applications
+- Enterprise monoliths
+- Full-stack applications
+- Traditional deployment patterns
+
+**Production Features**:
+- **Background Job Processing**: Comprehensive job manager with queuing, scheduling, and monitoring
+- **Multi-layer Caching**: L1 in-memory + L2 Redis caching with intelligent cache invalidation
+- **Performance Monitoring**: Enhanced configuration for jobs and performance metrics
+- **Production-ready Architecture**: Modular monolith with clean separation
+- MVC architecture with enhanced middleware
+- HTML templates with multiple engine support
+- Static assets with build pipeline options
+- Database migrations and connection pooling
+- Admin interface with monitoring dashboard
+
+**Command**: `go-starter new my-app --type=monolith`
+
+#### gRPC Gateway ✨ New Enhanced Blueprint
+**Perfect for**:
+- API Gateway patterns
+- Dual HTTP/gRPC interfaces
+- Protocol translation services
+- Unified API endpoints
+
+**Production Features**:
+- **Enhanced gRPC Interceptors**: Monitoring, security, and performance interceptors
+- **Rate Limiting**: For both HTTP and gRPC requests with configurable limits
+- **Unified Middleware**: Consistent middleware across HTTP and gRPC protocols
+- **Metrics Collection**: Prometheus-compatible metrics for both protocols
+- **Security**: Input validation, CORS, security headers
+- **Observability**: OpenTelemetry tracing and structured logging
+- Dual protocol support (HTTP REST + gRPC)
+- Protocol buffer definitions and code generation
+- TLS support for secure communication
+
+**Command**: `go-starter new my-gateway --type=grpc-gateway`
+
+#### Workspace
+**Perfect for**:
+- Monorepos
+- Multiple related services
+- Shared libraries
+- Complex project organization
+
+**Workspace Features**:
+- Go workspace configuration
+- Multiple modules
+- Shared dependencies
+- Unified build system
+
+**Command**: `go-starter new my-workspace --type=workspace`
+
+## 🎭 Use Case Scenarios
+
+### Startup MVP
+**Scenario**: Building a minimum viable product for a startup
+**Recommendation**: Web API Standard
+**Reasoning**: Fast development, good performance, scalable foundation
+
+```bash
+go-starter new startup-api --type=web-api \
+  --framework=gin \
+  --database-driver=postgres \
+  --auth-type=jwt \
+  --logger=slog
+```
+
+### Enterprise System
+**Scenario**: Large enterprise with complex business rules
+**Recommendation**: Web API Clean or DDD
+**Reasoning**: Maintainable, testable, handles complex business logic
+
+```bash
+go-starter new enterprise-system --type=web-api --architecture=clean \
+  --database-driver=postgres \
+  --database-orm=gorm \
+  --auth-type=jwt \
+  --logger=zap \
+  --advanced
+```
+
+### Enterprise Microservice Platform ✨ Enhanced
+**Scenario**: Production microservice with high-traffic requirements
+**Recommendation**: Enhanced Microservice
+**Reasoning**: Built-in observability, resilience patterns, performance optimization
+
+```bash
+go-starter new payment-service --type=microservice \
+  --logger=zap \
+  --database-driver=postgres \
+  --enable-observability=true \
+  --enable-circuit-breaker=true \
+  --enable-rate-limiting=true \
+  --enable-request-deduplication=true
+```
+
+### Production Web Application ✨ Enhanced
+**Scenario**: High-traffic web application with background processing
+**Recommendation**: Enhanced Monolith
+**Reasoning**: Background job processing, multi-layer caching, performance monitoring
+
+```bash
+go-starter new ecommerce-platform --type=monolith \
+  --framework=gin \
+  --database-driver=postgres \
+  --enable-jobs=true \
+  --enable-caching=true \
+  --enable-performance-monitoring=true \
+  --logger=zap
+```
+
+### API Gateway Service ✨ Enhanced
+**Scenario**: Unified API gateway supporting both HTTP and gRPC clients
+**Recommendation**: Enhanced gRPC Gateway
+**Reasoning**: Dual protocol support, enhanced interceptors, unified monitoring
+
+```bash
+go-starter new api-gateway --type=grpc-gateway \
+  --grpc-port=50051 \
+  --http-port=8080 \
+  --enable-enhanced-interceptors=true \
+  --enable-rate-limiting=true \
+  --enable-metrics-collection=true \
+  --logger=zap
+```
+
+### Developer Tool
+**Scenario**: Building a CLI tool for developers
+**Recommendation**: CLI Standard
+**Reasoning**: Rich feature set, professional polish, good UX
+
+```bash
+go-starter new dev-tool --type=cli --complexity=standard \
+  --logger=slog
+```
+
+### Event Processing
+**Scenario**: Processing events from various AWS services
+**Recommendation**: Lambda Standard
+**Reasoning**: Serverless, event-driven, cost-effective
+
+```bash
+go-starter new event-processor --type=lambda \
+  --logger=zerolog
+```
+
+### Microservices Platform
+**Scenario**: Building a platform with multiple microservices
+**Recommendation**: Workspace + Microservice
+**Reasoning**: Shared libraries, consistent patterns, service organization
+
+```bash
+# Create workspace
+go-starter new platform --type=workspace
+
+# Add individual services
+cd platform/services
+go-starter new user-service --type=microservice
+go-starter new order-service --type=microservice
+go-starter new notification-service --type=microservice
+```
+
+### API with Multiple Interfaces
+**Scenario**: Need HTTP REST, gRPC, and CLI interfaces
+**Recommendation**: Web API Hexagonal
+**Reasoning**: Multiple adapters, clean separation, testable
+
+```bash
+go-starter new multi-interface-api --type=web-api --architecture=hexagonal \
+  --database-driver=postgres \
+  --auth-type=jwt \
+  --logger=zap \
+  --advanced
+```
+
+## 🚀 Migration Paths
+
+### Scaling Up Complexity
+
+#### Simple → Standard CLI
+When your CLI tool needs more features:
+1. Generate new standard CLI project
+2. Copy business logic from simple version
+3. Add new features (subcommands, config files)
+4. Migrate gradually
+
+#### Standard → Clean Architecture
+When your API needs better structure:
+1. Generate clean architecture version
+2. Identify domain entities and use cases
+3. Move business logic to domain layer
+4. Implement repository interfaces
+5. Migrate endpoint by endpoint
+
+#### Clean → DDD
+When you need richer domain modeling:
+1. Identify aggregates and bounded contexts
+2. Create domain services and specifications
+3. Add domain events
+4. Implement event handlers
+
+### Scaling Down Complexity
+
+Sometimes you might need to simplify:
+
+#### DDD → Clean
+If DDD proves too complex:
+1. Flatten aggregates to simple entities
+2. Move domain services to use cases
+3. Remove complex specifications
+4. Simplify event handling
+
+#### Clean → Standard
+If clean architecture is overkill:
+1. Merge use cases into service layer
+2. Remove adapter interfaces
+3. Simplify to traditional layers
+4. Keep good practices (testing, structure)
+
+## 📊 Performance Characteristics
+
+### Runtime Performance
+
+| Blueprint | Startup Time | Memory Usage | Throughput | Latency |
+|-----------|--------------|--------------|------------|---------|
+| **CLI Simple** | Fast | Low | N/A | N/A |
+| **CLI Standard** | Moderate | Medium | N/A | N/A |
+| **Web API Standard** | Fast | Medium | High | Low |
+| **Web API Clean** | Moderate | Medium | High | Low |
+| **Web API DDD** | Slow | High | Medium | Medium |
+| **Web API Hexagonal** | Slow | High | Medium | Medium |
+| **Lambda Standard** | Very Fast | Very Low | High | Very Low |
+| **Lambda Proxy** | Fast | Low | High | Low |
+| **Microservice** | Moderate | Medium | High | Medium |
+
+### Development Performance
+
+| Blueprint | Initial Setup | Feature Addition | Bug Fixing | Testing |
+|-----------|---------------|------------------|------------|---------|
+| **CLI Simple** | Very Fast | Fast | Fast | Easy |
+| **CLI Standard** | Fast | Moderate | Moderate | Moderate |
+| **Web API Standard** | Fast | Fast | Moderate | Moderate |
+| **Web API Clean** | Moderate | Moderate | Easy | Easy |
+| **Web API DDD** | Slow | Slow | Easy | Easy |
+| **Web API Hexagonal** | Very Slow | Moderate | Very Easy | Very Easy |
+| **Lambda Standard** | Very Fast | Fast | Fast | Easy |
+| **Lambda Proxy** | Fast | Moderate | Moderate | Moderate |
+
+## 🎯 Team Expertise Requirements
+
+### Beginner-Friendly (Production-Ready)
+- **CLI Simple**: Perfect for Go beginners ✅
+- **Lambda Standard**: Good serverless introduction ✅
+- **Library**: Focuses on Go fundamentals ✅
+
+### Intermediate (Production-Ready)
+- **CLI Standard**: Good for CLI development learning ✅
+- **Web API Standard**: Solid web development foundation ✅
+
+### Advanced (Production-Ready)
+- **Web API Clean**: Requires Clean Architecture knowledge ✅
+- **gRPC Gateway**: Needs microservice and protocol expertise ✅
+
+### Expert (In Development)
+- **Web API DDD**: Requires domain modeling expertise 🔄
+- **Web API Hexagonal**: Advanced architecture patterns 🔄
+- **Microservice**: Needs distributed systems understanding 🔄
+- **Monolith**: Complex but familiar patterns 🔄
+- **Workspace**: Complex project organization 🔄
+
+## 🛠️ Customization Options
+
+### Framework Selection
+
+#### Web Frameworks
+```bash
+# Gin (fastest, most popular)
+--framework=gin
+
+# Echo (middleware-rich)
+--framework=echo
+
+# Fiber (Express-like)
+--framework=fiber
+
+# Chi (lightweight)
+--framework=chi
+```
+
+#### CLI Frameworks
+```bash
+# Cobra (most popular)
+--framework=cobra
+```
+
+### Database Options
+
+```bash
+# Relational databases
+--database-driver=postgres  # Recommended for production
+--database-driver=mysql     # Alternative relational DB
+--database-driver=sqlite    # Development/testing
+
+# NoSQL databases
+--database-driver=mongodb   # Document database
+
+# ORM/Query Builders
+--database-orm=gorm        # Feature-rich ORM
+--database-orm=sqlx        # Lightweight extensions
+--database-orm=sqlc        # Type-safe SQL generation
+--database-orm=ent         # Facebook's entity framework
+```
+
+### Authentication
+
+```bash
+# JSON Web Tokens (most popular)
+--auth-type=jwt
+
+# OAuth2 providers
+--auth-type=oauth2
+
+# Session-based (traditional)
+--auth-type=session
+
+# API key authentication
+--auth-type=api-key
+```
+
+### Logger Selection
+
+```bash
+# Standard library (Go 1.21+)
+--logger=slog
+
+# High performance
+--logger=zap
+
+# Zero allocation
+--logger=zerolog
+
+# Feature-rich
+--logger=logrus
+```
+
+## 📋 Quick Reference Commands
+
+### Most Common Combinations
+
+```bash
+# Simple learning project
+go-starter new my-project --type=cli --complexity=simple
+
+# Production CLI tool
+go-starter new my-tool --type=cli --complexity=standard --logger=slog
+
+# Standard REST API
+go-starter new my-api --type=web-api --framework=gin --database-driver=postgres --auth-type=jwt
+
+# Enterprise API
+go-starter new enterprise-api --type=web-api --architecture=clean --database-driver=postgres --auth-type=jwt --logger=zap
+
+# Serverless function
+go-starter new my-lambda --type=lambda --logger=zerolog
+
+# Shared library
+go-starter new my-lib --type=library
+
+# Microservice
+go-starter new my-service --type=microservice --logger=zap
+
+# Complex domain API
+go-starter new domain-api --type=web-api --architecture=ddd --database-driver=postgres --auth-type=jwt --advanced
+```
+
+### Preview Before Generation
+
+```bash
+# See what will be generated
+go-starter new my-project --type=web-api --dry-run
+
+# Advanced preview
+go-starter new my-project --type=web-api --architecture=clean --dry-run --advanced
+```
+
+## 🎯 Final Recommendations
+
+### Choose Based On:
+
+1. **Team Size & Expertise**
+   - 1 person: CLI Simple ✅, Lambda Standard ✅
+   - 2-5 people: Web API Standard ✅, CLI Standard ✅
+   - 5+ people: Web API Clean ✅, gRPC Gateway ✅
+
+2. **Project Longevity**
+   - Short-term: Standard architectures ✅
+   - Long-term: Clean Architecture ✅
+
+3. **Business Complexity**
+   - Simple: Standard patterns ✅
+   - Complex: Clean Architecture ✅
+
+4. **Performance Requirements**
+   - High throughput: Web API Standard ✅, Lambda Standard ✅
+   - Low latency: Web API Standard ✅ with optimized logger
+
+5. **Architecture Requirements**
+   - Standard REST: Web API Standard ✅
+   - Enterprise Clean: Web API Clean ✅
+   - Dual Protocol: gRPC Gateway ✅
+
+6. **Testability Needs**
+   - Standard: Web API Standard ✅
+   - High: Web API Clean ✅
+   - Maximum: Web API Clean ✅ (Hexagonal in development 🔄)
+
+**Production-Ready Status**: Choose any blueprint marked with ✅ for immediate production use. Blueprints marked with 🔄 are still in development.
+
+Remember: You can always start simple and migrate to more complex architectures as your project grows. go-starter's consistent patterns make this migration easier.
