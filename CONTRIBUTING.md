@@ -446,6 +446,114 @@ func TestCommand_Execute(t *testing.T) {
 }
 ```
 
+## 📁 Project Organization Guidelines
+
+### Documentation Structure
+
+The project follows a structured documentation organization:
+
+```
+docs/
+├── 01-getting-started/    # User onboarding and installation
+├── 02-user-guides/        # User documentation and tutorials
+├── 03-blueprints/         # Blueprint catalog and selection guides
+├── 04-developers/         # Developer documentation and guides
+├── 05-development/        # Development processes and workflows
+├── 06-architecture/       # Architecture design and decisions
+├── 07-reports/            # Project reports and analysis
+│   └── archive/          # Historical reports (timestamped)
+├── 08-agents/            # Agent documentation and specifications
+├── 09-workspace-migration/ # Workspace migration planning
+├── design/               # Design systems and brand identity
+└── releases/             # Release notes and setup guides
+```
+
+### File Naming Conventions
+
+1. **Directories**: Use `kebab-case` for directory names
+   - ✅ `my-feature/`, `web-ui/`, `user-guides/`
+   - ❌ `MyFeature/`, `Web_UI/`, `user_guides/`
+
+2. **Major Documentation**: Use `SCREAMING_SNAKE_CASE` for important docs
+   - ✅ `CONTRIBUTING.md`, `BLUEPRINT_STATUS_GUIDE.md`, `README.md`
+   - ❌ `contributing.md`, `blueprint-status-guide.md`
+
+3. **Regular Documentation**: Use `kebab-case` for standard docs
+   - ✅ `web-ui-user-guide.md`, `quick-start.md`, `installation.md`
+   - ❌ `web_ui_user_guide.md`, `QuickStart.md`
+
+4. **Archive Files**: Include timestamp suffix for historical files
+   - ✅ `phase4-validation-2025-08.md`, `web-ui-fix-summary-2025-08.md`
+   - ❌ `phase4-validation.md`, `web-ui-fix-summary.md`
+
+### Development Artifact Guidelines
+
+**Build Artifacts** (excluded by .gitignore):
+- `/bin/` - Compiled binaries
+- `/dist/` - Distribution builds
+- `/build/` - Build outputs
+- `web/bin/` - Web server binaries
+
+**Coverage Reports** (excluded by .gitignore):
+- `**/coverage-reports/` - Coverage report directories
+- `coverage-*.json` - JSON coverage files
+- `coverage-*.xml` - XML coverage files
+
+**Web UI Artifacts** (excluded by .gitignore):
+- `web/bin/` - Web binaries
+- `web/dist/` - Production builds
+- `web/build/` - Development builds
+- `web/node_modules/` - Node dependencies
+- `web/.next/` - Next.js cache
+- `web/.cache/` - Build cache
+
+**Spec System Artifacts** (excluded by .gitignore):
+- `specs/*/research.md` - Generated research
+- `specs/*/plan.md` - Generated plans
+- `specs/*/tasks.md` - Generated tasks
+- `.specify/memory/` - Specification memory
+- `.specify/templates/` - Specification templates
+
+**Development Tools** (excluded by .gitignore):
+- `scripts/*.log` - Script logs
+- `scripts/output/` - Script outputs
+- `validation-cli/bin/` - Validation binaries
+
+### Where to Put New Files
+
+**User-facing documentation** → `docs/02-user-guides/`
+**Developer guides** → `docs/04-developers/`
+**Architecture decisions** → `docs/06-architecture/`
+**Project reports** → `docs/07-reports/` (or `docs/07-reports/archive/` for historical)
+**Blueprint documentation** → `docs/03-blueprints/`
+**Development processes** → `docs/05-development/`
+
+### Git Best Practices
+
+**File Moves**:
+- Always use `git mv` to preserve history
+- Verify history preservation with `git log --follow <file>`
+
+**Commits**:
+- Use conventional commit format: `type(scope): description`
+- Common types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+- Include Claude Code footer when AI-assisted
+
+**Example**:
+```bash
+# Moving a file
+git mv old/path/file.md new/path/file.md
+
+# Committing the move
+git commit -m "docs: reorganize documentation structure
+
+Move user guides to docs/02-user-guides/ for better organization.
+
+🤖 Generated with [Claude Code](https://claude.ai/code)
+
+Co-Authored-By: Claude <noreply@anthropic.com>"
+```
+
 ## 🆘 Getting Help
 
 If you need help with TDD or testing:
