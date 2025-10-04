@@ -34,15 +34,15 @@
 [Extract from feature spec: primary requirement + technical approach from research]
 
 ## Technical Context
-**Language/Version**: [e.g., Python 3.11, Swift 5.9, Rust 1.75 or NEEDS CLARIFICATION]  
-**Primary Dependencies**: [e.g., FastAPI, UIKit, LLVM or NEEDS CLARIFICATION]  
-**Storage**: [if applicable, e.g., PostgreSQL, CoreData, files or N/A]  
-**Testing**: [e.g., pytest, XCTest, cargo test or NEEDS CLARIFICATION]  
-**Target Platform**: [e.g., Linux server, iOS 15+, WASM or NEEDS CLARIFICATION]
-**Project Type**: [single/web/mobile - determines source structure]  
-**Performance Goals**: [domain-specific, e.g., 1000 req/s, 10k lines/sec, 60 fps or NEEDS CLARIFICATION]  
-**Constraints**: [domain-specific, e.g., <200ms p95, <100MB memory, offline-capable or NEEDS CLARIFICATION]  
-**Scale/Scope**: [domain-specific, e.g., 10k users, 1M LOC, 50 screens or NEEDS CLARIFICATION]
+**Language/Version**: Go 1.23.0+ (current: 1.23.0 with 1.21+ generated projects)  
+**Primary Dependencies**: Cobra (CLI), Gin (Web), Sprig (templates), Viper (config), Testcontainers (testing)  
+**Storage**: PostgreSQL (blueprints), File-based templates (embed.FS), In-memory caching  
+**Testing**: Go test, Testcontainers, Godog (BDD), ATDD framework, Cross-platform validation  
+**Target Platform**: Cross-platform (Linux, macOS, Windows) - CLI tool and generated projects
+**Project Type**: CLI tool with web UI - generates 12 production-ready Go project blueprints  
+**Performance Goals**: <500ms generation time, <100MB memory usage, parallel file operations  
+**Constraints**: Zero external dependencies for generated projects, backward compatibility Go 1.21+  
+**Scale/Scope**: 12 blueprints, 100+ template files, enterprise-grade generated projects (up to 72 files)
 
 ## Constitution Check
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
