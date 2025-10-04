@@ -397,4 +397,30 @@ go-starter new enterprise-system --type microservice --architecture hexagonal --
 
 🚀 **From simple scripts to enterprise architectures - go-starter scales with you.**
 
+## 🚀 Roadmap - Go Workspace Migration
+
+### Current Focus: Modular Architecture
+We're migrating go-starter to a Go workspace structure to improve modularity and enable independent development of core, CLI, and Web UI components.
+
+**📋 [Track Progress: GitHub Project #10](https://github.com/users/francknouama/projects/10)**
+
+#### Migration Phases
+- **Phase 1**: Architecture Analysis & Planning (#227-229)
+- **Phase 2**: Core Module Extraction (#230-231)
+- **Phase 3**: CLI Module Separation (#232-233)
+- **Phase 4**: Web Module Independence (#234)
+- **Phase 5**: Workspace Configuration (#235, #240)
+- **Phase 6**: Validation & Documentation (#236-239)
+
+**Timeline**: Q1 2025 (10-15 days estimated)
+
+### Benefits of Workspace Structure
+- **Better Modularity** - Independent versioning and development
+- **Cleaner Dependencies** - Clear module boundaries
+- **Improved Testing** - Module-level and integration tests
+- **Flexible Deployment** - Use modules independently or together
+- **Backward Compatibility** - Smooth migration for existing users
+
+---
+
 ⭐ **[Star us on GitHub](https://github.com/francknouama/go-starter)** • 🐛 **[Report Issues](https://github.com/francknouama/go-starter/issues)** • 💬 **[Join Discussions](https://github.com/francknouama/go-starter/discussions)**

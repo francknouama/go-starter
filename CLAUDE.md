@@ -6,6 +6,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 
 **go-starter** - A comprehensive Go project generator combining create-react-app simplicity with Spring Initializr flexibility. Features progressive disclosure for beginners and advanced developers with an interactive CLI interface.
 
+## 🚀 Go Workspace Migration (In Progress)
+
+### Migration Overview
+The project is undergoing a migration to Go workspace structure to separate core functionalities, CLI, and Web UI into independent modules. This will improve modularity, testing, and allow independent development of each component.
+
+**GitHub Project**: [#10 - Go Workspace Migration](https://github.com/users/francknouama/projects/10)
+
+### Target Architecture
+```
+go-starter/
+├── go.work                    # Workspace configuration
+├── modules/
+│   ├── core/                  # Core functionality
+│   │   ├── go.mod
+│   │   ├── generator/         # Generation engine
+│   │   ├── templates/         # Template system
+│   │   └── blueprints/        # Blueprint definitions
+│   ├── cli/                   # CLI implementation
+│   │   ├── go.mod
+│   │   ├── cmd/               # Cobra commands
+│   │   └── prompts/           # Interactive system
+│   └── web/                   # Web UI & API
+│       ├── go.mod
+│       ├── frontend/          # React application
+│       └── api/               # Go API server
+└── tests/                      # Integration tests
+```
+
+### Migration Phases & Issues
+- **Phase 1: Preparation** - #227, #228, #229
+- **Phase 2: Core Module** - #230, #231
+- **Phase 3: CLI Module** - #232, #233
+- **Phase 4: Web Module** - #234
+- **Phase 5: Workspace** - #235, #240
+- **Phase 6: Validation** - #236, #237, #238, #239
+
+**Timeline**: 10-15 days (estimated)
+
 ## 🎯 Interactive CLI System
 
 ### 💻 CLI Interactive Mode
@@ -301,6 +339,40 @@ go-starter new my-tool --type=cli --complexity=simple
 - Multi-agent collaboration for complex features
 - Release preparation workflows
 - Quality assurance coordination
+
+#### performance-security-specialist
+**Purpose**: Security vulnerability remediation, performance optimization, and code security analysis
+**When to Use**: For Dependabot alerts, security vulnerabilities, performance bottlenecks, security code reviews, dependency updates, and security compliance assessments
+
+**Core Expertise**:
+- Security vulnerability assessment and remediation
+- Dependency management and security updates
+- Performance profiling and optimization
+- Security code review and static analysis
+- OWASP security best practices implementation
+- CVE analysis and mitigation strategies
+
+**Primary Functions**:
+- Analyze and fix Dependabot security alerts
+- Update vulnerable dependencies to secure versions
+- Perform security code reviews and audits
+- Optimize application performance and resource usage
+- Implement security headers and middleware
+- Configure secure deployment practices
+
+**Security Specialties**:
+- **Dependency Security**: Go modules, npm packages, security updates
+- **Code Security**: Input validation, injection prevention, secrets management
+- **Infrastructure Security**: Docker security, CI/CD pipeline security
+- **Performance**: Memory optimization, CPU profiling, load testing
+- **Compliance**: Security standards, vulnerability scanning
+
+**Technical Focus Areas**:
+- Go security best practices and secure coding
+- Web application security (OWASP Top 10)
+- Container and deployment security
+- Performance monitoring and optimization
+- Security automation in CI/CD pipelines
 
 #### ascii-art-designer
 **Purpose**: Create professional ASCII art logos, banners, and decorative elements for CLI applications
